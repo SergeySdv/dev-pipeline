@@ -15,13 +15,20 @@ from pathlib import Path
 
 
 def run(cmd, cwd=None, check=True, capture=True, input_text=None):
+    """
+    Run a subprocess with optional text input.
+
+    When capture=True (default), text mode is enabled and input_text should be
+    a string. When capture=False, callers may pass bytes via input_text if they
+    need to stream raw data.
+    """
     return subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
-        input=input_text.encode("utf-8") if input_text else None,
+        input=input_text if input_text is not None else None,
         check=check,
         capture_output=capture,
-        text=True,
+        text=capture,
     )
 
 
