@@ -47,15 +47,15 @@ The core idea: ship improvements in parallel streams with strict, explicit proto
 
 ```mermaid
 graph TD
-  U[User/Agent] --> PS[project_setup.py --clone-url --run-discovery]
+  U[User/Agent] --> PS[project_setup.py (clone + discovery)]
   PS --> Repo[(Repo)]
-  PS --> Disc[Codex discovery<br/>codex_ci_bootstrap.py]
-  Disc --> CIScripts[scripts/ci/* (filled per stack)]
+  PS --> Disc[Codex discovery (codex_ci_bootstrap.py)]
+  Disc --> CIScripts[CI scripts filled per stack]
   U --> PP[protocol_pipeline.py]
   PP --> PlanGen[Planning (gpt-5.1-high)]
   PlanGen --> Decomp[Decompose steps (gpt-5.1-high)]
-  Decomp --> Worktree[Worktree + .protocols/NNNN-[Task-short-name]/]
-  Worktree --> PR[Draft PR/MR (gh/glab)]
+  Decomp --> Worktree[Worktree + .protocols/NNNN-Task-short-name]
+  Worktree --> PR[Draft PR/MR (gh or glab)]
   PR --> CIJobs[CI (GitHub Actions / GitLab)]
   CIJobs --> Status[Checks & build status]
 ```
@@ -64,8 +64,8 @@ graph TD
 
 ```mermaid
 flowchart LR
-  A[Prepare repo<br/>project_setup.py] --> B[Codex discovery<br/>(optional)]
-  B --> C[Run protocol_pipeline.py<br/>generate plan + steps]
+  A[Prepare repo (project_setup.py)] --> B[Codex discovery (optional)]
+  B --> C[Run protocol_pipeline.py (plan + steps)]
   C --> D[Optional: auto Draft PR/MR]
   C --> E[Optional: auto-run a step]
   D --> F[CI pipelines run]
