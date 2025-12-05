@@ -10,6 +10,7 @@ This repository is a starter kit for DeksdenFlow_Ilyas_Edition_1.0: a protocol-d
 - `.github/workflows/ci.yml` and `.gitlab-ci.yml`: dual CI entrypoints that call the same `scripts/ci/*.sh` hooks.
 - `schemas/`: JSON schema for planning agent output.
 - `tests/`: harnesses covering orchestration code paths; optional Codex integration test gated by `RUN_REAL_CODEX`.
+- `deksdenflow/`: reusable library for protocol pipeline, QA, project setup, and the new orchestrator (API + storage + domain).
 
 ## Core building blocks
 - **Protocol assets and schema**  
@@ -38,6 +39,8 @@ This repository is a starter kit for DeksdenFlow_Ilyas_Edition_1.0: a protocol-d
   - Small utility that reads `dataset.csv` (category/value), aggregates metrics, and renders a PDF via reportlab. Current inputs are toy data; output path defaults to `docs/dataset_report.pdf`.
 - **TerraformManager workflow plan (`docs/terraformmanager-workflow-plan.md`)**  
   - Checklists for cloning/running the TerraformManager demo under `Projects/`, covering API/CLI/UI validation and optional infra tooling; serves as an example end-to-end ops workflow.
+- **Orchestrator (alpha)**  
+  - `deksdenflow/storage.py` provides SQLite persistence for Projects/ProtocolRuns/StepRuns/Events; `deksdenflow/api/app.py` exposes FastAPI endpoints for CRUD + actions; `scripts/api_server.py` runs uvicorn. Queueing is a stub (`deksdenflow/jobs.py`) to be replaced with a real backend.
 
 ## Operational workflows
 1. **Bootstrap a repo**  

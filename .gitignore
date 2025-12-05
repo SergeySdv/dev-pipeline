@@ -16,3 +16,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+Projects/
+dataset_report.pdf
+dataset.csv
+docs/terraformmanager-workflow-plan.md
+scripts/generate_dataset_report.py
+.deksdenflow.sqlite
+.deksdenflow.sqlite-journal

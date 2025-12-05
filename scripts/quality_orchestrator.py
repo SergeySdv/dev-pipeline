@@ -1,81 +1,29 @@
 #!/usr/bin/env python3
 """
 Run Codex as a QA orchestrator/validator for a given protocol step.
-It collects plan/context/log, the step file, git status, and latest commit message,
-then asks Codex (default model: codex-5.1-max) to produce a verdict and findings.
-If the verdict is FAIL, this script exits 1 to stop the pipeline.
+This script is now a thin wrapper over the reusable deksdenflow.qa module.
 """
 
 import argparse
 import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-def run(cmd, cwd=None, check=True, capture=True, input_text=None):
-    """
-    Run a subprocess with optional text input.
-
-    When capture=True (default), text mode is enabled and input_text should be
-    a string. When capture=False, callers may pass bytes via input_text if they
-    need to stream raw data.
-    """
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        input=input_text if input_text is not None else None,
-        check=check,
-        capture_output=capture,
-        text=capture,
-    )
+from deksdenflow.qa import (  # noqa: E402
+    QualityResult,
+    build_prompt,
+    determine_verdict,
+    read_file,
+    run,
+    run_quality_check,
+)
 
 
-def read_file(path: Path) -> str:
-    return path.read_text(encoding="utf-8") if path.is_file() else ""
-
-
-def build_prompt(protocol_root: Path, step_file: Path) -> str:
-    plan = read_file(protocol_root / "plan.md")
-    context = read_file(protocol_root / "context.md")
-    log = read_file(protocol_root / "log.md")
-    step = read_file(step_file)
-
-    git_status = run(["git", "status", "--porcelain"], cwd=protocol_root.parent.parent).stdout.strip()
-    last_commit = ""
-    try:
-        last_commit = run(
-            ["git", "log", "-1", "--pretty=format:%s"],
-            cwd=protocol_root.parent.parent,
-        ).stdout.strip()
-    except subprocess.CalledProcessError:
-        last_commit = "(no commits yet)"
-
-    return f"""You are a QA orchestrator. Validate the current protocol step. Follow the checklist and output Markdown only (no fences).
-
-plan.md:
-{plan}
-
-context.md:
-{context}
-
-log.md (may be empty):
-{log}
-
-Step file ({step_file.name}):
-{step}
-
-Git status (porcelain):
-{git_status}
-
-Latest commit message:
-{last_commit}
-
-Use the format from the quality-validator prompt. If any blocking issue, verdict = FAIL."""
-
-
-def main() -> None:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Codex QA orchestrator for a protocol step.")
     parser.add_argument(
         "--protocol-root",
@@ -107,55 +55,37 @@ def main() -> None:
         default="read-only",
         help="Codex sandbox mode (default: read-only).",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    if shutil.which("codex") is None:
-        print("codex CLI not found in PATH. Install/configure codex first.", file=sys.stderr)
-        sys.exit(1)
+
+def main() -> None:
+    args = parse_args()
 
     protocol_root = Path(args.protocol_root).resolve()
     step_path = protocol_root / args.step_file
-    if not step_path.is_file():
-        print(f"Step file not found: {step_path}", file=sys.stderr)
+    prompt_path = Path(args.prompt_file).resolve()
+    report_path = Path(args.report_file) if args.report_file else None
+
+    try:
+        qa_result: QualityResult = run_quality_check(
+            protocol_root=protocol_root,
+            step_file=step_path,
+            model=args.model,
+            prompt_file=prompt_path,
+            sandbox=args.sandbox,
+            report_file=report_path,
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"Codex QA run failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    prompt_file = Path(args.prompt_file).resolve()
-    if not prompt_file.is_file():
-        print(f"Prompt file not found: {prompt_file}", file=sys.stderr)
+    print(f"QA report written to {qa_result.report_path}")
+    if qa_result.verdict.upper() == "FAIL":
+        print("QA verdict: FAIL")
         sys.exit(1)
-
-    prompt_prefix = prompt_file.read_text(encoding="utf-8")
-    prompt_body = build_prompt(protocol_root, step_path)
-    full_prompt = f"{prompt_prefix}\n\n{prompt_body}"
-
-    report_path = Path(args.report_file) if args.report_file else protocol_root / "quality-report.md"
-
-    cmd = [
-        "codex",
-        "exec",
-        "-m",
-        args.model,
-        "--cd",
-        str(protocol_root.parent.parent),
-        "--sandbox",
-        args.sandbox,
-        "-",
-    ]
-
-    result = run(cmd, input_text=full_prompt, capture=True, check=False)
-    if result.returncode != 0:
-        print("Codex QA run failed:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
-        sys.exit(result.returncode)
-
-    report_text = result.stdout.strip()
-    report_path.write_text(report_text, encoding="utf-8")
-    print(f"QA report written to {report_path}")
-
-    if "VERDICT" in report_text.upper():
-        if "FAIL" in report_text.splitlines()[-1].upper() or "VERDICT: FAIL" in report_text.upper():
-            print("QA verdict: FAIL")
-            sys.exit(1)
 
 
 if __name__ == "__main__":

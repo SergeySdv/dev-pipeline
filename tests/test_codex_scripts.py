@@ -10,9 +10,7 @@ SCRIPT_DIR = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import codex_ci_bootstrap  # type: ignore  # noqa: E402
-import protocol_pipeline  # type: ignore  # noqa: E402
-import quality_orchestrator  # type: ignore  # noqa: E402
-import project_setup  # type: ignore  # noqa: E402
+from deksdenflow import pipeline, project_setup, qa  # noqa: E402
 
 
 class DummyResult:
@@ -66,8 +64,8 @@ class CodexScriptTests(unittest.TestCase):
             schema = tmp_path / "schema.json"
             out_msg = tmp_path / "last.json"
 
-            with mock.patch.object(protocol_pipeline.subprocess, "run") as mock_run:
-                protocol_pipeline.run_codex_exec(
+            with mock.patch.object(pipeline.subprocess, "run") as mock_run:
+                pipeline.run_codex_exec(
                     model="model-x",
                     cwd=tmp_path,
                     prompt_text="prompt-body",
@@ -96,6 +94,11 @@ class CodexScriptTests(unittest.TestCase):
             step = proto_root / "01-step.md"
             step.write_text("step body", encoding="utf-8")
 
+            prompt_dir = Path(tmpdir) / "prompts"
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = prompt_dir / "quality-validator.prompt.md"
+            prompt_file.write_text("validator header", encoding="utf-8")
+
             codex_calls = []
 
             def fake_run(cmd, cwd=None, check=True, capture=True, input_text=None):
@@ -108,27 +111,21 @@ class CodexScriptTests(unittest.TestCase):
                     return DummyResult(cmd, stdout="VERDICT: PASS")
                 raise AssertionError(f"Unexpected command: {cmd}")
 
-            argv = [
-                "quality_orchestrator.py",
-                "--protocol-root",
-                str(proto_root),
-                "--step-file",
-                "01-step.md",
-                "--model",
-                "test-model",
-                "--sandbox",
-                "read-only",
-            ]
+            with mock.patch.object(qa.shutil, "which", return_value="/usr/bin/codex"), \
+                mock.patch.object(qa, "run", side_effect=fake_run):
+                result = qa.run_quality_check(
+                    protocol_root=proto_root,
+                    step_file=step,
+                    model="test-model",
+                    prompt_file=prompt_file,
+                    sandbox="read-only",
+                )
 
-            with mock.patch.object(quality_orchestrator.shutil, "which", return_value="/usr/bin/codex"), \
-                mock.patch.object(quality_orchestrator, "run", side_effect=fake_run), \
-                mock.patch.object(sys, "argv", argv):
-                quality_orchestrator.main()
-
-            report_path = proto_root / "quality-report.md"
+            report_path = result.report_path
             self.assertTrue(report_path.is_file())
             self.assertIn("VERDICT: PASS", report_path.read_text(encoding="utf-8"))
             self.assertEqual(codex_calls[0][0][3], "test-model")
+            self.assertEqual(result.verdict, "PASS")
 
     def test_project_setup_codex_discovery_passes_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
