@@ -127,19 +127,24 @@ class RedisQueue:
         return None
 
     def list(self, status: Optional[str] = None) -> List[Job]:
-        # Listing RQ jobs requires fetching from Redis; return empty for now.
-        return []
+        jobs: List[Job] = []
+        for q in self._queues.values():
+            rq_jobs = q.job_ids
+            if not rq_jobs:
+                continue
+            for job_id in rq_jobs:
+                jobs.append(Job(job_id=job_id, job_type="unknown", payload={}, status="queued", queue=q.name))
+        return jobs
 
     def requeue(self, job: Job, delay_seconds: float) -> None:
         q = self._get_queue(job.queue)
         q.enqueue_in(time.timedelta(seconds=delay_seconds), "deksdenflow.worker_runtime.rq_job_handler", job.job_type, job.payload)
 
     def stats(self) -> Dict[str, Any]:
-        q = self._get_queue("default")
-        return {
-            "backend": "redis-rq",
-            "queued": q.count,
-        }
+        stats: Dict[str, Any] = {"backend": "redis-rq"}
+        for name, q in self._queues.items():
+            stats[name] = {"queued": q.count}
+        return stats
 
 
 def create_queue(redis_url: Optional[str]) -> BaseQueue:

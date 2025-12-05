@@ -324,6 +324,11 @@ def queue_stats(queue: jobs.BaseQueue = Depends(get_queue)) -> dict:
     return queue.stats()
 
 
+@app.get("/queues/jobs", dependencies=[Depends(require_auth)])
+def queue_jobs(queue: jobs.BaseQueue = Depends(get_queue)) -> list[dict]:
+    return [job.asdict() for job in queue.list()]
+
+
 @app.post(
     "/webhooks/github",
     response_model=schemas.ActionResponse,
@@ -345,11 +350,13 @@ async def github_webhook(
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
     metrics.inc_webhook("github")
     action = payload.get("action", "")
-    branch = payload.get("workflow_run", {}).get("head_branch") or payload.get("ref", "")
     conclusion = payload.get("workflow_run", {}).get("conclusion")
-
+    if not protocol_run_id:
+        branch = payload.get("workflow_run", {}).get("head_branch") or payload.get("ref", "")
+        run = db.find_protocol_run_by_branch(branch or "")
+    else:
+        run = db.get_protocol_run(protocol_run_id)
     branch = payload.get("workflow_run", {}).get("head_branch") or payload.get("ref", "")
-    run = db.get_protocol_run(protocol_run_id) if protocol_run_id else db.find_protocol_run_by_branch(branch or "")
     if not run:
         raise HTTPException(status_code=404, detail="Protocol run not found for webhook")
     step = db.latest_step_run(run.id)
