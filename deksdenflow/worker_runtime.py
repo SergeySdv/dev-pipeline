@@ -44,6 +44,7 @@ def drain_once(queue: BaseQueue, db: Database) -> Optional[Job]:
 
     try:
         process_job(job, db)
+        metrics.inc_job(job.job_type, "completed")
     except Exception as exc:  # pragma: no cover - best effort
         job.attempts += 1
         backoff = min(60, 2 ** job.attempts)
@@ -57,6 +58,7 @@ def drain_once(queue: BaseQueue, db: Database) -> Optional[Job]:
             if proto_id:
                 db.append_event(proto_id, "job_failed", f"{job.job_type} failed: {exc}", step_run_id=step_id)
                 db.update_protocol_status(proto_id, ProtocolStatus.BLOCKED)
+            metrics.inc_job(job.job_type, "failed")
     return job
 
 

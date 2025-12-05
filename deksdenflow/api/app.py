@@ -63,6 +63,11 @@ def get_worker(request: Request) -> BackgroundWorker:
     return request.app.state.worker  # type: ignore[attr-defined]
 
 
+def get_protocol_project(protocol_run_id: int, db: Database) -> int:
+    run = db.get_protocol_run(protocol_run_id)
+    return run.project_id
+
+
 def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(auth_scheme),
@@ -200,7 +205,10 @@ def list_protocol_runs(project_id: int, db: Database = Depends(get_db), request:
 
 
 @app.get("/protocols/{protocol_run_id}", response_model=schemas.ProtocolRunOut, dependencies=[Depends(require_auth)])
-def get_protocol(protocol_run_id: int, db: Database = Depends(get_db)) -> schemas.ProtocolRunOut:
+def get_protocol(protocol_run_id: int, db: Database = Depends(get_db), request: Request = None) -> schemas.ProtocolRunOut:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
     try:
         run = db.get_protocol_run(protocol_run_id)
     except KeyError as exc:
@@ -213,7 +221,11 @@ def start_protocol(
     protocol_run_id: int,
     db: Database = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
 ) -> schemas.ActionResponse:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
     try:
         db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
     except KeyError as exc:
@@ -255,11 +267,15 @@ def run_step(
     step_id: int,
     db: Database = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
 ) -> schemas.ActionResponse:
     try:
         step = db.update_step_status(step_id, StepStatus.RUNNING)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if request:
+        project_id = get_protocol_project(step.protocol_run_id, db)
+        require_project_access(project_id, request, db)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message="Step execution enqueued", job=job)
 
@@ -269,11 +285,15 @@ def run_step_qa(
     step_id: int,
     db: Database = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
 ) -> schemas.ActionResponse:
     try:
         step = db.update_step_status(step_id, StepStatus.NEEDS_QA)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if request:
+        project_id = get_protocol_project(step.protocol_run_id, db)
+        require_project_access(project_id, request, db)
     job = queue.enqueue("run_quality_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message="QA enqueued", job=job)
 
