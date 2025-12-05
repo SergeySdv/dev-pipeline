@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from .codex import run_process, enforce_token_budget
+from .errors import CodexCommandError
 
 
 @dataclass
@@ -109,7 +110,7 @@ def run_quality_check(
 
     result = run_process(cmd, input_text=full_prompt, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"codex exec failed with code {result.returncode}: {result.stderr}")
+        raise CodexCommandError(f"codex exec failed with code {result.returncode}: {result.stderr}")
 
     report_text = result.stdout.strip()
     report_path.write_text(report_text, encoding="utf-8")

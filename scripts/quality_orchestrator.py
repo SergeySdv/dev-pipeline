@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from deksdenflow.config import load_config  # noqa: E402
+from deksdenflow.logging import init_cli_logging  # noqa: E402
 from deksdenflow.qa import QualityResult, run_quality_check  # noqa: E402
 
 
@@ -56,6 +57,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config()
+    init_cli_logging(config.log_level)
 
     protocol_root = Path(args.protocol_root).resolve()
     step_path = protocol_root / args.step_file

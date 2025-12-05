@@ -4,6 +4,7 @@ from typing import List, Optional
 import math
 
 from .logging import get_logger
+from .errors import BudgetExceededError
 
 log = get_logger(__name__)
 
@@ -63,7 +64,7 @@ def enforce_token_budget(prompt_text: str, max_tokens: Optional[int], context: s
         if mode == "warn":
             log.warning("Token budget exceeded", extra={"context": context, "estimated_tokens": estimated, "max_tokens": max_tokens})
             return
-        raise ValueError(message)
+        raise BudgetExceededError(message)
     log.debug("Token budget ok", extra={"context": context, "estimated_tokens": estimated, "max_tokens": max_tokens})
 
 

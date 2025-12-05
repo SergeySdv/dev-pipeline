@@ -13,9 +13,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from deksdenflow.ci import trigger_ci  # noqa: E402
+from deksdenflow.config import load_config  # noqa: E402
+from deksdenflow.logging import init_cli_logging  # noqa: E402
 
 
 def main() -> None:
+    config = load_config()
+    init_cli_logging(config.log_level)
     parser = argparse.ArgumentParser(description="Trigger CI for a protocol branch.")
     parser.add_argument("--branch", required=True, help="Branch name (NNNN-task).")
     parser.add_argument("--repo-root", default=".", help="Repo root (default: cwd).")

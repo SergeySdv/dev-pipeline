@@ -25,6 +25,8 @@ from deksdenflow.pipeline import (  # noqa: E402
     slugify,
     write_protocol_files,
 )
+from deksdenflow.config import load_config  # noqa: E402
+from deksdenflow.logging import init_cli_logging  # noqa: E402
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -68,6 +70,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    config = load_config()
+    init_cli_logging(config.log_level)
     cli_args = parse_args()
     try:
         run_pipeline(cli_args)

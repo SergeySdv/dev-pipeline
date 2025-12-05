@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Optional
 
 
@@ -16,12 +15,18 @@ class RequestIdFilter(logging.Filter):
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
     logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format='%(asctime)s %(levelname)s %(name)s %(message)s request_id=%(request_id)s',
+        level=getattr(logging, str(level).upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s request_id=%(request_id)s",
     )
-    logger = logging.getLogger("deksdenflow")
-    return logger
+    return logging.getLogger("deksdenflow")
 
 
 def get_logger(name: str = "deksdenflow") -> logging.Logger:
     return logging.getLogger(name)
+
+
+def init_cli_logging(level: Optional[str] = None) -> logging.Logger:
+    """
+    Initialize logging for CLI tools using the configured log level (default INFO).
+    """
+    return setup_logging(level or "INFO")

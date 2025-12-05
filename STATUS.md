@@ -4,7 +4,7 @@
 - Added Postgres adapter (psycopg3) alongside SQLite and wired a factory (`create_database`) to select based on `DEKSDENFLOW_DB_URL`.
 - Added Alembic scaffolding and initial migration (projects, protocol_runs, step_runs, events); applied to the default SQLite DB.
 - Token budgeting now configurable (`DEKSDENFLOW_MAX_TOKENS_*`, `DEKSDENFLOW_TOKEN_BUDGET_MODE` strict/warn/off) and enforced in pipeline/QA.
-- Structured logging propagated to workers (config-driven log level; Codex worker emits plan/exec/QA/CI events).
+- Structured logging propagated to workers/CLIs (config-driven log level; Codex worker emits plan/exec/QA/CI events; CLIs initialize logging from config).
 - Makefile helpers: `orchestrator-setup` (venv + deps + migrate), plus `deps` and `migrate`.
 
 ## How to run now

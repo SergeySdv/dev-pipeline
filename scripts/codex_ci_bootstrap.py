@@ -15,9 +15,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from deksdenflow.project_setup import run_codex_discovery  # noqa: E402
+from deksdenflow.config import load_config  # noqa: E402
+from deksdenflow.logging import init_cli_logging  # noqa: E402
 
 
 def main() -> None:
+    config = load_config()
+    init_cli_logging(config.log_level)
     parser = argparse.ArgumentParser(
         description="Use Codex CLI to infer stack and fill CI scripts for this repo."
     )
