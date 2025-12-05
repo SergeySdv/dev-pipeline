@@ -128,35 +128,61 @@ class RedisQueue:
 
     def list(self, status: Optional[str] = None) -> List[Job]:
         jobs: List[Job] = []
-        registry_map = {
-            None: lambda q: q.get_jobs(),
-            "queued": lambda q: q.get_jobs(),
-            "started": lambda q: q.started_job_registry.get_job_ids(),
-            "finished": lambda q: q.finished_job_registry.get_job_ids(),
-            "failed": lambda q: q.failed_job_registry.get_job_ids(),
-        }
-        fetcher = registry_map.get(status, registry_map[None])
         for q in self._queues.values():
-            rq_jobs = fetcher(q)
-            for rq_job in rq_jobs:
-                if hasattr(rq_job, "id"):
-                    job_id = rq_job.id
-                    func_name = rq_job.func_name
-                    args = rq_job.args or {}
-                else:
-                    # registry returns ids
-                    job_id = rq_job
-                    func_name = "unknown"
-                    args = {}
-                jobs.append(
-                    Job(
-                        job_id=job_id,
-                        job_type=func_name,
-                        payload=args,
-                        status=status or "queued",
-                        queue=q.name,
+            if status in (None, "queued"):
+                for rq_job in q.get_jobs():
+                    jobs.append(
+                        Job(
+                            job_id=rq_job.id,
+                            job_type=rq_job.func_name,
+                            payload=rq_job.args or {},
+                            status="queued",
+                            queue=q.name,
+                            created_at=rq_job.enqueued_at.timestamp() if rq_job.enqueued_at else time.time(),
+                        )
                     )
-                )
+            if status in (None, "started"):
+                for job_id in q.started_job_registry.get_job_ids():
+                    rq_job = q.fetch_job(job_id)
+                    if rq_job:
+                        jobs.append(
+                            Job(
+                                job_id=rq_job.id,
+                                job_type=rq_job.func_name,
+                                payload=rq_job.args or {},
+                                status="started",
+                                queue=q.name,
+                                created_at=rq_job.enqueued_at.timestamp() if rq_job.enqueued_at else time.time(),
+                            )
+                        )
+            if status in (None, "finished"):
+                for job_id in q.finished_job_registry.get_job_ids():
+                    rq_job = q.fetch_job(job_id)
+                    if rq_job:
+                        jobs.append(
+                            Job(
+                                job_id=rq_job.id,
+                                job_type=rq_job.func_name,
+                                payload=rq_job.args or {},
+                                status="finished",
+                                queue=q.name,
+                                created_at=rq_job.enqueued_at.timestamp() if rq_job.enqueued_at else time.time(),
+                            )
+                        )
+            if status in (None, "failed"):
+                for job_id in q.failed_job_registry.get_job_ids():
+                    rq_job = q.fetch_job(job_id)
+                    if rq_job:
+                        jobs.append(
+                            Job(
+                                job_id=rq_job.id,
+                                job_type=rq_job.func_name,
+                                payload=rq_job.args or {},
+                                status="failed",
+                                queue=q.name,
+                                created_at=rq_job.enqueued_at.timestamp() if rq_job.enqueued_at else time.time(),
+                            )
+                        )
         return jobs
 
     def requeue(self, job: Job, delay_seconds: float) -> None:
