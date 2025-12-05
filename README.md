@@ -56,7 +56,8 @@ graph TD
   PP --> PlanGen["Planning (gpt-5.1-high)"]
   PlanGen --> Decomp["Decompose steps (gpt-5.1-high)"]
   Decomp --> Worktree["Worktree + .protocols/NNNN-Task"]
-  Worktree --> PR["Draft PR/MR (gh or glab)"]
+  Worktree --> QA["quality_orchestrator.py (Codex QA)"]
+  QA --> PR["Draft PR/MR (gh or glab)"]
   PR --> CIJobs["CI (GitHub Actions or GitLab)"]
   CIJobs --> Status["Checks and build status"]
 ```
@@ -69,8 +70,9 @@ flowchart LR
   B --> C["Run protocol_pipeline.py (plan + steps)"]
   C --> D["Optional: auto Draft PR/MR"]
   C --> E["Optional: auto-run a step"]
+  E --> QA["Run quality_orchestrator.py"]
+  QA --> G["Commit/push per step"]
   D --> F["CI pipelines run"]
-  E --> G["Commit/push per step"]
   G --> F
   F --> H["Review & merge via protocol-review prompts"]
 ```
