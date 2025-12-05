@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import codex_ci_bootstrap  # type: ignore  # noqa: E402
 import protocol_pipeline  # type: ignore  # noqa: E402
 import quality_orchestrator  # type: ignore  # noqa: E402
+import project_setup  # type: ignore  # noqa: E402
 
 
 class DummyResult:
@@ -128,6 +129,30 @@ class CodexScriptTests(unittest.TestCase):
             self.assertTrue(report_path.is_file())
             self.assertIn("VERDICT: PASS", report_path.read_text(encoding="utf-8"))
             self.assertEqual(codex_calls[0][0][3], "test-model")
+
+    def test_project_setup_codex_discovery_passes_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            prompts_dir = repo_root / "prompts"
+            prompts_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = prompts_dir / "repo-discovery.prompt.md"
+            prompt_file.write_text("hello discovery", encoding="utf-8")
+
+            captured = {}
+
+            def fake_run(cmd, cwd=None, check=True, capture=True, input_text=None):
+                captured["cmd"] = cmd
+                captured["cwd"] = cwd
+                captured["input_text"] = input_text
+                return DummyResult(cmd)
+
+            with mock.patch.object(project_setup.shutil, "which", return_value="/usr/bin/codex"), \
+                mock.patch.object(project_setup, "run", side_effect=fake_run):
+                project_setup.run_codex_discovery(repo_root, "gpt-5.1-codex-max")
+
+            self.assertEqual(captured["cmd"][:4], ["codex", "exec", "-m", "gpt-5.1-codex-max"])
+            self.assertEqual(captured["cwd"], repo_root)
+            self.assertEqual(captured["input_text"], "hello discovery")
 
 
 if __name__ == "__main__":

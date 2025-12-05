@@ -41,13 +41,20 @@ PLACEHOLDER = (
 )
 
 
-def run(cmd: list[str], cwd: Optional[Path] = None, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str],
+    cwd: Optional[Path] = None,
+    check: bool = True,
+    capture: bool = True,
+    input_text: Optional[str] = None,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
         check=check,
         capture_output=capture,
         text=True,
+        input=input_text,
     )
 
 
@@ -149,6 +156,7 @@ def run_codex_discovery(repo_root: Path, model: str) -> None:
         cwd=repo_root,
         capture=False,
         check=True,
+        input_text=prompt_text,
     )
 
 
@@ -181,7 +189,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--discovery-model",
-        help="Model for discovery (default from PROTOCOL_DISCOVERY_MODEL or codex-5.1-max).",
+        help="Model for discovery (default from PROTOCOL_DISCOVERY_MODEL or gpt-5.1-codex-max).",
     )
     return parser.parse_args()
 
@@ -209,7 +217,7 @@ def main() -> None:
     ensure_assets(repo_root)
 
     if args.run_discovery:
-        discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "codex-5.1-max")
+        discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
         run_codex_discovery(repo_root, discovery_model)
 
     print("Project setup completed. Review any placeholders and customize CI scripts for your stack.")

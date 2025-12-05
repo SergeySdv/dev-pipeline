@@ -2,7 +2,7 @@
 """
 Run Codex CLI to infer stack and fill CI scripts for the current repository.
 
-This wraps codex exec (default model: codex-5.1-max) using the repo-discovery prompt.
+This wraps codex exec (default model: gpt-5.1-codex-max) using the repo-discovery prompt.
 """
 
 import argparse
@@ -27,8 +27,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="codex-5.1-max",
-        help="Codex model to use (default: codex-5.1-max).",
+        default="gpt-5.1-codex-max",
+        help="Codex model to use (default: gpt-5.1-codex-max).",
     )
     parser.add_argument(
         "--prompt-file",
