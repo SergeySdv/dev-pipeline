@@ -6,6 +6,7 @@
 - Token budgeting now configurable (`DEKSDENFLOW_MAX_TOKENS_*`, `DEKSDENFLOW_TOKEN_BUDGET_MODE` strict/warn/off) and enforced in pipeline/QA.
 - Structured logging propagated to workers/CLIs (config-driven log level; Codex worker emits plan/exec/QA/CI events; CLIs initialize logging from config).
 - Makefile helpers: `orchestrator-setup` (venv + deps + migrate), plus `deps` and `migrate`.
+- Postgres path now uses psycopg pool; API health endpoint reflects DB reachability (ok/degraded based on DB probe).
 
 ## How to run now
 ```bash

@@ -6,9 +6,11 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 try:  # Optional Postgres support
     import psycopg
     from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
 except ImportError:  # pragma: no cover - Postgres optional
     psycopg = None  # type: ignore
     dict_row = None  # type: ignore
+    ConnectionPool = None  # type: ignore
 
 from .domain import Event, Project, ProtocolRun, StepRun
 
@@ -451,12 +453,15 @@ class PostgresDatabase:
     Requires psycopg>=3. Follows the same contract as the SQLite Database class.
     """
 
-    def __init__(self, db_url: str):
+    def __init__(self, db_url: str, pool_size: int = 5):
         if psycopg is None:  # pragma: no cover - optional dependency
             raise ImportError("psycopg is required for Postgres support. Install psycopg[binary].")
         self.db_url = db_url
+        self.pool = ConnectionPool(conninfo=db_url, min_size=1, max_size=pool_size) if ConnectionPool else None
 
     def _connect(self):
+        if self.pool:
+            return self.pool.connection()
         return psycopg.connect(self.db_url, row_factory=dict_row)
 
     def init_schema(self) -> None:
@@ -683,11 +688,11 @@ class PostgresDatabase:
         return [Database._row_to_event(row) for row in rows]  # type: ignore[arg-type]
 
 
-def create_database(db_path: Path, db_url: Optional[str] = None) -> BaseDatabase:
+def create_database(db_path: Path, db_url: Optional[str] = None, pool_size: int = 5) -> BaseDatabase:
     """
     Factory to select the backing store. Defaults to SQLite; accepts a Postgres URL
     to allow future migrations without changing callers.
     """
     if db_url and db_url.startswith("postgres"):
-        return PostgresDatabase(db_url)
+        return PostgresDatabase(db_url, pool_size=pool_size)
     return Database(db_path)

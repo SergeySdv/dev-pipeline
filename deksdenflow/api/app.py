@@ -14,6 +14,7 @@ from deksdenflow.logging import RequestIdFilter, get_logger, setup_logging
 from deksdenflow.metrics import metrics
 from deksdenflow.storage import BaseDatabase, create_database
 from deksdenflow.worker_runtime import BackgroundWorker
+from deksdenflow.health import check_db
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -29,7 +30,7 @@ async def lifespan(app: FastAPI):
     config = load_config()
     logger.setLevel(config.log_level.upper())
     logger.info("Starting API", extra={"request_id": "-", "env": config.environment})
-    db = create_database(db_path=config.db_path, db_url=config.db_url)
+    db = create_database(db_path=config.db_path, db_url=config.db_url, pool_size=config.db_pool_size)
     db.init_schema()
     queue = jobs.create_queue(config.redis_url)
     app.state.config = config  # type: ignore[attr-defined]
@@ -132,7 +133,9 @@ async def add_request_id(request: Request, call_next):
 
 @app.get("/health", response_model=schemas.Health)
 def health() -> schemas.Health:
-    return schemas.Health()
+    db_status = check_db(app.state.db)  # type: ignore[attr-defined]
+    status = "ok" if db_status.status == "ok" else "degraded"
+    return schemas.Health(status=status)
 
 
 @app.get("/metrics")
