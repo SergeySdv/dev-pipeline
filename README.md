@@ -24,6 +24,7 @@ This repo is a lightweight starter kit for agent-driven development using the De
 - `schemas/protocol-planning.schema.json` — JSON Schema for the planning agent’s output.
 - `scripts/project_setup.py` — prepares a repo with starter docs/prompts/CI/schema/pipeline if they’re missing.
 - `prompts/repo-discovery.prompt.md` — Codex prompt to auto-discover stack and fill CI scripts.
+- `scripts/codex_ci_bootstrap.py` — helper to run Codex (codex-5.1-max by default) with the discovery prompt to fill CI scripts.
 
 ## How to use the prompts
 
@@ -118,3 +119,9 @@ The script will:
 - Make CI scripts executable.
 - Optional: `--clone-url <git-url>` to clone a repo before prep (use `--clone-dir` to set the folder name).
 - Optional: `--run-discovery` to call Codex (default `codex-5.1-max`) with `prompts/repo-discovery.prompt.md` to auto-fill CI scripts based on detected stack.
+
+You can also run Codex CI bootstrap directly later:
+
+```bash
+python3 scripts/codex_ci_bootstrap.py --model codex-5.1-max
+```
