@@ -43,6 +43,37 @@ This repo is a lightweight starter kit for agent-driven development using the De
 
 The core idea: ship improvements in parallel streams with strict, explicit protocols. Use the prompts and CI hooks here as the default spine; swap in your stack-specific commands without changing the flow.
 
+## Architecture (Mermaid)
+
+```mermaid
+graph TD
+  U[User/Agent] --> PS[project_setup.py --clone-url --run-discovery]
+  PS --> Repo[(Repo)]
+  PS --> Disc[Codex discovery<br/>codex_ci_bootstrap.py]
+  Disc --> CIScripts[scripts/ci/* (filled per stack)]
+  U --> PP[protocol_pipeline.py]
+  PP --> PlanGen[Planning (gpt-5.1-high)]
+  PlanGen --> Decomp[Decompose steps (gpt-5.1-high)]
+  Decomp --> Worktree[Worktree + .protocols/NNNN-[Task-short-name]/]
+  Worktree --> PR[Draft PR/MR (gh/glab)]
+  PR --> CIJobs[CI (GitHub Actions / GitLab)]
+  CIJobs --> Status[Checks & build status]
+```
+
+## Workflow overview (Mermaid)
+
+```mermaid
+flowchart LR
+  A[Prepare repo<br/>project_setup.py] --> B[Codex discovery<br/>(optional)]
+  B --> C[Run protocol_pipeline.py<br/>generate plan + steps]
+  C --> D[Optional: auto Draft PR/MR]
+  C --> E[Optional: auto-run a step]
+  D --> F[CI pipelines run]
+  E --> G[Commit/push per step]
+  G --> F
+  F --> H[Review & merge via protocol-review prompts]
+```
+
 ## Protocol pipeline (Codex CLI)
 
 Prerequisites:
