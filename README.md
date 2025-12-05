@@ -46,32 +46,45 @@ The core idea: ship improvements in parallel streams with strict, explicit proto
 ## Architecture (Mermaid)
 
 ```mermaid
-graph TD
-  U[User/Agent] --> PS[project_setup.py (clone + discovery)]
-  PS --> Repo[(Repo)]
-  PS --> Disc[Codex discovery (codex_ci_bootstrap.py)]
-  Disc --> CIScripts[CI scripts filled per stack]
-  U --> PP[protocol_pipeline.py]
-  PP --> PlanGen[Planning (gpt-5.1-high)]
-  PlanGen --> Decomp[Decompose steps (gpt-5.1-high)]
-  Decomp --> Worktree[Worktree + .protocols/NNNN-Task-short-name]
-  Worktree --> PR[Draft PR/MR (gh or glab)]
-  PR --> CIJobs[CI (GitHub Actions / GitLab)]
-  CIJobs --> Status[Checks & build status]
+graph TD;
+  U[User/Agent];
+  PS[project_setup.py (clone + discovery)];
+  Repo[(Repo)];
+  Disc[Codex discovery codex_ci_bootstrap.py];
+  CIScripts[CI scripts filled per stack];
+  PP[protocol_pipeline.py];
+  PlanGen[Planning gpt-5.1-high];
+  Decomp[Decompose steps gpt-5.1-high];
+  Worktree[Worktree + .protocols/NNNN-Task];
+  PR[Draft PR/MR gh or glab];
+  CIJobs[CI GitHub Actions or GitLab];
+  Status[Checks and build status];
+
+  U --> PS;
+  PS --> Repo;
+  PS --> Disc;
+  Disc --> CIScripts;
+  U --> PP;
+  PP --> PlanGen;
+  PlanGen --> Decomp;
+  Decomp --> Worktree;
+  Worktree --> PR;
+  PR --> CIJobs;
+  CIJobs --> Status;
 ```
 
 ## Workflow overview (Mermaid)
 
 ```mermaid
-flowchart LR
-  A[Prepare repo (project_setup.py)] --> B[Codex discovery (optional)]
-  B --> C[Run protocol_pipeline.py (plan + steps)]
-  C --> D[Optional: auto Draft PR/MR]
-  C --> E[Optional: auto-run a step]
-  D --> F[CI pipelines run]
-  E --> G[Commit/push per step]
-  G --> F
-  F --> H[Review & merge via protocol-review prompts]
+flowchart LR;
+  A[Prepare repo project_setup.py] --> B[Codex discovery optional];
+  B --> C[Run protocol_pipeline.py plan plus steps];
+  C --> D[Optional auto Draft PR or MR];
+  C --> E[Optional auto-run a step];
+  D --> F[CI pipelines run];
+  E --> G[Commit and push per step];
+  G --> F;
+  F --> H[Review and merge via protocol-review prompts];
 ```
 
 ## Protocol pipeline (Codex CLI)
