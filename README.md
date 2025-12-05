@@ -9,9 +9,32 @@ This repo is a lightweight starter kit for agent-driven development using the De
 
 ## Quick start
 
-1. Read `prompts/project-init.prompt.md` — this is the prompt you can feed to an agent to scaffold a new repository in minutes.
-2. Customize the CI hooks in `scripts/ci/` to match your stack (Node, Python, Go, etc.). The pipelines call these scripts if they exist.
-3. Keep the flow close to DeksdenFlow_Ilyas_Edition_1.0: plan in `.protocols/`, execute in worktrees/branches, log in `log.md`, and gate merges with review prompts.
+1. Prep a repo (existing or new):
+   ```bash
+   python3 scripts/project_setup.py --base-branch main --init-if-needed
+   # Optional: --clone-url <git-url> --run-discovery
+   ```
+   This adds docs/prompts/CI/schema/pipeline scripts and can auto-fill CI commands via Codex discovery.
+2. Fill CI commands in `scripts/ci/*.sh` for your stack (Node, Python, Java, Go, etc.). Workflows already call these scripts.
+3. Generate a protocol for your next task:
+   ```bash
+   python3 scripts/protocol_pipeline.py --base-branch main --short-name "<task>" --description "<desc>"
+   # Optional: --pr-platform github|gitlab, --run-step 01-some-step.md
+   ```
+   This creates a worktree/branch `NNNN-<task>`, `.protocols/NNNN-<task>/plan.md` + step files, and can open a Draft PR/MR.
+4. Execute steps with Codex:
+   ```bash
+   codex --model codex-5.1-max-xhigh --cd ../worktrees/NNNN-<task> \
+     --sandbox workspace-write --ask-for-approval on-request \
+     "Follow .protocols/NNNN-<task>/plan.md and the current step file to implement the next step."
+   ```
+5. Validate a step (optional QA gate):
+   ```bash
+   python3 scripts/quality_orchestrator.py \
+     --protocol-root ../worktrees/NNNN-<task>/.protocols/NNNN-<task> \
+     --step-file 01-some-step.md \
+     --model codex-5.1-max
+   ```
 
 ## Folder map
 
