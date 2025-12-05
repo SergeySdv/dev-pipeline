@@ -165,14 +165,17 @@ class Database:
         Attempt to locate a protocol run based on branch/ref naming (NNNN-<task>).
         """
         ref = branch.replace("refs/heads/", "").replace("refs/tags/", "")
-        ref = ref.split("/")[-1]
-        row = self._fetchone(
-            "SELECT * FROM protocol_runs WHERE protocol_name = ? OR base_branch = ?",
-            (ref, ref),
-        )
-        if row:
-            return self._row_to_protocol(row)
-        return self.find_protocol_run_by_name(ref)
+        parts = ref.split("/")
+        # Prefer last segment; also try full ref
+        candidates = [ref, parts[-1]]
+        for cand in candidates:
+            row = self._fetchone(
+                "SELECT * FROM protocol_runs WHERE protocol_name = ? OR base_branch = ?",
+                (cand, cand),
+            )
+            if row:
+                return self._row_to_protocol(row)
+        return None
 
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]:
         rows = self._fetchall(

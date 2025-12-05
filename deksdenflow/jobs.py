@@ -128,14 +128,31 @@ class RedisQueue:
 
     def list(self, status: Optional[str] = None) -> List[Job]:
         jobs: List[Job] = []
+        registry_map = {
+            None: lambda q: q.get_jobs(),
+            "queued": lambda q: q.get_jobs(),
+            "started": lambda q: q.started_job_registry.get_job_ids(),
+            "finished": lambda q: q.finished_job_registry.get_job_ids(),
+            "failed": lambda q: q.failed_job_registry.get_job_ids(),
+        }
+        fetcher = registry_map.get(status, registry_map[None])
         for q in self._queues.values():
-            rq_jobs = q.get_jobs() if status in (None, "queued") else q.get_jobs(status=status)
+            rq_jobs = fetcher(q)
             for rq_job in rq_jobs:
+                if hasattr(rq_job, "id"):
+                    job_id = rq_job.id
+                    func_name = rq_job.func_name
+                    args = rq_job.args or {}
+                else:
+                    # registry returns ids
+                    job_id = rq_job
+                    func_name = "unknown"
+                    args = {}
                 jobs.append(
                     Job(
-                        job_id=rq_job.id,
-                        job_type=rq_job.func_name,
-                        payload=rq_job.args or {},
+                        job_id=job_id,
+                        job_type=func_name,
+                        payload=args,
                         status=status or "queued",
                         queue=q.name,
                     )

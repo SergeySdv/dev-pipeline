@@ -360,17 +360,21 @@ async def github_webhook(
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
     metrics.inc_webhook("github")
     action = payload.get("action", "")
-    conclusion = payload.get("workflow_run", {}).get("conclusion")
+    workflow = payload.get("workflow_run") or {}
+    conclusion = workflow.get("conclusion")
+    pr_number = None
+    if workflow.get("pull_requests"):
+        pr_number = workflow["pull_requests"][0].get("number")
     if not protocol_run_id:
-        branch = payload.get("workflow_run", {}).get("head_branch") or payload.get("ref", "")
+        branch = workflow.get("head_branch") or payload.get("ref", "")
         run = db.find_protocol_run_by_branch(branch or "")
     else:
         run = db.get_protocol_run(protocol_run_id)
-    branch = payload.get("workflow_run", {}).get("head_branch") or payload.get("ref", "")
+    branch = workflow.get("head_branch") or payload.get("ref", "")
     if not run:
         raise HTTPException(status_code=404, detail="Protocol run not found for webhook")
     step = db.latest_step_run(run.id)
-    message = f"GitHub webhook {event_type} action={action} branch={branch} conclusion={conclusion}"
+    message = f"GitHub webhook {event_type} action={action} branch={branch} conclusion={conclusion} pr={pr_number}"
     db.append_event(
         protocol_run_id=run.id,
         step_run_id=step.id if step else None,
@@ -409,6 +413,11 @@ async def gitlab_webhook(
         if sig != token:
             metrics.inc_webhook_status("gitlab", "unauthorized")
             raise HTTPException(status_code=401, detail="Invalid webhook token")
+        # Optional HMAC header (custom) X-Gitlab-Signature-256
+        hmac_sig = request.headers.get("X-Gitlab-Signature-256")
+        if hmac_sig and not verify_signature(token, body, hmac_sig):
+            metrics.inc_webhook_status("gitlab", "unauthorized")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
     metrics.inc_webhook("gitlab")
     status = payload.get("object_attributes", {}).get("status")
     ref = payload.get("ref")
