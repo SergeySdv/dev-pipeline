@@ -693,7 +693,7 @@ def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config
 
     agent_id = str(agent.get("id") or agent.get("agent_id") or step.step_name)
     try:
-        prompt_text, prompt_path = build_prompt_text(agent, codemachine_root, placeholders)
+        prompt_text, prompt_path = build_prompt_text(agent, codemachine_root, placeholders, step_spec=step_spec, workspace=workspace)
     except Exception as exc:  # pragma: no cover - best effort
         db.update_step_status(step.id, StepStatus.FAILED, summary=f"CodeMachine prompt error: {exc}")
         db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)

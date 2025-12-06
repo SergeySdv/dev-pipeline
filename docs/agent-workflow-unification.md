@@ -47,11 +47,10 @@ This document captures the current redundancy between Codex- and CodeMachine-dri
 - Codex execution honors spec outputs: when `outputs` are present in the `StepSpec`, Codex stdout is written to the specified protocol path and any auxiliary paths (mirrors CodeMachine dual writes).
 
 ## Next Implementation Steps
-- Prompt resolution unification: add a spec-aware resolver for Codex prompts that can read arbitrary `prompt_ref` locations (including outside `.protocols/`) and attach prompt versions to events.
-- QA expansion: allow per-step QA engine/model/prompt in `StepSpec`; add tests for non-skip CodeMachine QA and Codex QA with custom prompt refs.
-- Spec schema tightening: formalize `ProtocolSpec` JSON Schema; validate at import/planning time (not only at execution) and surface errors early via events.
-- Observability: record spec version/hash on events; include output paths and validation status in `step_completed` metadata for Codex and CodeMachine.
-- Migration tooling: provide a CLI (or job) to backfill `protocol_spec` for existing runs and to validate specs across projects.
+- Execution path unification: centralize Codex and CodeMachine step execution through a shared resolver/engine dispatch with consistent event types.
+- Prompt/output adapter: move prompt/output resolution into a reusable helper used by both execution and QA (including aux outputs maps).
+- Policy coverage: expand scenario tests for mixed-engine runs with loop/trigger policies and inline trigger depth limits.
+- Migration automation: add a job/CLI to backfill specs across projects and report validation summaries to operators.
 
 ## Progress Checklist
 - [x] Unified spec helpers created for Codex/CodeMachine with step creation from spec.

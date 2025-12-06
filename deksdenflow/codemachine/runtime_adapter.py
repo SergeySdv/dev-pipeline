@@ -13,6 +13,7 @@ from typing import Dict, Optional, Tuple
 
 from deksdenflow.domain import ProtocolRun, StepRun
 from deksdenflow.logging import get_logger
+from deksdenflow.spec import resolve_spec_path
 
 log = get_logger(__name__)
 
@@ -85,12 +86,31 @@ def build_prompt_text(
     agent: Dict[str, object],
     codemachine_root: Path,
     placeholders: Dict[str, object],
+    *,
+    step_spec: Optional[dict] = None,
+    workspace: Optional[Path] = None,
 ) -> Tuple[str, Path]:
     """
     Return prompt text and the resolved prompt path for the given agent.
-    Includes specification text when present for additional context.
+
+    If a step spec provides prompt_ref, resolve it relative to the protocol
+    root/workspace (supporting prompts outside `.codemachine`). Falls back to
+    the agent prompt path. Specification text is appended when present.
     """
-    prompt_path = resolve_prompt_path(agent, codemachine_root, placeholders)
+    prompt_path: Optional[Path] = None
+    workspace_root = workspace or codemachine_root.parent
+    if step_spec:
+        prompt_ref = step_spec.get("prompt_ref")
+        if prompt_ref:
+            prompt_ref_str = _apply_placeholders(str(prompt_ref), placeholders)
+            try:
+                prompt_path = resolve_spec_path(prompt_ref_str, codemachine_root, workspace=workspace_root)
+            except Exception:  # pragma: no cover - defensive
+                prompt_path = (codemachine_root / prompt_ref_str).resolve()
+            if prompt_path and not prompt_path.exists():
+                prompt_path = None
+    if prompt_path is None:
+        prompt_path = resolve_prompt_path(agent, codemachine_root, placeholders)
     prompt_text = prompt_path.read_text(encoding="utf-8")
 
     spec_path = codemachine_root / "inputs" / "specifications.md"
