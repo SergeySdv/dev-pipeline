@@ -313,6 +313,7 @@ class TuiDashboard(App):
             target = self.protocol_id or self.protocols[0]["id"]
             self.protocol_id = target
             self._highlight(list_view, target)
+            self._render_protocol_details()
 
     async def _load_steps(self) -> None:
         list_view = self._get_list("steps")
@@ -332,8 +333,8 @@ class TuiDashboard(App):
         for step in filtered:
             label = f"{step['step_index']}: {step['step_name']} [{step['status']}]"
             list_view.append(DataListItem(label, step["id"], subtitle=f"retries={step['retries']}"))
-        if self.steps:
-            target = self.step_id or self.steps[-1]["id"]
+        if filtered:
+            target = self.step_id or filtered[-1]["id"]
             self.step_id = target
             self._highlight(list_view, target)
         else:
@@ -356,8 +357,6 @@ class TuiDashboard(App):
         log.info("events_loaded", extra={"count": len(self.events), "protocol_id": self.protocol_id})
         for ev in reversed(self.events[-50:]):
             text = f"{ev['event_type']}: {ev['message']}"
-            if ev.get("metadata"):
-                text += f" • {json.dumps(ev['metadata'])}"
             list_view.append(DataListItem(text, ev["id"]))
 
     def _highlight(self, list_view: ListView, target_id: int) -> None:
@@ -444,6 +443,7 @@ class TuiDashboard(App):
             self.status_message = "Select a protocol."
             return
         await self._post_action(f"/protocols/{self.protocol_id}/actions/open_pr", "Open PR job enqueued.")
+        await self._load_protocols()
 
     async def action_import_codemachine(self) -> None:
         if not self.project_id:
@@ -534,6 +534,30 @@ class TuiDashboard(App):
             return await self.push_screen_wait(screen)
         finally:
             self.modal_open = False
+
+    def _render_protocol_details(self) -> None:
+        panel = self.query_one("#protocol_meta", Static)
+        run = next((r for r in self.protocols if r["id"] == self.protocol_id), None)
+        if not run:
+            panel.update("No protocol selected.")
+            return
+        status = run.get("status", "-")
+        base = run.get("base_branch", "-")
+        desc = run.get("description") or ""
+        updated = run.get("updated_at", "-")
+        counts: Dict[str, int] = {}
+        for s in self.steps:
+            counts[s["status"]] = counts.get(s["status"], 0) + 1
+        counts_text = ", ".join(f"{k}:{v}" for k, v in counts.items()) if counts else "no steps"
+        panel.update(f"{run['protocol_name']} [{status}] • base={base} • steps={counts_text}\n{desc}\nupdated={updated}")
+
+    async def action_cycle_filter(self) -> None:
+        order = [None, "pending", "running", "needs_qa", "failed"]
+        idx = order.index(self.step_filter) if self.step_filter in order else 0
+        self.step_filter = order[(idx + 1) % len(order)]
+        await self._load_steps()
+        label = self.step_filter or "all"
+        self.status_message = f"Step filter: {label}"
 
 
 def run_tui() -> None:
