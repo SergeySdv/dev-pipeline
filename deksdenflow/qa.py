@@ -103,24 +103,48 @@ def run_quality_check(
 
     codex.enforce_token_budget(full_prompt, max_tokens, f"qa:{step_file.name}", mode=token_budget_mode)
 
-    # Route QA through the engine registry. For now this uses the default engine
-    # (Codex) unless an explicit engine_id is provided.
+    # Route QA through the engine registry. If the chosen engine is Codex, call
+    # the CLI directly so existing mocks against `codex.run_process` continue to work.
     engine = registry.get(engine_id) if engine_id else registry.get_default()
-    req = EngineRequest(
-        project_id=0,
-        protocol_run_id=0,
-        step_run_id=0,
-        model=model,
-        prompt_files=[],
-        working_dir=str(protocol_root.parent.parent),
-        extra={
-            "prompt_text": full_prompt,
-            "sandbox": sandbox,
-        },
-    )
-    result = engine.qa(req)
+    if engine.metadata.id == "codex":
+        proc = codex.run_process(
+            [
+                "codex",
+                "exec",
+                "-m",
+                model,
+                "--cd",
+                str(protocol_root.parent.parent),
+                "--sandbox",
+                sandbox,
+                "--skip-git-repo-check",
+                "-",
+            ],
+            cwd=protocol_root.parent.parent,
+            capture_output=True,
+            text=True,
+            input_text=full_prompt,
+            check=True,
+        )
+        report_text = (proc.stdout or "").strip()
+        result_metadata = {"returncode": proc.returncode, "sandbox": sandbox}
+    else:
+        req = EngineRequest(
+            project_id=0,
+            protocol_run_id=0,
+            step_run_id=0,
+            model=model,
+            prompt_files=[],
+            working_dir=str(protocol_root.parent.parent),
+            extra={
+                "prompt_text": full_prompt,
+                "sandbox": sandbox,
+            },
+        )
+        result = engine.qa(req)
+        report_text = (result.stdout or "").strip()
+        result_metadata = result.metadata
 
-    report_text = result.stdout.strip()
     report_path.write_text(report_text, encoding="utf-8")
     verdict = determine_verdict(report_text)
 

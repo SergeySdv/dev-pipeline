@@ -12,9 +12,15 @@ import deksdenflow.engines_codex  # noqa: F401 - ensure Codex engine is register
 from deksdenflow.codex import run_process, enforce_token_budget, estimate_tokens
 from deksdenflow.config import load_config
 from deksdenflow.logging import get_logger
-from deksdenflow.domain import ProtocolStatus, StepStatus
+from deksdenflow.domain import ProtocolRun, ProtocolStatus, StepRun, StepStatus
 from deksdenflow.prompt_utils import prompt_version
 from deksdenflow.codemachine.policy_runtime import apply_loop_policies, apply_trigger_policies
+from deksdenflow.codemachine.runtime_adapter import (
+    build_prompt_text,
+    find_agent_for_step,
+    is_codemachine_run,
+    output_paths,
+)
 from deksdenflow.pipeline import (
     detect_repo_root,
     execute_step_prompt,
@@ -55,18 +61,22 @@ def _enqueue_trigger_target(
             metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
         )
         return None
+    queue = None
+    force_inline = False
     if config.redis_url:
         try:
             queue = RedisQueue(config.redis_url)
-            job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
-            db.append_event(
-                protocol_run_id,
-                "trigger_enqueued",
-                "Triggered step enqueued for execution.",
-                step_run_id=step_run_id,
-                metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-            )
-            return job.asdict()
+            force_inline = getattr(queue, "_is_fakeredis", False)
+            if not force_inline:
+                job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
+                db.append_event(
+                    protocol_run_id,
+                    "trigger_enqueued",
+                    "Triggered step enqueued for execution.",
+                    step_run_id=step_run_id,
+                    metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+                )
+                return job.asdict()
         except Exception as exc:  # pragma: no cover - best effort
             db.append_event(
                 protocol_run_id,
@@ -76,7 +86,7 @@ def _enqueue_trigger_target(
                 metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
             )
             return None
-    # Inline fallback for dev/local without Redis.
+    # Inline fallback for dev/local without Redis, or when using fakeredis.
     try:
         target = db.get_step_run(step_run_id)
         merged_state = dict(target.runtime_state or {})
@@ -85,7 +95,7 @@ def _enqueue_trigger_target(
         db.append_event(
             protocol_run_id,
             "trigger_executed_inline",
-            "Triggered step executed inline (no queue configured).",
+            "Triggered step executed inline (no queue configured or fakeredis).",
             step_run_id=step_run_id,
             metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
         )
@@ -376,6 +386,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         },
     )
     db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+    if is_codemachine_run(run):
+        _handle_codemachine_execute(step, run, project, config, db)
+        return
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Executed via stub (codex/repo unavailable)")
         db.append_event(
@@ -489,6 +502,153 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         handle_quality(step.id, db)
 
 
+def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config, db: BaseDatabase) -> None:
+    workspace = Path(run.worktree_path or project.git_url or ".").resolve()
+    codemachine_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace / ".codemachine")
+    template_cfg = run.template_config or {}
+    placeholders = template_cfg.get("placeholders") or {}
+
+    agent = find_agent_for_step(step, template_cfg)
+    if not agent:
+        db.update_step_status(step.id, StepStatus.FAILED, summary="CodeMachine agent not found")
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        db.append_event(
+            run.id,
+            "codemachine_step_failed",
+            f"No agent found for step {step.step_name}",
+            step_run_id=step.id,
+            metadata={"step_name": step.step_name, "template": template_cfg.get("template")},
+        )
+        return
+
+    agent_id = str(agent.get("id") or agent.get("agent_id") or step.step_name)
+    try:
+        prompt_text, prompt_path = build_prompt_text(agent, codemachine_root, placeholders)
+    except Exception as exc:  # pragma: no cover - best effort
+        db.update_step_status(step.id, StepStatus.FAILED, summary=f"CodeMachine prompt error: {exc}")
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        db.append_event(
+            run.id,
+            "codemachine_step_failed",
+            "Failed to resolve prompt for CodeMachine agent.",
+            step_run_id=step.id,
+            metadata={"error": str(exc), "agent_id": agent_id, "codemachine_root": str(codemachine_root)},
+        )
+        return
+
+    engine_defaults = (template_cfg.get("template") or {}).get("engineDefaults") or {}
+    engine_id = step.engine_id or agent.get("engine_id") or engine_defaults.get("execute") or registry.get_default().metadata.id
+    model = (
+        step.model
+        or agent.get("model")
+        or engine_defaults.get("executeModel")
+        or (project.default_models.get("exec") if project.default_models else None)
+        or getattr(config, "exec_model", None)
+        or registry.get(engine_id).metadata.default_model
+        or "codex-5.1-max-xhigh"
+    )
+
+    engine = registry.get(engine_id)
+    exec_request = EngineRequest(
+        project_id=project.id,
+        protocol_run_id=run.id,
+        step_run_id=step.id,
+        model=model,
+        prompt_files=[str(prompt_path)],
+        working_dir=str(workspace),
+        extra={
+            "prompt_text": prompt_text,
+            "sandbox": "workspace-write",
+        },
+    )
+    db.append_event(
+        step.protocol_run_id,
+        "codemachine_step_started",
+        f"Executing CodeMachine agent {agent_id}.",
+        step_run_id=step.id,
+        metadata={
+            "engine_id": engine_id,
+            "model": model,
+            "prompt_path": str(prompt_path),
+            "workspace": str(workspace),
+            "template": template_cfg.get("template"),
+        },
+    )
+    try:
+        result = engine.execute(exec_request)
+    except Exception as exc:  # pragma: no cover - best effort
+        db.update_step_status(step.id, StepStatus.FAILED, summary=f"CodeMachine execution failed: {exc}", engine_id=engine_id, model=model)
+        db.append_event(
+            step.protocol_run_id,
+            "codemachine_step_failed",
+            f"Execution failed for agent {agent_id}: {exc}",
+            step_run_id=step.id,
+            metadata={"engine_id": engine_id, "model": model, "prompt_path": str(prompt_path)},
+        )
+        loop_decision = apply_loop_policies(step, db, reason="codemachine_exec_failed")
+        if loop_decision and loop_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+        else:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        trigger_decision = apply_trigger_policies(step, db, reason="codemachine_exec_failed")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="codemachine_exec_failed",
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
+        return
+
+    output_text = result.stdout or ""
+    protocol_output_path, codemachine_output_path = output_paths(workspace, codemachine_root, run, step, agent_id)
+    protocol_output_path.write_text(output_text, encoding="utf-8")
+    codemachine_output_path.write_text(output_text, encoding="utf-8")
+
+    db.update_step_status(
+        step.id,
+        StepStatus.NEEDS_QA,
+        summary=f"Executed CodeMachine agent {agent_id}; pending QA",
+        model=model,
+        engine_id=engine_id,
+    )
+    db.append_event(
+        step.protocol_run_id,
+        "codemachine_step_completed",
+        f"CodeMachine agent {agent_id} executed.",
+        step_run_id=step.id,
+        metadata={
+            "engine_id": engine_id,
+            "model": model,
+            "prompt_path": str(prompt_path),
+            "outputs": {"protocol": str(protocol_output_path), "codemachine": str(codemachine_output_path)},
+            "result_metadata": result.metadata,
+        },
+    )
+
+    trigger_decision = apply_trigger_policies(step, db, reason="codemachine_exec_completed")
+    if trigger_decision and trigger_decision.get("applied"):
+        db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+        _enqueue_trigger_target(
+            trigger_decision["target_step_id"],
+            run.id,
+            db,
+            source="codemachine_exec_completed",
+            inline_depth=trigger_decision.get("inline_depth", 0),
+        )
+    if getattr(config, "auto_qa_after_exec", False):
+        db.append_event(
+            step.protocol_run_id,
+            "qa_enqueued",
+            "Auto QA after execution.",
+            step_run_id=step.id,
+            metadata={"source": "auto_after_exec"},
+        )
+        handle_quality(step.id, db)
+
+
 def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
     step = db.get_step_run(step_run_id)
     run = db.get_protocol_run(step.protocol_run_id)
@@ -505,6 +665,27 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             "step_name": step.step_name,
         },
     )
+    if is_codemachine_run(run):
+        db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped for CodeMachine run")
+        db.append_event(
+            step.protocol_run_id,
+            "qa_skipped_codemachine",
+            "QA skipped (CodeMachine adapter does not run codex QA).",
+            step_run_id=step.id,
+            metadata={"reason": "codemachine_adapter"},
+        )
+        trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_codemachine")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="qa_skipped_codemachine",
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
+        maybe_complete_protocol(step.protocol_run_id, db)
+        return
     qa_model = project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max"
     repo_path = Path(project.git_url) if Path(project.git_url).exists() else None
     prompt_path = (repo_path / "prompts" / "quality-validator.prompt.md") if repo_path else None
