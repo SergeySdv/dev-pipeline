@@ -491,7 +491,7 @@ class TuiDashboard(App):
         status_bar.update(value)
 
     def watch_refreshing(self, value: bool) -> None:
-        loader = self.query("#loader").first()
+        loader = next(iter(self.query("#loader")), None)
         if loader:
             loader.display = value
 
