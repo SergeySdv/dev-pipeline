@@ -75,6 +75,11 @@ def test_codex_spec_outputs_write_stdout(tmp_path, monkeypatch) -> None:
     assert "hello world" in exec_out
     assert "hello world" in mirror_out
     events = db.list_events(run.id)
+    started = next(e for e in events if e.event_type == "step_started")
+    assert started.metadata["engine_id"] == "fake-engine-out"
+    assert started.metadata["model"] == "fake-model"
+    assert started.metadata["prompt_path"].endswith("00-step.md")
+    assert started.metadata["prompt_versions"]["exec"] == fingerprint_file(Path(workspace / ".protocols" / "0001-demo" / "00-step.md"))
     completed = next(e for e in events if e.event_type == "step_completed")
     outputs_meta = completed.metadata["outputs"]
     assert outputs_meta["protocol"].endswith("outputs/exec.md")

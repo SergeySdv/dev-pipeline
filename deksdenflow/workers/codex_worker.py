@@ -669,6 +669,19 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         },
     )
     exec_result = None
+    db.append_event(
+        step.protocol_run_id,
+        "step_started",
+        "Executing step via Codex.",
+        step_run_id=step.id,
+        metadata={
+            "engine_id": engine_id,
+            "model": exec_model,
+            "prompt_path": str(step_path),
+            "prompt_versions": {"exec": prompt_ver},
+            "spec_hash": spec_hash_val,
+        },
+    )
     try:
         exec_result = engine.execute(exec_request)
     except Exception as exc:  # pragma: no cover - best effort
