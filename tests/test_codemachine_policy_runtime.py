@@ -233,6 +233,7 @@ def test_handle_quality_triggers_followup(monkeypatch, tmp_path) -> None:
     assert step0_after.status == StepStatus.COMPLETED
     assert step1_after.status in (StepStatus.PENDING, StepStatus.NEEDS_QA)
     assert step1_after.runtime_state.get("last_triggered_by") == step0.step_name
+    assert step1_after.runtime_state.get("inline_trigger_depth") >= 1
 
     events = [e.event_type for e in db.list_events(run.id)]
     assert "qa_passed" in events
@@ -275,7 +276,41 @@ def test_handle_execute_step_triggers_inline(monkeypatch, tmp_path) -> None:
     step1_after = db.get_step_run(step1.id)
     assert step0_after.status == StepStatus.NEEDS_QA
     assert step1_after.status == StepStatus.NEEDS_QA
+    assert step1_after.runtime_state.get("inline_trigger_depth") >= 1
 
     events = [e.event_type for e in db.list_events(run.id)]
     assert "trigger_decision" in events
     assert "trigger_executed_inline" in events
+
+
+def test_inline_trigger_depth_guard(monkeypatch, tmp_path) -> None:
+    db = _make_db(tmp_path)
+    repo_root = tmp_path / "repo"
+    (repo_root / "prompts").mkdir(parents=True, exist_ok=True)
+    protocol_root = repo_root / ".protocols" / "0008-demo"
+    protocol_root.mkdir(parents=True, exist_ok=True)
+    (protocol_root / "plan.md").write_text("plan", encoding="utf-8")
+    (protocol_root / "context.md").write_text("context", encoding="utf-8")
+    (protocol_root / "log.md").write_text("", encoding="utf-8")
+    (protocol_root / "00-main.md").write_text("step", encoding="utf-8")
+
+    project = db.create_project("demo", str(repo_root), "main", None, None)
+    run = db.create_protocol_run(
+        project.id,
+        "0008-demo",
+        ProtocolStatus.RUNNING,
+        "main",
+        str(repo_root),
+        str(protocol_root),
+        "demo protocol",
+    )
+    trigger_policy = {"module_id": "handoff", "behavior": "trigger", "trigger_agent_id": "main"}
+    step0 = db.create_step_run(run.id, 0, "00-main.md", "setup", StepStatus.PENDING, model="codex-5.1", policy=[trigger_policy])
+
+    monkeypatch.setattr(codex_worker.shutil, "which", lambda _: None)
+    monkeypatch.setattr(codex_worker, "MAX_INLINE_TRIGGER_DEPTH", 1)
+
+    codex_worker.handle_execute_step(step0.id, db)
+
+    events = [e.event_type for e in db.list_events(run.id)]
+    assert "trigger_inline_depth_exceeded" in events or "trigger_executed_inline" in events

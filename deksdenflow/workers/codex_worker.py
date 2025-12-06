@@ -31,14 +31,30 @@ from deksdenflow.engines import EngineRequest, registry
 from deksdenflow.jobs import RedisQueue
 
 log = get_logger(__name__)
+MAX_INLINE_TRIGGER_DEPTH = 3
 
 
-def _enqueue_trigger_target(step_run_id: int, protocol_run_id: int, db: BaseDatabase, source: str) -> Optional[dict]:
+def _enqueue_trigger_target(
+    step_run_id: int,
+    protocol_run_id: int,
+    db: BaseDatabase,
+    source: str,
+    inline_depth: int = 0,
+) -> Optional[dict]:
     """
     Enqueue a triggered step for execution. If Redis is unavailable, fall back
     to synchronous inline execution to mirror CodeMachine's immediate trigger behavior.
     """
     config = load_config()
+    if inline_depth >= MAX_INLINE_TRIGGER_DEPTH:
+        db.append_event(
+            protocol_run_id,
+            "trigger_inline_depth_exceeded",
+            f"Inline trigger depth exceeded ({inline_depth}/{MAX_INLINE_TRIGGER_DEPTH}).",
+            step_run_id=step_run_id,
+            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+        )
+        return None
     if config.redis_url:
         try:
             queue = RedisQueue(config.redis_url)
@@ -48,7 +64,7 @@ def _enqueue_trigger_target(step_run_id: int, protocol_run_id: int, db: BaseData
                 "trigger_enqueued",
                 "Triggered step enqueued for execution.",
                 step_run_id=step_run_id,
-                metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source},
+                metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
             )
             return job.asdict()
         except Exception as exc:  # pragma: no cover - best effort
@@ -57,18 +73,21 @@ def _enqueue_trigger_target(step_run_id: int, protocol_run_id: int, db: BaseData
                 "trigger_enqueue_failed",
                 f"Failed to enqueue triggered step: {exc}",
                 step_run_id=step_run_id,
-                metadata={"target_step_id": step_run_id, "source": source},
+                metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
             )
             return None
     # Inline fallback for dev/local without Redis.
     try:
-        db.update_step_status(step_run_id, StepStatus.RUNNING, summary="Triggered (inline)")
+        target = db.get_step_run(step_run_id)
+        merged_state = dict(target.runtime_state or {})
+        merged_state["inline_trigger_depth"] = inline_depth
+        db.update_step_status(step_run_id, StepStatus.RUNNING, summary="Triggered (inline)", runtime_state=merged_state)
         db.append_event(
             protocol_run_id,
             "trigger_executed_inline",
             "Triggered step executed inline (no queue configured).",
             step_run_id=step_run_id,
-            metadata={"target_step_id": step_run_id, "source": source},
+            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
         )
         handle_execute_step(step_run_id, db)
         return {"inline": True, "target_step_id": step_run_id}
@@ -78,7 +97,7 @@ def _enqueue_trigger_target(step_run_id: int, protocol_run_id: int, db: BaseData
             "trigger_inline_failed",
             f"Inline trigger failed: {exc}",
             step_run_id=step_run_id,
-            metadata={"target_step_id": step_run_id, "source": source},
+            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
         )
         try:
             db.update_step_status(step_run_id, StepStatus.FAILED, summary=f"Trigger inline failed: {exc}")
@@ -368,7 +387,13 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         trigger_decision = apply_trigger_policies(step, db, reason="exec_stub")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="exec_stub")
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="exec_stub",
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
         if getattr(config, "auto_qa_after_exec", False):
             db.append_event(
                 step.protocol_run_id,
@@ -414,10 +439,19 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             step_run_id=step.id,
             metadata={"protocol_run_id": run.id, "step_run_id": step.id, "model": exec_model},
         )
+        loop_decision = apply_loop_policies(step, db, reason="exec_failed")
+        if loop_decision and loop_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
         trigger_decision = apply_trigger_policies(step, db, reason="exec_failed")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="exec_failed")
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="exec_failed",
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
         else:
             db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
@@ -437,7 +471,13 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
     trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
     if trigger_decision and trigger_decision.get("applied"):
         db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="exec_completed")
+        _enqueue_trigger_target(
+            trigger_decision["target_step_id"],
+            run.id,
+            db,
+            source="exec_completed",
+            inline_depth=trigger_decision.get("inline_depth", 0),
+        )
     if getattr(config, "auto_qa_after_exec", False):
         db.append_event(
             step.protocol_run_id,
@@ -482,7 +522,13 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
         trigger_decision = apply_trigger_policies(step, db, reason="qa_stub_pass")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="qa_stub_pass")
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="qa_stub_pass",
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
         maybe_complete_protocol(step.protocol_run_id, db)
         return
     repo_root = repo_path or detect_repo_root()
@@ -543,7 +589,13 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
             if trigger_decision and trigger_decision.get("applied"):
                 db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-                _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="qa_passed")
+                _enqueue_trigger_target(
+                    trigger_decision["target_step_id"],
+                    run.id,
+                    db,
+                    source="qa_passed",
+                    inline_depth=trigger_decision.get("inline_depth", 0),
+                )
             maybe_complete_protocol(step.protocol_run_id, db)
             metrics.inc_qa_verdict("pass")
     except Exception as exc:  # pragma: no cover - best effort

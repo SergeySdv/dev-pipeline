@@ -185,6 +185,14 @@ def apply_trigger_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_pa
     if not policies:
         return None
 
+    source_state = step.runtime_state or {}
+    source_depth = 0
+    try:
+        source_depth = int(source_state.get("inline_trigger_depth", 0)) if isinstance(source_state, dict) else 0
+    except Exception:
+        source_depth = 0
+    inline_depth = source_depth + 1
+
     steps = db.list_step_runs(step.protocol_run_id)
     steps_by_agent: Dict[str, Tuple[int, StepRun]] = {
         _agent_id_from_step_name(s.step_name): (s.step_index, s) for s in steps
@@ -221,6 +229,7 @@ def apply_trigger_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_pa
 
         new_state = dict(target_step.runtime_state or {})
         new_state["last_triggered_by"] = step.step_name
+        new_state["inline_trigger_depth"] = inline_depth
         db.update_step_status(
             target_step.id,
             StepStatus.PENDING,
@@ -237,6 +246,7 @@ def apply_trigger_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_pa
                 "reason": reason,
                 "target_step_index": target_index,
                 "target_step_id": target_step.id,
+                "inline_depth": inline_depth,
             },
         )
         log.info(
@@ -246,6 +256,7 @@ def apply_trigger_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_pa
                 "step_run_id": step.id,
                 "target_agent": target_agent,
                 "target_index": target_index,
+                "inline_depth": inline_depth,
             },
         )
         return {
@@ -254,6 +265,7 @@ def apply_trigger_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_pa
             "target_step_index": target_index,
             "target_step_id": target_step.id,
             "reason": reason,
+            "inline_depth": inline_depth,
         }
 
     return None
