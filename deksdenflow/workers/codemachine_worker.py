@@ -3,78 +3,14 @@ Worker entry point for ingesting CodeMachine workspaces.
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from deksdenflow.codemachine import (
-    AgentSpec,
-    CodeMachineConfig,
-    ConfigError,
-    ModulePolicy,
-    config_to_template_payload,
-    load_codemachine_config,
-    policy_to_dict,
-)
-from deksdenflow.domain import ProtocolStatus, StepStatus
+from deksdenflow.codemachine import ConfigError, config_to_template_payload, load_codemachine_config
+from deksdenflow.domain import ProtocolStatus
 from deksdenflow.logging import get_logger
+from deksdenflow.spec import PROTOCOL_SPEC_KEY, build_spec_from_codemachine_config, create_steps_from_spec, validate_protocol_spec
 from deksdenflow.storage import BaseDatabase
-from deksdenflow.workers.codex_worker import infer_step_type
 
 log = get_logger(__name__)
-
-
-def _policies_for_agent(agent: AgentSpec, modules: List[ModulePolicy]) -> List[dict]:
-    """
-    Attach module policies only when explicitly referenced:
-    - trigger modules attach when trigger_agent_id matches the agent id
-    - modules attach when the agent references a module_id via raw["moduleId"/"module_id"/"module"] or when the module has
-      target_agent_id set to this agent.
-    - Multiple matching modules are returned; no global fallback.
-    """
-    policies: List[dict] = []
-    # Prefer explicit module references on agent
-    agent_modules = agent.raw.get("moduleId") or agent.raw.get("module_id") or agent.raw.get("module")
-    agent_module_ids = set()
-    if isinstance(agent_modules, str):
-        agent_module_ids.add(agent_modules)
-    elif isinstance(agent_modules, list):
-        agent_module_ids.update(str(m) for m in agent_modules)
-
-    for mod in modules:
-        target_agent = (mod.target_agent_id or mod.raw.get("targetAgentId") or mod.raw.get("target_agent_id") or "").strip()
-        should_attach = False
-        if mod.module_id in agent_module_ids:
-            should_attach = True
-        if target_agent and target_agent == agent.id:
-            should_attach = True
-        if mod.behavior == "trigger" and mod.trigger_agent_id == agent.id:
-            should_attach = True
-        if should_attach:
-            policies.append(policy_to_dict(mod))
-    return policies
-
-
-def _create_steps_from_config(
-    run_id: int,
-    cfg: CodeMachineConfig,
-    db: BaseDatabase,
-) -> int:
-    created = 0
-    for idx, agent in enumerate(cfg.main_agents):
-        step_name = f"{idx:02d}-{agent.id}"
-        policies = _policies_for_agent(agent, cfg.modules)
-        db.create_step_run(
-            protocol_run_id=run_id,
-            step_index=idx,
-            step_name=step_name,
-            step_type=infer_step_type(step_name),
-            status=StepStatus.PENDING,
-            model=agent.model,
-            engine_id=agent.engine_id,
-            policy=policies,
-            summary=agent.description,
-        )
-        created += 1
-    return created
 
 
 def import_codemachine_workspace(
@@ -89,10 +25,24 @@ def import_codemachine_workspace(
     """
     root = Path(workspace_path)
     cfg = load_codemachine_config(root)
+    protocol_spec = build_spec_from_codemachine_config(cfg)
+    base_for_validation = root / ".codemachine" if (root / ".codemachine").exists() else root
+    validation_errors = validate_protocol_spec(base_for_validation, protocol_spec)
+    if validation_errors:
+        db.append_event(
+            protocol_run_id,
+            "spec_validation_error",
+            "CodeMachine spec validation failed.",
+            metadata={"errors": validation_errors},
+        )
+        db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
+        return {"errors": validation_errors}
     template_payload = config_to_template_payload(cfg)
+    template_payload[PROTOCOL_SPEC_KEY] = protocol_spec
 
     db.update_protocol_template(protocol_run_id, template_config=template_payload, template_source=cfg.template)
-    created = _create_steps_from_config(protocol_run_id, cfg, db)
+    existing = {s.step_name for s in db.list_step_runs(protocol_run_id)}
+    created = create_steps_from_spec(protocol_run_id, protocol_spec, db, existing_names=existing)
     db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
     db.append_event(
         protocol_run_id,

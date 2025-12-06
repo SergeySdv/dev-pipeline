@@ -68,6 +68,7 @@ This document captures the current state of the system, the risks that block ful
 - Structured logging with correlation IDs per ProtocolRun/StepRun; Events persisted for timeline views and audits.
 - Metrics: jobs per type/status, step/protocol durations, Codex token usage/cost by project, QA pass/fail rates, error rates by model.
 - Export to Prometheus/OpenTelemetry; budget alerts when usage crosses thresholds.
+- Spec validation and outputs: ProtocolSpec/StepSpec paths are validated; missing prompts/outputs emit `spec_validation_error` and block execution. Codex execution writes stdout to spec-declared protocol and aux outputs, mirroring CodeMachine artifact behavior.
 
 ### 2.8 Deployment and compatibility
 - Containerized services: `deksdenflow-core` (API + library), `codex-worker`, `git-ci-worker`, plus Redis/DB. Local dev uses SQLite and in-process queue; prod uses Postgres and external Redis.

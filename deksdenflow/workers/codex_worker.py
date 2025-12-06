@@ -35,6 +35,13 @@ from deksdenflow.workers.state import maybe_complete_protocol
 from deksdenflow.metrics import metrics
 from deksdenflow.engines import EngineRequest, registry
 from deksdenflow.jobs import RedisQueue
+from deksdenflow.spec import (
+    PROTOCOL_SPEC_KEY,
+    build_spec_from_protocol_files,
+    create_steps_from_spec,
+    get_step_spec,
+    validate_step_spec_paths,
+)
 
 log = get_logger(__name__)
 MAX_INLINE_TRIGGER_DEPTH = 3
@@ -127,6 +134,33 @@ def _budget_and_tokens(prompt_text: str, model: str, phase: str, token_budget_mo
     return estimated
 
 
+def _resolve_codex_exec_context(step: StepRun, run: ProtocolRun, project) -> tuple[Path, Path, Path, Path, str, Optional[dict], list[str]]:
+    """
+    Resolve repo/worktree/protocol paths, the prompt text, and outputs config for Codex execution based on step spec.
+    """
+    step_spec = get_step_spec(run.template_config, step.step_name)
+    repo_root = Path(project.git_url) if Path(project.git_url).exists() else detect_repo_root()
+    worktree = load_project(repo_root, run.protocol_name, run.base_branch)
+    protocol_root = worktree / ".protocols" / run.protocol_name
+    plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
+
+    prompt_ref = step_spec.get("prompt_ref") if step_spec else None
+    step_path = Path(prompt_ref) if prompt_ref else (protocol_root / step.step_name)
+    if not step_path.is_absolute():
+        # If prompt_ref provided, treat it as relative to worktree; otherwise protocol_root.
+        base = worktree if prompt_ref else protocol_root
+        step_path = (base / step_path).resolve()
+    if not step_path.exists():
+        step_path = protocol_root / step.step_name
+
+    step_content = step_path.read_text(encoding="utf-8")
+    exec_prompt = execute_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_path.name, step_content)
+    outputs_cfg = step_spec.get("outputs") if step_spec else None
+    # Emit validation info to caller.
+    errors = validate_step_spec_paths(protocol_root, step_spec or {})
+    return repo_root, worktree, protocol_root, step_path, exec_prompt, outputs_cfg, errors
+
+
 def infer_step_type(filename: str) -> str:
     lower = filename.lower()
     if lower.startswith("00-") or "setup" in lower:
@@ -140,24 +174,15 @@ def sync_step_runs_from_protocol(protocol_root: Path, protocol_run_id: int, db: 
     """
     Ensure StepRun rows exist for each step file in the protocol directory.
     """
-    step_files = sorted([p for p in protocol_root.glob("*.md") if p.name[0:2].isdigit()])
-    existing = {s.step_name: s for s in db.list_step_runs(protocol_run_id)}
-    created = 0
-    for idx, step_file in enumerate(step_files):
-        if step_file.name in existing:
-            continue
-        db.create_step_run(
-            protocol_run_id=protocol_run_id,
-            step_index=idx,
-            step_name=step_file.name,
-            step_type=infer_step_type(step_file.name),
-            status=StepStatus.PENDING,
-            model=None,
-            engine_id="codex",
-            policy=None,
-        )
-        created += 1
-    return created
+    run = db.get_protocol_run(protocol_run_id)
+    template_config = dict(run.template_config or {})
+    spec = template_config.get(PROTOCOL_SPEC_KEY)
+    if not spec:
+        spec = build_spec_from_protocol_files(protocol_root)
+        template_config[PROTOCOL_SPEC_KEY] = spec
+        db.update_protocol_template(protocol_run_id, template_config, run.template_source)
+    existing = {s.step_name for s in db.list_step_runs(protocol_run_id)}
+    return create_steps_from_spec(protocol_run_id, spec, db, existing_names=existing)
 
 
 def load_project(repo_root: Path, protocol_name: str, base_branch: str) -> Path:
@@ -375,6 +400,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
     project = db.get_project(run.project_id)
     config = load_config()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
+    step_spec = get_step_spec(run.template_config, step.step_name)
     log.info(
         "Executing step",
         extra={
@@ -387,7 +413,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
     )
     db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
     if is_codemachine_run(run):
-        _handle_codemachine_execute(step, run, project, config, db)
+        _handle_codemachine_execute(step, run, project, config, db, step_spec=step_spec)
         return
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Executed via stub (codex/repo unavailable)")
@@ -417,18 +443,30 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             )
             handle_quality(step.id, db)
         return
-    repo_root = Path(project.git_url) if Path(project.git_url).exists() else detect_repo_root()
-    worktree = load_project(repo_root, run.protocol_name, run.base_branch)
-    protocol_root = worktree / ".protocols" / run.protocol_name
-    step_path = protocol_root / step.step_name
-    plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
-    step_content = step_path.read_text(encoding="utf-8")
-    exec_prompt = execute_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_path.name, step_content)
-    exec_model = project.default_models.get("exec", "codex-5.1-max-xhigh") if project.default_models else "codex-5.1-max-xhigh"
+    repo_root, worktree, protocol_root, step_path, exec_prompt, outputs_cfg, spec_errors = _resolve_codex_exec_context(step, run, project)
+    if spec_errors:
+        for err in spec_errors:
+            db.append_event(
+                run.id,
+                "spec_validation_error",
+                err,
+                step_run_id=step.id,
+                metadata={"step": step.step_name},
+            )
+        db.update_step_status(step.id, StepStatus.FAILED, summary="Spec validation failed")
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return
+    exec_model = (
+        (step_spec.get("model") if step_spec else None)
+        or step.model
+        or (project.default_models.get("exec") if project.default_models else None)
+        or "codex-5.1-max-xhigh"
+    )
     exec_tokens = _budget_and_tokens(exec_prompt, exec_model, "exec", config.token_budget_mode, budget_limit)
 
-    engine_id = step.engine_id or registry.get_default().metadata.id
+    engine_id = (step_spec.get("engine_id") if step_spec else None) or step.engine_id or registry.get_default().metadata.id
     engine = registry.get(engine_id)
+    prompt_ver = prompt_version(step_path)
     exec_request = EngineRequest(
         project_id=project.id,
         protocol_run_id=run.id,
@@ -441,8 +479,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             "sandbox": "workspace-write",
         },
     )
+    exec_result = None
     try:
-        engine.execute(exec_request)
+        exec_result = engine.execute(exec_request)
     except Exception as exc:  # pragma: no cover - best effort
         db.update_step_status(step.id, StepStatus.FAILED, summary=f"Execution error: {exc}")
         db.append_event(
@@ -468,6 +507,28 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         else:
             db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
+    # If outputs are specified in the spec, write stdout to those paths as well.
+    if outputs_cfg and isinstance(outputs_cfg, dict):
+        stdout_text = ""
+        if exec_result and getattr(exec_result, "stdout", None):
+            stdout_text = exec_result.stdout
+        protocol_output = outputs_cfg.get("protocol")
+        if protocol_output:
+            proto_path = Path(protocol_output)
+            if not proto_path.is_absolute():
+                proto_path = (worktree / proto_path).resolve()
+            proto_path.parent.mkdir(parents=True, exist_ok=True)
+            if stdout_text:
+                proto_path.write_text(stdout_text, encoding="utf-8")
+        aux_outputs = outputs_cfg.get("aux") if isinstance(outputs_cfg, dict) else {}
+        if aux_outputs and isinstance(aux_outputs, dict) and stdout_text:
+            for _, path_val in aux_outputs.items():
+                out_path = Path(path_val)
+                if not out_path.is_absolute():
+                    out_path = (worktree / out_path).resolve()
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(stdout_text, encoding="utf-8")
+
     pushed = git_push_and_open_pr(worktree, run.protocol_name, run.base_branch)
     if pushed:
         triggered = trigger_ci_pipeline(repo_root, run.protocol_name, project.ci_provider)
@@ -479,7 +540,13 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         "step_completed",
         "Step executed via Codex. QA required.",
         step_run_id=step.id,
-        metadata={"protocol_run_id": run.id, "step_run_id": step.id, "estimated_tokens": {"exec": exec_tokens}},
+        metadata={
+            "protocol_run_id": run.id,
+            "step_run_id": step.id,
+            "estimated_tokens": {"exec": exec_tokens},
+            "outputs": outputs_cfg,
+            "prompt_versions": {"exec": prompt_ver},
+        },
     )
     trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
     if trigger_decision and trigger_decision.get("applied"):
@@ -502,7 +569,38 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         handle_quality(step.id, db)
 
 
-def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config, db: BaseDatabase) -> None:
+def _resolve_output_paths_from_spec(
+    outputs: Optional[dict],
+    workspace: Path,
+    codemachine_root: Path,
+    run: ProtocolRun,
+    step: StepRun,
+    agent_id: str,
+):
+    """Resolve protocol/aux output paths from spec if present; fallback to default helper."""
+    default_protocol, default_codemachine = output_paths(workspace, codemachine_root, run, step, agent_id)
+    if not outputs:
+        return default_protocol, default_codemachine
+    protocol_path = outputs.get("protocol")
+    if protocol_path:
+        protocol_path = Path(protocol_path)
+        if not protocol_path.is_absolute():
+            protocol_path = (workspace / protocol_path).resolve()
+    else:
+        protocol_path = default_protocol
+    aux = outputs.get("aux") if isinstance(outputs, dict) else {}
+    cm_path = None
+    if isinstance(aux, dict):
+        cm_out = aux.get("codemachine")
+        if cm_out:
+            cm_path = Path(cm_out)
+            if not cm_path.is_absolute():
+                cm_path = (workspace / cm_path).resolve()
+    codemachine_path = cm_path or default_codemachine
+    return protocol_path, codemachine_path
+
+
+def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config, db: BaseDatabase, step_spec: Optional[dict] = None) -> None:
     workspace = Path(run.worktree_path or project.git_url or ".").resolve()
     codemachine_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace / ".codemachine")
     template_cfg = run.template_config or {}
@@ -536,10 +634,18 @@ def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config
         )
         return
 
+    cm_prompt_ver = prompt_version(prompt_path)
     engine_defaults = (template_cfg.get("template") or {}).get("engineDefaults") or {}
-    engine_id = step.engine_id or agent.get("engine_id") or engine_defaults.get("execute") or registry.get_default().metadata.id
+    engine_id = (
+        (step_spec.get("engine_id") if step_spec else None)
+        or step.engine_id
+        or agent.get("engine_id")
+        or engine_defaults.get("execute")
+        or registry.get_default().metadata.id
+    )
     model = (
-        step.model
+        (step_spec.get("model") if step_spec else None)
+        or step.model
         or agent.get("model")
         or engine_defaults.get("executeModel")
         or (project.default_models.get("exec") if project.default_models else None)
@@ -570,6 +676,7 @@ def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config
             "engine_id": engine_id,
             "model": model,
             "prompt_path": str(prompt_path),
+            "prompt_versions": {"exec": cm_prompt_ver},
             "workspace": str(workspace),
             "template": template_cfg.get("template"),
         },
@@ -603,7 +710,10 @@ def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config
         return
 
     output_text = result.stdout or ""
-    protocol_output_path, codemachine_output_path = output_paths(workspace, codemachine_root, run, step, agent_id)
+    outputs_cfg = step_spec.get("outputs") if step_spec else None
+    protocol_output_path, codemachine_output_path = _resolve_output_paths_from_spec(outputs_cfg, workspace, codemachine_root, run, step, agent_id)
+    protocol_output_path.parent.mkdir(parents=True, exist_ok=True)
+    codemachine_output_path.parent.mkdir(parents=True, exist_ok=True)
     protocol_output_path.write_text(output_text, encoding="utf-8")
     codemachine_output_path.write_text(output_text, encoding="utf-8")
 
@@ -623,6 +733,7 @@ def _handle_codemachine_execute(step: StepRun, run: ProtocolRun, project, config
             "engine_id": engine_id,
             "model": model,
             "prompt_path": str(prompt_path),
+            "prompt_versions": {"exec": cm_prompt_ver},
             "outputs": {"protocol": str(protocol_output_path), "codemachine": str(codemachine_output_path)},
             "result_metadata": result.metadata,
         },
@@ -665,7 +776,32 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             "step_name": step.step_name,
         },
     )
-    if is_codemachine_run(run):
+    step_spec = get_step_spec(run.template_config, step.step_name)
+    qa_policy = (step_spec.get("qa") or {}).get("policy") if step_spec else None
+    if qa_policy == "skip":
+        event_type = "qa_skipped_codemachine" if is_codemachine_run(run) else "qa_skipped_policy"
+        event_message = "QA skipped (CodeMachine policy)." if event_type == "qa_skipped_codemachine" else "QA skipped by policy."
+        db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped (policy)")
+        db.append_event(
+            step.protocol_run_id,
+            event_type,
+            event_message,
+            step_run_id=step.id,
+            metadata={"policy": qa_policy},
+        )
+        trigger_decision = apply_trigger_policies(step, db, reason=event_type)
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source=event_type,
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
+        maybe_complete_protocol(step.protocol_run_id, db)
+        return
+    if qa_policy is None and is_codemachine_run(run):
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped for CodeMachine run")
         db.append_event(
             step.protocol_run_id,
@@ -686,11 +822,22 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             )
         maybe_complete_protocol(step.protocol_run_id, db)
         return
-    qa_model = project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max"
+    qa_cfg = (step_spec.get("qa") if step_spec else {}) or {}
+    qa_model = qa_cfg.get("model") or (project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max")
+    qa_engine_id = qa_cfg.get("engine_id") or step.engine_id
     repo_path = Path(project.git_url) if Path(project.git_url).exists() else None
-    prompt_path = (repo_path / "prompts" / "quality-validator.prompt.md") if repo_path else None
+    qa_prompt_path_cfg = qa_cfg.get("prompt")
+    prompt_path = None
+    if qa_prompt_path_cfg and repo_path:
+        prompt_path = Path(qa_prompt_path_cfg)
+        if not prompt_path.is_absolute():
+            prompt_path = (repo_path / qa_prompt_path_cfg).resolve()
+    elif repo_path:
+        prompt_path = repo_path / "prompts" / "quality-validator.prompt.md"
     qa_prompt_version = prompt_version(prompt_path)
-    if shutil.which("codex") is None or repo_path is None:
+    repo_missing = repo_path is None
+    repo_not_git = bool(repo_path) and not (repo_path / ".git").exists()
+    if shutil.which("codex") is None or (is_codemachine_run(run) and (repo_missing or repo_not_git)) or repo_path is None:
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA passed (stub; codex/repo unavailable)")
         metrics.inc_qa_verdict("pass")
         db.append_event(
@@ -728,7 +875,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             sandbox="read-only",
             max_tokens=budget_limit,
             token_budget_mode=config.token_budget_mode,
-            engine_id=step.engine_id,
+            engine_id=qa_engine_id,
         )
         verdict = result.verdict.upper()
         if verdict == "FAIL":

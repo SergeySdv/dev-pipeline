@@ -38,6 +38,9 @@ def test_import_attaches_targeted_modules(tmp_path) -> None:
         """,
     )
     _write(workspace / ".codemachine" / "template.json", '{"template":"golden","version":"0.0.1"}')
+    (workspace / ".codemachine" / "outputs").mkdir(parents=True, exist_ok=True)
+    _write(workspace / ".codemachine" / "prompts" / "plan.md", "plan prompt")
+    _write(workspace / ".codemachine" / "prompts" / "build.md", "build prompt")
 
     project = db.create_project("demo", str(workspace), "main", None, None)
     run = db.create_protocol_run(project.id, "9999-golden", ProtocolStatus.PLANNED, "main", str(workspace), str(workspace / ".codemachine"), "golden")

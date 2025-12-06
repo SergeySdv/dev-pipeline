@@ -45,6 +45,9 @@ def test_codemachine_import_inline_creates_steps_and_template() -> None:
             """,
         )
         _write(workspace / ".codemachine" / "template.json", '{"template":"spec-to-code","version":"0.0.1"}')
+        (workspace / ".codemachine" / "outputs").mkdir(parents=True, exist_ok=True)
+        _write(workspace / ".codemachine" / "prompts" / "plan.md", "plan prompt")
+        _write(workspace / ".codemachine" / "prompts" / "build.md", "build prompt")
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
