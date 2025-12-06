@@ -1,5 +1,4 @@
 import json
-import threading
 import time
 import uuid
 from dataclasses import dataclass, asdict, field
@@ -178,67 +177,7 @@ class RedisQueue:
         return self._redis
 
 
-class LocalQueue:
-    """
-    In-memory queue for local/dev use when Redis is unavailable.
-    Not durable; single-process only.
-    """
-
-    def __init__(self) -> None:
-        self._jobs: Dict[str, Job] = {}
-        self._lock = threading.Lock()
-
-    def enqueue(self, job_type: str, payload: Dict[str, Any], queue: Optional[str] = None) -> Job:
-        job = Job(
-            job_id=str(uuid.uuid4()),
-            job_type=job_type,
-            payload=payload,
-            queue=queue or "default",
-            status="queued",
-            next_run_at=time.time(),
-        )
-        with self._lock:
-            self._jobs[job.job_id] = job
-        return job
-
-    def claim(self, queue: Optional[str] = None) -> Optional[Job]:
-        now = time.time()
-        with self._lock:
-            candidates = [
-                job
-                for job in self._jobs.values()
-                if job.status == "queued" and job.next_run_at <= now and (queue is None or job.queue == queue)
-            ]
-            if not candidates:
-                return None
-            job = sorted(candidates, key=lambda j: j.next_run_at)[0]
-            job.status = "started"
-            job.started_at = time.time()
-            return job
-
-    def list(self, status: Optional[str] = None) -> List[Job]:
-        with self._lock:
-            jobs = list(self._jobs.values())
-        if status:
-            jobs = [job for job in jobs if job.status == status]
-        return sorted(jobs, key=lambda j: j.created_at)
-
-    def requeue(self, job: Job, delay_seconds: float) -> None:
-        with self._lock:
-            job.status = "queued"
-            job.next_run_at = time.time() + delay_seconds
-
-    def stats(self) -> Dict[str, Any]:
-        with self._lock:
-            counts: Dict[str, int] = {"queued": 0, "started": 0, "finished": 0, "failed": 0}
-            for job in self._jobs.values():
-                counts[job.status] = counts.get(job.status, 0) + 1
-        return {"backend": "local", "default": counts}
-
-
-def create_queue(redis_url: Optional[str], allow_inmemory: bool = False) -> BaseQueue:
+def create_queue(redis_url: Optional[str]) -> BaseQueue:
     if not redis_url:
-        if allow_inmemory:
-            return LocalQueue()
-        raise RuntimeError("Redis queue required (set DEKSDENFLOW_REDIS_URL) or enable in-memory fallback")
+        raise RuntimeError("Redis queue required; set DEKSDENFLOW_REDIS_URL (use fakeredis:// for tests)")
     return RedisQueue(redis_url)

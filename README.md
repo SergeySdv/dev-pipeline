@@ -37,7 +37,7 @@ This repo is a lightweight starter kit for agent-driven development using the De
   ```
 
 Logging tip: set `DEKSDENFLOW_LOG_JSON=true` to emit structured JSON logs from CLIs/workers/API.
-Redis is recommended for orchestration; set `DEKSDENFLOW_REDIS_URL`. When unset, the API now falls back to an in-memory queue (dev/demo only), and you can still use `fakeredis://` for local testing.
+Redis is required for orchestration; set `DEKSDENFLOW_REDIS_URL` (use `fakeredis://` for local testing).
 
 ## Containerized orchestrator (API + worker + Redis/Postgres)
 

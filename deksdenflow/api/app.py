@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting API", extra={"request_id": "-", "env": config.environment})
     db = create_database(db_path=config.db_path, db_url=config.db_url, pool_size=config.db_pool_size)
     db.init_schema()
-    queue = jobs.create_queue(config.redis_url, allow_inmemory=True)
+    queue = jobs.create_queue(config.redis_url)
     try:
         # Fail fast if Redis is unreachable
         queue.stats()
@@ -50,10 +50,6 @@ async def lifespan(app: FastAPI):
     worker = None
     if isinstance(queue, jobs.RedisQueue) and queue.is_fakeredis:
         worker = RQWorkerThread(queue)
-        app.state.worker = worker  # type: ignore[attr-defined]
-        worker.start()
-    elif isinstance(queue, jobs.LocalQueue):
-        worker = BackgroundWorker(queue, db)
         app.state.worker = worker  # type: ignore[attr-defined]
         worker.start()
     try:

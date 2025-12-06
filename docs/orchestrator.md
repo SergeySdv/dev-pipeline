@@ -1,15 +1,15 @@
 # DeksdenFlow Orchestrator (alpha)
 
-This folder describes the first slice of a central orchestrator/API you can run locally. It is intentionally minimal: SQLite persistence, FastAPI endpoints, and a queue abstraction with two backends (in-memory for dev, Redis/RQ for durability).
+This folder describes the first slice of a central orchestrator/API you can run locally. It is intentionally minimal: SQLite persistence, FastAPI endpoints, and a Redis/RQ-backed queue (fakeredis works for tests).
 
 ## Components
 - `deksdenflow/storage.py`: SQLite schema + small DAO for Projects, ProtocolRuns, StepRuns, and Events.
 - `deksdenflow/domain.py`: status enums and dataclasses for the core entities.
 - `deksdenflow/api/app.py`: FastAPI app with health, project, protocol, step, and event endpoints plus action hooks that enqueue placeholder jobs.
-- `deksdenflow/jobs.py`: queue abstraction with in-memory fallback for local use and Redis/RQ backend via `DEKSDENFLOW_REDIS_URL`.
-- `deksdenflow/worker_runtime.py`: job processors that call Codex/onboarding handlers, plus background worker helpers (in-process for LocalQueue, SimpleWorker for fakeredis).
+- `deksdenflow/jobs.py`: queue abstraction backed by Redis/RQ via `DEKSDENFLOW_REDIS_URL`.
+- `deksdenflow/worker_runtime.py`: job processors that call Codex/onboarding handlers, plus background worker helper (SimpleWorker for fakeredis).
 - `deksdenflow/logging.py`: minimal structured logging helpers and request-id filter.
-- `scripts/api_server.py`: uvicorn runner for the API; starts an in-process worker when using the LocalQueue.
+- `scripts/api_server.py`: uvicorn runner for the API; starts a SimpleWorker thread when using fakeredis (dev/tests).
 - `scripts/ci_trigger.py`: optional helper to trigger CI (gh/glab) for a protocol branch.
 - `scripts/rq_worker.py`: RQ worker entrypoint when using Redis-backed queue (fakeredis works for tests).
 
@@ -28,7 +28,7 @@ Environment toggles:
 - `DEKSDENFLOW_ENV` (default `local`)
 - `DEKSDENFLOW_API_TOKEN` (optional; when set, require `Authorization: Bearer <token>` on non-health endpoints)
 - `DEKSDENFLOW_API_HOST` / `DEKSDENFLOW_API_PORT` for server binding
-- `DEKSDENFLOW_REDIS_URL` to enable Redis-backed queue (falls back to in-memory for local/demo)
+- `DEKSDENFLOW_REDIS_URL` to enable Redis-backed queue (required; `fakeredis://` works for tests)
 - `DEKSDENFLOW_LOG_LEVEL` (default `INFO`)
 - `DEKSDENFLOW_WEBHOOK_TOKEN` (optional shared secret for webhook calls)
 Retry/backoff:
