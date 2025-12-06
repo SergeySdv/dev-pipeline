@@ -538,7 +538,10 @@ class TuiDashboard(App):
             self.modal_open = False
 
     def _render_protocol_details(self) -> None:
-        panel = self.query_one("#protocol_meta", Static)
+        panel = next(iter(self.query("#protocol_meta")), None)
+        if not panel:
+            log.error("protocol_meta_missing", extra={})
+            return
         run = next((r for r in self.protocols if r["id"] == self.protocol_id), None)
         if not run:
             panel.update("No protocol selected.")
