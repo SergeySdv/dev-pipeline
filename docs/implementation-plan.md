@@ -6,6 +6,13 @@ This plan turns the target architecture into executable work. Phases can run seq
 - Stack choice: Postgres for production (SQLite for dev/tests), Redis + RQ for the first queue/worker implementation.
 - Phase 0 priorities: 0.1 (stabilize library surface) → 0.2 (thin CLIs) → 0.3 (central config) → 0.4 (logging/errors). Containerization (0.5) can trail but should land before API/worker rollout.
 
+## Status model and QA defaults
+- ProtocolRun: `pending` → `planning` → `planned` → `running` → (`paused` | `blocked` | `failed` | `cancelled` | `completed`). CI failure or job failure moves to `blocked`; PR/MR merge completes the run.
+- StepRun: `pending` → `running` → `needs_qa` → (`completed` | `failed` | `cancelled`). Execution ends in `needs_qa`; QA or manual approval flips to `completed`.
+- Automation flags: `DEKSDENFLOW_AUTO_QA_AFTER_EXEC=true` enqueues QA immediately after execution; `DEKSDENFLOW_AUTO_QA_ON_CI=true` enqueues QA when CI success webhooks arrive.
+- CI callbacks: `scripts/ci/report.sh success|failure` posts GitHub/GitLab-style payloads to the orchestrator using `DEKSDENFLOW_API_BASE` (optional `DEKSDENFLOW_API_TOKEN`/`DEKSDENFLOW_WEBHOOK_TOKEN`).
+- Auth tokens: API bearer token (`DEKSDENFLOW_API_TOKEN`) gates all non-health endpoints; per-project token (`X-Project-Token`) is optional; webhook token (`DEKSDENFLOW_WEBHOOK_TOKEN`) signs/verifies CI callbacks.
+
 ## Phase 0 – Foundations and refactoring
 **Goal:** Make the orchestration logic library-first, configurable, and container-ready.
 

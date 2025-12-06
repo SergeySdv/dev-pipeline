@@ -39,6 +39,13 @@ This repo is a lightweight starter kit for agent-driven development using the De
 Logging tip: set `DEKSDENFLOW_LOG_JSON=true` to emit structured JSON logs from CLIs/workers/API.
 Redis is required for orchestration; set `DEKSDENFLOW_REDIS_URL` (use `fakeredis://` for local testing).
 
+## Orchestrator status & QA options
+
+- Protocol statuses: `pending` → `planning` → `planned` → `running` → (`paused` | `blocked` | `failed` | `cancelled` | `completed`). CI failures or worker errors block the run; PR/MR merge completes it.
+- Step statuses: `pending` → `running` → `needs_qa` → (`completed` | `failed` | `cancelled`). Execution stops at `needs_qa`; QA or manual approval marks `completed`.
+- Auto QA knobs: set `DEKSDENFLOW_AUTO_QA_AFTER_EXEC=true` to enqueue QA immediately after execution. Set `DEKSDENFLOW_AUTO_QA_ON_CI=true` to enqueue QA when CI reports success via webhook.
+- CI callbacks: export `DEKSDENFLOW_API_BASE` in CI and call `scripts/ci/report.sh success|failure` to mirror pipeline status into the orchestrator (supports GitHub/GitLab payloads; optional `DEKSDENFLOW_API_TOKEN`/`DEKSDENFLOW_WEBHOOK_TOKEN`). Set `DEKSDENFLOW_PROTOCOL_RUN_ID` if branch detection is ambiguous so the webhook can map directly to a run.
+
 ## Containerized orchestrator (API + worker + Redis/Postgres)
 
 For a quick local stack with API, RQ worker, Redis, and Postgres:

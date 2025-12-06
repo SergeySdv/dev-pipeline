@@ -83,6 +83,11 @@ def get_protocol_project(protocol_run_id: int, db: BaseDatabase) -> int:
     return run.project_id
 
 
+def get_step_project(step_run_id: int, db: BaseDatabase) -> int:
+    step = db.get_step_run(step_run_id)
+    return get_protocol_project(step.protocol_run_id, db)
+
+
 def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(auth_scheme),
@@ -119,6 +124,27 @@ def verify_signature(secret: str, body: bytes, signature_header: str) -> bool:
         signature = signature_header
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return compare_digest(digest, signature)
+
+
+def record_event(
+    db: BaseDatabase,
+    protocol_run_id: int,
+    event_type: str,
+    message: str,
+    *,
+    request: Optional[Request] = None,
+    step_run_id: Optional[int] = None,
+    metadata: Optional[dict] = None,
+):
+    request_id = getattr(request.state, "request_id", None) if request else None
+    return db.append_event(
+        protocol_run_id=protocol_run_id,
+        event_type=event_type,
+        message=message,
+        step_run_id=step_run_id,
+        metadata=metadata,
+        request_id=request_id,
+    )
 
 
 @app.middleware("http")
@@ -178,6 +204,7 @@ def create_project(
     payload: schemas.ProjectCreate,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
 ) -> schemas.ProjectOut:
     project = db.create_project(
         name=payload.name,
@@ -197,7 +224,13 @@ def create_project(
         protocol_root=None,
         description="Project setup and bootstrap",
     )
-    db.append_event(protocol_run_id=setup_run.id, event_type="setup_enqueued", message="Project setup enqueued.")
+    record_event(
+        db,
+        protocol_run_id=setup_run.id,
+        event_type="setup_enqueued",
+        message="Project setup enqueued.",
+        request=request,
+    )
     queue.enqueue("project_setup_job", {"project_id": project.id, "protocol_run_id": setup_run.id})
     return schemas.ProjectOut(**project.__dict__)
 
@@ -285,7 +318,14 @@ def start_protocol(
     except ValueError:
         raise HTTPException(status_code=409, detail="Protocol state changed; retry")
     job = queue.enqueue("plan_protocol_job", {"protocol_run_id": protocol_run_id}).asdict()
-    db.append_event(protocol_run_id, "planning_enqueued", "Planning job enqueued.")
+    record_event(
+        db,
+        protocol_run_id,
+        "planning_enqueued",
+        "Planning job enqueued.",
+        metadata={"job_id": job["job_id"]},
+        request=request,
+    )
     return schemas.ActionResponse(message="Protocol planning enqueued", job=job)
 
 
@@ -308,7 +348,7 @@ def pause_protocol(
         run = db.update_protocol_status(protocol_run_id, ProtocolStatus.PAUSED, expected_status=run.status)
     except ValueError:
         raise HTTPException(status_code=409, detail="Protocol state changed; retry")
-    db.append_event(protocol_run_id, "paused", "Protocol paused by user.")
+    record_event(db, protocol_run_id, "paused", "Protocol paused by user.", request=request)
     return schemas.ProtocolRunOut(**run.__dict__)
 
 
@@ -331,7 +371,7 @@ def resume_protocol(
         run = db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING, expected_status=run.status)
     except ValueError:
         raise HTTPException(status_code=409, detail="Protocol state changed; retry")
-    db.append_event(protocol_run_id, "resumed", "Protocol resumed by user.")
+    record_event(db, protocol_run_id, "resumed", "Protocol resumed by user.", request=request)
     return schemas.ProtocolRunOut(**run.__dict__)
 
 
@@ -358,7 +398,7 @@ def cancel_protocol(
     for step in steps:
         if step.status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.NEEDS_QA):
             db.update_step_status(step.id, StepStatus.CANCELLED, summary="Cancelled with protocol", expected_status=step.status)
-    db.append_event(protocol_run_id, "cancelled", "Protocol cancelled by user.")
+    record_event(db, protocol_run_id, "cancelled", "Protocol cancelled by user.", request=request)
     return schemas.ProtocolRunOut(**run.__dict__)
 
 
@@ -382,6 +422,15 @@ def run_next_step(
         raise HTTPException(status_code=409, detail="Step state changed; retry")
     db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+    record_event(
+        db,
+        protocol_run_id,
+        "step_enqueued",
+        f"Step {step.step_name} enqueued for execution.",
+        step_run_id=step.id,
+        metadata={"job_id": job["job_id"]},
+        request=request,
+    )
     return schemas.ActionResponse(message=f"Step {step.step_name} enqueued", job=job)
 
 
@@ -410,6 +459,15 @@ def retry_latest_step(
         raise HTTPException(status_code=409, detail="Step state changed; retry")
     db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+    record_event(
+        db,
+        protocol_run_id,
+        "step_retry_enqueued",
+        f"Retrying {step.step_name}.",
+        step_run_id=step.id,
+        metadata={"job_id": job["job_id"], "retries": step.retries},
+        request=request,
+    )
     return schemas.ActionResponse(message=f"Retrying {step.step_name}", job=job)
 
 
@@ -418,11 +476,15 @@ def create_step(
     protocol_run_id: int,
     payload: schemas.StepRunCreate,
     db: BaseDatabase = Depends(get_db),
+    request: Request = None,
 ) -> schemas.StepRunOut:
     try:
         db.get_protocol_run(protocol_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
     step = db.create_step_run(
         protocol_run_id=protocol_run_id,
         step_index=payload.step_index,
@@ -436,7 +498,13 @@ def create_step(
 
 
 @app.get("/protocols/{protocol_run_id}/steps", response_model=list[schemas.StepRunOut], dependencies=[Depends(require_auth)])
-def list_steps(protocol_run_id: int, db: BaseDatabase = Depends(get_db)) -> list[schemas.StepRunOut]:
+def list_steps(protocol_run_id: int, db: BaseDatabase = Depends(get_db), request: Request = None) -> list[schemas.StepRunOut]:
+    if request:
+        try:
+            project_id = get_protocol_project(protocol_run_id, db)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        require_project_access(project_id, request, db)
     steps = db.list_step_runs(protocol_run_id)
     return [schemas.StepRunOut(**s.__dict__) for s in steps]
 
@@ -463,6 +531,15 @@ def run_step(
         raise HTTPException(status_code=409, detail="Step state changed; retry")
     db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+    record_event(
+        db,
+        step.protocol_run_id,
+        "step_enqueued",
+        "Step execution enqueued.",
+        step_run_id=step.id,
+        metadata={"job_id": job["job_id"]},
+        request=request,
+    )
     return schemas.ActionResponse(message="Step execution enqueued", job=job)
 
 
@@ -487,6 +564,15 @@ def run_step_qa(
     except ValueError:
         raise HTTPException(status_code=409, detail="Step state changed; retry")
     job = queue.enqueue("run_quality_job", {"step_run_id": step.id}).asdict()
+    record_event(
+        db,
+        step.protocol_run_id,
+        "qa_enqueued",
+        "QA run enqueued.",
+        step_run_id=step.id,
+        metadata={"job_id": job["job_id"]},
+        request=request,
+    )
     return schemas.ActionResponse(message="QA enqueued", job=job)
 
 
@@ -501,27 +587,63 @@ def open_pr_now(
         project_id = get_protocol_project(protocol_run_id, db)
         require_project_access(project_id, request, db)
     job = queue.enqueue("open_pr_job", {"protocol_run_id": protocol_run_id}).asdict()
+    record_event(
+        db,
+        protocol_run_id,
+        "open_pr_enqueued",
+        "Open PR/MR job enqueued.",
+        metadata={"job_id": job["job_id"]},
+        request=request,
+    )
     return schemas.ActionResponse(message="Open PR/MR enqueued", job=job)
 
 
 @app.post("/steps/{step_id}/actions/approve", response_model=schemas.StepRunOut, dependencies=[Depends(require_auth)])
-def approve_step(step_id: int, db: BaseDatabase = Depends(get_db)) -> schemas.StepRunOut:
+def approve_step(step_id: int, db: BaseDatabase = Depends(get_db), request: Request = None) -> schemas.StepRunOut:
+    if request:
+        try:
+            project_id = get_step_project(step_id, db)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        require_project_access(project_id, request, db)
     try:
         step = db.update_step_status(step_id, StepStatus.COMPLETED)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    db.append_event(
+    record_event(
+        db,
         protocol_run_id=step.protocol_run_id,
-        step_run_id=step.id,
         event_type="manual_approval",
         message="Step marked as completed manually.",
+        step_run_id=step.id,
+        request=request,
     )
+    maybe_complete_protocol(step.protocol_run_id, db)
     return schemas.StepRunOut(**step.__dict__)
 
 
 @app.get("/protocols/{protocol_run_id}/events", response_model=list[schemas.EventOut], dependencies=[Depends(require_auth)])
-def list_events(protocol_run_id: int, db: BaseDatabase = Depends(get_db)) -> list[schemas.EventOut]:
+def list_events(protocol_run_id: int, db: BaseDatabase = Depends(get_db), request: Request = None) -> list[schemas.EventOut]:
+    if request:
+        try:
+            project_id = get_protocol_project(protocol_run_id, db)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        require_project_access(project_id, request, db)
     events = db.list_events(protocol_run_id)
+    return [schemas.EventOut(**e.__dict__) for e in events]
+
+
+@app.get("/events", response_model=list[schemas.EventOut], dependencies=[Depends(require_auth)])
+def recent_events(
+    limit: int = 50,
+    project_id: Optional[int] = None,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> list[schemas.EventOut]:
+    if project_id and request:
+        require_project_access(project_id, request, db)
+    events = db.list_recent_events(limit=limit, project_id=project_id)
     return [schemas.EventOut(**e.__dict__) for e in events]
 
 
@@ -545,6 +667,7 @@ async def github_webhook(
     request: Request,
     protocol_run_id: Optional[int] = None,
     db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
 ) -> schemas.ActionResponse:
     body = await request.body()
     payload = json.loads(body.decode("utf-8") or "{}")
@@ -611,12 +734,14 @@ async def github_webhook(
         "protocol_run_id": run.id,
         "step_run_id": step.id if step else None,
     }
-    db.append_event(
+    record_event(
+        db,
         protocol_run_id=run.id,
         step_run_id=step.id if step else None,
         event_type=event_type,
         message=message,
         metadata=metadata,
+        request=request,
     )
 
     normalized = (conclusion or status or "").lower()
@@ -624,18 +749,48 @@ async def github_webhook(
     running_states = {"in_progress", "queued", "requested", "pending"}
     failure_states = {"failure", "timed_out", "cancelled", "canceled", "action_required", "error"}
 
+    auto_qa = getattr(config, "auto_qa_on_ci", False)
     if step and normalized in success_states:
-        db.update_step_status(step.id, StepStatus.COMPLETED, summary="CI passed")
+        if auto_qa:
+            db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="CI passed; running QA")
+            job = queue.enqueue("run_quality_job", {"step_run_id": step.id}).asdict()
+            record_event(
+                db,
+                run.id,
+                "qa_enqueued",
+                "QA enqueued after CI success.",
+                step_run_id=step.id,
+                metadata={"job_id": job["job_id"], "source": "ci_webhook", "provider": "github"},
+                request=request,
+            )
+        else:
+            db.update_step_status(step.id, StepStatus.COMPLETED, summary="CI passed")
+            maybe_complete_protocol(run.id, db)
     elif step and normalized in running_states:
         db.update_step_status(step.id, StepStatus.RUNNING, summary="CI running")
     elif step and normalized in failure_states:
         db.update_step_status(step.id, StepStatus.FAILED, summary="CI failed")
         db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        db.append_event(run.id, event_type, "CI failed; protocol blocked", step_run_id=step.id, metadata={"conclusion": conclusion})
+        record_event(
+            db,
+            run.id,
+            event_type,
+            "CI failed; protocol blocked",
+            step_run_id=step.id,
+            metadata={"conclusion": conclusion},
+            request=request,
+        )
 
     if event_type == "pull_request" and payload.get("pull_request", {}).get("merged"):
         db.update_protocol_status(run.id, ProtocolStatus.COMPLETED)
-        db.append_event(run.id, "pr_merged", "PR merged; protocol completed", metadata={"pr_number": pr_number})
+        record_event(
+            db,
+            run.id,
+            "pr_merged",
+            "PR merged; protocol completed",
+            metadata={"pr_number": pr_number},
+            request=request,
+        )
 
     return schemas.ActionResponse(message="Webhook recorded")
 
@@ -649,6 +804,7 @@ async def gitlab_webhook(
     request: Request,
     protocol_run_id: Optional[int] = None,
     db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
 ) -> schemas.ActionResponse:
     body = await request.body()
     payload = json.loads(body.decode("utf-8") or "{}")
@@ -688,12 +844,14 @@ async def gitlab_webhook(
         "protocol_run_id": run.id,
         "step_run_id": step.id if step else None,
     }
-    db.append_event(
+    record_event(
+        db,
         protocol_run_id=run.id,
         step_run_id=step.id if step else None,
         event_type=object_kind,
         message=message,
         metadata=metadata,
+        request=request,
     )
 
     normalized = (status or "").lower()
@@ -703,9 +861,31 @@ async def gitlab_webhook(
 
     if object_kind == "merge_request" and attrs.get("state") == "merged":
         db.update_protocol_status(run.id, ProtocolStatus.COMPLETED)
-        db.append_event(run.id, "mr_merged", "Merge request merged; protocol completed", metadata=metadata)
+        record_event(
+            db,
+            run.id,
+            "mr_merged",
+            "Merge request merged; protocol completed",
+            metadata=metadata,
+            request=request,
+        )
+    auto_qa = getattr(config, "auto_qa_on_ci", False)
     if step and normalized in success_states:
-        db.update_step_status(step.id, StepStatus.COMPLETED, summary="CI passed")
+        if auto_qa:
+            db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="CI passed; running QA")
+            job = queue.enqueue("run_quality_job", {"step_run_id": step.id}).asdict()
+            record_event(
+                db,
+                run.id,
+                "qa_enqueued",
+                "QA enqueued after CI success.",
+                step_run_id=step.id,
+                metadata={"job_id": job["job_id"], "source": "ci_webhook", "provider": "gitlab"},
+                request=request,
+            )
+        else:
+            db.update_step_status(step.id, StepStatus.COMPLETED, summary="CI passed")
+            maybe_complete_protocol(run.id, db)
     elif step and normalized in running_states:
         db.update_step_status(step.id, StepStatus.RUNNING, summary="CI running")
     elif step and normalized in failure_states:

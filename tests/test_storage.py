@@ -57,3 +57,7 @@ def test_storage_round_trip_creates_records() -> None:
         assert len(steps) == 1
         events = db.list_events(run.id)
         assert len(events) == 1
+        recent = db.list_recent_events()
+        assert len(recent) == 1
+        assert recent[0].protocol_name == "0001-demo"
+        assert recent[0].project_name == "demo"

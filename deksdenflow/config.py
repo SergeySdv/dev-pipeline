@@ -37,6 +37,8 @@ class Config(BaseModel):
     max_tokens_per_protocol: Optional[int] = Field(default=None)
     token_budget_mode: str = Field(default="strict")  # strict | warn | off
     db_pool_size: int = Field(default=5)
+    auto_qa_on_ci: bool = Field(default=False)
+    auto_qa_after_exec: bool = Field(default=False)
 
     class Config:
         arbitrary_types_allowed = True
@@ -78,6 +80,8 @@ def load_config() -> Config:
     max_tokens_per_protocol = os.environ.get("DEKSDENFLOW_MAX_TOKENS_PER_PROTOCOL")
     token_budget_mode = os.environ.get("DEKSDENFLOW_TOKEN_BUDGET_MODE", "strict")
     db_pool_size = int(os.environ.get("DEKSDENFLOW_DB_POOL_SIZE", "5"))
+    auto_qa_on_ci = os.environ.get("DEKSDENFLOW_AUTO_QA_ON_CI", "false").lower() in ("1", "true", "yes", "on")
+    auto_qa_after_exec = os.environ.get("DEKSDENFLOW_AUTO_QA_AFTER_EXEC", "false").lower() in ("1", "true", "yes", "on")
     return Config(
         db_url=db_url,
         db_path=db_path,
@@ -94,4 +98,6 @@ def load_config() -> Config:
         max_tokens_per_protocol=int(max_tokens_per_protocol) if max_tokens_per_protocol else None,
         token_budget_mode=token_budget_mode,
         db_pool_size=db_pool_size,
+        auto_qa_on_ci=auto_qa_on_ci,
+        auto_qa_after_exec=auto_qa_after_exec,
     )

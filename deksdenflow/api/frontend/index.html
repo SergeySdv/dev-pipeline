@@ -27,6 +27,13 @@
       </div>
       <div id="projectList" class="cards"></div>
 
+      <div class="form" id="projectTokenForm">
+        <label>Project token (X-Project-Token, optional for selected project)
+          <input id="projectToken" type="password" placeholder="Set per-project token" />
+        </label>
+        <button type="button" id="saveProjectToken">Save project token</button>
+      </div>
+
       <form id="projectForm" class="form">
         <h3>Onboard project</h3>
         <label>Project name <input name="name" required /></label>
@@ -71,6 +78,27 @@
       <div id="protocolList"></div>
 
       <div id="protocolDetail"></div>
+
+      <div class="pane" id="queuePanel">
+        <div class="panel-header">
+          <h3>Queue</h3>
+          <div class="panel-actions">
+            <button id="refreshQueue" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="queueStats"></div>
+        <div id="queueJobs"></div>
+      </div>
+
+      <div class="pane" id="operationsPanel">
+        <div class="panel-header">
+          <h3>Recent activity</h3>
+          <div class="panel-actions">
+            <button id="refreshOperations" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="operationsList"></div>
+      </div>
     </section>
   </main>
 

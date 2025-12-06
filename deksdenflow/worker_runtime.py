@@ -53,6 +53,7 @@ def process_job(job: Job, db: BaseDatabase) -> None:
             event_type="unknown_job",
             message=f"Unhandled job type {job.job_type}",
             metadata={"job_id": job.job_id, "protocol_run_id": protocol_run_id},
+            job_id=job.job_id,
         )
     log.info(
         "job_end",
@@ -67,19 +68,24 @@ def process_job(job: Job, db: BaseDatabase) -> None:
     )
 
 
-def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
-    job = queue.claim()
-    if not job:
-        return None
-
+def _run_job_with_handling(
+    job: Job,
+    db: BaseDatabase,
+    queue: Optional[BaseQueue] = None,
+    requeue_on_retry: bool = False,
+    rethrow: bool = False,
+) -> Job:
+    start = time.time()
     try:
         process_job(job, db)
         job.status = "finished"
         job.ended_at = time.time()
         metrics.inc_job(job.job_type, "completed")
+        metrics.observe_job_duration(job.job_type, "completed", job.ended_at - start)
+        return job
     except Exception as exc:  # pragma: no cover - best effort
         job.attempts += 1
-        backoff = min(60, 2 ** job.attempts)
+        backoff = min(60, 2**job.attempts)
         retryable = True
         error_category = None
         if isinstance(exc, DeksdenflowError):
@@ -93,9 +99,11 @@ def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
             error_type=exc.__class__.__name__,
             error_category=error_category,
         )
-        if retryable and job.attempts < job.max_attempts:
+        if retryable and requeue_on_retry and queue and job.attempts < job.max_attempts:
             log.warning("Job failed; requeuing with backoff", extra={**context, "backoff": backoff})
             queue.requeue(job, delay_seconds=backoff)
+            metrics.inc_job(job.job_type, "retried")
+            metrics.observe_job_duration(job.job_type, "retried", time.time() - start)
         else:
             job.status = "failed"
             job.ended_at = time.time()
@@ -113,7 +121,9 @@ def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
                         "error_type": exc.__class__.__name__,
                         "error_category": error_category,
                         "attempts": job.attempts,
+                        "job_id": job.job_id,
                     },
+                    job_id=job.job_id,
                 )
                 db.update_protocol_status(proto_id, ProtocolStatus.BLOCKED)
             if step_id:
@@ -122,7 +132,17 @@ def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
                 except Exception:  # pragma: no cover - best effort
                     pass
             metrics.inc_job(job.job_type, "failed")
-    return job
+            metrics.observe_job_duration(job.job_type, "failed", job.ended_at - start)
+        if rethrow:
+            raise
+        return job
+
+
+def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
+    job = queue.claim()
+    if not job:
+        return None
+    return _run_job_with_handling(job, db, queue=queue, requeue_on_retry=True, rethrow=False)
 
 
 def rq_job_handler(job_type: str, payload: dict) -> None:
@@ -134,8 +154,7 @@ def rq_job_handler(job_type: str, payload: dict) -> None:
     db = create_database(db_path=config.db_path, db_url=config.db_url)
     db.init_schema()
     job = Job(job_id=str(payload.get("job_id", "")), job_type=job_type, payload=payload)
-    process_job(job, db)
-    metrics.inc_job(job_type, "completed")
+    _run_job_with_handling(job, db, queue=None, requeue_on_retry=False, rethrow=True)
 
 
 class BackgroundWorker:

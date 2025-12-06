@@ -136,8 +136,9 @@ class BaseDatabase(Protocol):
     def list_step_runs(self, protocol_run_id: int) -> List[StepRun]: ...
     def latest_step_run(self, protocol_run_id: int) -> Optional[StepRun]: ...
     def update_step_status(self, step_run_id: int, status: str, retries: Optional[int] = None, summary: Optional[str] = None, model: Optional[str] = None, expected_status: Optional[str] = None) -> StepRun: ...
-    def append_event(self, protocol_run_id: int, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None, step_run_id: Optional[int] = None) -> Event: ...
+    def append_event(self, protocol_run_id: int, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None, step_run_id: Optional[int] = None, request_id: Optional[str] = None, job_id: Optional[str] = None) -> Event: ...
     def list_events(self, protocol_run_id: int) -> List[Event]: ...
+    def list_recent_events(self, limit: int = 50, project_id: Optional[int] = None) -> List[Event]: ...
 
 
 class Database:
@@ -404,8 +405,15 @@ class Database:
         message: str,
         step_run_id: Optional[int] = None,
         metadata: Optional[dict] = None,
+        request_id: Optional[str] = None,
+        job_id: Optional[str] = None,
     ) -> Event:
-        metadata_json = json.dumps(metadata) if metadata else None
+        meta = dict(metadata or {})
+        if request_id and "request_id" not in meta:
+            meta["request_id"] = request_id
+        if job_id and "job_id" not in meta:
+            meta["job_id"] = job_id
+        metadata_json = json.dumps(meta) if meta else None
         with self._connect() as conn:
             cur = conn.execute(
                 """
@@ -424,6 +432,26 @@ class Database:
             "SELECT * FROM events WHERE protocol_run_id = ? ORDER BY created_at DESC",
             (protocol_run_id,),
         )
+        return [self._row_to_event(row) for row in rows]
+
+    def list_recent_events(self, limit: int = 50, project_id: Optional[int] = None) -> List[Event]:
+        """
+        Return recent events across projects, newest first. Includes protocol/project context for console views.
+        """
+        limit = max(1, min(int(limit), 500))
+        base = """
+        SELECT e.*, pr.protocol_name, pr.project_id, p.name AS project_name
+        FROM events e
+        JOIN protocol_runs pr ON e.protocol_run_id = pr.id
+        JOIN projects p ON pr.project_id = p.id
+        """
+        params: list[Any] = []
+        if project_id is not None:
+            base += " WHERE pr.project_id = ?"
+            params.append(project_id)
+        base += " ORDER BY e.created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._fetchall(base, tuple(params))
         return [self._row_to_event(row) for row in rows]
 
     @staticmethod
@@ -486,6 +514,21 @@ class Database:
 
     @staticmethod
     def _row_to_event(row: Any) -> Event:
+        protocol_name = None
+        project_id = None
+        project_name = None
+        if isinstance(row, dict):
+            protocol_name = row.get("protocol_name")
+            project_id = row.get("project_id")
+            project_name = row.get("project_name")
+        elif hasattr(row, "keys"):
+            keys = set(row.keys())
+            if "protocol_name" in keys:
+                protocol_name = row["protocol_name"]
+            if "project_id" in keys:
+                project_id = row["project_id"]
+            if "project_name" in keys:
+                project_name = row["project_name"]
         return Event(
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
@@ -494,6 +537,9 @@ class Database:
             message=row["message"],
             metadata=Database._parse_json(row.get("metadata") if isinstance(row, dict) else row["metadata"]),
             created_at=row["created_at"],
+            protocol_name=protocol_name,
+            project_id=project_id,
+            project_name=project_name,
         )
 
 
@@ -763,7 +809,14 @@ class PostgresDatabase:
         message: str,
         step_run_id: Optional[int] = None,
         metadata: Optional[dict] = None,
+        request_id: Optional[str] = None,
+        job_id: Optional[str] = None,
     ) -> Event:
+        meta = dict(metadata or {})
+        if request_id and "request_id" not in meta:
+            meta["request_id"] = request_id
+        if job_id and "job_id" not in meta:
+            meta["job_id"] = job_id
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -772,7 +825,7 @@ class PostgresDatabase:
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (protocol_run_id, step_run_id, event_type, message, json.dumps(metadata)),
+                    (protocol_run_id, step_run_id, event_type, message, json.dumps(meta) if meta else None),
                 )
                 event_id = cur.fetchone()["id"]
             conn.commit()
@@ -784,6 +837,23 @@ class PostgresDatabase:
             "SELECT * FROM events WHERE protocol_run_id = %s ORDER BY created_at DESC",
             (protocol_run_id,),
         )
+        return [Database._row_to_event(row) for row in rows]  # type: ignore[arg-type]
+
+    def list_recent_events(self, limit: int = 50, project_id: Optional[int] = None) -> List[Event]:
+        limit = max(1, min(int(limit), 500))
+        base = """
+        SELECT e.*, pr.protocol_name, pr.project_id, p.name AS project_name
+        FROM events e
+        JOIN protocol_runs pr ON e.protocol_run_id = pr.id
+        JOIN projects p ON pr.project_id = p.id
+        """
+        params: list[Any] = []
+        if project_id is not None:
+            base += " WHERE pr.project_id = %s"
+            params.append(project_id)
+        base += " ORDER BY e.created_at DESC LIMIT %s"
+        params.append(limit)
+        rows = self._fetchall(base, tuple(params))
         return [Database._row_to_event(row) for row in rows]  # type: ignore[arg-type]
 
 

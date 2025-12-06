@@ -52,7 +52,7 @@ class RedisQueue:
     def __init__(self, redis_url: str) -> None:
         try:
             import redis  # type: ignore
-            from rq import Queue  # type: ignore
+            from rq import Queue, Retry  # type: ignore
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("Redis/RQ not installed; install redis rq or omit DEKSDENFLOW_REDIS_URL") from exc
 
@@ -69,6 +69,7 @@ class RedisQueue:
         self._queue_cls = Queue
         self._queues: Dict[str, Queue] = {}
         self._is_fakeredis = use_fake
+        self._retry_cls = Retry
 
     def _get_queue(self, name: str):
         if name not in self._queues:
@@ -83,13 +84,52 @@ class RedisQueue:
             queue=queue or "default",
         )
         q = self._get_queue(job.queue)
+        retry = None
+        max_retries = max(job.max_attempts - 1, 0)
+        if max_retries > 0:
+            intervals = [min(60, 2**i) for i in range(1, max_retries + 1)]
+            retry = self._retry_cls(max=max_retries, interval=intervals)  # type: ignore[arg-type]
         # Jobs will be processed by scripts/rq_worker.py
+        enqueue_kwargs = {"job_id": job.job_id}
+        if retry:
+            enqueue_kwargs["retry"] = retry
         job.payload["job_id"] = job.job_id
-        q.enqueue("deksdenflow.worker_runtime.rq_job_handler", job.job_type, job.payload)
+        q.enqueue("deksdenflow.worker_runtime.rq_job_handler", job.job_type, job.payload, **enqueue_kwargs)
         return job
 
     def claim(self, queue: Optional[str] = None) -> Optional[Job]:
-        return None
+        """
+        Best-effort dequeue for BackgroundWorker compatibility (non-blocking).
+        Prefer running a real RQ worker; this is primarily for dev/test.
+        """
+        import rq.job  # type: ignore
+
+        q = self._get_queue(queue or "default")
+        job_id = self._redis.lpop(q.key)
+        if not job_id:
+            return None
+        if isinstance(job_id, bytes):
+            job_id = job_id.decode("utf-8")
+        rq_job = rq.job.Job.fetch(job_id, connection=self._redis)
+        job_type = rq_job.args[0] if rq_job.args else rq_job.func_name
+        payload = rq_job.args[1] if rq_job.args and len(rq_job.args) > 1 else rq_job.kwargs or {}
+        created_at = rq_job.enqueued_at.timestamp() if rq_job.enqueued_at else time.time()
+        started_at = rq_job.started_at.timestamp() if rq_job.started_at else None
+        ended_at = getattr(rq_job, "ended_at", None)
+        ended_at_ts = ended_at.timestamp() if ended_at else None
+        return Job(
+            job_id=rq_job.id,
+            job_type=str(job_type),
+            payload=payload if isinstance(payload, dict) else {"payload": payload},
+            status="queued",
+            queue=q.name,
+            created_at=created_at,
+            started_at=started_at,
+            ended_at=ended_at_ts,
+            result=None,
+            error=None,
+            meta=getattr(rq_job, "meta", None),
+        )
 
     def list(self, status: Optional[str] = None) -> List[Job]:
         jobs: List[Job] = []

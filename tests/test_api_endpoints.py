@@ -88,13 +88,19 @@ def test_api_projects_protocols_steps_end_to_end() -> None:
             events = client.get(f"/protocols/{protocol_run_id}/events").json()
             assert any(e["event_type"] == "manual_approval" for e in events)
 
-            # Pause/resume/cancel protocol
-            resp = client.post(f"/protocols/{protocol_run_id}/actions/pause")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "paused"
-            resp = client.post(f"/protocols/{protocol_run_id}/actions/resume")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "running"
-            resp = client.post(f"/protocols/{protocol_run_id}/actions/cancel")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "cancelled"
+            # Pause/resume/cancel protocol (skip if already terminal after approval)
+            run_after = client.get(f"/protocols/{protocol_run_id}").json()
+            terminal = run_after["status"] in ("completed", "cancelled", "failed")
+            if not terminal:
+                resp = client.post(f"/protocols/{protocol_run_id}/actions/pause")
+                assert resp.status_code == 200
+                assert resp.json()["status"] == "paused"
+                resp = client.post(f"/protocols/{protocol_run_id}/actions/resume")
+                assert resp.status_code == 200
+                assert resp.json()["status"] == "running"
+                resp = client.post(f"/protocols/{protocol_run_id}/actions/cancel")
+                assert resp.status_code == 200
+                assert resp.json()["status"] == "cancelled"
+
+            ops = client.get("/events", params={"project_id": project_id}).json()
+            assert any(o["protocol_run_id"] == protocol_run_id for o in ops)

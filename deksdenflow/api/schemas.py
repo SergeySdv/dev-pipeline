@@ -63,6 +63,9 @@ class EventOut(BaseModel):
     message: str
     created_at: str
     metadata: Optional[dict] = None
+    protocol_name: Optional[str] = None
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
 
 
 class ActionResponse(BaseModel):

@@ -75,3 +75,6 @@ class Event:
     message: str
     metadata: Optional[dict]
     created_at: str
+    protocol_name: Optional[str] = None
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None

@@ -150,3 +150,48 @@ def test_gitlab_merge_request_updates_protocol() -> None:
             assert run_after["status"] == "completed"
             events = client.get(f"/protocols/{run['id']}/events").json()
             assert any(e["event_type"] in ("merge_request", "mr_merged") for e in events)
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_github_webhook_triggers_auto_qa_when_enabled() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.environ["DEKSDENFLOW_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
+        os.environ.pop("DEKSDENFLOW_API_TOKEN", None)
+        os.environ["DEKSDENFLOW_REDIS_URL"] = "fakeredis://"
+        os.environ["DEKSDENFLOW_AUTO_QA_ON_CI"] = "true"
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            proj = client.post(
+                "/projects",
+                json={"name": "demo", "git_url": "git@example.com/demo.git", "base_branch": "main"},
+            ).json()
+            run = client.post(
+                f"/projects/{proj['id']}/protocols",
+                json={"protocol_name": "0005-demo", "status": "running", "base_branch": "main"},
+            ).json()
+            client.post(
+                f"/protocols/{run['id']}/steps",
+                json={"step_index": 0, "step_name": "00-setup", "step_type": "setup"},
+            )
+
+            payload = {"workflow_run": {"conclusion": "success", "head_branch": "0005-demo"}, "action": "completed"}
+            resp = client.post(
+                "/webhooks/github",
+                json=payload,
+                headers={"X-GitHub-Event": "workflow_run"},
+            )
+            assert resp.status_code == 200
+
+            # Allow background worker to process QA job.
+            import time
+
+            for _ in range(10):
+                step_after = client.get(f"/protocols/{run['id']}/steps").json()[0]
+                if step_after["status"] == "completed":
+                    break
+                time.sleep(0.2)
+            else:
+                assert False, "Expected QA job to complete step"
+
+            events = client.get(f"/protocols/{run['id']}/events").json()
+            assert any(e["event_type"] == "qa_enqueued" for e in events)

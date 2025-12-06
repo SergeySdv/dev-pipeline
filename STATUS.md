@@ -8,6 +8,11 @@
 - Makefile helpers: `orchestrator-setup`, `deps`, `migrate`.
 - Compose stack + Dockerfile for `deksdenflow-core`; optional codex-worker service; K8s manifests for API/worker with probes and resource limits.
 - Redis/RQ required for orchestration; fakeredis wired for tests/dev and API now fails fast when Redis is unreachable.
+- Queue/worker updates: RQ enqueue includes retries; `RedisQueue.claim` supports in-process background worker for fakeredis/dev. Execution now lands in `needs_qa` and can auto-enqueue QA via `DEKSDENFLOW_AUTO_QA_AFTER_EXEC`; CI success can auto-enqueue QA via `DEKSDENFLOW_AUTO_QA_ON_CI`.
+- CI callbacks: `scripts/ci/report.sh` posts GitHub/GitLab-style payloads back to `/webhooks/*` using `DEKSDENFLOW_API_BASE` (optional `DEKSDENFLOW_API_TOKEN`/`DEKSDENFLOW_WEBHOOK_TOKEN`).
+- Console now includes a recent activity feed backed by `/events` (project-filterable) so ops can monitor runs without drilling into each protocol.
+- CI reporter supports `DEKSDENFLOW_PROTOCOL_RUN_ID` to disambiguate branches when posting webhook-style status updates.
+- Observability: events capture request IDs, token budgets are enforced in Codex workers with estimated token counters, and job durations are exported as Prometheus histograms.
 
 ## How to run now
 ```bash

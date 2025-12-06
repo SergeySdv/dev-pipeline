@@ -5,6 +5,10 @@ const state = {
   protocols: [],
   steps: [],
   events: [],
+  operations: [],
+  projectTokens: JSON.parse(localStorage.getItem("df_project_tokens") || "{}"),
+  queueStats: null,
+  queueJobs: [],
   selectedProject: null,
   selectedProtocol: null,
   poll: null,
@@ -13,6 +17,8 @@ const state = {
 const statusEl = document.getElementById("authStatus");
 const apiBaseInput = document.getElementById("apiBase");
 const apiTokenInput = document.getElementById("apiToken");
+const projectTokenInput = document.getElementById("projectToken");
+const saveProjectTokenBtn = document.getElementById("saveProjectToken");
 
 function setStatus(message, level = "info") {
   if (!statusEl) return;
@@ -31,14 +37,22 @@ function statusClass(status) {
 }
 
 async function apiFetch(path, options = {}) {
-  const headers = options.headers || {};
+  const { projectId, ...restOptions } = options;
+  const headers = restOptions.headers || {};
   if (state.token) {
     headers["Authorization"] = `Bearer ${state.token}`;
   }
-  if (options.body && !headers["Content-Type"]) {
+  const targetProjectId = projectId || state.selectedProject;
+  if (targetProjectId) {
+    const projectToken = state.projectTokens[String(targetProjectId)];
+    if (projectToken) {
+      headers["X-Project-Token"] = projectToken;
+    }
+  }
+  if (restOptions.body && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
-  const resp = await fetch(apiPath(path), { ...options, headers });
+  const resp = await fetch(apiPath(path), { ...restOptions, headers });
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`${resp.status} ${resp.statusText}: ${text}`);
@@ -57,6 +71,15 @@ function persistAuth() {
   apiTokenInput.value = state.token;
   setStatus("Auth saved. Loading data...");
   loadProjects();
+  loadOperations();
+  loadQueue();
+}
+
+function persistProjectTokens() {
+  localStorage.setItem("df_project_tokens", JSON.stringify(state.projectTokens));
+  if (state.selectedProject && projectTokenInput) {
+    projectTokenInput.value = state.projectTokens[String(state.selectedProject)] || "";
+  }
 }
 
 async function loadProjects() {
@@ -94,8 +117,12 @@ function renderProjects() {
       state.selectedProtocol = null;
       state.steps = [];
       state.events = [];
+      if (projectTokenInput) {
+        projectTokenInput.value = state.projectTokens[String(proj.id)] || "";
+      }
       renderProjects();
       loadProtocols();
+      loadOperations();
     };
     container.appendChild(card);
   });
@@ -187,6 +214,7 @@ function renderProtocolDetail() {
         <button id="runNext">Run next step</button>
         <button id="retryStep">Retry failed step</button>
         <button id="runQa">Run QA on latest</button>
+        <button id="approveStep">Approve latest</button>
         <button id="openPr">Open PR/MR now</button>
         <button id="pauseRun">Pause</button>
         <button id="resumeRun">Resume</button>
@@ -194,6 +222,7 @@ function renderProtocolDetail() {
         <button id="refreshActive">Refresh</button>
       </div>
     </div>
+    ${renderCiHints(run)}
     <div class="split">
       <div class="pane">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -219,6 +248,7 @@ function renderProtocolDetail() {
   document.getElementById("runNext").onclick = () => runNextStep(run.id);
   document.getElementById("retryStep").onclick = () => retryLatest(run.id);
   document.getElementById("runQa").onclick = () => runQaLatest();
+  document.getElementById("approveStep").onclick = () => approveLatest();
   document.getElementById("openPr").onclick = () => openPr(run.id);
   document.getElementById("refreshActive").onclick = () => {
     loadSteps();
@@ -232,6 +262,7 @@ function renderProtocolDetail() {
   const runNextBtn = document.getElementById("runNext");
   const retryBtn = document.getElementById("retryStep");
   const qaBtn = document.getElementById("runQa");
+  const approveBtn = document.getElementById("approveStep");
 
   const terminal = ["completed", "cancelled", "failed"].includes(run.status);
   startBtn.disabled = !["pending", "planned"].includes(run.status);
@@ -242,6 +273,7 @@ function renderProtocolDetail() {
   runNextBtn.disabled = terminal || run.status === "paused";
   retryBtn.disabled = terminal || run.status === "paused";
   qaBtn.disabled = terminal || run.status === "paused" || !latestStep;
+  approveBtn.disabled = terminal || run.status === "paused" || !latestStep;
 }
 
 function renderStepsTable() {
@@ -291,6 +323,26 @@ function renderEventsList() {
     .join("");
 }
 
+function renderCiHints(run) {
+  const base = (state.apiBase || window.location.origin || "").replace(/\/$/, "");
+  const githubUrl = `${base}/webhooks/github`;
+  const gitlabUrl = `${base}/webhooks/gitlab`;
+  return `
+    <div class="pane">
+      <div class="pane-heading">
+        <h3>CI & Webhooks</h3>
+        <span class="pill">${run.protocol_name}</span>
+      </div>
+      <p class="muted small">Report CI status from your pipeline or post a webhook manually.</p>
+      <div class="code-block">DEKSDENFLOW_API_BASE=${base || "http://localhost:8000"}
+scripts/ci/report.sh success
+# on failure
+scripts/ci/report.sh failure</div>
+      <div class="muted small">GitHub: POST ${githubUrl} (X-GitHub-Event: status) · GitLab: POST ${gitlabUrl} (X-Gitlab-Event: Pipeline Hook)</div>
+    </div>
+  `;
+}
+
 async function loadSteps() {
   if (!state.selectedProtocol) return;
   try {
@@ -313,6 +365,116 @@ async function loadEvents() {
   }
 }
 
+async function loadQueue() {
+  try {
+    const stats = await apiFetch("/queues");
+    const jobs = await apiFetch("/queues/jobs");
+    state.queueStats = stats;
+    state.queueJobs = jobs;
+    renderQueue();
+  } catch (err) {
+    state.queueStats = null;
+    state.queueJobs = [];
+    renderQueue();
+    setStatus(err.message, "error");
+  }
+}
+
+function renderQueue() {
+  const statsEl = document.getElementById("queueStats");
+  const jobsEl = document.getElementById("queueJobs");
+  if (!statsEl || !jobsEl) return;
+  if (!state.queueStats) {
+    statsEl.innerHTML = `<p class="muted">Queue stats will appear after loading.</p>`;
+    jobsEl.innerHTML = `<p class="muted">No jobs loaded.</p>`;
+    return;
+  }
+  const { backend, ...queues } = state.queueStats;
+  const queueRows = Object.entries(queues)
+    .map(
+      ([name, data]) => `
+        <div class="event">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span class="pill">${name}</span>
+            <span class="muted" style="font-size:12px;">${backend || ""}</span>
+          </div>
+          <div class="muted" style="font-size:12px;">queued ${data.queued} · started ${data.started} · finished ${data.finished} · failed ${data.failed}</div>
+        </div>
+      `
+    )
+    .join("");
+  statsEl.innerHTML = queueRows || `<p class="muted">No queues reported.</p>`;
+
+  const jobs = (state.queueJobs || []).slice(0, 6);
+  jobsEl.innerHTML = jobs.length
+    ? jobs
+        .map(
+          (job) => `
+            <div class="event">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="pill">${job.job_type}</span>
+                <span class="pill ${statusClass(job.status)}">${job.status}</span>
+              </div>
+              <div class="muted" style="font-size:12px;">${job.job_id}</div>
+            </div>
+          `
+        )
+        .join("")
+    : `<p class="muted">No jobs yet.</p>`;
+}
+
+async function loadOperations() {
+  const target = document.getElementById("operationsList");
+  if (!target) return;
+  try {
+    const params = [];
+    if (state.selectedProject) {
+      params.push(`project_id=${state.selectedProject}`);
+    }
+    params.push("limit=50");
+    const qs = params.length ? `?${params.join("&")}` : "";
+    const events = await apiFetch(`/events${qs}`);
+    state.operations = events;
+    renderOperations();
+  } catch (err) {
+    state.operations = [];
+    renderOperations();
+    setStatus(err.message, "error");
+  }
+}
+
+function renderOperations() {
+  const target = document.getElementById("operationsList");
+  if (!target) return;
+  if (!state.operations.length) {
+    target.innerHTML = `<p class="muted">Recent events will appear here.</p>`;
+    return;
+  }
+  target.innerHTML = state.operations
+    .slice(0, 40)
+    .map((e) => {
+      const contextBits = [
+        e.project_name || e.project_id || "",
+        e.protocol_name || "",
+        e.step_run_id ? `step ${e.step_run_id}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `
+        <div class="event">
+          <div style="display:flex; justify-content:space-between;">
+            <span class="pill">${e.event_type}</span>
+            <span class="muted">${formatDate(e.created_at)}</span>
+          </div>
+          <div>${e.message}</div>
+          ${contextBits ? `<div class="muted small">${contextBits}</div>` : ""}
+          ${e.metadata ? `<div class="muted" style="font-size:12px;">${JSON.stringify(e.metadata)}</div>` : ""}
+        </div>
+      `;
+    })
+    .join("");
+}
+
 function startPolling() {
   if (state.poll) {
     clearInterval(state.poll);
@@ -320,6 +482,7 @@ function startPolling() {
   state.poll = setInterval(() => {
     loadSteps();
     loadEvents();
+    loadOperations();
   }, 4000);
 }
 
@@ -398,6 +561,22 @@ async function runQaLatest() {
   }
 }
 
+async function approveLatest() {
+  if (!state.steps.length) {
+    setStatus("No steps to approve.", "error");
+    return;
+  }
+  const latest = state.steps[state.steps.length - 1];
+  try {
+    await apiFetch(`/steps/${latest.id}/actions/approve`, { method: "POST" });
+    setStatus(`Step ${latest.step_name} approved.`);
+    loadSteps();
+    loadEvents();
+  } catch (err) {
+    setStatus(err.message, "error");
+  }
+}
+
 async function openPr(runId) {
   try {
     await apiFetch(`/protocols/${runId}/actions/open_pr`, { method: "POST" });
@@ -417,6 +596,31 @@ function wireForms() {
 
   document.getElementById("refreshProjects").onclick = loadProjects;
   document.getElementById("refreshProtocols").onclick = loadProtocols;
+  const refreshQueueBtn = document.getElementById("refreshQueue");
+  if (refreshQueueBtn) {
+    refreshQueueBtn.onclick = loadQueue;
+  }
+  const refreshOpsBtn = document.getElementById("refreshOperations");
+  if (refreshOpsBtn) {
+    refreshOpsBtn.onclick = loadOperations;
+  }
+  if (saveProjectTokenBtn) {
+    saveProjectTokenBtn.onclick = () => {
+      if (!state.selectedProject) {
+        setStatus("Select a project first.", "error");
+        return;
+      }
+      const token = projectTokenInput.value.trim();
+      const key = String(state.selectedProject);
+      if (token) {
+        state.projectTokens[key] = token;
+      } else {
+        delete state.projectTokens[key];
+      }
+      persistProjectTokens();
+      setStatus(token ? "Project token saved." : "Project token cleared.");
+    };
+  }
 
   document.getElementById("projectForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -487,10 +691,13 @@ function formatDate(dateString) {
 function init() {
   apiBaseInput.value = state.apiBase;
   apiTokenInput.value = state.token;
+  renderQueue();
+  renderOperations();
   wireForms();
   if (state.token) {
     setStatus("Using saved token.");
     loadProjects();
+    loadQueue();
   } else {
     setStatus("Add a bearer token to start.");
   }

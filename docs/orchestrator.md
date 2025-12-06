@@ -31,8 +31,19 @@ Environment toggles:
 - `DEKSDENFLOW_REDIS_URL` to enable Redis-backed queue (required; `fakeredis://` works for tests)
 - `DEKSDENFLOW_LOG_LEVEL` (default `INFO`)
 - `DEKSDENFLOW_WEBHOOK_TOKEN` (optional shared secret for webhook calls)
+- `DEKSDENFLOW_AUTO_QA_ON_CI` (default `false`): when true, GitHub/GitLab webhooks that report CI success will enqueue a QA job for the latest step of the matching protocol run.
+- `DEKSDENFLOW_AUTO_QA_AFTER_EXEC` (default `false`): when true, execution jobs immediately trigger QA for the same step (even without CI).
 Retry/backoff:
 - Jobs default to `max_attempts=3` with exponential backoff up to 60s; failures append events and block the protocol.
+CI callbacks:
+- `scripts/ci/report.sh` posts GitHub/GitLab-style webhook payloads back to the orchestrator. Set `DEKSDENFLOW_API_BASE`, optionally `DEKSDENFLOW_API_TOKEN`/`DEKSDENFLOW_WEBHOOK_TOKEN`, and call `scripts/ci/report.sh success|failure` from your CI job to mirror status into the orchestrator.
+
+Status model (API/console)
+- ProtocolRun statuses: `pending` → `planning` → `planned` → `running` → (`paused`|`blocked`|`failed`|`cancelled`|`completed`). CI failures or job failures move to `blocked`; PR/MR merge moves to `completed`.
+- StepRun statuses: `pending` → `running` → `needs_qa` → (`completed`|`failed`|`cancelled`). Execution now ends in `needs_qa`; QA or manual approval sets `completed`; CI failures map to `failed`.
+- Auto QA options: set `DEKSDENFLOW_AUTO_QA_AFTER_EXEC=true` to enqueue QA right after execution (even without CI). Set `DEKSDENFLOW_AUTO_QA_ON_CI=true` to enqueue QA when a passing CI webhook arrives.
+- Queue/worker: Redis/RQ is required; fakeredis works for tests/dev. RQ workers process jobs; a lightweight `claim()` path exists for the in-process `BackgroundWorker` when using fakeredis.
+- Auth tokens: `DEKSDENFLOW_API_TOKEN` protects API routes; `X-Project-Token` can scope per project; `DEKSDENFLOW_WEBHOOK_TOKEN` signs/validates inbound webhooks; console can pass both via UI fields.
 
 ## API sketch
 - `GET /health` → `{ "status": "ok" }`
