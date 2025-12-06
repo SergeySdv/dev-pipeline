@@ -153,11 +153,11 @@ class TuiDashboard(App):
         border: solid $surface-darken-2;
         padding: 1;
     }
-    #projects-panel { grid-column: 1; grid-row: 2 / span 2; }
+    #projects-panel { grid-column: 1; grid-row: 2 / 4; }
     #protocols-panel { grid-column: 2; grid-row: 2; }
     #steps-panel { grid-column: 2; grid-row: 3; }
-    #events-panel { grid-column: 3; grid-row: 2 / span 2; }
-    #step-details { grid-column: 1 / span 3; grid-row: 4; }
+    #events-panel { grid-column: 3; grid-row: 2 / 4; }
+    #step-details { grid-column: 1 / 4; grid-row: 4; }
     #status_bar {
         grid-column: 1 / span 3;
         grid-row: 5;
