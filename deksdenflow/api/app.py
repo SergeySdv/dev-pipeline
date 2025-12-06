@@ -1,16 +1,19 @@
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 import json
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from deksdenflow import jobs
 from deksdenflow.config import load_config
 from deksdenflow.domain import ProtocolStatus, StepStatus
-from deksdenflow.logging import RequestIdFilter, get_logger, setup_logging
+from deksdenflow.logging import log_extra, setup_logging, json_logging_from_env
 from deksdenflow.metrics import metrics
 from deksdenflow.storage import BaseDatabase, create_database
 from deksdenflow.worker_runtime import BackgroundWorker
@@ -21,7 +24,7 @@ import hashlib
 
 from . import schemas
 
-logger = setup_logging()
+logger = setup_logging(json_output=json_logging_from_env())
 auth_scheme = HTTPBearer(auto_error=False)
 
 
@@ -51,6 +54,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DeksdenFlow Orchestrator API", version="0.1.0", lifespan=lifespan)
+frontend_dir = Path(__file__).resolve().parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/console/static", StaticFiles(directory=frontend_dir), name="console-static")
 
 
 def get_db(request: Request) -> BaseDatabase:
@@ -121,14 +127,28 @@ async def add_request_id(request: Request, call_next):
     logger.info(
         "request",
         extra={
-            "request_id": request_id,
+            **log_extra(
+                request_id=request_id,
+                protocol_run_id=request.headers.get("X-Protocol-Run-ID"),
+                step_run_id=request.headers.get("X-Step-Run-ID"),
+            ),
             "path": request.url.path,
             "method": request.method,
             "status_code": response.status_code,
             "duration_ms": f"{duration_s * 1000:.2f}",
+            "client": request.client.host if request.client else None,
         },
     )
     return response
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/console", response_class=HTMLResponse)
+def console() -> HTMLResponse:
+    if not frontend_dir.exists():
+        raise HTTPException(status_code=404, detail="Console assets not available")
+    html = (frontend_dir / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(content=html)
 
 
 @app.get("/health", response_model=schemas.Health)
@@ -147,7 +167,11 @@ def metrics_endpoint():
 
 
 @app.post("/projects", response_model=schemas.ProjectOut, dependencies=[Depends(require_auth)])
-def create_project(payload: schemas.ProjectCreate, db: BaseDatabase = Depends(get_db)) -> schemas.ProjectOut:
+def create_project(
+    payload: schemas.ProjectCreate,
+    db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
+) -> schemas.ProjectOut:
     project = db.create_project(
         name=payload.name,
         git_url=payload.git_url,
@@ -156,6 +180,18 @@ def create_project(payload: schemas.ProjectCreate, db: BaseDatabase = Depends(ge
         default_models=payload.default_models,
         secrets=payload.secrets,
     )
+    # Kick off onboarding so the console can show progress immediately.
+    setup_run = db.create_protocol_run(
+        project_id=project.id,
+        protocol_name=f"setup-{project.id}",
+        status=ProtocolStatus.PENDING,
+        base_branch=project.base_branch,
+        worktree_path=None,
+        protocol_root=None,
+        description="Project setup and bootstrap",
+    )
+    db.append_event(protocol_run_id=setup_run.id, event_type="setup_enqueued", message="Project setup enqueued.")
+    queue.enqueue("project_setup_job", {"project_id": project.id, "protocol_run_id": setup_run.id})
     return schemas.ProjectOut(**project.__dict__)
 
 
@@ -232,11 +268,139 @@ def start_protocol(
         project_id = get_protocol_project(protocol_run_id, db)
         require_project_access(project_id, request, db)
     try:
-        db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
+        run = db.get_protocol_run(protocol_run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status not in (ProtocolStatus.PENDING, ProtocolStatus.PLANNED, ProtocolStatus.PAUSED):
+        raise HTTPException(status_code=409, detail="Protocol already running or terminal")
+    try:
+        db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING, expected_status=run.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
     job = queue.enqueue("plan_protocol_job", {"protocol_run_id": protocol_run_id}).asdict()
     return schemas.ActionResponse(message="Protocol planning enqueued", job=job)
+
+
+@app.post("/protocols/{protocol_run_id}/actions/pause", response_model=schemas.ProtocolRunOut, dependencies=[Depends(require_auth)])
+def pause_protocol(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ProtocolRunOut:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    try:
+        run = db.get_protocol_run(protocol_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status in (ProtocolStatus.CANCELLED, ProtocolStatus.COMPLETED, ProtocolStatus.FAILED):
+        raise HTTPException(status_code=409, detail="Protocol already terminal")
+    try:
+        run = db.update_protocol_status(protocol_run_id, ProtocolStatus.PAUSED, expected_status=run.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
+    db.append_event(protocol_run_id, "paused", "Protocol paused by user.")
+    return schemas.ProtocolRunOut(**run.__dict__)
+
+
+@app.post("/protocols/{protocol_run_id}/actions/resume", response_model=schemas.ProtocolRunOut, dependencies=[Depends(require_auth)])
+def resume_protocol(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ProtocolRunOut:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    try:
+        run = db.get_protocol_run(protocol_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status != ProtocolStatus.PAUSED:
+        raise HTTPException(status_code=409, detail="Protocol is not paused")
+    try:
+        run = db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING, expected_status=run.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
+    db.append_event(protocol_run_id, "resumed", "Protocol resumed by user.")
+    return schemas.ProtocolRunOut(**run.__dict__)
+
+
+@app.post("/protocols/{protocol_run_id}/actions/cancel", response_model=schemas.ProtocolRunOut, dependencies=[Depends(require_auth)])
+def cancel_protocol(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ProtocolRunOut:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    try:
+        run = db.get_protocol_run(protocol_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status == ProtocolStatus.CANCELLED:
+        return schemas.ProtocolRunOut(**run.__dict__)
+    try:
+        run = db.update_protocol_status(protocol_run_id, ProtocolStatus.CANCELLED, expected_status=run.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
+    steps = db.list_step_runs(protocol_run_id)
+    for step in steps:
+        if step.status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.NEEDS_QA):
+            db.update_step_status(step.id, StepStatus.CANCELLED, summary="Cancelled with protocol", expected_status=step.status)
+    db.append_event(protocol_run_id, "cancelled", "Protocol cancelled by user.")
+    return schemas.ProtocolRunOut(**run.__dict__)
+
+
+@app.post("/protocols/{protocol_run_id}/actions/run_next_step", response_model=schemas.ActionResponse, dependencies=[Depends(require_auth)])
+def run_next_step(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
+) -> schemas.ActionResponse:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    steps = db.list_step_runs(protocol_run_id)
+    target = next((s for s in steps if s.status in (StepStatus.PENDING, StepStatus.BLOCKED, StepStatus.FAILED)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="No pending or failed steps to run")
+    try:
+        step = db.update_step_status(target.id, StepStatus.RUNNING, expected_status=target.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Step state changed; retry")
+    job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+    return schemas.ActionResponse(message=f"Step {step.step_name} enqueued", job=job)
+
+
+@app.post("/protocols/{protocol_run_id}/actions/retry_latest", response_model=schemas.ActionResponse, dependencies=[Depends(require_auth)])
+def retry_latest_step(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
+) -> schemas.ActionResponse:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    steps = db.list_step_runs(protocol_run_id)
+    target = next((s for s in reversed(steps) if s.status in (StepStatus.FAILED, StepStatus.BLOCKED)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="No failed or blocked steps to retry")
+    try:
+        step = db.update_step_status(
+            target.id,
+            StepStatus.RUNNING,
+            retries=target.retries + 1,
+            expected_status=target.status,
+        )
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Step state changed; retry")
+    job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+    return schemas.ActionResponse(message=f"Retrying {step.step_name}", job=job)
 
 
 @app.post("/protocols/{protocol_run_id}/steps", response_model=schemas.StepRunOut, dependencies=[Depends(require_auth)])
@@ -275,12 +439,18 @@ def run_step(
     request: Request = None,
 ) -> schemas.ActionResponse:
     try:
-        step = db.update_step_status(step_id, StepStatus.RUNNING)
+        step = db.get_step_run(step_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if step.status not in (StepStatus.PENDING, StepStatus.BLOCKED, StepStatus.FAILED):
+        raise HTTPException(status_code=409, detail="Step already running or completed")
     if request:
         project_id = get_protocol_project(step.protocol_run_id, db)
         require_project_access(project_id, request, db)
+    try:
+        step = db.update_step_status(step.id, StepStatus.RUNNING, expected_status=step.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Step state changed; retry")
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message="Step execution enqueued", job=job)
 
@@ -293,14 +463,34 @@ def run_step_qa(
     request: Request = None,
 ) -> schemas.ActionResponse:
     try:
-        step = db.update_step_status(step_id, StepStatus.NEEDS_QA)
+        step = db.get_step_run(step_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if step.status in (StepStatus.COMPLETED, StepStatus.CANCELLED):
+        raise HTTPException(status_code=409, detail="Step already completed or cancelled")
     if request:
         project_id = get_protocol_project(step.protocol_run_id, db)
         require_project_access(project_id, request, db)
+    try:
+        step = db.update_step_status(step.id, StepStatus.NEEDS_QA, expected_status=step.status)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Step state changed; retry")
     job = queue.enqueue("run_quality_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message="QA enqueued", job=job)
+
+
+@app.post("/protocols/{protocol_run_id}/actions/open_pr", response_model=schemas.ActionResponse, dependencies=[Depends(require_auth)])
+def open_pr_now(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
+) -> schemas.ActionResponse:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    job = queue.enqueue("open_pr_job", {"protocol_run_id": protocol_run_id}).asdict()
+    return schemas.ActionResponse(message="Open PR/MR enqueued", job=job)
 
 
 @app.post("/steps/{step_id}/actions/approve", response_model=schemas.StepRunOut, dependencies=[Depends(require_auth)])
@@ -407,6 +597,8 @@ async def github_webhook(
         "check_name": check_name,
         "branch": branch,
         "sha": sha,
+        "protocol_run_id": run.id,
+        "step_run_id": step.id if step else None,
     }
     db.append_event(
         protocol_run_id=run.id,
@@ -482,6 +674,8 @@ async def gitlab_webhook(
         "ref": branch,
         "event": object_kind,
         "pr_number": pr_number,
+        "protocol_run_id": run.id,
+        "step_run_id": step.id if step else None,
     }
     db.append_event(
         protocol_run_id=run.id,

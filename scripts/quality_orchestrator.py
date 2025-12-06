@@ -14,7 +14,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import init_cli_logging  # noqa: E402
+from deksdenflow.logging import (
+    init_cli_logging,
+    json_logging_from_env,
+    EXIT_DEP_MISSING,
+    EXIT_RUNTIME_ERROR,
+)  # noqa: E402
 from deksdenflow.qa import QualityResult, run_quality_check  # noqa: E402
 
 
@@ -57,7 +62,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config()
-    init_cli_logging(config.log_level)
+    init_cli_logging(config.log_level, json_output=json_logging_from_env())
 
     protocol_root = Path(args.protocol_root).resolve()
     step_path = protocol_root / args.step_file
@@ -77,15 +82,15 @@ def main() -> None:
         )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
-        sys.exit(1)
+        sys.exit(EXIT_DEP_MISSING)
     except Exception as exc:
         print(f"Codex QA run failed: {exc}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
     print(f"QA report written to {qa_result.report_path}")
     if qa_result.verdict.upper() == "FAIL":
         print("QA verdict: FAIL")
-        sys.exit(1)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
 
 if __name__ == "__main__":

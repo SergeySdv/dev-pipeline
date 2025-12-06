@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .codex import run_process, enforce_token_budget
+from . import codex
 from .errors import CodexCommandError
 
 
@@ -24,12 +24,12 @@ def build_prompt(protocol_root: Path, step_file: Path) -> str:
     log = read_file(protocol_root / "log.md")
     step = read_file(step_file)
 
-    git_status = run_process(
+    git_status = codex.run_process(
         ["git", "status", "--porcelain"], cwd=protocol_root.parent.parent, capture_output=True, text=True
     ).stdout.strip()
     last_commit = ""
     try:
-        last_commit = run_process(
+        last_commit = codex.run_process(
             ["git", "log", "-1", "--pretty=format:%s"],
             cwd=protocol_root.parent.parent,
             capture_output=True,
@@ -106,11 +106,14 @@ def run_quality_check(
         "-",
     ]
 
-    enforce_token_budget(full_prompt, max_tokens, f"qa:{step_file.name}", mode=token_budget_mode)
+    codex.enforce_token_budget(full_prompt, max_tokens, f"qa:{step_file.name}", mode=token_budget_mode)
 
-    result = run_process(cmd, input_text=full_prompt, capture_output=True, text=True, check=False)
+    result = codex.run_process(cmd, input_text=full_prompt, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        raise CodexCommandError(f"codex exec failed with code {result.returncode}: {result.stderr}")
+        raise CodexCommandError(
+            f"codex exec failed with code {result.returncode}: {result.stderr}",
+            metadata={"cmd": cmd, "returncode": result.returncode},
+        )
 
     report_text = result.stdout.strip()
     report_path.write_text(report_text, encoding="utf-8")

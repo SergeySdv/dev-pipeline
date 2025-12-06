@@ -2,18 +2,17 @@ import threading
 import time
 from typing import Optional
 
-import logging
-
 from deksdenflow.config import load_config
 from deksdenflow.domain import ProtocolStatus, StepStatus
+from deksdenflow.errors import DeksdenflowError
 from deksdenflow.jobs import BaseQueue, Job
 from deksdenflow.storage import BaseDatabase, Database, create_database
-from deksdenflow.workers import codex_worker
+from deksdenflow.workers import codex_worker, onboarding_worker
 from deksdenflow.metrics import metrics
-from deksdenflow.logging import setup_logging
+from deksdenflow.logging import get_logger, log_extra, setup_logging, json_logging_from_env
 
 
-log = logging.getLogger("deksdenflow.worker")
+log = get_logger("deksdenflow.worker")
 
 
 def process_job(job: Job, db: BaseDatabase) -> None:
@@ -21,12 +20,31 @@ def process_job(job: Job, db: BaseDatabase) -> None:
     Handle a single job. This is a placeholder that updates DB state and logs events.
     Replace with real integrations (Codex/Git/CI) as the orchestrator matures.
     """
+    log.info(
+        "job_start",
+        extra={
+            **log_extra(
+                job_id=job.job_id,
+                protocol_run_id=job.payload.get("protocol_run_id"),
+                step_run_id=job.payload.get("step_run_id"),
+            ),
+            "job_type": job.job_type,
+        },
+    )
     if job.job_type == "plan_protocol_job":
         codex_worker.handle_plan_protocol(job.payload["protocol_run_id"], db)
     elif job.job_type == "execute_step_job":
         codex_worker.handle_execute_step(job.payload["step_run_id"], db)
     elif job.job_type == "run_quality_job":
         codex_worker.handle_quality(job.payload["step_run_id"], db)
+    elif job.job_type == "project_setup_job":
+        onboarding_worker.handle_project_setup(
+            job.payload["project_id"],
+            db,
+            protocol_run_id=job.payload.get("protocol_run_id"),
+        )
+    elif job.job_type == "open_pr_job":
+        codex_worker.handle_open_pr(job.payload["protocol_run_id"], db)
     else:
         protocol_run_id = job.payload.get("protocol_run_id") or -1
         db.append_event(
@@ -34,7 +52,19 @@ def process_job(job: Job, db: BaseDatabase) -> None:
             step_run_id=None,
             event_type="unknown_job",
             message=f"Unhandled job type {job.job_type}",
+            metadata={"job_id": job.job_id, "protocol_run_id": protocol_run_id},
         )
+    log.info(
+        "job_end",
+        extra={
+            **log_extra(
+                job_id=job.job_id,
+                protocol_run_id=job.payload.get("protocol_run_id"),
+                step_run_id=job.payload.get("step_run_id"),
+            ),
+            "job_type": job.job_type,
+        },
+    )
 
 
 def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
@@ -48,16 +78,44 @@ def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
     except Exception as exc:  # pragma: no cover - best effort
         job.attempts += 1
         backoff = min(60, 2 ** job.attempts)
-        if job.attempts < job.max_attempts:
-            log.warning("Job failed; requeuing with backoff", extra={"job_id": job.job_id, "error": str(exc)})
+        retryable = True
+        error_category = None
+        if isinstance(exc, DeksdenflowError):
+            retryable = exc.retryable
+            error_category = exc.category
+        context = log_extra(
+            job_id=job.job_id,
+            protocol_run_id=job.payload.get("protocol_run_id"),
+            step_run_id=job.payload.get("step_run_id"),
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+            error_category=error_category,
+        )
+        if retryable and job.attempts < job.max_attempts:
+            log.warning("Job failed; requeuing with backoff", extra={**context, "backoff": backoff})
             queue.requeue(job, delay_seconds=backoff)
         else:
-            log.error("Job failed permanently", extra={"job_id": job.job_id, "error": str(exc)})
+            log.error("Job failed permanently", extra=context)
             proto_id = job.payload.get("protocol_run_id")
             step_id = job.payload.get("step_run_id")
             if proto_id:
-                db.append_event(proto_id, "job_failed", f"{job.job_type} failed: {exc}", step_run_id=step_id)
+                db.append_event(
+                    proto_id,
+                    "job_failed",
+                    f"{job.job_type} failed: {exc}",
+                    step_run_id=step_id,
+                    metadata={
+                        "error_type": exc.__class__.__name__,
+                        "error_category": error_category,
+                        "attempts": job.attempts,
+                    },
+                )
                 db.update_protocol_status(proto_id, ProtocolStatus.BLOCKED)
+            if step_id:
+                try:
+                    db.update_step_status(step_id, StepStatus.FAILED, summary=f"{job.job_type} failed: {exc}")
+                except Exception:  # pragma: no cover - best effort
+                    pass
             metrics.inc_job(job.job_type, "failed")
     return job
 
@@ -67,7 +125,7 @@ def rq_job_handler(job_type: str, payload: dict) -> None:
     Entry point for RQ workers. Uses env-configured DB and processes a single job.
     """
     config = load_config()
-    setup_logging(config.log_level)
+    setup_logging(config.log_level, json_output=json_logging_from_env())
     db = create_database(db_path=config.db_path, db_url=config.db_url)
     db.init_schema()
     job = Job(job_id=str(payload.get("job_id", "")), job_type=job_type, payload=payload)

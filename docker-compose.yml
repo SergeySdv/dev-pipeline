@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    environment:
+      DEKSDENFLOW_DB_URL: postgresql://deksdenflow:deksdenflow@db:5432/deksdenflow
+      DEKSDENFLOW_REDIS_URL: redis://redis:6379/0
+      DEKSDENFLOW_API_TOKEN: ${DEKSDENFLOW_API_TOKEN:-changeme}
+      DEKSDENFLOW_LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    command: ["python", "scripts/api_server.py"]
+
+  worker:
+    build: .
+    environment:
+      DEKSDENFLOW_DB_URL: postgresql://deksdenflow:deksdenflow@db:5432/deksdenflow
+      DEKSDENFLOW_REDIS_URL: redis://redis:6379/0
+      DEKSDENFLOW_LOG_LEVEL: INFO
+    depends_on:
+      - db
+      - redis
+    command: ["python", "scripts/worker.py"]
+
+  codex-worker:
+    build: .
+    environment:
+      DEKSDENFLOW_DB_URL: postgresql://deksdenflow:deksdenflow@db:5432/deksdenflow
+      DEKSDENFLOW_REDIS_URL: redis://redis:6379/0
+      DEKSDENFLOW_LOG_LEVEL: INFO
+    depends_on:
+      - db
+      - redis
+    command: ["python", "scripts/worker.py"]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: deksdenflow
+      POSTGRES_PASSWORD: deksdenflow
+      POSTGRES_DB: deksdenflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:

@@ -3,6 +3,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,8 +19,17 @@ from deksdenflow.project_setup import (  # noqa: E402
     ensure_remote_origin,
     run_codex_discovery,
 )
-from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import init_cli_logging  # noqa: E402
+try:
+    from deksdenflow.config import load_config  # type: ignore  # noqa: E402
+except Exception:  # pragma: no cover - fallback when deps missing
+    load_config = None
+try:
+    from deksdenflow.logging import init_cli_logging, json_logging_from_env, EXIT_DEP_MISSING, EXIT_RUNTIME_ERROR  # type: ignore  # noqa: E402
+except Exception:  # pragma: no cover - fallback when deps missing
+    init_cli_logging = None
+    json_logging_from_env = lambda: False  # type: ignore
+    EXIT_DEP_MISSING = 3  # type: ignore
+    EXIT_RUNTIME_ERROR = 1  # type: ignore
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,8 +67,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    config = load_config()
-    init_cli_logging(config.log_level)
+    config = load_config() if load_config else SimpleNamespace(log_level="INFO")
+    if init_cli_logging:
+        init_cli_logging(getattr(config, "log_level", "INFO"), json_output=json_logging_from_env())
     args = parse_args()
 
     repo_root: Path
@@ -76,13 +87,20 @@ def main() -> None:
     os.chdir(repo_root)
     repo_root = Path(os.getcwd())
 
-    ensure_remote_origin(repo_root)
-    ensure_base_branch(repo_root, args.base_branch)
-    ensure_assets(repo_root)
+    try:
+        ensure_remote_origin(repo_root)
+        ensure_base_branch(repo_root, args.base_branch)
+        ensure_assets(repo_root)
 
-    if args.run_discovery:
-        discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
-        run_codex_discovery(repo_root, discovery_model)
+        if args.run_discovery:
+            discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
+            run_codex_discovery(repo_root, discovery_model)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(EXIT_DEP_MISSING)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Project setup failed: {exc}", file=sys.stderr)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
     print("Project setup completed. Review any placeholders and customize CI scripts for your stack.")
 

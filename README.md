@@ -30,11 +30,22 @@ This repo is a lightweight starter kit for agent-driven development using the De
    ```
 5. Validate a step (optional QA gate):
    ```bash
-   python3 scripts/quality_orchestrator.py \
-     --protocol-root ../worktrees/NNNN-<task>/.protocols/NNNN-<task> \
-     --step-file 01-some-step.md \
-     --model codex-5.1-max
-   ```
+  python3 scripts/quality_orchestrator.py \
+    --protocol-root ../worktrees/NNNN-<task>/.protocols/NNNN-<task> \
+    --step-file 01-some-step.md \
+    --model codex-5.1-max
+  ```
+
+Logging tip: set `DEKSDENFLOW_LOG_JSON=true` to emit structured JSON logs from CLIs/workers/API.
+
+## Containerized orchestrator (API + worker + Redis/Postgres)
+
+For a quick local stack with API, background worker, Redis, and Postgres:
+```bash
+docker-compose up --build
+# API at http://localhost:8000 (token from DEKSDENFLOW_API_TOKEN env or compose default)
+```
+Environment defaults live in `docker-compose.yml`; override with env vars as needed.
 
 ## Folder map
 

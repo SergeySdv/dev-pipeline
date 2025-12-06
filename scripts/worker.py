@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import setup_logging, get_logger  # noqa: E402
+from deksdenflow.logging import setup_logging, get_logger, json_logging_from_env, log_extra  # noqa: E402
 from deksdenflow.storage import create_database  # noqa: E402
 from deksdenflow.jobs import create_queue  # noqa: E402
 from deksdenflow.worker_runtime import drain_once  # noqa: E402
@@ -24,7 +24,7 @@ from deksdenflow.worker_runtime import drain_once  # noqa: E402
 
 def main(poll_interval: float = 1.0) -> None:
     config = load_config()
-    logger = setup_logging(config.log_level)
+    logger = setup_logging(config.log_level, json_output=json_logging_from_env())
     db = create_database(db_path=config.db_path, db_url=config.db_url)
     db.init_schema()
     queue = create_queue(config.redis_url)
@@ -39,6 +39,9 @@ def main(poll_interval: float = 1.0) -> None:
                 time.sleep(poll_interval)
     except KeyboardInterrupt:
         logger.info("[worker] stopping")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("[worker] fatal error", extra=log_extra(error=str(exc), error_type=exc.__class__.__name__))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

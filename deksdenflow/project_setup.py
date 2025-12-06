@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .codex import run_process
+from . import codex
 
 # Map of target paths -> template paths (relative to repo root of this starter)
 BASE_FILES = {
@@ -42,28 +42,28 @@ PLACEHOLDER = (
 
 def ensure_git_repo(base_branch: str, init_if_needed: bool) -> Path:
     try:
-        out = run_process(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        out = codex.run_process(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
         return Path(out.stdout.strip())
     except Exception:
         if not init_if_needed:
             print("Not a git repository. Re-run with --init-if-needed to git init.")
             sys.exit(1)
         print(f"Initializing git repository with base branch {base_branch}...")
-        run_process(["git", "init", "-b", base_branch], capture_output=False, text=True)
-        out = run_process(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        codex.run_process(["git", "init", "-b", base_branch], capture_output=False, text=True)
+        out = codex.run_process(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
         return Path(out.stdout.strip())
 
 
 def ensure_remote_origin(repo_root: Path) -> None:
     try:
-        run_process(["git", "remote", "get-url", "origin"], cwd=repo_root, capture_output=True, text=True)
+        codex.run_process(["git", "remote", "get-url", "origin"], cwd=repo_root, capture_output=True, text=True)
     except Exception:
         print("Warning: no remote 'origin' configured. Add one with `git remote add origin <url>`.")
 
 
 def ensure_base_branch(repo_root: Path, base_branch: str) -> None:
     try:
-        run_process(
+        codex.run_process(
             ["git", "show-ref", "--verify", f"refs/heads/{base_branch}"],
             cwd=repo_root,
             capture_output=True,
@@ -112,7 +112,7 @@ def clone_repo(url: str, target_dir: Path) -> Path:
         return target_dir
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     print(f"Cloning {url} into {target_dir} ...")
-    run_process(["git", "clone", url, str(target_dir)], capture_output=False, text=True)
+    codex.run_process(["git", "clone", url, str(target_dir)], capture_output=False, text=True)
     return target_dir
 
 
@@ -163,7 +163,7 @@ def run_codex_discovery(
         cmd.append("--skip-git-repo-check")
     cmd.append("-")
 
-    run_process(
+    codex.run_process(
         cmd,
         cwd=repo_root,
         capture_output=False,

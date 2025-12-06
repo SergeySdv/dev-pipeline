@@ -4,7 +4,7 @@ from typing import List, Optional
 import math
 
 from .logging import get_logger
-from .errors import BudgetExceededError
+from .errors import BudgetExceededError, CodexCommandError, GitCommandError
 
 log = get_logger(__name__)
 
@@ -23,14 +23,28 @@ def run_process(
     capture_output=True enables stdout/stderr capture; text=True returns strings.
     input_text (string) is encoded when text=True.
     """
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        check=check,
-        capture_output=capture_output,
-        text=text,
-        input=input_text if input_text is not None else None,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            check=check,
+            capture_output=capture_output,
+            text=text,
+            input=input_text if input_text is not None else None,
+        )
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - passthrough to more specific errors
+        # Re-wrap common failure types for clearer error handling upstream.
+        if cmd and cmd[0] == "git":
+            raise GitCommandError(
+                str(exc),
+                metadata={"cmd": cmd, "cwd": str(cwd) if cwd else None, "returncode": exc.returncode},
+            ) from exc
+        if cmd and cmd[0] == "codex":
+            raise CodexCommandError(
+                str(exc),
+                metadata={"cmd": cmd, "cwd": str(cwd) if cwd else None, "returncode": exc.returncode},
+            ) from exc
+        raise
 
 
 def run_command(cmd: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
@@ -64,7 +78,7 @@ def enforce_token_budget(prompt_text: str, max_tokens: Optional[int], context: s
         if mode == "warn":
             log.warning("Token budget exceeded", extra={"context": context, "estimated_tokens": estimated, "max_tokens": max_tokens})
             return
-        raise BudgetExceededError(message)
+        raise BudgetExceededError(message, metadata={"context": context, "estimated_tokens": estimated, "max_tokens": max_tokens})
     log.debug("Token budget ok", extra={"context": context, "estimated_tokens": estimated, "max_tokens": max_tokens})
 
 

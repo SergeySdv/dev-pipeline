@@ -3,6 +3,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
+from deksdenflow.logging import get_logger
+
 try:  # Optional Postgres support
     import psycopg
     from psycopg.rows import dict_row
@@ -126,10 +128,10 @@ class BaseDatabase(Protocol):
     def get_protocol_run(self, run_id: int) -> ProtocolRun: ...
     def find_protocol_run_by_name(self, protocol_name: str) -> Optional[ProtocolRun]: ...
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]: ...
-    def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun: ...
+    def update_protocol_status(self, run_id: int, status: str, expected_status: Optional[str] = None) -> ProtocolRun: ...
     def create_step_run(self, protocol_run_id: int, step_index: int, step_name: str, step_type: str, status: str, model: Optional[str] = None, retries: int = 0, summary: Optional[str] = None) -> StepRun: ...
     def get_step_run(self, step_run_id: int) -> StepRun: ...
-    def update_step_status(self, step_run_id: int, status: str, retries: Optional[int] = None, summary: Optional[str] = None, model: Optional[str] = None) -> StepRun: ...
+    def update_step_status(self, step_run_id: int, status: str, retries: Optional[int] = None, summary: Optional[str] = None, model: Optional[str] = None, expected_status: Optional[str] = None) -> StepRun: ...
     def append_event(self, protocol_run_id: int, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None, step_run_id: Optional[int] = None) -> Event: ...
 
 
@@ -261,14 +263,25 @@ class Database:
         )
         return [self._row_to_protocol(row) for row in rows]
 
-    def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun:
+    def update_protocol_status(self, run_id: int, status: str, expected_status: Optional[str] = None) -> ProtocolRun:
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE protocol_runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (status, run_id),
-            )
+            if expected_status:
+                cur = conn.execute(
+                    "UPDATE protocol_runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?",
+                    (status, run_id, expected_status),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError(f"ProtocolRun {run_id} status conflict")
+            else:
+                conn.execute(
+                    "UPDATE protocol_runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (status, run_id),
+                )
             conn.commit()
-        return self.get_protocol_run(run_id)
+        run = self.get_protocol_run(run_id)
+        log = get_logger(__name__)
+        log.info("protocol_status_updated", extra={"protocol_run_id": run_id, "status": status})
+        return run
 
     def create_step_run(
         self,
@@ -329,22 +342,45 @@ class Database:
         retries: Optional[int] = None,
         summary: Optional[str] = None,
         model: Optional[str] = None,
+        expected_status: Optional[str] = None,
     ) -> StepRun:
         with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE step_runs
-                SET status = ?,
-                    summary = COALESCE(?, summary),
-                    model = COALESCE(?, model),
-                    retries = COALESCE(?, retries),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (status, summary, model, retries, step_id),
-            )
+            if expected_status:
+                cur = conn.execute(
+                    """
+                    UPDATE step_runs
+                    SET status = ?,
+                        summary = COALESCE(?, summary),
+                        model = COALESCE(?, model),
+                        retries = COALESCE(?, retries),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND status = ?
+                    """,
+                    (status, summary, model, retries, step_id, expected_status),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError(f"StepRun {step_id} status conflict")
+            else:
+                conn.execute(
+                    """
+                    UPDATE step_runs
+                    SET status = ?,
+                        summary = COALESCE(?, summary),
+                        model = COALESCE(?, model),
+                        retries = COALESCE(?, retries),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (status, summary, model, retries, step_id),
+                )
             conn.commit()
-        return self.get_step_run(step_id)
+        step = self.get_step_run(step_id)
+        log = get_logger(__name__)
+        log.info(
+            "step_status_updated",
+            extra={"step_run_id": step_id, "protocol_run_id": step.protocol_run_id, "status": status},
+        )
+        return step
 
     def append_event(
         self,
@@ -568,13 +604,21 @@ class PostgresDatabase:
         )
         return [Database._row_to_protocol(row) for row in rows]  # type: ignore[arg-type]
 
-    def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun:
+    def update_protocol_status(self, run_id: int, status: str, expected_status: Optional[str] = None) -> ProtocolRun:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE protocol_runs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (status, run_id),
-                )
+                if expected_status:
+                    cur.execute(
+                        "UPDATE protocol_runs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s AND status = %s",
+                        (status, run_id, expected_status),
+                    )
+                    if cur.rowcount == 0:
+                        raise ValueError(f"ProtocolRun {run_id} status conflict")
+                else:
+                    cur.execute(
+                        "UPDATE protocol_runs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        (status, run_id),
+                    )
             conn.commit()
         return self.get_protocol_run(run_id)
 
@@ -639,21 +683,38 @@ class PostgresDatabase:
         retries: Optional[int] = None,
         summary: Optional[str] = None,
         model: Optional[str] = None,
+        expected_status: Optional[str] = None,
     ) -> StepRun:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE step_runs
-                    SET status = %s,
-                        summary = COALESCE(%s, summary),
-                        model = COALESCE(%s, model),
-                        retries = COALESCE(%s, retries),
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                    """,
-                    (status, summary, model, retries, step_id),
-                )
+                if expected_status:
+                    cur.execute(
+                        """
+                        UPDATE step_runs
+                        SET status = %s,
+                            summary = COALESCE(%s, summary),
+                            model = COALESCE(%s, model),
+                            retries = COALESCE(%s, retries),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s AND status = %s
+                        """,
+                        (status, summary, model, retries, step_id, expected_status),
+                    )
+                    if cur.rowcount == 0:
+                        raise ValueError(f"StepRun {step_id} status conflict")
+                else:
+                    cur.execute(
+                        """
+                        UPDATE step_runs
+                        SET status = %s,
+                            summary = COALESCE(%s, summary),
+                            model = COALESCE(%s, model),
+                            retries = COALESCE(%s, retries),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (status, summary, model, retries, step_id),
+                    )
             conn.commit()
         return self.get_step_run(step_id)
 

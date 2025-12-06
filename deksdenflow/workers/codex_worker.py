@@ -138,7 +138,15 @@ def run_codex(prompt_text: str, model: str, cwd: Path, sandbox: str, output_sche
 def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase) -> None:
     run = db.get_protocol_run(protocol_run_id)
     project = db.get_project(run.project_id)
-    log.info("Planning protocol", extra={"protocol": run.protocol_name, "project": project.id})
+    log.info(
+        "Planning protocol",
+        extra={
+            "protocol_run_id": run.id,
+            "protocol": run.protocol_name,
+            "project": project.id,
+            "branch": run.protocol_name,
+        },
+    )
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
         db.append_event(protocol_run_id, "planned", "Protocol planned (stub; codex or repo unavailable).", step_run_id=None)
@@ -198,7 +206,16 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
     step = db.get_step_run(step_run_id)
     run = db.get_protocol_run(step.protocol_run_id)
     project = db.get_project(run.project_id)
-    log.info("Executing step", extra={"step": step.step_name, "protocol": run.protocol_name})
+    log.info(
+        "Executing step",
+        extra={
+            "step_run_id": step.id,
+            "protocol_run_id": run.id,
+            "protocol": run.protocol_name,
+            "branch": run.protocol_name,
+            "step_name": step.step_name,
+        },
+    )
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="Executed via stub (codex/repo unavailable)")
         db.append_event(step.protocol_run_id, "step_completed", "Step executed (stub; codex/repo unavailable).", step_run_id=step.id)
@@ -222,14 +239,29 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         if triggered:
             db.append_event(step.protocol_run_id, "ci_triggered", "CI triggered after push.", step_run_id=step.id, metadata={"branch": run.protocol_name})
     db.update_step_status(step.id, StepStatus.COMPLETED, summary="Executed via Codex")
-    db.append_event(step.protocol_run_id, "step_completed", "Step executed via Codex.", step_run_id=step.id)
+    db.append_event(
+        step.protocol_run_id,
+        "step_completed",
+        "Step executed via Codex.",
+        step_run_id=step.id,
+        metadata={"protocol_run_id": run.id, "step_run_id": step.id},
+    )
 
 
 def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
     step = db.get_step_run(step_run_id)
     run = db.get_protocol_run(step.protocol_run_id)
     project = db.get_project(run.project_id)
-    log.info("Running QA", extra={"step": step.step_name, "protocol": run.protocol_name})
+    log.info(
+        "Running QA",
+        extra={
+            "step_run_id": step.id,
+            "protocol_run_id": run.id,
+            "protocol": run.protocol_name,
+            "branch": run.protocol_name,
+            "step_name": step.step_name,
+        },
+    )
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA passed (stub; codex/repo unavailable)")
         db.append_event(step.protocol_run_id, "qa_passed", "QA passed (stub; codex/repo unavailable).", step_run_id=step.id)
@@ -247,4 +279,54 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
         "read-only",
     )
     db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA passed via Codex")
-    db.append_event(step.protocol_run_id, "qa_passed", "QA passed via Codex.", step_run_id=step.id)
+    db.append_event(
+        step.protocol_run_id,
+        "qa_passed",
+        "QA passed via Codex.",
+        step_run_id=step.id,
+        metadata={"protocol_run_id": run.id, "step_run_id": step.id},
+    )
+
+
+def handle_open_pr(protocol_run_id: int, db: BaseDatabase) -> None:
+    run = db.get_protocol_run(protocol_run_id)
+    project = db.get_project(run.project_id)
+    repo_root = Path(project.git_url) if Path(project.git_url).exists() else None
+    if not repo_root:
+        db.append_event(
+            run.id,
+            "open_pr_skipped",
+            "Repo not available locally; cannot push or open PR/MR.",
+            metadata={"git_url": project.git_url},
+        )
+        return
+    try:
+        worktree = load_project(repo_root, run.protocol_name, run.base_branch)
+        pushed = git_push_and_open_pr(worktree, run.protocol_name, run.base_branch)
+        if pushed:
+            db.append_event(run.id, "open_pr", "Branch pushed and PR/MR requested.", metadata={"branch": run.protocol_name})
+            triggered = trigger_ci_pipeline(repo_root, run.protocol_name, project.ci_provider)
+            if triggered:
+                db.append_event(
+                    run.id,
+                    "ci_triggered",
+                    "CI triggered after PR/MR request.",
+                    metadata={"branch": run.protocol_name},
+                )
+        else:
+            db.append_event(
+                run.id,
+                "open_pr_failed",
+                "Failed to push branch or open PR/MR.",
+                metadata={"branch": run.protocol_name},
+            )
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+    except Exception as exc:  # pragma: no cover - best effort
+        log.warning("Open PR job failed", extra={"protocol": run.protocol_name, "error": str(exc)})
+        db.append_event(
+            run.id,
+            "open_pr_failed",
+            f"Open PR/MR failed: {exc}",
+            metadata={"branch": run.protocol_name},
+        )
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)

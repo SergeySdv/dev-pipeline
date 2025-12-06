@@ -14,12 +14,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from deksdenflow.ci import trigger_ci  # noqa: E402
 from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import init_cli_logging  # noqa: E402
+from deksdenflow.logging import init_cli_logging, json_logging_from_env, EXIT_RUNTIME_ERROR  # noqa: E402
 
 
 def main() -> None:
     config = load_config()
-    init_cli_logging(config.log_level)
+    init_cli_logging(config.log_level, json_output=json_logging_from_env())
     parser = argparse.ArgumentParser(description="Trigger CI for a protocol branch.")
     parser.add_argument("--branch", required=True, help="Branch name (NNNN-task).")
     parser.add_argument("--repo-root", default=".", help="Repo root (default: cwd).")
@@ -29,7 +29,7 @@ def main() -> None:
     repo_root = Path(args.repo_root).resolve()
     triggered = trigger_ci(args.platform, repo_root, args.branch)
     if not triggered:
-        sys.exit(1)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
 
 if __name__ == "__main__":

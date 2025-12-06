@@ -7,8 +7,10 @@ class ProtocolStatus:
     PLANNING = "planning"
     PLANNED = "planned"
     RUNNING = "running"
+    PAUSED = "paused"
     BLOCKED = "blocked"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
 
 
@@ -18,6 +20,7 @@ class StepStatus:
     NEEDS_QA = "needs_qa"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     BLOCKED = "blocked"
 
 

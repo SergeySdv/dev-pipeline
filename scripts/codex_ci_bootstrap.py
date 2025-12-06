@@ -16,12 +16,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from deksdenflow.project_setup import run_codex_discovery  # noqa: E402
 from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import init_cli_logging  # noqa: E402
+from deksdenflow.logging import init_cli_logging, json_logging_from_env, EXIT_DEP_MISSING, EXIT_RUNTIME_ERROR  # noqa: E402
 
 
 def main() -> None:
     config = load_config()
-    init_cli_logging(config.log_level)
+    init_cli_logging(config.log_level, json_output=json_logging_from_env())
     parser = argparse.ArgumentParser(
         description="Use Codex CLI to infer stack and fill CI scripts for this repo."
     )
@@ -68,10 +68,13 @@ def main() -> None:
         )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
-        sys.exit(1)
+        sys.exit(EXIT_DEP_MISSING)
     except subprocess.CalledProcessError as exc:
         print(f"Codex discovery failed (exit {exc.returncode}): {exc}", file=sys.stderr)
-        sys.exit(exc.returncode)
+        sys.exit(exc.returncode or EXIT_RUNTIME_ERROR)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Unexpected error: {exc}", file=sys.stderr)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
     print("Codex discovery complete. Review scripts/ci/* for generated commands.")
 
