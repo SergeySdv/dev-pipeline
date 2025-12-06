@@ -310,6 +310,7 @@ function renderStepsTable() {
           <td class="muted">${s.model || "-"}</td>
           <td class="muted">${s.engine_id || "-"}</td>
           <td class="muted">${policyLabel(s.policy)}</td>
+          <td class="muted">${runtimeStateLabel(s.runtime_state)}</td>
           <td class="muted">${s.summary || "-"}</td>
         </tr>
       `
@@ -318,7 +319,7 @@ function renderStepsTable() {
   return `
     <table class="table">
       <thead>
-        <tr><th>#</th><th>Name</th><th>Status</th><th>Model</th><th>Engine</th><th>Policy</th><th>Summary</th></tr>
+        <tr><th>#</th><th>Name</th><th>Status</th><th>Model</th><th>Engine</th><th>Policy</th><th>State</th><th>Summary</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -338,6 +339,46 @@ function policyLabel(policy) {
   return parts.join(" ");
 }
 
+function runtimeStateLabel(state) {
+  if (!state) return "-";
+  const parts = [];
+  const loops = state.loop_counts || state.loopCounts;
+  if (loops && typeof loops === "object") {
+    const loopBits = Object.entries(loops).map(([k, v]) => `${k}:${v}`);
+    if (loopBits.length) parts.push(`loops(${loopBits.join(",")})`);
+  }
+  if (state.last_triggered_by) parts.push(`triggered_by:${state.last_triggered_by}`);
+  if (state.last_target_step_index !== undefined) parts.push(`target:${state.last_target_step_index}`);
+  return parts.join(" ") || "-";
+}
+
+function eventTypeClass(eventType) {
+  const important = ["loop_decision", "loop_limit_reached", "trigger_decision", "trigger_enqueued", "trigger_executed_inline", "trigger_enqueue_failed", "trigger_missing_target"];
+  if (important.includes(eventType)) return "warn";
+  return "";
+}
+
+function eventMetaSnippet(event) {
+  const meta = event.metadata || {};
+  const parts = [];
+  if (event.event_type === "loop_decision" || event.event_type === "loop_limit_reached") {
+    if (meta.target_step_index !== undefined) parts.push(`target:${meta.target_step_index}`);
+    if (meta.iterations !== undefined) {
+      const max = meta.max_iterations !== undefined ? `/${meta.max_iterations}` : "";
+      parts.push(`iter:${meta.iterations}${max}`);
+    }
+    if (Array.isArray(meta.steps_reset)) parts.push(`reset:${meta.steps_reset.length}`);
+  }
+  if (event.event_type.startsWith("trigger_")) {
+    if (meta.target_step_index !== undefined) parts.push(`target:${meta.target_step_index}`);
+    if (meta.target_step_id !== undefined) parts.push(`id:${meta.target_step_id}`);
+    if (meta.source) parts.push(`source:${meta.source}`);
+    if (meta.reason) parts.push(`reason:${meta.reason}`);
+    if (meta.policy && meta.policy.module_id) parts.push(`policy:${meta.policy.module_id}`);
+  }
+  return parts.join(" · ");
+}
+
 function renderEventsList() {
   if (!state.events.length) {
     return `<p class="muted">Events will appear as jobs run.</p>`;
@@ -354,14 +395,16 @@ function renderEventsList() {
           : null;
         const modelLine = meta.model ? `model:${meta.model}` : null;
         const extraLine = [promptLine, modelLine].filter(Boolean).join(" | ");
+        const metaSnippet = eventMetaSnippet(e);
         return `
         <div class="event">
           <div style="display:flex; justify-content:space-between;">
-            <span class="pill">${e.event_type}</span>
+            <span class="pill ${eventTypeClass(e.event_type)}">${e.event_type}</span>
             <span class="muted">${formatDate(e.created_at)}</span>
           </div>
           <div>${e.message}</div>
           ${extraLine ? `<div class="muted" style="font-size:12px;">${extraLine}</div>` : ""}
+          ${metaSnippet ? `<div class="muted" style="font-size:12px;">${metaSnippet}</div>` : ""}
           ${e.metadata ? `<div class="muted" style="font-size:12px;">${JSON.stringify(e.metadata)}</div>` : ""}
         </div>
       `;

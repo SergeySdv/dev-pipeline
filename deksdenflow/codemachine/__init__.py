@@ -12,6 +12,7 @@ from .config_loader import (
     load_codemachine_config,
     policy_to_dict,
 )
+from .policy_runtime import apply_loop_policies, apply_trigger_policies
 
 __all__ = [
     "AgentSpec",
@@ -22,4 +23,6 @@ __all__ = [
     "config_to_template_payload",
     "load_codemachine_config",
     "policy_to_dict",
+    "apply_loop_policies",
+    "apply_trigger_policies",
 ]

@@ -14,6 +14,7 @@ from deksdenflow.config import load_config
 from deksdenflow.logging import get_logger
 from deksdenflow.domain import ProtocolStatus, StepStatus
 from deksdenflow.prompt_utils import prompt_version
+from deksdenflow.codemachine.policy_runtime import apply_loop_policies, apply_trigger_policies
 from deksdenflow.pipeline import (
     detect_repo_root,
     execute_step_prompt,
@@ -27,8 +28,63 @@ from deksdenflow.qa import run_quality_check, build_prompt
 from deksdenflow.workers.state import maybe_complete_protocol
 from deksdenflow.metrics import metrics
 from deksdenflow.engines import EngineRequest, registry
+from deksdenflow.jobs import RedisQueue
 
 log = get_logger(__name__)
+
+
+def _enqueue_trigger_target(step_run_id: int, protocol_run_id: int, db: BaseDatabase, source: str) -> Optional[dict]:
+    """
+    Enqueue a triggered step for execution. If Redis is unavailable, fall back
+    to synchronous inline execution to mirror CodeMachine's immediate trigger behavior.
+    """
+    config = load_config()
+    if config.redis_url:
+        try:
+            queue = RedisQueue(config.redis_url)
+            job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
+            db.append_event(
+                protocol_run_id,
+                "trigger_enqueued",
+                "Triggered step enqueued for execution.",
+                step_run_id=step_run_id,
+                metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source},
+            )
+            return job.asdict()
+        except Exception as exc:  # pragma: no cover - best effort
+            db.append_event(
+                protocol_run_id,
+                "trigger_enqueue_failed",
+                f"Failed to enqueue triggered step: {exc}",
+                step_run_id=step_run_id,
+                metadata={"target_step_id": step_run_id, "source": source},
+            )
+            return None
+    # Inline fallback for dev/local without Redis.
+    try:
+        db.update_step_status(step_run_id, StepStatus.RUNNING, summary="Triggered (inline)")
+        db.append_event(
+            protocol_run_id,
+            "trigger_executed_inline",
+            "Triggered step executed inline (no queue configured).",
+            step_run_id=step_run_id,
+            metadata={"target_step_id": step_run_id, "source": source},
+        )
+        handle_execute_step(step_run_id, db)
+        return {"inline": True, "target_step_id": step_run_id}
+    except Exception as exc:  # pragma: no cover - best effort
+        db.append_event(
+            protocol_run_id,
+            "trigger_inline_failed",
+            f"Inline trigger failed: {exc}",
+            step_run_id=step_run_id,
+            metadata={"target_step_id": step_run_id, "source": source},
+        )
+        try:
+            db.update_step_status(step_run_id, StepStatus.FAILED, summary=f"Trigger inline failed: {exc}")
+        except Exception:
+            pass
+        return None
 
 
 def _budget_and_tokens(prompt_text: str, model: str, phase: str, token_budget_mode: str, max_tokens: Optional[int]) -> int:
@@ -309,6 +365,10 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             "Step executed (stub; codex/repo unavailable). QA required.",
             step_run_id=step.id,
         )
+        trigger_decision = apply_trigger_policies(step, db, reason="exec_stub")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="exec_stub")
         if getattr(config, "auto_qa_after_exec", False):
             db.append_event(
                 step.protocol_run_id,
@@ -343,7 +403,24 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             "sandbox": "workspace-write",
         },
     )
-    engine.execute(exec_request)
+    try:
+        engine.execute(exec_request)
+    except Exception as exc:  # pragma: no cover - best effort
+        db.update_step_status(step.id, StepStatus.FAILED, summary=f"Execution error: {exc}")
+        db.append_event(
+            step.protocol_run_id,
+            "step_execution_failed",
+            f"Execution failed: {exc}",
+            step_run_id=step.id,
+            metadata={"protocol_run_id": run.id, "step_run_id": step.id, "model": exec_model},
+        )
+        trigger_decision = apply_trigger_policies(step, db, reason="exec_failed")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="exec_failed")
+        else:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return
     pushed = git_push_and_open_pr(worktree, run.protocol_name, run.base_branch)
     if pushed:
         triggered = trigger_ci_pipeline(repo_root, run.protocol_name, project.ci_provider)
@@ -357,6 +434,10 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         step_run_id=step.id,
         metadata={"protocol_run_id": run.id, "step_run_id": step.id, "estimated_tokens": {"exec": exec_tokens}},
     )
+    trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
+    if trigger_decision and trigger_decision.get("applied"):
+        db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+        _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="exec_completed")
     if getattr(config, "auto_qa_after_exec", False):
         db.append_event(
             step.protocol_run_id,
@@ -398,6 +479,10 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             step_run_id=step.id,
             metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model},
         )
+        trigger_decision = apply_trigger_policies(step, db, reason="qa_stub_pass")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="qa_stub_pass")
         maybe_complete_protocol(step.protocol_run_id, db)
         return
     repo_root = repo_path or detect_repo_root()
@@ -434,7 +519,11 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
                     "model": qa_model,
                 },
             )
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            loop_decision = apply_loop_policies(step, db, reason="qa_failed")
+            if loop_decision and loop_decision.get("applied"):
+                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            else:
+                db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
             metrics.inc_qa_verdict("fail")
         else:
             db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS")
@@ -451,6 +540,10 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
                     "model": qa_model,
                 },
             )
+            trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
+            if trigger_decision and trigger_decision.get("applied"):
+                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+                _enqueue_trigger_target(trigger_decision["target_step_id"], run.id, db, source="qa_passed")
             maybe_complete_protocol(step.protocol_run_id, db)
             metrics.inc_qa_verdict("pass")
     except Exception as exc:  # pragma: no cover - best effort
