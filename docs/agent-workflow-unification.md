@@ -47,9 +47,9 @@ This document captures the current redundancy between Codex- and CodeMachine-dri
 - Codex execution honors spec outputs: when `outputs` are present in the `StepSpec`, Codex stdout is written to the specified protocol path and any auxiliary paths (mirrors CodeMachine dual writes).
 
 ## Next Implementation Steps
-- Execution path unification: centralize Codex and CodeMachine step execution through a shared resolver/engine dispatch with consistent event types (Codex path still separate).
+- Execution path unification: fold Codex and CodeMachine into a single resolver/dispatch path for steps (currently still branched).
 - Policy coverage: expand scenario tests for mixed-engine runs with loop/trigger policies and inline trigger depth limits.
-- Migration automation: add a job/CLI to backfill specs across projects and report validation summaries to operators.
+- Migration automation: add a job/CLI to backfill specs across projects and report validation summaries to operators (spec_audit job added).
 
 ## Progress Checklist
 - [x] Unified spec helpers created for Codex/CodeMachine with step creation from spec.
