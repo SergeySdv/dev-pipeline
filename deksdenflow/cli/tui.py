@@ -261,7 +261,11 @@ class TuiDashboard(App):
             self.refreshing = False
 
     def _get_list(self, list_id: str) -> ListView:
-        return self.query_one(f"#{list_id}", ListView)
+        try:
+            return self.query_one(f"#{list_id}", ListView)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.error("list_lookup_failed", extra={"list_id": list_id, "error": str(exc)})
+            return ListView()
 
     async def _load_projects(self) -> None:
         try:
