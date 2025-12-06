@@ -525,7 +525,10 @@ class TuiDashboard(App):
     async def _show_modal(self, screen: ModalScreen[Any]) -> Any:
         self.modal_open = True
         try:
-            return await self.push_screen_wait(screen)
+            await self.push_screen(screen)
+            if hasattr(screen, "dismissed"):
+                return await screen.dismissed.wait()
+            return None
         finally:
             self.modal_open = False
 
