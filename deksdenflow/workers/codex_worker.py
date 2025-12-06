@@ -624,10 +624,8 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         },
     )
     db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-    if is_codemachine_run(run):
-        _handle_codemachine_execute(step, run, project, config, db, step_spec=step_spec)
-        return
-    if shutil.which("codex") is None or not Path(project.git_url).exists():
+    codemachine = is_codemachine_run(run)
+    if not codemachine and (shutil.which("codex") is None or not Path(project.git_url).exists()):
         db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Executed via stub (codex/repo unavailable)")
         db.append_event(
             step.protocol_run_id,
@@ -656,15 +654,11 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             )
             handle_quality(step.id, db)
         return
-    ctx, spec_errors = _resolve_codex_context(step, run, project, step_spec)
-    repo_root = ctx.repo_root
-    worktree = ctx.workdir
-    protocol_root = ctx.protocol_root
-    step_path = ctx.prompt_path
-    exec_prompt = ctx.prompt_text
-    outputs_cfg = ctx.outputs_cfg
-    resolved_protocol_out = ctx.protocol_output_path
-    resolved_aux_outs = ctx.aux_outputs
+    ctx, spec_errors = (
+        _resolve_codemachine_context(step, run, project, config, run.template_config or {}, step_spec)
+        if is_codemachine_run(run)
+        else _resolve_codex_context(step, run, project, step_spec)
+    )
     spec_hash_val = spec_hash_val or ctx.spec_hash
     if spec_errors:
         for err in spec_errors:
@@ -679,20 +673,19 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
         db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
     exec_model = ctx.model
-    exec_tokens = _budget_and_tokens(exec_prompt, exec_model, "exec", config.token_budget_mode, budget_limit)
+    exec_tokens = _budget_and_tokens(ctx.prompt_text, exec_model, "exec", config.token_budget_mode, budget_limit)
 
-    engine_id = ctx.engine_id
-    engine = registry.get(engine_id)
+    engine = registry.get(ctx.engine_id)
     prompt_ver = ctx.prompt_version
     exec_request = EngineRequest(
         project_id=project.id,
         protocol_run_id=run.id,
         step_run_id=step.id,
         model=exec_model,
-        prompt_files=[],
-        working_dir=str(worktree),
+        prompt_files=ctx.prompt_files,
+        working_dir=str(ctx.workdir),
         extra={
-            "prompt_text": exec_prompt,
+            "prompt_text": ctx.prompt_text,
             "sandbox": "workspace-write",
         },
     )
@@ -700,14 +693,15 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
     db.append_event(
         step.protocol_run_id,
         "step_started",
-        "Executing step via Codex.",
+        f"Executing step via {ctx.kind.title()}.",
         step_run_id=step.id,
         metadata={
-            "engine_id": engine_id,
+            "engine_id": ctx.engine_id,
             "model": exec_model,
-            "prompt_path": str(step_path),
+            "prompt_path": str(ctx.prompt_path),
             "prompt_versions": {"exec": prompt_ver},
             "spec_hash": spec_hash_val,
+            "agent_id": ctx.agent_id,
         },
     )
     try:
@@ -738,44 +732,56 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
     stdout_text = exec_result.stdout if exec_result and getattr(exec_result, "stdout", None) else ""
-    if outputs_cfg and resolved_protocol_out:
-        resolved_protocol_out.parent.mkdir(parents=True, exist_ok=True)
+    if ctx.protocol_output_path:
+        ctx.protocol_output_path.parent.mkdir(parents=True, exist_ok=True)
         if stdout_text:
-            resolved_protocol_out.write_text(stdout_text, encoding="utf-8")
-            for out_path in resolved_aux_outs.values():
+            ctx.protocol_output_path.write_text(stdout_text, encoding="utf-8")
+            for out_path in ctx.aux_outputs.values():
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_text(stdout_text, encoding="utf-8")
 
-    pushed = git_push_and_open_pr(worktree, run.protocol_name, run.base_branch)
-    if pushed:
-        triggered = trigger_ci_pipeline(repo_root, run.protocol_name, project.ci_provider)
-        if triggered:
-            db.append_event(step.protocol_run_id, "ci_triggered", "CI triggered after push.", step_run_id=step.id, metadata={"branch": run.protocol_name})
+    if ctx.kind == "codex":
+        pushed = git_push_and_open_pr(ctx.repo_root, run.protocol_name, run.base_branch)
+        if pushed:
+            triggered = trigger_ci_pipeline(ctx.repo_root, run.protocol_name, project.ci_provider)
+            if triggered:
+                db.append_event(step.protocol_run_id, "ci_triggered", "CI triggered after push.", step_run_id=step.id, metadata={"branch": run.protocol_name})
     db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Executed via Codex; pending QA")
+    outputs_meta = (
+        {
+            "protocol": str(ctx.protocol_output_path),
+            "aux": {k: str(v) for k, v in ctx.aux_outputs.items()} if ctx.aux_outputs else {},
+        }
+        if ctx.protocol_output_path
+        else ctx.outputs_cfg
+    )
+    base_meta = {
+        "protocol_run_id": run.id,
+        "step_run_id": step.id,
+        "estimated_tokens": {"exec": exec_tokens},
+        "outputs": outputs_meta,
+        "prompt_versions": {"exec": prompt_ver},
+        "prompt_path": str(ctx.prompt_path),
+        "engine_id": ctx.engine_id,
+        "model": exec_model,
+        "spec_hash": spec_hash_val,
+        "spec_validated": True,
+        "agent_id": ctx.agent_id,
+    }
+    if ctx.kind == "codemachine":
+        db.append_event(
+            step.protocol_run_id,
+            "codemachine_step_completed",
+            f"CodeMachine agent {ctx.agent_id} executed.",
+            step_run_id=step.id,
+            metadata=base_meta,
+        )
     db.append_event(
         step.protocol_run_id,
         "step_completed",
-        "Step executed via Codex. QA required.",
+        f"Step executed via {ctx.kind.title()}. QA required.",
         step_run_id=step.id,
-        metadata={
-            "protocol_run_id": run.id,
-            "step_run_id": step.id,
-            "estimated_tokens": {"exec": exec_tokens},
-            "outputs": (
-                {
-                    "protocol": str(resolved_protocol_out),
-                    "aux": {k: str(v) for k, v in resolved_aux_outs.items()} if resolved_aux_outs else {},
-                }
-                if resolved_protocol_out
-                else outputs_cfg
-            ),
-            "prompt_versions": {"exec": prompt_ver},
-            "prompt_path": str(step_path),
-            "engine_id": engine_id,
-            "model": exec_model,
-            "spec_hash": spec_hash_val,
-            "spec_validated": True,
-        },
+        metadata=base_meta,
     )
     trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
     if trigger_decision and trigger_decision.get("applied"):
