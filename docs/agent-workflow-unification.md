@@ -52,3 +52,13 @@ This document captures the current redundancy between Codex- and CodeMachine-dri
 - Spec schema tightening: formalize `ProtocolSpec` JSON Schema; validate at import/planning time (not only at execution) and surface errors early via events.
 - Observability: record spec version/hash on events; include output paths and validation status in `step_completed` metadata for Codex and CodeMachine.
 - Migration tooling: provide a CLI (or job) to backfill `protocol_spec` for existing runs and to validate specs across projects.
+
+## Progress Checklist
+- [x] Unified spec helpers created for Codex/CodeMachine with step creation from spec.
+- [x] Spec validation enforced at execution/import; failures block with `spec_validation_error`.
+- [x] Codex execution now uses spec for engine/model/prompt_ref and writes stdout to spec-declared outputs (protocol + aux).
+- [x] QA path reads spec QA policy/model/prompt and skips only when policy says so; CodeMachine QA can be enabled via spec.
+- [x] Prompt versions recorded for exec/QA events; outputs metadata attached.
+- [ ] Codex prompt resolver to support arbitrary prompt_ref outside `.protocols/` (with evented versioning).
+- [ ] Formal JSON Schema for `ProtocolSpec` + CLI to validate/backfill existing runs.
+- [ ] Expanded scenario tests for custom QA prompts/engines and spec hash/version observability.
