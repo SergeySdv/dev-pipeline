@@ -79,6 +79,9 @@ def test_codex_spec_outputs_write_stdout(tmp_path, monkeypatch) -> None:
     outputs_meta = completed.metadata["outputs"]
     assert outputs_meta["protocol"].endswith("outputs/exec.md")
     assert outputs_meta["aux"]["mirror"].endswith("outputs/mirror.md")
+    assert completed.metadata["engine_id"] == "fake-engine-out"
+    assert completed.metadata["model"] == "fake-model"
+    assert completed.metadata["prompt_path"].endswith("00-step.md")
 
 
 def test_spec_validation_failure_blocks_execution(tmp_path, monkeypatch) -> None:

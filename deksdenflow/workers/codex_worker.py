@@ -729,6 +729,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
                 else outputs_cfg
             ),
             "prompt_versions": {"exec": prompt_ver},
+            "prompt_path": str(step_path),
+            "engine_id": engine_id,
+            "model": exec_model,
             "spec_hash": spec_hash_val,
             "spec_validated": True,
         },
