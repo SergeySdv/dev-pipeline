@@ -29,6 +29,8 @@ class ProtocolRunCreate(BaseModel):
     worktree_path: Optional[str] = None
     protocol_root: Optional[str] = None
     description: Optional[str] = None
+    template_config: Optional[dict] = None
+    template_source: Optional[dict] = None
 
 
 class ProtocolRunOut(ProtocolRunCreate):
@@ -45,12 +47,15 @@ class StepRunCreate(BaseModel):
     status: str = "pending"
     model: Optional[str] = None
     summary: Optional[str] = None
+    engine_id: Optional[str] = None
+    policy: Optional[list[dict] | dict] = None
 
 
 class StepRunOut(StepRunCreate):
     id: int
     protocol_run_id: int
     retries: int
+    runtime_state: Optional[dict] = None
     created_at: str
     updated_at: str
 
@@ -69,5 +74,19 @@ class EventOut(BaseModel):
 
 
 class ActionResponse(BaseModel):
+    message: str
+    job: Optional[dict] = None
+
+
+class CodeMachineImportRequest(BaseModel):
+    protocol_name: str
+    workspace_path: str
+    base_branch: str = "main"
+    description: Optional[str] = None
+    enqueue: bool = False
+
+
+class CodeMachineImportResponse(BaseModel):
+    protocol_run: ProtocolRunOut
     message: str
     job: Optional[dict] = None

@@ -1,11 +1,13 @@
 """
-Codex worker: resolves protocol context, runs Codex CLI for planning/exec/QA, and updates DB.
+Codex worker: resolves protocol context, runs engine-backed planning/exec/QA, and updates DB.
 """
 
 import json
 import shutil
 from pathlib import Path
 from typing import Optional
+
+import deksdenflow.engines_codex  # noqa: F401 - ensure Codex engine is registered
 
 from deksdenflow.codex import run_process, enforce_token_budget, estimate_tokens
 from deksdenflow.config import load_config
@@ -24,6 +26,7 @@ from deksdenflow.ci import trigger_ci
 from deksdenflow.qa import run_quality_check, build_prompt
 from deksdenflow.workers.state import maybe_complete_protocol
 from deksdenflow.metrics import metrics
+from deksdenflow.engines import EngineRequest, registry
 
 log = get_logger(__name__)
 
@@ -65,6 +68,8 @@ def sync_step_runs_from_protocol(protocol_root: Path, protocol_run_id: int, db: 
             step_type=infer_step_type(step_file.name),
             status=StepStatus.PENDING,
             model=None,
+            engine_id="codex",
+            policy=None,
         )
         created += 1
     return created
@@ -163,25 +168,6 @@ def trigger_ci_pipeline(repo_root: Path, branch: str, ci_provider: Optional[str]
     return result
 
 
-def run_codex(prompt_text: str, model: str, cwd: Path, sandbox: str, output_schema: Optional[Path] = None) -> str:
-    cmd = [
-        "codex",
-        "exec",
-        "-m",
-        model,
-        "--cd",
-        str(cwd),
-        "--sandbox",
-        sandbox,
-        "--skip-git-repo-check",
-        "-",
-    ]
-    if output_schema:
-        cmd.extend(["--output-schema", str(output_schema)])
-    proc = run_process(cmd, cwd=cwd, capture_output=True, text=True, input_text=prompt_text)
-    return proc.stdout
-
-
 def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase) -> None:
     run = db.get_protocol_run(protocol_run_id)
     project = db.get_project(run.project_id)
@@ -221,13 +207,23 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase) -> None:
         templates_section=templates,
     )
     planning_tokens = _budget_and_tokens(planning_text, planning_model, "planning", config.token_budget_mode, budget_limit)
-    planning_json = run_codex(
-        planning_text,
-        planning_model,
-        worktree,
-        "read-only",
-        schema_path,
+
+    engine = registry.get_default()
+    planning_request = EngineRequest(
+        project_id=project.id,
+        protocol_run_id=run.id,
+        step_run_id=0,
+        model=planning_model,
+        prompt_files=[],
+        working_dir=str(worktree),
+        extra={
+            "prompt_text": planning_text,
+            "sandbox": "read-only",
+            "output_schema": str(schema_path),
+        },
     )
+    planning_result = engine.plan(planning_request)
+    planning_json = planning_result.stdout
     data = json.loads(planning_json)
     write_protocol_files(protocol_root, data)
     created_steps = sync_step_runs_from_protocol(protocol_root, protocol_run_id, db)
@@ -240,14 +236,29 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase) -> None:
         if step_file.name.lower().startswith("00-setup"):
             continue
         step_content = step_file.read_text(encoding="utf-8")
-        dec_text = decompose_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_file.name, step_content)
-        decompose_tokens += _budget_and_tokens(dec_text, decompose_model, "decompose", config.token_budget_mode, budget_limit)
-        new_content = run_codex(
-            dec_text,
-            decompose_model,
-            worktree,
-            "read-only",
+        dec_text = decompose_step_prompt(
+            run.protocol_name,
+            run.protocol_name.split("-")[0],
+            plan_md,
+            step_file.name,
+            step_content,
         )
+        decompose_tokens += _budget_and_tokens(dec_text, decompose_model, "decompose", config.token_budget_mode, budget_limit)
+
+        decompose_request = EngineRequest(
+            project_id=project.id,
+            protocol_run_id=run.id,
+            step_run_id=0,
+            model=decompose_model,
+            prompt_files=[],
+            working_dir=str(worktree),
+            extra={
+                "prompt_text": dec_text,
+                "sandbox": "read-only",
+            },
+        )
+        decompose_result = engine.plan(decompose_request)
+        new_content = decompose_result.stdout
         step_file.write_text(new_content, encoding="utf-8")
 
     db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
@@ -317,12 +328,22 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
     exec_prompt = execute_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_path.name, step_content)
     exec_model = project.default_models.get("exec", "codex-5.1-max-xhigh") if project.default_models else "codex-5.1-max-xhigh"
     exec_tokens = _budget_and_tokens(exec_prompt, exec_model, "exec", config.token_budget_mode, budget_limit)
-    run_codex(
-        exec_prompt,
-        exec_model,
-        worktree,
-        "workspace-write",
+
+    engine_id = step.engine_id or registry.get_default().metadata.id
+    engine = registry.get(engine_id)
+    exec_request = EngineRequest(
+        project_id=project.id,
+        protocol_run_id=run.id,
+        step_run_id=step.id,
+        model=exec_model,
+        prompt_files=[],
+        working_dir=str(worktree),
+        extra={
+            "prompt_text": exec_prompt,
+            "sandbox": "workspace-write",
+        },
     )
+    engine.execute(exec_request)
     pushed = git_push_and_open_pr(worktree, run.protocol_name, run.base_branch)
     if pushed:
         triggered = trigger_ci_pipeline(repo_root, run.protocol_name, project.ci_provider)
@@ -395,6 +416,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
             sandbox="read-only",
             max_tokens=budget_limit,
             token_budget_mode=config.token_budget_mode,
+            engine_id=step.engine_id,
         )
         verdict = result.verdict.upper()
         if verdict == "FAIL":

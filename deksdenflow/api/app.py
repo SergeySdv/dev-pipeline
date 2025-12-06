@@ -13,12 +13,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from deksdenflow import jobs
 from deksdenflow.config import load_config
 from deksdenflow.domain import ProtocolStatus, StepStatus
+from deksdenflow.codemachine import ConfigError, config_to_template_payload, load_codemachine_config
 from deksdenflow.logging import log_extra, setup_logging, json_logging_from_env
 from deksdenflow.metrics import metrics
 from deksdenflow.storage import BaseDatabase, create_database
 from deksdenflow.worker_runtime import BackgroundWorker, RQWorkerThread
 from deksdenflow.health import check_db
 from deksdenflow.workers.state import maybe_complete_protocol
+from deksdenflow.workers import codemachine_worker
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -273,8 +275,73 @@ def create_protocol_run(
         worktree_path=payload.worktree_path,
         protocol_root=payload.protocol_root,
         description=payload.description,
+        template_config=payload.template_config,
+        template_source=payload.template_source,
     )
     return schemas.ProtocolRunOut(**run.__dict__)
+
+
+@app.post("/projects/{project_id}/codemachine/import", response_model=schemas.CodeMachineImportResponse, dependencies=[Depends(require_auth)])
+def import_codemachine(
+    project_id: int,
+    payload: schemas.CodeMachineImportRequest,
+    db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
+    request: Request = None,
+) -> schemas.CodeMachineImportResponse:
+    if request:
+        require_project_access(project_id, request, db)
+    try:
+        project = db.get_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    status = ProtocolStatus.PLANNING if payload.enqueue else ProtocolStatus.PLANNED
+    run = db.create_protocol_run(
+        project_id=project.id,
+        protocol_name=payload.protocol_name,
+        status=status,
+        base_branch=payload.base_branch,
+        worktree_path=payload.workspace_path,
+        protocol_root=str(Path(payload.workspace_path) / ".codemachine"),
+        description=payload.description,
+        template_config=None,
+        template_source=None,
+    )
+
+    if payload.enqueue:
+        job = queue.enqueue(
+            "codemachine_import_job",
+            {
+                "project_id": project.id,
+                "protocol_run_id": run.id,
+                "workspace_path": payload.workspace_path,
+            },
+        ).asdict()
+        record_event(
+            db,
+            protocol_run_id=run.id,
+            event_type="codemachine_import_enqueued",
+            message="CodeMachine import enqueued.",
+            metadata={"job_id": job["job_id"], "workspace": payload.workspace_path},
+            request=request,
+        )
+        return schemas.CodeMachineImportResponse(
+            protocol_run=schemas.ProtocolRunOut(**run.__dict__),
+            job=job,
+            message="Enqueued CodeMachine import job.",
+        )
+
+    try:
+        codemachine_worker.import_codemachine_workspace(project.id, run.id, payload.workspace_path, db)
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    run = db.get_protocol_run(run.id)
+    return schemas.CodeMachineImportResponse(
+        protocol_run=schemas.ProtocolRunOut(**run.__dict__),
+        message="Imported CodeMachine workspace.",
+        job=None,
+    )
 
 
 @app.get("/projects/{project_id}/protocols", response_model=list[schemas.ProtocolRunOut], dependencies=[Depends(require_auth)])
@@ -492,7 +559,9 @@ def create_step(
         step_type=payload.step_type,
         status=payload.status,
         model=payload.model,
+        engine_id=payload.engine_id,
         summary=payload.summary,
+        policy=payload.policy,
     )
     return schemas.StepRunOut(**step.__dict__)
 

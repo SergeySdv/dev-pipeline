@@ -20,6 +20,7 @@ Projects/
 dataset_report.pdf
 dataset.csv
 docs/terraformmanager-workflow-plan.md
+docs/migration-interoperability.md
 scripts/generate_dataset_report.py
 .deksdenflow.sqlite
 .deksdenflow.sqlite-journal

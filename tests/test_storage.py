@@ -30,6 +30,8 @@ def test_storage_round_trip_creates_records() -> None:
             description="demo run",
         )
         assert run.id > 0
+        assert run.template_config is None
+        assert run.template_source is None
 
         step = db.create_step_run(
             protocol_run_id=run.id,
@@ -40,6 +42,9 @@ def test_storage_round_trip_creates_records() -> None:
             model=None,
         )
         assert step.id > 0
+        assert step.engine_id is None
+        assert step.policy is None
+        assert step.runtime_state is None
 
         db.append_event(
             protocol_run_id=run.id,

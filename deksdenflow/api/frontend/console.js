@@ -216,6 +216,7 @@ function renderProtocolDetail() {
         <div>
           <div style="font-weight:700;">${run.protocol_name}</div>
           <div class="muted">${run.description || ""}</div>
+          ${renderTemplateMeta(run)}
         </div>
         <span class="pill ${statusClass(run.status)}">${run.status}</span>
       </div>
@@ -286,6 +287,15 @@ function renderProtocolDetail() {
   approveBtn.disabled = terminal || run.status === "paused" || !latestStep;
 }
 
+function renderTemplateMeta(run) {
+  const cfg = run.template_config || {};
+  const template = cfg.template || run.template_source || null;
+  if (!template) return "";
+  const name = template.template || template.name || "template";
+  const version = template.version ? `v${template.version}` : "";
+  return `<div class="muted" style="font-size:12px;">Template: ${name} ${version}</div>`;
+}
+
 function renderStepsTable() {
   if (!state.steps.length) {
     return `<p class="muted">No steps recorded for this run.</p>`;
@@ -298,6 +308,8 @@ function renderStepsTable() {
           <td>${s.step_name}</td>
           <td><span class="pill ${statusClass(s.status)}">${s.status}</span></td>
           <td class="muted">${s.model || "-"}</td>
+          <td class="muted">${s.engine_id || "-"}</td>
+          <td class="muted">${policyLabel(s.policy)}</td>
           <td class="muted">${s.summary || "-"}</td>
         </tr>
       `
@@ -306,11 +318,24 @@ function renderStepsTable() {
   return `
     <table class="table">
       <thead>
-        <tr><th>#</th><th>Name</th><th>Status</th><th>Model</th><th>Summary</th></tr>
+        <tr><th>#</th><th>Name</th><th>Status</th><th>Model</th><th>Engine</th><th>Policy</th><th>Summary</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+function policyLabel(policy) {
+  if (!policy) return "-";
+  if (Array.isArray(policy) && policy.length) {
+    return policy.map((p) => policyLabel(p)).join(" / ");
+  }
+  const parts = [];
+  if (policy.behavior) parts.push(policy.behavior);
+  if (policy.action) parts.push(policy.action);
+  if (policy.trigger_agent_id) parts.push(`→${policy.trigger_agent_id}`);
+  if (policy.max_iterations) parts.push(`max:${policy.max_iterations}`);
+  return parts.join(" ");
 }
 
 function renderEventsList() {

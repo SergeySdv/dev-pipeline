@@ -47,6 +47,8 @@ class ProtocolRun:
     worktree_path: Optional[str]
     protocol_root: Optional[str]
     description: Optional[str]
+    template_config: Optional[dict]
+    template_source: Optional[dict]
     created_at: str
     updated_at: str
 
@@ -61,6 +63,9 @@ class StepRun:
     status: str
     retries: int
     model: Optional[str]
+    engine_id: Optional[str]
+    policy: Optional[object]
+    runtime_state: Optional[dict]
     summary: Optional[str]
     created_at: str
     updated_at: str

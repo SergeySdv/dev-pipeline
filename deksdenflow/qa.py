@@ -5,6 +5,8 @@ from typing import Optional
 
 from . import codex
 from .errors import CodexCommandError
+from deksdenflow.engines import EngineRequest, registry
+import deksdenflow.engines_codex  # noqa: F401 - ensure Codex engine is registered
 
 
 @dataclass
@@ -84,6 +86,7 @@ def run_quality_check(
     report_file: Optional[Path] = None,
     max_tokens: Optional[int] = None,
     token_budget_mode: str = "strict",
+    engine_id: Optional[str] = None,
 ) -> QualityResult:
     if shutil.which("codex") is None:
         raise FileNotFoundError("codex CLI not found in PATH")
@@ -98,26 +101,24 @@ def run_quality_check(
 
     report_path = report_file if report_file else protocol_root / "quality-report.md"
 
-    cmd = [
-        "codex",
-        "exec",
-        "-m",
-        model,
-        "--cd",
-        str(protocol_root.parent.parent),
-        "--sandbox",
-        sandbox,
-        "-",
-    ]
-
     codex.enforce_token_budget(full_prompt, max_tokens, f"qa:{step_file.name}", mode=token_budget_mode)
 
-    result = codex.run_process(cmd, input_text=full_prompt, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise CodexCommandError(
-            f"codex exec failed with code {result.returncode}: {result.stderr}",
-            metadata={"cmd": cmd, "returncode": result.returncode},
-        )
+    # Route QA through the engine registry. For now this uses the default engine
+    # (Codex) unless an explicit engine_id is provided.
+    engine = registry.get(engine_id) if engine_id else registry.get_default()
+    req = EngineRequest(
+        project_id=0,
+        protocol_run_id=0,
+        step_run_id=0,
+        model=model,
+        prompt_files=[],
+        working_dir=str(protocol_root.parent.parent),
+        extra={
+            "prompt_text": full_prompt,
+            "sandbox": sandbox,
+        },
+    )
+    result = engine.qa(req)
 
     report_text = result.stdout.strip()
     report_path.write_text(report_text, encoding="utf-8")
