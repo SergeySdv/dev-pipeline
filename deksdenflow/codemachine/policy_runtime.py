@@ -26,6 +26,44 @@ def _policy_list(policy_field: Optional[object]) -> List[dict]:
     return []
 
 
+def _normalized_conditions(policy: dict) -> List[str]:
+    """
+    Collect stringified condition tokens from a policy.
+    Supports `condition`, `conditions`, and common nested keys (on/reason/event/when).
+    """
+    tokens: List[str] = []
+
+    def _add(value: object) -> None:
+        if value is None:
+            return
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                tokens.append(stripped.lower())
+        elif isinstance(value, (list, tuple, set)):
+            for entry in value:
+                _add(entry)
+        elif isinstance(value, dict):
+            for key in ("on", "reason", "event", "when", "name"):
+                _add(value.get(key))
+
+    _add(policy.get("condition"))
+    _add(policy.get("conditions"))
+    return tokens
+
+
+def _conditions_allow(policy: dict, reason: Optional[str]) -> bool:
+    """
+    Evaluate policy conditions against the provided reason.
+    Empty conditions always allow; otherwise a case-insensitive string match is required.
+    """
+    expected = _normalized_conditions(policy)
+    if not expected:
+        return True
+    reason_val = (reason or "").strip().lower()
+    return bool(reason_val) and reason_val in expected
+
+
 def _loop_counts(state: Dict[str, object], module_id: str) -> int:
     loop_state = state.get("loop_counts") or {}
     if isinstance(loop_state, dict):
@@ -72,6 +110,24 @@ def apply_loop_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_faile
         if (policy.get("behavior") or "").lower() != "loop":
             continue
         module_id = str(policy.get("module_id") or policy.get("id") or "loop")
+        if not _conditions_allow(policy, reason):
+            db.append_event(
+                protocol_run_id=step.protocol_run_id,
+                step_run_id=step.id,
+                event_type="loop_condition_skipped",
+                message=f"Loop policy {module_id} skipped; condition not met.",
+                metadata={"policy": policy, "reason": reason, "conditions": _normalized_conditions(policy)},
+            )
+            log.info(
+                "loop_condition_skipped",
+                extra={
+                    "protocol_run_id": step.protocol_run_id,
+                    "step_run_id": step.id,
+                    "module_id": module_id,
+                    "reason": reason,
+                },
+            )
+            continue
         max_iterations = policy.get("max_iterations")
         step_back = _coerce_int(policy.get("step_back"), 1)
         if step_back <= 0:
@@ -200,6 +256,25 @@ def apply_trigger_policies(step: StepRun, db: BaseDatabase, reason: str = "qa_pa
 
     for policy in policies:
         if (policy.get("behavior") or "").lower() != "trigger":
+            continue
+        module_id = str(policy.get("module_id") or policy.get("id") or "trigger")
+        if not _conditions_allow(policy, reason):
+            db.append_event(
+                protocol_run_id=step.protocol_run_id,
+                step_run_id=step.id,
+                event_type="trigger_condition_skipped",
+                message=f"Trigger policy {module_id} skipped; condition not met.",
+                metadata={"policy": policy, "reason": reason, "conditions": _normalized_conditions(policy)},
+            )
+            log.info(
+                "trigger_condition_skipped",
+                extra={
+                    "protocol_run_id": step.protocol_run_id,
+                    "step_run_id": step.id,
+                    "module_id": module_id,
+                    "reason": reason,
+                },
+            )
             continue
         target_agent = policy.get("trigger_agent_id") or policy.get("target_agent_id") or policy.get("targetAgentId")
         if not target_agent:

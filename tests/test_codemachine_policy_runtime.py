@@ -77,6 +77,32 @@ def test_apply_loop_policy_honors_max_iterations(tmp_path) -> None:
     assert meta.get("max_iterations") == 1
 
 
+def test_loop_policy_respects_condition_reason(tmp_path) -> None:
+    db = _make_db(tmp_path)
+    project = db.create_project("demo", str(tmp_path / "repo"), "main", None, None)
+    run = db.create_protocol_run(project.id, "0002b-demo", ProtocolStatus.RUNNING, "main", None, None, "demo protocol")
+    policy = {
+        "module_id": "iteration-checker",
+        "behavior": "loop",
+        "action": "stepBack",
+        "max_iterations": 2,
+        "step_back": 0,
+        "skip_steps": [],
+        "condition": "qa_failed",
+    }
+    step = db.create_step_run(run.id, 0, "00-setup", "setup", StepStatus.FAILED, model=None, policy=[policy])
+
+    no_op = apply_loop_policies(db.get_step_run(step.id), db, reason="exec_failed")
+    assert no_op is None
+    assert db.get_step_run(step.id).status == StepStatus.FAILED
+    events = [e for e in db.list_events(run.id) if e.event_type == "loop_condition_skipped"]
+    assert events and events[-1].metadata.get("reason") == "exec_failed"
+
+    decision = apply_loop_policies(db.get_step_run(step.id), db, reason="qa_failed")
+    assert decision and decision["applied"]
+    assert db.get_step_run(step.id).status == StepStatus.PENDING
+
+
 def test_apply_trigger_policy_sets_target_pending(tmp_path) -> None:
     db = _make_db(tmp_path)
     project = db.create_project("demo", str(tmp_path / "repo"), "main", None, None)
@@ -114,6 +140,34 @@ def test_apply_trigger_policy_skips_missing_target(tmp_path) -> None:
 
     events = [e for e in db.list_events(run.id) if e.event_type == "trigger_missing_target"]
     assert events, "expected trigger_missing_target event"
+
+
+def test_trigger_policy_respects_conditions(tmp_path) -> None:
+    db = _make_db(tmp_path)
+    project = db.create_project("demo", str(tmp_path / "repo"), "main", None, None)
+    run = db.create_protocol_run(project.id, "0005b-demo", ProtocolStatus.RUNNING, "main", None, None, "demo protocol")
+    trigger_policy = {
+        "module_id": "handoff",
+        "behavior": "trigger",
+        "trigger_agent_id": "qa",
+        "conditions": ["qa_passed"],
+    }
+
+    step0 = db.create_step_run(run.id, 0, "00-plan", "work", StepStatus.COMPLETED, model=None, policy=[trigger_policy])
+    step1 = db.create_step_run(run.id, 1, "01-qa", "work", StepStatus.FAILED, model=None)
+
+    no_op = apply_trigger_policies(db.get_step_run(step0.id), db, reason="exec_completed")
+    assert no_op is None
+    step1_after = db.get_step_run(step1.id)
+    assert step1_after.status == StepStatus.FAILED
+    skipped_events = [e for e in db.list_events(run.id) if e.event_type == "trigger_condition_skipped"]
+    assert skipped_events and skipped_events[-1].metadata.get("reason") == "exec_completed"
+
+    decision = apply_trigger_policies(db.get_step_run(step0.id), db, reason="qa_passed")
+    assert decision and decision["applied"]
+    step1_after = db.get_step_run(step1.id)
+    assert step1_after.status == StepStatus.PENDING
+    assert step1_after.runtime_state.get("last_triggered_by") == step0.step_name
 
 
 def test_handle_quality_applies_loop_policy(monkeypatch, tmp_path) -> None:

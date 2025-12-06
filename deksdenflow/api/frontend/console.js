@@ -368,11 +368,13 @@ function eventTypeClass(eventType) {
   const important = [
     "loop_decision",
     "loop_limit_reached",
+    "loop_condition_skipped",
     "trigger_decision",
     "trigger_enqueued",
     "trigger_executed_inline",
     "trigger_inline_depth_exceeded",
     "trigger_enqueue_failed",
+    "trigger_condition_skipped",
     "trigger_missing_target",
   ];
   if (important.includes(eventType)) return "warn";

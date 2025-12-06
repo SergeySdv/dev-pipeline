@@ -538,6 +538,7 @@ These implementation notes are intended as the concrete blueprint for wiring Cod
 - **Strict module attachment**: Modules attach only when explicitly referenced (agent `moduleId/module/module_id`, module `targetAgentId`, or trigger `trigger_agent_id`). All matching modules attach; no default loop fallback.
 - **Console hints**: Protocol detail shows template name/version; steps table shows engine and attached policies.
 - **Runtime adapter**: Workers detect CodeMachine runs, resolve agent prompts with placeholders, execute via the engine registry, and write artifacts to both `.protocols/<run>/` and `.codemachine/outputs/`. Codex QA is skipped for CodeMachine runs (triggers still fire).
+- **Condition-aware policies**: loop/trigger policies honor `condition/conditions` when the reason matches; skipped evaluations emit `loop_condition_skipped`/`trigger_condition_skipped` events for observability.
 - **Inline triggers with fakeredis**: When Redis is configured with `fakeredis://`, trigger policies execute inline to mirror the dev/test expectation.
 
 ---
@@ -545,7 +546,7 @@ These implementation notes are intended as the concrete blueprint for wiring Cod
 ## 16) Compatibility matrix (snapshot)
 
 - **Agents**: id/name/description/promptPath/mirrorPath/engineId/model supported.
-- **Modules (loop/trigger)**: behavior.type/action/stepBack/maxIterations/skip + triggerAgentId/targetAgentId parsed; condition/conditions fields are stored but not yet evaluated.
+- **Modules (loop/trigger)**: behavior.type/action/stepBack/maxIterations/skip + triggerAgentId/targetAgentId parsed; condition/conditions fields gate execution (reason-matched) with `loop_condition_skipped` / `trigger_condition_skipped` events.
 - **Attachment rules**: modules attach only when referenced via agent moduleId list or module targetAgentId/triggerAgentId. No implicit defaults.
-- **Runtime**: loop policies drive stepBack/backfill with runtime_state counters; trigger policies enqueue/inline target steps with depth guards. Conditions are captured for future use.
+- **Runtime**: loop policies drive stepBack/backfill with runtime_state counters; trigger policies enqueue/inline target steps with depth guards. Conditions gate applicability based on reason; skipped policies emit observable events.
 - **Docs/tests**: golden parsing tests live under `tests/test_codemachine_golden.py`; runtime semantics under `tests/test_codemachine_policy_runtime.py`.
