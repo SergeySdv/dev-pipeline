@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -82,25 +82,109 @@ class ImportScreen(ModalScreen[Optional[Dict[str, Any]]]):
             )
 
 
+class StepActionScreen(ModalScreen[Optional[str]]):
+    """Modal menu for step actions."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("Step actions", classes="title")
+        yield Button("Run next", id="run_next", variant="primary")
+        yield Button("Retry latest", id="retry_latest")
+        yield Button("Run QA", id="run_qa")
+        yield Button("Approve", id="approve")
+        yield Button("Open PR", id="open_pr")
+        yield Button("Cancel", id="cancel", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+        else:
+            self.dismiss(event.button.id)
+
+
+class TokenConfigScreen(ModalScreen[Optional[Dict[str, str]]]):
+    """Modal to update API base and tokens without env edits."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("Configure API base/token", classes="title")
+        yield Input(placeholder="API base (e.g., http://localhost:8000)", id="api_base")
+        yield Input(placeholder="API token (optional)", id="api_token", password=True)
+        yield Input(placeholder="Project token (optional)", id="project_token", password=True)
+        yield Button("Save", id="save", variant="primary")
+        yield Button("Cancel", id="cancel", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        api_base = self.query_one("#api_base", Input).value.strip()
+        api_token = self.query_one("#api_token", Input).value.strip()
+        project_token = self.query_one("#project_token", Input).value.strip()
+        if not api_base:
+            self.app.bell()
+            return
+        self.dismiss(
+            {
+                "api_base": api_base,
+                "api_token": api_token or None,
+                "project_token": project_token or None,
+            }
+        )
+
+
 class TuiDashboard(App):
     CSS = """
-    #layout { height: 1fr; }
-    #left, #middle, #right { padding: 1; }
-    .title { color: cyan; }
-    #status_bar { padding: 0 1; height: 3; }
+    Screen {
+        layout: grid;
+        grid-size: 3 5;
+        grid-rows: auto 1fr 1fr auto auto;
+        grid-columns: 1fr 1fr 1fr;
+    }
+
+    Header {
+        dock: top;
+        background: $surface;
+    }
+    Footer {
+        dock: bottom;
+        background: $surface-darken-1;
+    }
+
+    #projects-panel, #protocols-panel, #steps-panel, #events-panel, #step-details {
+        border: solid $surface-darken-2;
+        padding: 1;
+    }
+    #projects-panel { grid-column: 1; grid-row: 2 / span 2; }
+    #protocols-panel { grid-column: 2; grid-row: 2; }
+    #steps-panel { grid-column: 2; grid-row: 3; }
+    #events-panel { grid-column: 3; grid-row: 2 / span 2; }
+    #step-details { grid-column: 1 / span 3; grid-row: 4; }
+    #status_bar {
+        grid-column: 1 / span 3;
+        grid-row: 5;
+        height: 3;
+        padding: 0 1;
+    }
+    .title { color: $primary; }
+    .pill { border: tall $primary; padding: 0 1; }
     #step_meta, #step_policy, #step_runtime { padding: 0 1; }
     """
 
     BINDINGS = [
-        Binding("r", "refresh", "Refresh"),
-        Binding("n", "run_next", "Run next step"),
-        Binding("t", "retry_latest", "Retry latest"),
-        Binding("y", "run_qa", "Run QA latest"),
-        Binding("a", "approve", "Approve latest"),
-        Binding("o", "open_pr", "Open PR"),
-        Binding("i", "import_codemachine", "Import CodeMachine"),
-        Binding("q", "quit", "Quit"),
+        Binding("r", "refresh", "Refresh", priority=True),
+        Binding("?", "help", "Help", priority=True),
+        Binding("q", "quit", "Quit", priority=True),
+        Binding("tab", "focus_next", "Next pane", priority=True),
+        Binding("shift+tab", "focus_previous", "Prev pane", priority=True),
+        Binding("enter", "step_menu", "Step actions", show=True),
+        Binding("c", "configure_tokens", "Config API/token", show=True),
+        Binding("n", "run_next", "Run next step", show=True),
+        Binding("t", "retry_latest", "Retry latest", show=True),
+        Binding("y", "run_qa", "Run QA latest", show=True),
+        Binding("a", "approve", "Approve latest", show=True),
+        Binding("o", "open_pr", "Open PR", show=True),
+        Binding("i", "import_codemachine", "Import CodeMachine", show=True),
     ]
+    HELP_TEXT = "r refresh • tab/shift+tab focus panes • n run next • t retry • y run QA • a approve • o open PR • i import CodeMachine • q quit"
 
     status_message = reactive("Ready")
     refreshing = reactive(False)
@@ -116,35 +200,41 @@ class TuiDashboard(App):
         self.protocols: List[Dict[str, Any]] = []
         self.steps: List[Dict[str, Any]] = []
         self.events: List[Dict[str, Any]] = []
+        self.step_filter: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        with Horizontal(id="layout"):
-            with Vertical(id="left"):
+        with Grid(id="layout"):
+            with Vertical(id="projects-panel"):
                 yield Static("Projects", classes="title")
                 yield ListView(id="projects")
+            with Vertical(id="protocols-panel"):
                 yield Static("Protocols", classes="title")
                 yield ListView(id="protocols")
-            with Vertical(id="middle"):
+            with Vertical(id="steps-panel"):
                 yield Static("Steps", classes="title")
                 yield ListView(id="steps")
-            with VerticalScroll(id="right"):
+            with VerticalScroll(id="events-panel"):
+                yield Static("Events", classes="title")
+                yield ListView(id="events")
+                yield LoadingIndicator(id="loader", classes="hidden")
+            with Vertical(id="step-details"):
                 yield Static("Step details", classes="title")
                 yield Static("", id="step_meta")
                 yield Static("Policy (loop/trigger)", classes="title")
                 yield Static("", id="step_policy")
                 yield Static("Runtime state", classes="title")
                 yield Static("", id="step_runtime")
-                yield Static("Events", classes="title")
-                yield ListView(id="events")
-                yield LoadingIndicator(id="loader", classes="hidden")
-                yield Static("", id="status_bar")
+            yield Static("", id="status_bar")
         yield Footer()
 
     async def on_mount(self) -> None:
         self.query_one("#loader", LoadingIndicator).display = False
         await self.refresh_all()
         self.set_interval(self.refresh_interval, self.refresh_all, pause=False)
+
+    async def action_help(self) -> None:
+        self.status_message = self.HELP_TEXT
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == "projects":
@@ -232,7 +322,8 @@ class TuiDashboard(App):
             return
         self.steps = steps or []
         log.info("steps_loaded", extra={"count": len(self.steps), "protocol_id": self.protocol_id})
-        for step in self.steps:
+        filtered = [s for s in self.steps if not self.step_filter or s["status"] == self.step_filter]
+        for step in filtered:
             label = f"{step['step_index']}: {step['step_name']} [{step['status']}]"
             list_view.append(DataListItem(label, step["id"], subtitle=f"retries={step['retries']}"))
         if self.steps:
@@ -259,6 +350,8 @@ class TuiDashboard(App):
         log.info("events_loaded", extra={"count": len(self.events), "protocol_id": self.protocol_id})
         for ev in reversed(self.events[-50:]):
             text = f"{ev['event_type']}: {ev['message']}"
+            if ev.get("metadata"):
+                text += f" • {json.dumps(ev['metadata'])}"
             list_view.append(DataListItem(text, ev["id"]))
 
     def _highlight(self, list_view: ListView, target_id: int) -> None:
@@ -388,6 +481,34 @@ class TuiDashboard(App):
     def watch_refreshing(self, value: bool) -> None:
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = value
+
+    async def action_step_menu(self) -> None:
+        if not self.protocol_id:
+            self.status_message = "Select a protocol."
+            return
+        choice = await self.push_screen_wait(StepActionScreen())
+        if not choice:
+            return
+        if choice == "run_next":
+            await self.action_run_next()
+        elif choice == "retry_latest":
+            await self.action_retry_latest()
+        elif choice == "run_qa":
+            await self.action_run_qa()
+        elif choice == "approve":
+            await self.action_approve()
+        elif choice == "open_pr":
+            await self.action_open_pr()
+
+    async def action_configure_tokens(self) -> None:
+        result = await self.push_screen_wait(TokenConfigScreen())
+        if not result:
+            return
+        self.client.base_url = result["api_base"]
+        self.client.token = result.get("api_token")
+        self.client.project_token = result.get("project_token")
+        self.status_message = f"Updated API base to {self.client.base_url}"
+        log.info("api_config_updated", extra={"base_url": self.client.base_url})
 
 
 def run_tui() -> None:
