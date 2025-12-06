@@ -164,7 +164,8 @@ class TuiDashboard(App):
     #events-panel { grid-column: 3; grid-row-start: 2; grid-row-end: 4; }
     #step-details { grid-column-start: 1; grid-column-end: 4; grid-row: 4; }
     #status_bar {
-        grid-column: 1 / span 3;
+        grid-column-start: 1;
+        grid-column-end: 4;
         grid-row: 5;
         height: 3;
         padding: 0 1;
