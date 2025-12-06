@@ -11,25 +11,32 @@ This repo is a lightweight starter kit for agent-driven development using the De
 ## Quick start
 
 1. Prep a repo (existing or new):
+
    ```bash
    python3 scripts/project_setup.py --base-branch main --init-if-needed
    # Optional: --clone-url <git-url> --run-discovery
    ```
+
    This adds docs/prompts/CI/schema/pipeline scripts and can auto-fill CI commands via Codex discovery.
 2. Fill CI commands in `scripts/ci/*.sh` for your stack (Node, Python, Java, Go, etc.). Workflows already call these scripts.
 3. Generate a protocol for your next task:
+
    ```bash
    python3 scripts/protocol_pipeline.py --base-branch main --short-name "<task>" --description "<desc>"
    # Optional: --pr-platform github|gitlab, --run-step 01-some-step.md
    ```
+
    This creates a worktree/branch `NNNN-<task>`, `.protocols/NNNN-<task>/plan.md` + step files, and can open a Draft PR/MR.
 4. Execute steps with Codex:
+
    ```bash
    codex --model codex-5.1-max-xhigh --cd ../worktrees/NNNN-<task> \
      --sandbox workspace-write --ask-for-approval on-request \
      "Follow .protocols/NNNN-<task>/plan.md and the current step file to implement the next step."
    ```
+
 5. Validate a step (optional QA gate):
+
    ```bash
    python3 scripts/quality_orchestrator.py \
      --protocol-root ../worktrees/NNNN-<task>/.protocols/NNNN-<task> \
@@ -58,13 +65,16 @@ Redis is required for orchestration; set `DEKSDENFLOW_REDIS_URL` (use `fakeredis
 ## Containerized orchestrator (API + worker + Redis/Postgres)
 
 For a quick local stack with API, RQ worker, Redis, and Postgres:
+
 ```bash
 docker-compose up --build
 # API at http://localhost:8000 (token from DEKSDENFLOW_API_TOKEN env or compose default)
 ```
+
 Environment defaults live in `docker-compose.yml`; override with env vars as needed.
 
 Local (SQLite + fakeredis) without Docker:
+
 ```bash
 make orchestrator-setup
 DEKSDENFLOW_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py
@@ -134,7 +144,7 @@ graph TD
 ```mermaid
 flowchart LR
   A["Register project (/projects)"] --> B["project_setup_job (clone + bootstrap assets)"]
-  A --> B2["optional: codemachine_import_job (/projects/{id}/codemachine/import)"]
+  A --> B2["optional: codemachine_import_job (/projects/&#123;id&#125;/codemachine/import)"]
   B --> C["plan_protocol_job (plan + decompose)"]
   C --> D["execute_step_job (worktree + .protocols updates)"]
   D -->|DEKSDENFLOW_AUTO_QA_AFTER_EXEC| E["run_quality_job"]
@@ -156,10 +166,10 @@ flowchart TD
   A --> C{"Import .codemachine?"}
   C -->|Yes| C1["codemachine_import_job\npersist template + create steps\nattach loop/trigger policies"]
   C -->|No| B
-  B --> D[/POST /projects/{id}/protocols + start/]
+  B --> D[/POST /projects/&#123;id&#125;/protocols + start/]
   D --> E["plan_protocol_job\nCodex plan + decompose → StepRuns"]
   E --> F{"Any pending/blocked steps?"}
-  F -->|run| G[/steps/{id}/actions/run → execute_step_job/]
+  F -->|run| G[/steps/&#123;id&#125;/actions/run → execute_step_job/]
   G --> H{"Execution path"}
   H -->|Codex| H1["Codex exec → writes .protocols step"]
   H -->|CodeMachine| H2["Resolve agent prompt + specs → write .protocols + .codemachine/outputs"]
@@ -288,6 +298,7 @@ python3 scripts/quality_orchestrator.py \
 ```
 
 Behavior:
+
 - Collects plan/context/log, the step file, git status, latest commit message.
 - Calls Codex with `prompts/quality-validator.prompt.md`.
 - Writes `quality-report.md` in the protocol folder.
