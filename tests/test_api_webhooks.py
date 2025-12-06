@@ -17,6 +17,7 @@ def test_github_webhook_updates_step_and_protocol() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         os.environ["DEKSDENFLOW_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
         os.environ.pop("DEKSDENFLOW_API_TOKEN", None)
+        os.environ["DEKSDENFLOW_REDIS_URL"] = "fakeredis://"
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -52,6 +53,7 @@ def test_gitlab_webhook_updates_step() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         os.environ["DEKSDENFLOW_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
         os.environ.pop("DEKSDENFLOW_API_TOKEN", None)
+        os.environ["DEKSDENFLOW_REDIS_URL"] = "fakeredis://"
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -83,6 +85,7 @@ def test_github_pr_merge_completes_protocol() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         os.environ["DEKSDENFLOW_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
         os.environ.pop("DEKSDENFLOW_API_TOKEN", None)
+        os.environ["DEKSDENFLOW_REDIS_URL"] = "fakeredis://"
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(

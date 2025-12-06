@@ -16,8 +16,9 @@ from deksdenflow.domain import ProtocolStatus, StepStatus
 from deksdenflow.logging import log_extra, setup_logging, json_logging_from_env
 from deksdenflow.metrics import metrics
 from deksdenflow.storage import BaseDatabase, create_database
-from deksdenflow.worker_runtime import BackgroundWorker
+from deksdenflow.worker_runtime import BackgroundWorker, RQWorkerThread
 from deksdenflow.health import check_db
+from deksdenflow.workers.state import maybe_complete_protocol
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -35,14 +36,24 @@ async def lifespan(app: FastAPI):
     logger.info("Starting API", extra={"request_id": "-", "env": config.environment})
     db = create_database(db_path=config.db_path, db_url=config.db_url, pool_size=config.db_pool_size)
     db.init_schema()
-    queue = jobs.create_queue(config.redis_url)
+    queue = jobs.create_queue(config.redis_url, allow_inmemory=True)
+    try:
+        # Fail fast if Redis is unreachable
+        queue.stats()
+    except Exception as exc:  # pragma: no cover - runtime guard
+        logger.error("Redis unavailable at startup", extra={"error": str(exc)})
+        raise
     app.state.config = config  # type: ignore[attr-defined]
     app.state.db = db  # type: ignore[attr-defined]
     app.state.queue = queue  # type: ignore[attr-defined]
     app.state.metrics = metrics  # type: ignore[attr-defined]
     worker = None
-    if isinstance(queue, jobs.InMemoryQueue):
-        worker = BackgroundWorker(queue=queue, db=db)
+    if isinstance(queue, jobs.RedisQueue) and queue.is_fakeredis:
+        worker = RQWorkerThread(queue)
+        app.state.worker = worker  # type: ignore[attr-defined]
+        worker.start()
+    elif isinstance(queue, jobs.LocalQueue):
+        worker = BackgroundWorker(queue, db)
         app.state.worker = worker  # type: ignore[attr-defined]
         worker.start()
     try:
@@ -67,7 +78,7 @@ def get_queue(request: Request) -> jobs.BaseQueue:
     return request.app.state.queue  # type: ignore[attr-defined]
 
 
-def get_worker(request: Request) -> BackgroundWorker:
+def get_worker(request: Request) -> RQWorkerThread:
     return request.app.state.worker  # type: ignore[attr-defined]
 
 
@@ -274,10 +285,11 @@ def start_protocol(
     if run.status not in (ProtocolStatus.PENDING, ProtocolStatus.PLANNED, ProtocolStatus.PAUSED):
         raise HTTPException(status_code=409, detail="Protocol already running or terminal")
     try:
-        db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING, expected_status=run.status)
+        db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNING, expected_status=run.status)
     except ValueError:
         raise HTTPException(status_code=409, detail="Protocol state changed; retry")
     job = queue.enqueue("plan_protocol_job", {"protocol_run_id": protocol_run_id}).asdict()
+    db.append_event(protocol_run_id, "planning_enqueued", "Planning job enqueued.")
     return schemas.ActionResponse(message="Protocol planning enqueued", job=job)
 
 
@@ -372,6 +384,7 @@ def run_next_step(
         step = db.update_step_status(target.id, StepStatus.RUNNING, expected_status=target.status)
     except ValueError:
         raise HTTPException(status_code=409, detail="Step state changed; retry")
+    db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message=f"Step {step.step_name} enqueued", job=job)
 
@@ -399,6 +412,7 @@ def retry_latest_step(
         )
     except ValueError:
         raise HTTPException(status_code=409, detail="Step state changed; retry")
+    db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message=f"Retrying {step.step_name}", job=job)
 
@@ -451,6 +465,7 @@ def run_step(
         step = db.update_step_status(step.id, StepStatus.RUNNING, expected_status=step.status)
     except ValueError:
         raise HTTPException(status_code=409, detail="Step state changed; retry")
+    db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
     job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
     return schemas.ActionResponse(message="Step execution enqueued", job=job)
 

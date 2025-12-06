@@ -7,6 +7,7 @@
 - Structured logging extended (JSON option via `DEKSDENFLOW_LOG_JSON`); workers/CLIs/API share logger init, request IDs, and standard exit codes; events now include protocol/step IDs and workers log job start/end with IDs.
 - Makefile helpers: `orchestrator-setup`, `deps`, `migrate`.
 - Compose stack + Dockerfile for `deksdenflow-core`; optional codex-worker service; K8s manifests for API/worker with probes and resource limits.
+- Redis/RQ required for orchestration; fakeredis wired for tests/dev and API now fails fast when Redis is unreachable.
 
 ## How to run now
 ```bash
@@ -15,6 +16,7 @@ make orchestrator-setup \
 ```
 Then start API: `.venv/bin/python scripts/api_server.py`
 # Or use docker-compose: `docker-compose up --build` (API on :8000)
+# Redis URL required: set `DEKSDENFLOW_REDIS_URL` (use `fakeredis://` for local/testing).
 
 ## Next focus
 - Harden logging/error handling across all CLIs/workers with richer structured fields (protocol/step IDs everywhere).

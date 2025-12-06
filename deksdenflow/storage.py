@@ -125,14 +125,19 @@ class BaseDatabase(Protocol):
     def get_project(self, project_id: int) -> Project: ...
     def list_projects(self) -> List[Project]: ...
     def create_protocol_run(self, project_id: int, protocol_name: str, status: str, base_branch: str, worktree_path: Optional[str], protocol_root: Optional[str], description: Optional[str]) -> ProtocolRun: ...
+    def update_protocol_paths(self, run_id: int, worktree_path: Optional[str], protocol_root: Optional[str]) -> ProtocolRun: ...
     def get_protocol_run(self, run_id: int) -> ProtocolRun: ...
     def find_protocol_run_by_name(self, protocol_name: str) -> Optional[ProtocolRun]: ...
+    def find_protocol_run_by_branch(self, branch: str) -> Optional[ProtocolRun]: ...
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]: ...
     def update_protocol_status(self, run_id: int, status: str, expected_status: Optional[str] = None) -> ProtocolRun: ...
     def create_step_run(self, protocol_run_id: int, step_index: int, step_name: str, step_type: str, status: str, model: Optional[str] = None, retries: int = 0, summary: Optional[str] = None) -> StepRun: ...
     def get_step_run(self, step_run_id: int) -> StepRun: ...
+    def list_step_runs(self, protocol_run_id: int) -> List[StepRun]: ...
+    def latest_step_run(self, protocol_run_id: int) -> Optional[StepRun]: ...
     def update_step_status(self, step_run_id: int, status: str, retries: Optional[int] = None, summary: Optional[str] = None, model: Optional[str] = None, expected_status: Optional[str] = None) -> StepRun: ...
     def append_event(self, protocol_run_id: int, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None, step_run_id: Optional[int] = None) -> Event: ...
+    def list_events(self, protocol_run_id: int) -> List[Event]: ...
 
 
 class Database:
@@ -235,6 +240,19 @@ class Database:
             raise KeyError(f"ProtocolRun {run_id} not found")
         return self._row_to_protocol(row)
 
+    def update_protocol_paths(self, run_id: int, worktree_path: Optional[str], protocol_root: Optional[str]) -> ProtocolRun:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE protocol_runs
+                SET worktree_path = ?, protocol_root = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (worktree_path, protocol_root, run_id),
+            )
+            conn.commit()
+        return self.get_protocol_run(run_id)
+
     def find_protocol_run_by_name(self, protocol_name: str) -> Optional[ProtocolRun]:
         row = self._fetchone("SELECT * FROM protocol_runs WHERE protocol_name = ?", (protocol_name,))
         return self._row_to_protocol(row) if row else None
@@ -248,10 +266,7 @@ class Database:
         # Prefer last segment; also try full ref
         candidates = [ref, parts[-1]]
         for cand in candidates:
-            row = self._fetchone(
-                "SELECT * FROM protocol_runs WHERE protocol_name = ? OR base_branch = ?",
-                (cand, cand),
-            )
+            row = self._fetchone("SELECT * FROM protocol_runs WHERE protocol_name = ?", (cand,))
             if row:
                 return self._row_to_protocol(row)
         return None
@@ -411,7 +426,6 @@ class Database:
         )
         return [self._row_to_event(row) for row in rows]
 
-    @staticmethod
     @staticmethod
     def _parse_json(value: Any) -> Optional[dict]:
         if value is None:
@@ -597,6 +611,16 @@ class PostgresDatabase:
         row = self._fetchone("SELECT * FROM protocol_runs WHERE protocol_name = %s", (protocol_name,))
         return Database._row_to_protocol(row) if row else None  # type: ignore[arg-type]
 
+    def find_protocol_run_by_branch(self, branch: str) -> Optional[ProtocolRun]:
+        ref = branch.replace("refs/heads/", "").replace("refs/tags/", "")
+        parts = ref.split("/")
+        candidates = [ref, parts[-1]]
+        for cand in candidates:
+            row = self._fetchone("SELECT * FROM protocol_runs WHERE protocol_name = %s", (cand,))
+            if row:
+                return Database._row_to_protocol(row)  # type: ignore[arg-type]
+        return None
+
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]:
         rows = self._fetchall(
             "SELECT * FROM protocol_runs WHERE project_id = %s ORDER BY created_at DESC",
@@ -619,6 +643,20 @@ class PostgresDatabase:
                         "UPDATE protocol_runs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                         (status, run_id),
                     )
+            conn.commit()
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_paths(self, run_id: int, worktree_path: Optional[str], protocol_root: Optional[str]) -> ProtocolRun:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE protocol_runs
+                    SET worktree_path = %s, protocol_root = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (worktree_path, protocol_root, run_id),
+                )
             conn.commit()
         return self.get_protocol_run(run_id)
 

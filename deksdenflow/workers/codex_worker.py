@@ -4,7 +4,6 @@ Codex worker: resolves protocol context, runs Codex CLI for planning/exec/QA, an
 
 import json
 import shutil
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -20,8 +19,42 @@ from deksdenflow.pipeline import (
 )
 from deksdenflow.storage import BaseDatabase
 from deksdenflow.ci import trigger_ci
+from deksdenflow.qa import run_quality_check
+from deksdenflow.workers.state import maybe_complete_protocol
 
 log = get_logger(__name__)
+
+
+def infer_step_type(filename: str) -> str:
+    lower = filename.lower()
+    if lower.startswith("00-") or "setup" in lower:
+        return "setup"
+    if "qa" in lower:
+        return "qa"
+    return "work"
+
+
+def sync_step_runs_from_protocol(protocol_root: Path, protocol_run_id: int, db: BaseDatabase) -> int:
+    """
+    Ensure StepRun rows exist for each step file in the protocol directory.
+    """
+    step_files = sorted([p for p in protocol_root.glob("*.md") if p.name[0:2].isdigit()])
+    existing = {s.step_name: s for s in db.list_step_runs(protocol_run_id)}
+    created = 0
+    for idx, step_file in enumerate(step_files):
+        if step_file.name in existing:
+            continue
+        db.create_step_run(
+            protocol_run_id=protocol_run_id,
+            step_index=idx,
+            step_name=step_file.name,
+            step_type=infer_step_type(step_file.name),
+            status=StepStatus.PENDING,
+            model=None,
+        )
+        created += 1
+    return created
+
 
 def load_project(repo_root: Path, protocol_name: str, base_branch: str) -> Path:
     worktrees_root = repo_root.parent / "worktrees"
@@ -156,6 +189,7 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase) -> None:
     worktree = load_project(repo_root, run.protocol_name, run.base_branch)
 
     protocol_root = worktree / ".protocols" / run.protocol_name
+    db.update_protocol_paths(protocol_run_id, str(worktree), str(protocol_root))
     schema_path = repo_root / "schemas" / "protocol-planning.schema.json"
     templates = (repo_root / "prompts" / "protocol-new.prompt.md").read_text(encoding="utf-8")
     planning_text = planning_prompt(
@@ -176,8 +210,15 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase) -> None:
     )
     data = json.loads(planning_json)
     write_protocol_files(protocol_root, data)
+    created_steps = sync_step_runs_from_protocol(protocol_root, protocol_run_id, db)
     db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
-    db.append_event(protocol_run_id, "planned", "Protocol planned via Codex.", step_run_id=None)
+    db.append_event(
+        protocol_run_id,
+        "planned",
+        "Protocol planned via Codex.",
+        step_run_id=None,
+        metadata={"steps_created": created_steps, "protocol_root": str(protocol_root)},
+    )
 
     # Decompose steps
     plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
@@ -216,6 +257,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase) -> None:
             "step_name": step.step_name,
         },
     )
+    db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="Executed via stub (codex/repo unavailable)")
         db.append_event(step.protocol_run_id, "step_completed", "Step executed (stub; codex/repo unavailable).", step_run_id=step.id)
@@ -265,27 +307,45 @@ def handle_quality(step_run_id: int, db: BaseDatabase) -> None:
     if shutil.which("codex") is None or not Path(project.git_url).exists():
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA passed (stub; codex/repo unavailable)")
         db.append_event(step.protocol_run_id, "qa_passed", "QA passed (stub; codex/repo unavailable).", step_run_id=step.id)
+        maybe_complete_protocol(step.protocol_run_id, db)
         return
     repo_root = Path(project.git_url) if Path(project.git_url).exists() else detect_repo_root()
     worktree = load_project(repo_root, run.protocol_name, run.base_branch)
     protocol_root = worktree / ".protocols" / run.protocol_name
     prompt_path = repo_root / "prompts" / "quality-validator.prompt.md"
-    prompt_prefix = prompt_path.read_text(encoding="utf-8")
-    qa_prompt = f"{prompt_prefix}\n\n(See step/context in repo)"
-    run_codex(
-        qa_prompt,
-        project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max",
-        worktree,
-        "read-only",
-    )
-    db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA passed via Codex")
-    db.append_event(
-        step.protocol_run_id,
-        "qa_passed",
-        "QA passed via Codex.",
-        step_run_id=step.id,
-        metadata={"protocol_run_id": run.id, "step_run_id": step.id},
-    )
+    try:
+        result = run_quality_check(
+            protocol_root=protocol_root,
+            step_file=protocol_root / step.step_name,
+            model=project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max",
+            prompt_file=prompt_path,
+            sandbox="read-only",
+        )
+        verdict = result.verdict.upper()
+        if verdict == "FAIL":
+            db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")
+            db.append_event(
+                step.protocol_run_id,
+                "qa_failed",
+                "QA failed via Codex.",
+                step_run_id=step.id,
+                metadata={"protocol_run_id": run.id, "step_run_id": step.id},
+            )
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        else:
+            db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS")
+            db.append_event(
+                step.protocol_run_id,
+                "qa_passed",
+                "QA passed via Codex.",
+                step_run_id=step.id,
+                metadata={"protocol_run_id": run.id, "step_run_id": step.id},
+            )
+            maybe_complete_protocol(step.protocol_run_id, db)
+    except Exception as exc:  # pragma: no cover - best effort
+        log.warning("QA job failed", extra={"step_run_id": step.id, "error": str(exc)})
+        db.update_step_status(step.id, StepStatus.FAILED, summary=f"QA error: {exc}")
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
 
 
 def handle_open_pr(protocol_run_id: int, db: BaseDatabase) -> None:

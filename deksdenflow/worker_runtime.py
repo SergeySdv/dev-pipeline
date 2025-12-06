@@ -5,7 +5,7 @@ from typing import Optional
 from deksdenflow.config import load_config
 from deksdenflow.domain import ProtocolStatus, StepStatus
 from deksdenflow.errors import DeksdenflowError
-from deksdenflow.jobs import BaseQueue, Job
+from deksdenflow.jobs import BaseQueue, Job, RedisQueue
 from deksdenflow.storage import BaseDatabase, Database, create_database
 from deksdenflow.workers import codex_worker, onboarding_worker
 from deksdenflow.metrics import metrics
@@ -74,6 +74,8 @@ def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
 
     try:
         process_job(job, db)
+        job.status = "finished"
+        job.ended_at = time.time()
         metrics.inc_job(job.job_type, "completed")
     except Exception as exc:  # pragma: no cover - best effort
         job.attempts += 1
@@ -95,6 +97,9 @@ def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:
             log.warning("Job failed; requeuing with backoff", extra={**context, "backoff": backoff})
             queue.requeue(job, delay_seconds=backoff)
         else:
+            job.status = "failed"
+            job.ended_at = time.time()
+            job.error = str(exc)
             log.error("Job failed permanently", extra=context)
             proto_id = job.payload.get("protocol_run_id")
             step_id = job.payload.get("step_run_id")
@@ -153,3 +158,44 @@ class BackgroundWorker:
             job = drain_once(self.queue, self.db)
             if job is None:
                 time.sleep(self.poll_interval)
+
+
+class RQWorkerThread:
+    """
+    Lightweight RQ SimpleWorker loop for test/dev when using fakeredis.
+    """
+
+    def __init__(self, redis_queue: RedisQueue, poll_interval: float = 0.25) -> None:
+        from rq import SimpleWorker  # type: ignore
+
+        self.redis_queue = redis_queue
+        self.poll_interval = poll_interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._worker_cls = SimpleWorker
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2)
+
+    def _loop(self) -> None:
+        q = self.redis_queue.get_rq_queue("default")
+        # Re-create worker each burst to avoid stale state in fakeredis and sidestep signal handling.
+        while not self._stop.is_set():
+            worker = self._worker_cls([q], connection=self.redis_queue.redis_connection)
+            try:
+                # Disable signal handlers when running in background threads.
+                worker._install_signal_handlers = lambda: None  # type: ignore[attr-defined]
+                try:
+                    from contextlib import nullcontext
+                except ImportError:  # pragma: no cover - defensive
+                    nullcontext = None  # type: ignore
+                if nullcontext:
+                    worker.death_penalty_class = lambda *args, **kwargs: nullcontext()  # type: ignore[assignment]
+                worker.work(burst=True, with_scheduler=False)
+            except Exception as exc:  # pragma: no cover - best effort
+                log.warning("RQ worker loop error", extra={"error": str(exc)})
+            time.sleep(self.poll_interval)

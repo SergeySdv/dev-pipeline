@@ -24,7 +24,7 @@ services:
     depends_on:
       - db
       - redis
-    command: ["python", "scripts/worker.py"]
+    command: ["python", "scripts/rq_worker.py"]
 
   codex-worker:
     build: .
@@ -35,7 +35,7 @@ services:
     depends_on:
       - db
       - redis
-    command: ["python", "scripts/worker.py"]
+    command: ["python", "scripts/rq_worker.py"]
     deploy:
       resources:
         limits:

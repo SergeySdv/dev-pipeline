@@ -18,6 +18,7 @@ def test_auth_rejects_missing_token_when_enabled() -> None:
         db_path = Path(tmpdir) / "api-auth.sqlite"
         os.environ["DEKSDENFLOW_DB_PATH"] = str(db_path)
         os.environ["DEKSDENFLOW_API_TOKEN"] = "secret-token"
+        os.environ["DEKSDENFLOW_REDIS_URL"] = "fakeredis://"
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             resp = client.get("/projects")

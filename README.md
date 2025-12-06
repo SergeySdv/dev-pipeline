@@ -37,10 +37,11 @@ This repo is a lightweight starter kit for agent-driven development using the De
   ```
 
 Logging tip: set `DEKSDENFLOW_LOG_JSON=true` to emit structured JSON logs from CLIs/workers/API.
+Redis is recommended for orchestration; set `DEKSDENFLOW_REDIS_URL`. When unset, the API now falls back to an in-memory queue (dev/demo only), and you can still use `fakeredis://` for local testing.
 
 ## Containerized orchestrator (API + worker + Redis/Postgres)
 
-For a quick local stack with API, background worker, Redis, and Postgres:
+For a quick local stack with API, RQ worker, Redis, and Postgres:
 ```bash
 docker-compose up --build
 # API at http://localhost:8000 (token from DEKSDENFLOW_API_TOKEN env or compose default)

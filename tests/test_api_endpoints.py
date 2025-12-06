@@ -18,6 +18,7 @@ def test_api_projects_protocols_steps_end_to_end() -> None:
         db_path = Path(tmpdir) / "api-test.sqlite"
         os.environ["DEKSDENFLOW_DB_PATH"] = str(db_path)
         os.environ.pop("DEKSDENFLOW_API_TOKEN", None)
+        os.environ["DEKSDENFLOW_REDIS_URL"] = "fakeredis://"
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             queue = client.app.state.queue  # type: ignore[attr-defined]
