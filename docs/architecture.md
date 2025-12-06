@@ -87,6 +87,59 @@ flowchart LR
   J -->|yes| K["Protocol → completed"]
 ```
 
+## Runtime configuration (env vars)
+- `DEKSDENFLOW_DB_URL` / `DEKSDENFLOW_DB_PATH` — Postgres URL or SQLite path (SQLite default).
+- `DEKSDENFLOW_REDIS_URL` — required Redis/RQ URL; use `fakeredis://` for local inline dev.
+- `DEKSDENFLOW_API_TOKEN` / `DEKSDENFLOW_WEBHOOK_TOKEN` — bearer auth + webhook HMAC/token validation.
+- `DEKSDENFLOW_AUTO_QA_AFTER_EXEC` / `DEKSDENFLOW_AUTO_QA_ON_CI` — enqueue QA after exec or on CI success.
+- `DEKSDENFLOW_MAX_TOKENS_PER_STEP` / `DEKSDENFLOW_MAX_TOKENS_PER_PROTOCOL` + `DEKSDENFLOW_TOKEN_BUDGET_MODE=strict|warn|off` — guardrails for Codex calls.
+- Logging: `DEKSDENFLOW_LOG_JSON=true` for structured logs; `DEKSDENFLOW_LOG_LEVEL=info|debug`.
+- Models: project `default_models` override per phase; fallbacks in `deksdenflow.config`.
+
+## Job types and workers
+- `project_setup_job` — ensure starter assets exist; emits setup events (no git mutation).
+- `plan_protocol_job` — create worktree, run planning + step decomposition via Codex, write `.protocols/`, create StepRuns.
+- `execute_step_job` — execute a step (Codex or CodeMachine adapter), write outputs, mark `needs_qa`, optionally push/open PR.
+- `run_quality_job` — build QA prompt and run Codex QA; on pass mark completed, on fail set failed/blocked or loop per policy.
+- `open_pr_job` — push branch and open PR/MR via `gh`/`glab` if available.
+- `codemachine_import_job` — parse `.codemachine` config, persist template, create steps with module policies.
+- Workers: RQ workers (`scripts/rq_worker.py`) for Redis; API auto-starts a background RQ worker thread when `fakeredis://` is used.
+
+## Data model (core fields)
+- Project: `id`, `name`, `git_url`, `base_branch`, `ci_provider`, `default_models`, `secrets` (optional `api_token`).
+- ProtocolRun: `id`, `project_id`, `protocol_name`, `status`, `base_branch`, `worktree_path`, `protocol_root`, `description`, `template_config`/`template_source`, timestamps.
+- StepRun: `id`, `protocol_run_id`, `step_index`, `step_name`, `step_type`, `status`, `retries`, `model`, `engine_id`, `policy`, `runtime_state`, `summary`.
+- Event: `id`, `protocol_run_id`, `step_run_id`, `event_type`, `message`, `metadata`, `created_at` (+ joined protocol/project names in list views).
+
+## Failure, retries, and policies
+- RQ retries: default `max_attempts=3` with exponential backoff (capped 60s) for enqueued jobs.
+- State guards: API uses optimistic checks; conflicting status transitions return 409.
+- Loop policies (CodeMachine): can reset steps to `pending` and increment `loop_counts` in `runtime_state`; bounded by `max_iterations` and skip lists.
+- Trigger policies: can re-queue/inline other steps; inline depth capped (`MAX_INLINE_TRIGGER_DEPTH`) to avoid recursion.
+- CI failures: webhook/report.sh set step to `failed` and protocol to `blocked`; manual retry resumes.
+- Codex/Repo unavailable: workers stub execution/QA, set `needs_qa` or `completed` with events and avoid crashing pipelines.
+
+## Git, CI, and webhooks
+- Worktrees: created under `../worktrees/<protocol_name>` from `origin/<base_branch>`; branch name matches protocol.
+- Push/PR: best-effort push + `gh`/`glab` draft creation after planning/exec and in `open_pr_job`.
+- CI flows: `.github/workflows/ci.yml` and `.gitlab-ci.yml` call `scripts/ci/*.sh` hooks; failures are mirrored via webhooks or `scripts/ci/report.sh`.
+- Webhook mapping: branch name (or explicit `protocol_run_id` param) maps CI events to runs; success can auto-enqueue QA, merge events complete the protocol.
+
+## Deployment modes
+- Local dev: `make orchestrator-setup && DEKSDENFLOW_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py`; background worker thread handles jobs inline.
+- Docker Compose: `docker-compose up --build` for API + worker + Redis + Postgres; use `scripts/rq_worker.py` for dedicated workers.
+- Production: prefer external Redis + Postgres; run API separately from RQ workers; lock down `DEKSDENFLOW_API_TOKEN`/`DEKSDENFLOW_WEBHOOK_TOKEN`.
+
+## Security and tenancy
+- Auth: bearer token on all non-health endpoints; optional per-project token via `X-Project-Token`.
+- Webhooks: HMAC (`X-Hub-Signature-256` or `X-Gitlab-Signature-256`) or shared token (`X-Gitlab-Token`/`X-Deksdenflow-Webhook-Token`) when configured.
+- Secrets: stored in `projects.secrets` (JSON) for project-level API token; avoid storing CI/git tokens in DB when possible.
+
+## Observability
+- Metrics: `/metrics` exposes Prometheus counters/histograms for requests, jobs, tokens, webhooks.
+- Logging: structured logs via `deksdenflow.logging` with request/job/step IDs; JSON toggle via env.
+- Events: persisted timeline per protocol/step; surfaced in console and `/events` API.
+
 ## Core building blocks
 - **Protocol assets and schema**  
   - Protocols live under `.protocols/NNNN-[task]/` inside each worktree; numbered via `next_protocol_number()` scanning existing `.protocols/` and `../worktrees/`.  
