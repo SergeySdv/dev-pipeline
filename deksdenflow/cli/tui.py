@@ -364,9 +364,12 @@ class TuiDashboard(App):
                 break
 
     def _render_step_details(self) -> None:
-        meta_widget = self.query_one("#step_meta", Static)
-        policy_widget = self.query_one("#step_policy", Static)
-        runtime_widget = self.query_one("#step_runtime", Static)
+        meta_widget = next(iter(self.query("#step_meta")), None)
+        policy_widget = next(iter(self.query("#step_policy")), None)
+        runtime_widget = next(iter(self.query("#step_runtime")), None)
+        if not (meta_widget and policy_widget and runtime_widget):
+            log.error("step_detail_widgets_missing", extra={})
+            return
         if not self.steps:
             meta_widget.update("Select a step to see engine and policy details.")
             policy_widget.update("No policy attached.")
