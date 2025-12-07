@@ -58,7 +58,7 @@ class ReadmeWorkflowIntegrationTest(unittest.TestCase):
         env.setdefault("PROTOCOL_EXEC_MODEL", "gpt-5.1-codex-max")
 
         cmd = [
-            "python3",
+            sys.executable,
             "scripts/protocol_pipeline.py",
             "--base-branch",
             "main",
