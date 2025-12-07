@@ -1,3 +1,5 @@
+![TasksGodzilla banner](docs/Images/BigBanner.png)
+
 # TasksGodzilla_Ilyas_Edition_1.0 Project Starter
 
 This repo is a lightweight starter kit for agent-driven development using the TasksGodzilla_Ilyas_Edition_1.0 protocols. It includes:
