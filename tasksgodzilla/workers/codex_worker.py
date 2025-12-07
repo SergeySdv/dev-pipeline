@@ -531,19 +531,35 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         },
     )
     if shutil.which("codex") is None:
+        workspace_root, protocol_root = _protocol_and_workspace_paths(run, project)
+        db.update_protocol_paths(protocol_run_id, str(workspace_root), str(protocol_root))
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "plan.md").write_text(f"# Plan for {run.protocol_name}\n\n- [ ] Execute demo step\n", encoding="utf-8")
+        (protocol_root / "context.md").write_text(run.description or "Auto-generated stub context.", encoding="utf-8")
+        (protocol_root / "log.md").write_text("", encoding="utf-8")
+        setup_file = protocol_root / "00-setup.md"
+        work_file = protocol_root / "01-demo.md"
+        if not setup_file.exists():
+            setup_file.write_text("Prepare workspace and dependencies.", encoding="utf-8")
+        if not work_file.exists():
+            work_file.write_text("Implement the demo task.", encoding="utf-8")
+
+        template_cfg = dict(run.template_config or {})
+        spec = template_cfg.get(PROTOCOL_SPEC_KEY)
+        if not spec:
+            spec = build_spec_from_protocol_files(protocol_root, default_qa_policy="skip")
+            template_cfg[PROTOCOL_SPEC_KEY] = spec
+            db.update_protocol_template(protocol_run_id, template_cfg, run.template_source)
+        spec_hash_val = protocol_spec_hash(spec) if spec else None
+        create_steps_from_spec(protocol_run_id, spec, db, existing_names={s.step_name for s in db.list_step_runs(protocol_run_id)})
+        update_spec_meta(db, protocol_run_id, template_cfg, run.template_source, status="valid", errors=[])
         db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
-        spec_hash_val = None
-        run = db.get_protocol_run(protocol_run_id)
-        if isinstance(run.template_config, dict):
-            tmpl_spec = run.template_config.get(PROTOCOL_SPEC_KEY)
-            if tmpl_spec:
-                spec_hash_val = protocol_spec_hash(tmpl_spec)
         db.append_event(
             protocol_run_id,
             "planned",
             "Protocol planned (stub; codex unavailable).",
             step_run_id=None,
-            metadata={"spec_hash": spec_hash_val, "spec_validated": False},
+            metadata={"spec_hash": spec_hash_val, "spec_validated": True},
         )
         return
 
@@ -700,7 +716,26 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     repo_root: Optional[Path] = None
 
     def _stub_execute(reason: str) -> None:
-        db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=f"Executed via stub ({reason})")
+        summary = f"Executed via stub ({reason})"
+        if qa_policy == "skip":
+            db.update_step_status(step.id, StepStatus.COMPLETED, summary=summary)
+            db.append_event(
+                step.protocol_run_id,
+                "step_completed",
+                f"Step executed (stub; {reason}). QA skipped by policy.",
+                step_run_id=step.id,
+                metadata={"spec_hash": spec_hash_val},
+            )
+            db.append_event(
+                step.protocol_run_id,
+                "qa_skipped_policy",
+                "QA skipped by policy during stub execution.",
+                step_run_id=step.id,
+                metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
+            )
+            maybe_complete_protocol(step.protocol_run_id, db)
+            return
+        db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=summary)
         db.append_event(
             step.protocol_run_id,
             "step_completed",

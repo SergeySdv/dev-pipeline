@@ -1,4 +1,4 @@
-.PHONY: orchestrator-setup migrate deps compose-deps compose-down
+.PHONY: orchestrator-setup migrate deps compose-deps compose-down demo-harness
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -26,3 +26,6 @@ compose-deps:
 # Stop Postgres/Redis containers started via compose-deps.
 compose-down:
 	docker compose stop db redis
+
+demo-harness: $(VENV)
+	TASKSGODZILLA_AUTO_CLONE=false $(PY) -m pytest tests/test_demo_harness.py -q
