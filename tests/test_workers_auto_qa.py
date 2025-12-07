@@ -62,3 +62,23 @@ def test_handle_quality_records_prompt_version(monkeypatch, tmp_path) -> None:
     assert qa_events, "expected qa_passed event"
     metadata = qa_events[0].metadata or {}
     assert metadata.get("prompt_versions", {}).get("qa") == prompt_version(qa_prompt)
+
+
+def test_handle_quality_blocks_when_repo_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
+    db = Database(tmp_path / "db.sqlite")
+    db.init_schema()
+
+    # Repo does not exist locally and auto-clone is disabled.
+    project = db.create_project("demo", "https://example.com/demo.git", "main", None, None)
+    run = db.create_protocol_run(project.id, "0003-demo", ProtocolStatus.RUNNING, "main", None, None, "demo protocol")
+    step = db.create_step_run(run.id, 0, "00-setup.md", "setup", StepStatus.NEEDS_QA, model=None)
+
+    codex_worker.handle_quality(step.id, db)
+
+    step_after = db.get_step_run(step.id)
+    run_after = db.get_protocol_run(run.id)
+    assert step_after.status == StepStatus.BLOCKED
+    assert run_after.status == ProtocolStatus.BLOCKED
+    events = [e.event_type for e in db.list_events(run.id)]
+    assert "qa_blocked_repo" in events

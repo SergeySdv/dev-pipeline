@@ -24,7 +24,7 @@ class FakeEngine:
         return EngineResult(success=True, stdout=f"output for {req.step_run_id}", stderr="", metadata={"engine": self.metadata.id})
 
     def qa(self, req: EngineRequest) -> EngineResult:  # pragma: no cover - not used here
-        return EngineResult(success=True, stdout="qa", stderr="")
+        return EngineResult(success=True, stdout="VERDICT: PASS", stderr="")
 
 
 def _register_fake_engine() -> None:
@@ -124,7 +124,7 @@ def test_codemachine_quality_is_skipped(tmp_path) -> None:
     step_after = db.get_step_run(step.id)
     assert step_after.status == StepStatus.COMPLETED
     events = [e.event_type for e in db.list_events(run.id)]
-    assert "qa_skipped_codemachine" in events
+    assert "qa_skipped_policy" in events
 
 
 def test_codemachine_quality_runs_when_policy_full(tmp_path) -> None:

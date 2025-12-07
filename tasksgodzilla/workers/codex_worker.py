@@ -30,10 +30,12 @@ from tasksgodzilla.pipeline import (
 )
 from tasksgodzilla.storage import BaseDatabase
 from tasksgodzilla.ci import trigger_ci
-from tasksgodzilla.qa import run_quality_check, build_prompt
+from tasksgodzilla.qa import build_prompt, determine_verdict
 from tasksgodzilla.workers.state import maybe_complete_protocol
 from tasksgodzilla.metrics import metrics
 from tasksgodzilla.engines import EngineRequest, registry
+from tasksgodzilla.engine_resolver import resolve_prompt_and_outputs
+from tasksgodzilla.workers.unified_runner import execute_step_unified, run_qa_unified
 from tasksgodzilla.jobs import RedisQueue
 from tasksgodzilla.project_setup import ensure_local_repo, local_repo_dir, auto_clone_enabled
 from tasksgodzilla.spec import (
@@ -837,11 +839,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     auto_clone = auto_clone_enabled()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
     step_spec = get_step_spec(run.template_config, step.step_name)
-    spec_hash_val = None
-    if isinstance(run.template_config, dict):
-        template_spec = run.template_config.get(PROTOCOL_SPEC_KEY)
-        if template_spec:
-            spec_hash_val = protocol_spec_hash(template_spec)
+    template_cfg = run.template_config or {}
+    protocol_spec = template_cfg.get(PROTOCOL_SPEC_KEY) if isinstance(template_cfg, dict) else None
+    spec_hash_val = protocol_spec_hash(protocol_spec) if protocol_spec else None
     log.info(
         "Executing step",
         extra={
@@ -889,9 +889,6 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         if repo_root is None:
             db.update_step_status(step.id, StepStatus.BLOCKED, summary="Repository unavailable")
             return
-    elif shutil.which("codex") is None:
-        _stub_execute("codex unavailable")
-        return
     else:
         repo_root = _repo_root_or_block(
             project,
@@ -899,6 +896,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             db,
             job_id=job_id,
             block_on_missing=auto_clone,
+            clone_if_missing=auto_clone,
         )
         if repo_root is None:
             if auto_clone:
@@ -906,12 +904,26 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 return
             _stub_execute("repository unavailable")
             return
-    ctx, spec_errors = (
-        _resolve_codemachine_context(step, run, project, config, run.template_config or {}, step_spec, job_id=job_id)
-        if codemachine
-        else _resolve_codex_context(step, run, project, step_spec, job_id=job_id, repo_root=repo_root)
-    )
-    spec_hash_val = spec_hash_val or ctx.spec_hash
+
+    if codemachine:
+        workspace_root = Path(run.worktree_path).expanduser() if run.worktree_path else repo_root
+        protocol_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace_root / ".codemachine")
+    else:
+        if shutil.which("codex") is None:
+            _stub_execute("codex unavailable")
+            return
+        worktree = _load_project_with_context(
+            repo_root,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=project.id,
+            job_id=job_id,
+        )
+        workspace_root = worktree
+        protocol_root = worktree / ".protocols" / run.protocol_name
+
+    spec_errors = validate_step_spec_paths(protocol_root, step_spec or {}, workspace=workspace_root)
     if spec_errors:
         for err in spec_errors:
             db.append_event(
@@ -924,40 +936,135 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         db.update_step_status(step.id, StepStatus.FAILED, summary="Spec validation failed")
         db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
-    exec_model = ctx.model
-    exec_tokens = _budget_and_tokens(ctx.prompt_text, exec_model, "exec", config.token_budget_mode, budget_limit)
 
-    engine = registry.get(ctx.engine_id)
-    prompt_ver = ctx.prompt_version
-    exec_request = EngineRequest(
-        project_id=project.id,
-        protocol_run_id=run.id,
-        step_run_id=step.id,
-        model=exec_model,
-        prompt_files=ctx.prompt_files,
-        working_dir=str(ctx.workdir),
-        extra={
-            "prompt_text": ctx.prompt_text,
-            "sandbox": "workspace-write",
-        },
+    resolution = resolve_prompt_and_outputs(
+        step_spec or {},
+        protocol_root=protocol_root,
+        workspace_root=workspace_root,
+        protocol_spec=protocol_spec,
+        default_engine_id=step.engine_id or registry.get_default().metadata.id,
     )
-    exec_result = None
+    kind = "codemachine" if codemachine else "codex"
+    engine_id = resolution.engine_id or registry.get_default().metadata.id
+    exec_model: Optional[str] = resolution.model
+
+    if codemachine:
+        agent = find_agent_for_step(step, template_cfg)
+        if not agent:
+            db.update_step_status(step.id, StepStatus.FAILED, summary="CodeMachine agent not found")
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            db.append_event(
+                run.id,
+                "codemachine_step_failed",
+                "CodeMachine agent not found.",
+                step_run_id=step.id,
+                metadata={"step_name": step.step_name, "template": template_cfg.get("template")},
+            )
+            return
+        placeholders = template_cfg.get("placeholders") or {}
+        prompt_text, prompt_path = build_prompt_text(agent, protocol_root, placeholders, step_spec=step_spec, workspace=workspace_root)
+        engine_defaults = (template_cfg.get("template") or {}).get("engineDefaults") or {}
+        agent_id = str(agent.get("id") or agent.get("agent_id") or step.step_name)
+        engine_id = (
+            step_spec.get("engine_id")
+            or step.engine_id
+            or agent.get("engine_id")
+            or engine_defaults.get("execute")
+            or registry.get_default().metadata.id
+        )
+        exec_model = (
+            exec_model
+            or step_spec.get("model")
+            or step.model
+            or agent.get("model")
+            or engine_defaults.get("executeModel")
+            or (project.default_models.get("exec") if project.default_models else None)
+            or getattr(config, "exec_model", None)
+            or registry.get(engine_id).metadata.default_model
+            or "codex-5.1-max-xhigh"
+        )
+        resolution.prompt_path = prompt_path
+        resolution.prompt_text = prompt_text
+        resolution.prompt_version = prompt_version(prompt_path)
+        resolution.engine_id = engine_id
+        resolution.model = exec_model
+        resolution.agent_id = agent_id
+        resolution.step_name = step.step_name
+        default_protocol, default_codemachine = output_paths(workspace_root, protocol_root, run, step, agent_id)
+        if not resolution.outputs.protocol:
+            resolution.outputs.protocol = default_protocol
+            resolution.outputs.raw["protocol"] = str(default_protocol)
+        if "codemachine" not in resolution.outputs.aux:
+            resolution.outputs.aux["codemachine"] = default_codemachine
+        resolution.workdir = workspace_root
+    else:
+        step_path = resolution.prompt_path
+        if not step_path.exists():
+            fallback = (protocol_root / step.step_name).resolve()
+            if fallback.exists():
+                step_path = fallback
+        step_content = step_path.read_text(encoding="utf-8") if step_path.exists() else ""
+        plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
+        exec_prompt = execute_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_path.name, step_content)
+        engine_id = step_spec.get("engine_id") or step.engine_id or engine_id
+        exec_model = (
+            exec_model
+            or step_spec.get("model")
+            or step.model
+            or (project.default_models.get("exec") if project.default_models else None)
+            or "codex-5.1-max-xhigh"
+        )
+        resolution.prompt_path = step_path
+        resolution.prompt_text = exec_prompt
+        resolution.prompt_version = prompt_version(step_path)
+        resolution.engine_id = engine_id
+        resolution.model = exec_model
+        resolution.workdir = workspace_root
+        if not resolution.outputs.protocol:
+            default_protocol_out = step_path if step_path else (protocol_root / step.step_name).resolve()
+            resolution.outputs.protocol = default_protocol_out
+            resolution.outputs.raw["protocol"] = str(default_protocol_out)
+
+    try:
+        engine = registry.get(engine_id)
+    except KeyError as exc:  # pragma: no cover - defensive guard
+        db.update_step_status(step.id, StepStatus.FAILED, summary=str(exc))
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        db.append_event(
+            run.id,
+            "step_execution_failed",
+            f"Execution failed: {exc}",
+            step_run_id=step.id,
+            metadata={"engine_id": engine_id, "spec_hash": spec_hash_val},
+        )
+        return
+
+    if engine.metadata.id == "codex" and shutil.which("codex") is None:
+        _stub_execute("codex unavailable")
+        return
+
+    exec_tokens = _budget_and_tokens(resolution.prompt_text, exec_model, "exec", config.token_budget_mode, budget_limit)
     db.append_event(
         step.protocol_run_id,
         "step_started",
-        f"Executing step via {ctx.kind.title()}.",
+        f"Executing step via {kind.title()}.",
         step_run_id=step.id,
         metadata={
-            "engine_id": ctx.engine_id,
+            "engine_id": engine_id,
             "model": exec_model,
-            "prompt_path": str(ctx.prompt_path),
-            "prompt_versions": {"exec": prompt_ver},
+            "prompt_path": str(resolution.prompt_path),
+            "prompt_versions": {"exec": resolution.prompt_version},
             "spec_hash": spec_hash_val,
-            "agent_id": ctx.agent_id,
+            "agent_id": resolution.agent_id,
         },
     )
     try:
-        exec_result = engine.execute(exec_request)
+        exec_result = execute_step_unified(
+            resolution,
+            project_id=project.id,
+            protocol_run_id=run.id,
+            step_run_id=step.id,
+        )
     except Exception as exc:  # pragma: no cover - best effort
         db.update_step_status(step.id, StepStatus.FAILED, summary=f"Execution error: {exc}")
         db.append_event(
@@ -983,18 +1090,10 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         else:
             db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
-    stdout_text = exec_result.stdout if exec_result and getattr(exec_result, "stdout", None) else ""
-    if ctx.protocol_output_path:
-        ctx.protocol_output_path.parent.mkdir(parents=True, exist_ok=True)
-        if stdout_text:
-            ctx.protocol_output_path.write_text(stdout_text, encoding="utf-8")
-            for out_path in ctx.aux_outputs.values():
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(stdout_text, encoding="utf-8")
 
-    if ctx.kind == "codex":
+    if kind == "codex":
         pushed = git_push_and_open_pr(
-            ctx.repo_root,
+            workspace_root,
             run.protocol_name,
             run.base_branch,
             protocol_run_id=run.id,
@@ -1003,7 +1102,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         )
         if pushed:
             triggered = trigger_ci_pipeline(
-                ctx.repo_root,
+                workspace_root,
                 run.protocol_name,
                 project.ci_provider,
                 protocol_run_id=run.id,
@@ -1014,7 +1113,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 db.append_event(step.protocol_run_id, "ci_triggered", "CI triggered after push.", step_run_id=step.id, metadata={"branch": run.protocol_name})
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
         else:
-            if _remote_branch_exists(ctx.repo_root, run.protocol_name):
+            if _remote_branch_exists(workspace_root, run.protocol_name):
                 db.append_event(
                     step.protocol_run_id,
                     "open_pr_branch_exists",
@@ -1032,40 +1131,34 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                     metadata={"branch": run.protocol_name},
                 )
                 db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-    db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Executed via Codex; pending QA")
-    outputs_meta = (
-        {
-            "protocol": str(ctx.protocol_output_path),
-            "aux": {k: str(v) for k, v in ctx.aux_outputs.items()} if ctx.aux_outputs else {},
-        }
-        if ctx.protocol_output_path
-        else ctx.outputs_cfg
-    )
+
+    db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=f"Executed via {kind.title()}; pending QA", model=exec_model, engine_id=engine_id)
+    outputs_meta = exec_result.metadata.get("outputs") if exec_result else {}
     base_meta = {
         "protocol_run_id": run.id,
         "step_run_id": step.id,
         "estimated_tokens": {"exec": exec_tokens},
         "outputs": outputs_meta,
-        "prompt_versions": {"exec": prompt_ver},
-        "prompt_path": str(ctx.prompt_path),
-        "engine_id": ctx.engine_id,
+        "prompt_versions": {"exec": resolution.prompt_version},
+        "prompt_path": str(resolution.prompt_path),
+        "engine_id": engine_id,
         "model": exec_model,
         "spec_hash": spec_hash_val,
         "spec_validated": True,
-        "agent_id": ctx.agent_id,
+        "agent_id": resolution.agent_id,
     }
-    if ctx.kind == "codemachine":
+    if kind == "codemachine":
         db.append_event(
             step.protocol_run_id,
             "codemachine_step_completed",
-            f"CodeMachine agent {ctx.agent_id} executed.",
+            f"CodeMachine agent {resolution.agent_id} executed.",
             step_run_id=step.id,
             metadata=base_meta,
         )
     db.append_event(
         step.protocol_run_id,
         "step_completed",
-        f"Step executed via {ctx.kind.title()}. QA required.",
+        f"Step executed via {kind.title()}. QA required.",
         step_run_id=step.id,
         metadata=base_meta,
     )
@@ -1090,192 +1183,6 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         handle_quality(step.id, db, job_id=job_id)
 
 
-def _handle_codemachine_execute(
-    step: StepRun,
-    run: ProtocolRun,
-    project,
-    config,
-    db: BaseDatabase,
-    step_spec: Optional[dict] = None,
-    job_id: Optional[str] = None,
-) -> None:
-    template_cfg = run.template_config or {}
-    try:
-        ctx, spec_errors = _resolve_codemachine_context(step, run, project, config, template_cfg, step_spec)
-    except ValueError as exc:
-        db.update_step_status(step.id, StepStatus.FAILED, summary=str(exc))
-        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        db.append_event(
-            run.id,
-            "codemachine_step_failed",
-            str(exc),
-            step_run_id=step.id,
-            metadata={"step_name": step.step_name, "template": template_cfg.get("template")},
-        )
-        return
-    try:
-        engine = registry.get(ctx.engine_id)
-    except KeyError as exc:  # pragma: no cover - defensive guard
-        db.update_step_status(step.id, StepStatus.FAILED, summary=str(exc))
-        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        db.append_event(
-            run.id,
-            "codemachine_step_failed",
-            "Execution failed: engine not registered.",
-            step_run_id=step.id,
-            metadata={"engine_id": ctx.engine_id, "spec_hash": ctx.spec_hash},
-        )
-        return
-
-    if spec_errors:
-        db.update_step_status(step.id, StepStatus.FAILED, summary="Spec validation failed")
-        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        for err in spec_errors:
-            db.append_event(
-                run.id,
-                "spec_validation_error",
-                err,
-                step_run_id=step.id,
-                metadata={"step": step.step_name, "spec_hash": ctx.spec_hash},
-            )
-        return
-
-    exec_request = EngineRequest(
-        project_id=project.id,
-        protocol_run_id=run.id,
-        step_run_id=step.id,
-        model=ctx.model,
-        prompt_files=ctx.prompt_files,
-        working_dir=str(ctx.workdir),
-        extra={
-            "prompt_text": ctx.prompt_text,
-            "sandbox": "workspace-write",
-        },
-    )
-    db.append_event(
-        step.protocol_run_id,
-        "codemachine_step_started",
-        f"Executing CodeMachine agent {ctx.agent_id}.",
-        step_run_id=step.id,
-        metadata={
-            "engine_id": ctx.engine_id,
-            "model": ctx.model,
-            "prompt_path": str(ctx.prompt_path),
-            "prompt_versions": {"exec": ctx.prompt_version},
-            "workspace": str(ctx.workdir),
-            "template": template_cfg.get("template"),
-            "spec_hash": ctx.spec_hash,
-        },
-    )
-    db.append_event(
-        step.protocol_run_id,
-        "step_started",
-        "Executing step via CodeMachine.",
-        step_run_id=step.id,
-        metadata={
-            "engine_id": ctx.engine_id,
-            "model": ctx.model,
-            "prompt_path": str(ctx.prompt_path),
-            "prompt_versions": {"exec": ctx.prompt_version},
-            "spec_hash": ctx.spec_hash,
-            "agent_id": ctx.agent_id,
-        },
-    )
-    try:
-        result = engine.execute(exec_request)
-    except Exception as exc:  # pragma: no cover - best effort
-        db.update_step_status(step.id, StepStatus.FAILED, summary=f"CodeMachine execution failed: {exc}", engine_id=ctx.engine_id, model=ctx.model)
-        db.append_event(
-            step.protocol_run_id,
-            "codemachine_step_failed",
-            f"Execution failed for agent {ctx.agent_id}: {exc}",
-            step_run_id=step.id,
-            metadata={"engine_id": ctx.engine_id, "model": ctx.model, "prompt_path": str(ctx.prompt_path)},
-        )
-        loop_decision = apply_loop_policies(step, db, reason="codemachine_exec_failed")
-        if loop_decision and loop_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        else:
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        trigger_decision = apply_trigger_policies(step, db, reason="codemachine_exec_failed")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
-                trigger_decision["target_step_id"],
-                run.id,
-                db,
-                source="codemachine_exec_failed",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        return
-
-    output_text = result.stdout or ""
-    protocol_output_path = ctx.protocol_output_path
-    aux_outputs = ctx.aux_outputs
-    if protocol_output_path:
-        protocol_output_path.parent.mkdir(parents=True, exist_ok=True)
-        for aux_path in aux_outputs.values():
-            aux_path.parent.mkdir(parents=True, exist_ok=True)
-        if output_text:
-            protocol_output_path.write_text(output_text, encoding="utf-8")
-            for aux_path in aux_outputs.values():
-                aux_path.write_text(output_text, encoding="utf-8")
-
-    db.update_step_status(
-        step.id,
-        StepStatus.NEEDS_QA,
-        summary=f"Executed CodeMachine agent {ctx.agent_id}; pending QA",
-        model=ctx.model,
-        engine_id=ctx.engine_id,
-    )
-    outputs_meta = {
-        "protocol": str(protocol_output_path) if protocol_output_path else None,
-        "aux": {k: str(v) for k, v in aux_outputs.items()} if aux_outputs else {},
-    }
-    event_meta = {
-        "engine_id": ctx.engine_id,
-        "model": ctx.model,
-        "prompt_path": str(ctx.prompt_path),
-        "prompt_versions": {"exec": ctx.prompt_version},
-        "outputs": outputs_meta,
-        "result_metadata": result.metadata,
-        "spec_hash": ctx.spec_hash,
-        "spec_validated": True,
-    }
-    db.append_event(
-        step.protocol_run_id,
-        "codemachine_step_completed",
-        f"CodeMachine agent {ctx.agent_id} executed.",
-        step_run_id=step.id,
-        metadata=event_meta,
-    )
-    db.append_event(
-        step.protocol_run_id,
-        "step_completed",
-        "Step executed via CodeMachine. QA required.",
-        step_run_id=step.id,
-        metadata=event_meta,
-    )
-
-    trigger_decision = apply_trigger_policies(step, db, reason="codemachine_exec_completed")
-    if trigger_decision and trigger_decision.get("applied"):
-        db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        _enqueue_trigger_target(
-            trigger_decision["target_step_id"],
-            run.id,
-            db,
-            source="codemachine_exec_completed",
-            inline_depth=trigger_decision.get("inline_depth", 0),
-        )
-    if getattr(config, "auto_qa_after_exec", False):
-        db.append_event(
-            step.protocol_run_id,
-            "qa_enqueued",
-            "Auto QA after execution.",
-            step_run_id=step.id,
-            metadata={"source": "auto_after_exec"},
-        )
-        handle_quality(step.id, db, job_id=job_id)
 
 
 def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = None) -> None:
@@ -1295,87 +1202,33 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         },
     )
     step_spec = get_step_spec(run.template_config, step.step_name)
-    spec_hash_val = None
-    if isinstance(run.template_config, dict):
-        template_spec = run.template_config.get(PROTOCOL_SPEC_KEY)
-        if template_spec:
-            spec_hash_val = protocol_spec_hash(template_spec)
+    template_cfg = run.template_config or {}
+    protocol_spec = template_cfg.get(PROTOCOL_SPEC_KEY) if isinstance(template_cfg, dict) else None
+    spec_hash_val = protocol_spec_hash(protocol_spec) if protocol_spec else None
     qa_cfg = (step_spec.get("qa") if step_spec else {}) or {}
     qa_policy = qa_cfg.get("policy") if step_spec else None
     if qa_policy == "skip":
-        event_type = "qa_skipped_codemachine" if is_codemachine_run(run) else "qa_skipped_policy"
-        event_message = "QA skipped (CodeMachine policy)." if event_type == "qa_skipped_codemachine" else "QA skipped by policy."
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped (policy)")
         db.append_event(
             step.protocol_run_id,
-            event_type,
-            event_message,
+            "qa_skipped_policy",
+            "QA skipped by policy.",
             step_run_id=step.id,
             metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
         )
-        trigger_decision = apply_trigger_policies(step, db, reason=event_type)
+        trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_policy")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
             _enqueue_trigger_target(
                 trigger_decision["target_step_id"],
                 run.id,
                 db,
-                source=event_type,
+                source="qa_skipped_policy",
                 inline_depth=trigger_decision.get("inline_depth", 0),
             )
         maybe_complete_protocol(step.protocol_run_id, db)
         return
-    workspace_root, protocol_root_hint = _protocol_and_workspace_paths(run, project)
-    qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root_hint, workspace_root)
-    qa_prompt_version = prompt_version(qa_prompt_path)
-    if qa_policy is None and is_codemachine_run(run):
-        db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped for CodeMachine run")
-        db.append_event(
-            step.protocol_run_id,
-            "qa_skipped_codemachine",
-            "QA skipped (CodeMachine adapter does not run codex QA).",
-            step_run_id=step.id,
-            metadata={"reason": "codemachine_adapter", "spec_hash": spec_hash_val},
-        )
-        trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_codemachine")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
-                trigger_decision["target_step_id"],
-                run.id,
-                db,
-                source="qa_skipped_codemachine",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        maybe_complete_protocol(step.protocol_run_id, db)
-        return
-    qa_model = qa_cfg.get("model") or (project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max")
-    qa_engine_id = qa_cfg.get("engine_id") or step.engine_id
-    def _qa_stub(reason: str) -> None:
-        db.update_step_status(step.id, StepStatus.COMPLETED, summary=f"QA passed (stub; {reason})")
-        metrics.inc_qa_verdict("pass")
-        db.append_event(
-            step.protocol_run_id,
-            "qa_passed",
-            f"QA passed (stub; {reason}).",
-            step_run_id=step.id,
-            metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model, "spec_hash": spec_hash_val},
-        )
-        trigger_decision = apply_trigger_policies(step, db, reason="qa_stub_pass")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
-                trigger_decision["target_step_id"],
-                run.id,
-                db,
-                source="qa_stub_pass",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        maybe_complete_protocol(step.protocol_run_id, db)
 
-    if shutil.which("codex") is None:
-        _qa_stub("codex unavailable")
-        return
     repo_root = _repo_root_or_block(
         project,
         run,
@@ -1384,11 +1237,17 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         block_on_missing=auto_clone,
     )
     if repo_root is None:
-        if auto_clone:
-            db.update_step_status(step.id, StepStatus.BLOCKED, summary="QA blocked; repository unavailable")
-            return
-        _qa_stub("repository unavailable")
+        db.update_step_status(step.id, StepStatus.BLOCKED, summary="QA blocked; repository unavailable")
+        db.append_event(
+            step.protocol_run_id,
+            "qa_blocked_repo",
+            "QA blocked; repository unavailable.",
+            step_run_id=step.id,
+            metadata={"spec_hash": spec_hash_val},
+        )
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
         return
+
     if (repo_root / ".git").exists():
         worktree = _load_project_with_context(
             repo_root,
@@ -1411,6 +1270,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         return
     else:
         worktree = repo_root
+
     protocol_root = worktree / ".protocols" / run.protocol_name
     qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, worktree)
     qa_prompt_version = prompt_version(qa_prompt_path)
@@ -1423,74 +1283,76 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
             resolved = resolve_spec_path(step.step_name, protocol_root, workspace=worktree)
             if resolved.exists():
                 step_path = resolved
-    qa_prompt = build_prompt(protocol_root, step_path)
-    qa_tokens = _budget_and_tokens(qa_prompt, qa_model, "qa", config.token_budget_mode, budget_limit)
+
+    qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
+    qa_body = build_prompt(protocol_root, step_path)
+    qa_prompt_full = f"{qa_prefix}\\n\\n{qa_body}"
+
+    qa_model = qa_cfg.get("model") or (project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max")
+    qa_engine_id = qa_cfg.get("engine_id") or step.engine_id or registry.get_default().metadata.id
+
     try:
-        result = run_quality_check(
-            protocol_root=protocol_root,
-            step_file=step_path,
-            model=qa_model,
-            prompt_file=qa_prompt_path,
-            sandbox="read-only",
-            max_tokens=budget_limit,
-            token_budget_mode=config.token_budget_mode,
-            engine_id=qa_engine_id,
+        registry.get(qa_engine_id)
+    except KeyError as exc:  # pragma: no cover - defensive guard
+        db.update_step_status(step.id, StepStatus.BLOCKED, summary=str(exc))
+        db.append_event(
+            step.protocol_run_id,
+            "qa_error",
+            f"QA failed to run: {exc}",
+            step_run_id=step.id,
+            metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
         )
-        verdict = result.verdict.upper()
-        if verdict == "FAIL":
-            db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")
-            db.append_event(
-                step.protocol_run_id,
-                "qa_failed",
-                "QA failed via Codex.",
-                step_run_id=step.id,
-                metadata={
-                    "protocol_run_id": run.id,
-                    "step_run_id": step.id,
-                    "estimated_tokens": {"qa": qa_tokens},
-                    "prompt_versions": {"qa": qa_prompt_version},
-                    "model": qa_model,
-                    "spec_hash": spec_hash_val,
-                },
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return
+
+    def _qa_stub(reason: str) -> None:
+        db.update_step_status(step.id, StepStatus.COMPLETED, summary=f"QA passed (stub; {reason})")
+        metrics.inc_qa_verdict("pass")
+        db.append_event(
+            step.protocol_run_id,
+            "qa_passed",
+            f"QA passed (stub; {reason}).",
+            step_run_id=step.id,
+            metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model, "spec_hash": spec_hash_val},
+        )
+        trigger_decision = apply_trigger_policies(step, db, reason="qa_stub_pass")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="qa_stub_pass",
+                inline_depth=trigger_decision.get("inline_depth", 0),
             )
-            loop_decision = apply_loop_policies(step, db, reason="qa_failed")
-            if loop_decision and loop_decision.get("applied"):
-                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            else:
-                db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-            metrics.inc_qa_verdict("fail")
-        else:
-            db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS")
-            db.append_event(
-                step.protocol_run_id,
-                "qa_passed",
-                "QA passed via Codex.",
-                step_run_id=step.id,
-                metadata={
-                    "protocol_run_id": run.id,
-                    "step_run_id": step.id,
-                    "estimated_tokens": {"qa": qa_tokens},
-                    "prompt_versions": {"qa": qa_prompt_version},
-                    "model": qa_model,
-                    "spec_hash": spec_hash_val,
-                },
-            )
-            trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
-            if trigger_decision and trigger_decision.get("applied"):
-                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-                _enqueue_trigger_target(
-                    trigger_decision["target_step_id"],
-                    run.id,
-                    db,
-                    source="qa_passed",
-                    inline_depth=trigger_decision.get("inline_depth", 0),
-                )
-            maybe_complete_protocol(step.protocol_run_id, db)
-            metrics.inc_qa_verdict("pass")
+        maybe_complete_protocol(step.protocol_run_id, db)
+
+    if qa_engine_id == "codex" and shutil.which("codex") is None:
+        _qa_stub("codex unavailable")
+        return
+
+    resolution = resolve_prompt_and_outputs(
+        step_spec or {},
+        protocol_root=protocol_root,
+        workspace_root=worktree,
+        protocol_spec=protocol_spec,
+        default_engine_id=qa_engine_id,
+    )
+    qa_tokens = _budget_and_tokens(qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit)
+
+    try:
+        qa_result = run_qa_unified(
+            resolution,
+            project_id=project.id,
+            protocol_run_id=run.id,
+            step_run_id=step.id,
+            qa_prompt_path=qa_prompt_path,
+            qa_prompt_text=qa_prompt_full,
+            qa_engine_id=qa_engine_id,
+            qa_model=qa_model,
+            sandbox="read-only",
+        )
     except Exception as exc:  # pragma: no cover - best effort
-        if not auto_clone and isinstance(exc, FileNotFoundError):
-            _qa_stub(str(exc))
-            return
         log.warning(
             "QA job failed",
             extra={
@@ -1509,6 +1371,63 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
             metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model},
         )
         metrics.inc_qa_verdict("fail")
+        return
+
+    report_text = qa_result.result.stdout.strip() if qa_result and qa_result.result and getattr(qa_result.result, "stdout", None) else ""
+    report_path = protocol_root / "quality-report.md"
+    report_path.write_text(report_text, encoding="utf-8")
+    verdict = determine_verdict(report_text).upper()
+
+    if verdict == "FAIL":
+        db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")
+        db.append_event(
+            step.protocol_run_id,
+            "qa_failed",
+            "QA failed via engine.",
+            step_run_id=step.id,
+            metadata={
+                "protocol_run_id": run.id,
+                "step_run_id": step.id,
+                "estimated_tokens": {"qa": qa_tokens},
+                "prompt_versions": {"qa": qa_prompt_version},
+                "model": qa_model,
+                "spec_hash": spec_hash_val,
+            },
+        )
+        loop_decision = apply_loop_policies(step, db, reason="qa_failed")
+        if loop_decision and loop_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+        else:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        metrics.inc_qa_verdict("fail")
+    else:
+        db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS")
+        db.append_event(
+            step.protocol_run_id,
+            "qa_passed",
+            "QA passed via engine.",
+            step_run_id=step.id,
+            metadata={
+                "protocol_run_id": run.id,
+                "step_run_id": step.id,
+                "estimated_tokens": {"qa": qa_tokens},
+                "prompt_versions": {"qa": qa_prompt_version},
+                "model": qa_model,
+                "spec_hash": spec_hash_val,
+            },
+        )
+        trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
+        if trigger_decision and trigger_decision.get("applied"):
+            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            _enqueue_trigger_target(
+                trigger_decision["target_step_id"],
+                run.id,
+                db,
+                source="qa_passed",
+                inline_depth=trigger_decision.get("inline_depth", 0),
+            )
+        maybe_complete_protocol(step.protocol_run_id, db)
+        metrics.inc_qa_verdict("pass")
 
 
 def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str] = None) -> None:
