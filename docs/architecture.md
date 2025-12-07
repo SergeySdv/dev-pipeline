@@ -123,7 +123,8 @@ flowchart LR
 
 ## Deployment modes
 - Local dev: `make orchestrator-setup && DEKSDENFLOW_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py`; background worker thread handles jobs inline.
-- Docker Compose: `docker-compose up --build` for API + worker + Redis + Postgres; use `scripts/rq_worker.py` for dedicated workers.
+- Local host app + compose dependencies: `make compose-deps` (brings up Redis:6380, Postgres:5433) then run API/workers on host with `DEKSDENFLOW_DB_URL=postgresql://deksdenflow:deksdenflow@localhost:5433/deksdenflow` and `DEKSDENFLOW_REDIS_URL=redis://localhost:6380/0`.
+- Docker Compose full stack: `docker compose up --build -d` for API + worker + codex-worker + Redis + Postgres (API on http://localhost:8011, default token `changeme` unless overridden); use `docker compose logs -f api worker codex-worker` for troubleshooting.
 - Production: prefer external Redis + Postgres; run API separately from RQ workers; lock down `DEKSDENFLOW_API_TOKEN`/`DEKSDENFLOW_WEBHOOK_TOKEN`.
 
 ## Security and tenancy

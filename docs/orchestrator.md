@@ -15,6 +15,7 @@ Docker Compose (Postgres + Redis):
 docker compose up --build
 # API at http://localhost:8011 (token from DEKSDENFLOW_API_TOKEN)
 ```
+Compose ports: API 8011->8010, Postgres 5433->5432, Redis 6380->6379. Use `docker compose logs -f api worker codex-worker` for troubleshooting and `docker compose down -v` to clean state.
 
 Local host app + compose dependencies (Postgres + Redis containers):
 ```bash

@@ -72,6 +72,14 @@ docker compose up --build
 ```
 
 Environment defaults live in `docker-compose.yml`; override with env vars as needed.
+Compose services and ports:
+- API: `8011 -> 8010` (default token `changeme` if not overridden)
+- Postgres: `5433 -> 5432` (db/user/pass `deksdenflow`)
+- Redis: `6380 -> 6379`
+Useful commands:
+- Start/refresh: `docker compose up --build -d`
+- Logs: `docker compose logs -f api worker codex-worker`
+- Stop/clean: `docker compose down -v`
 
 Local (SQLite + fakeredis) without Docker:
 
