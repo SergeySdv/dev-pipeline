@@ -20,6 +20,7 @@ def handle_spec_audit_job(payload: dict, db: BaseDatabase) -> list[dict]:
     project_id = payload.get("project_id")
     protocol_id = payload.get("protocol_id")
     backfill_missing = bool(payload.get("backfill_missing"))
+    interval_override = payload.get("interval_override")
     results = audit_specs(db, project_id=project_id, protocol_id=protocol_id, backfill_missing=backfill_missing)
     for res in results:
         protocol_id = res.get("protocol_run_id")
@@ -42,6 +43,7 @@ def handle_spec_audit_job(payload: dict, db: BaseDatabase) -> list[dict]:
             "backfill": backfill_missing,
             "count": len(results),
             "audited_protocol_run_ids": audited_protocols or None,
+            "interval_override": interval_override,
         },
     )
     return results

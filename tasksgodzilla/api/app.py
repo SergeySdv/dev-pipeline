@@ -248,14 +248,13 @@ def enqueue_spec_audit(
 ) -> schemas.ActionResponse:
     if payload.project_id:
         require_project_access(payload.project_id, request, db)
-    job = queue.enqueue(
-        "spec_audit_job",
-        {
-            "project_id": payload.project_id,
-            "protocol_id": payload.protocol_id,
-            "backfill_missing": payload.backfill,
-        },
-    ).asdict()
+    job_payload = {
+        "project_id": payload.project_id,
+        "protocol_id": payload.protocol_id,
+        "backfill_missing": payload.backfill,
+        "interval_override": payload.interval_seconds,
+    }
+    job = queue.enqueue("spec_audit_job", job_payload).asdict()
     return schemas.ActionResponse(message="Spec audit enqueued.", job=job)
 
 

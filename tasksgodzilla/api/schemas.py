@@ -119,3 +119,4 @@ class SpecAuditRequest(BaseModel):
     project_id: Optional[int] = None
     protocol_id: Optional[int] = None
     backfill: bool = False
+    interval_seconds: Optional[int] = None  # override per-request if needed
