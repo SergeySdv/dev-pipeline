@@ -9,13 +9,16 @@ PROVIDER="$(echo "${DEKSDENFLOW_CI_PROVIDER:-github}" | tr '[:upper:]' '[:lower:
 API_BASE="${DEKSDENFLOW_API_BASE:-}"
 PROTOCOL_RUN_ID="${DEKSDENFLOW_PROTOCOL_RUN_ID:-}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/logging.sh"
+
 if [ -z "$API_BASE" ]; then
-  echo "[deksdenflow] DEKSDENFLOW_API_BASE not set; skipping orchestrator webhook report." >&2
+  ci_warn "report skipped" "reason=missing_api_base"
   exit 0
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
-  echo "[deksdenflow] curl not available; skipping orchestrator webhook report." >&2
+  ci_warn "report skipped" "reason=curl_missing"
   exit 0
 fi
 
@@ -48,7 +51,7 @@ EOF
       sig="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$DEKSDENFLOW_WEBHOOK_TOKEN" | awk '{print $NF}')"
       SIG_HEADER=("-H" "X-Hub-Signature-256: sha256=${sig}")
     else
-      echo "[deksdenflow] openssl missing; sending GitHub-style webhook without signature." >&2
+      ci_warn "report webhook signature skipped" "reason=openssl_missing provider=github"
     fi
   fi
   curl -sS -X POST "$url" \
@@ -57,7 +60,7 @@ EOF
     "${AUTH_HEADER[@]}" \
     "${SIG_HEADER[@]}" \
     -d "$payload" >/dev/null 2>&1 || \
-    echo "[deksdenflow] Failed to notify orchestrator (GitHub hook)." >&2
+    ci_warn "report failed" "provider=github"
 }
 
 send_gitlab() {
@@ -80,13 +83,13 @@ EOF
     "${TOKEN_HEADER[@]}" \
     "${AUTH_HEADER[@]}" \
     -d "$payload" >/dev/null 2>&1 || \
-    echo "[deksdenflow] Failed to notify orchestrator (GitLab hook)." >&2
+    ci_warn "report failed" "provider=gitlab"
 }
 
 case "$PROVIDER" in
   github) send_github ;;
   gitlab) send_gitlab ;;
   *)
-    echo "[deksdenflow] Unknown DEKSDENFLOW_CI_PROVIDER=${PROVIDER}; supported: github, gitlab." >&2
+    ci_warn "report skipped" "reason=unknown_provider provider=${PROVIDER}"
     ;;
 esac

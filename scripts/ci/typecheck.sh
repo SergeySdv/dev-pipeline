@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/logging.sh"
 report_status() {
   if [ -x "${SCRIPT_DIR}/report.sh" ]; then
     "${SCRIPT_DIR}/report.sh" "$1" || true
@@ -13,7 +14,7 @@ VENV_PATH="${VENV_PATH:-.venv}"
 PY_BIN="${PY_BIN:-${VENV_PATH}/bin/python}"
 
 if [ ! -x "${PY_BIN}" ]; then
-  echo "[ci] typecheck: python not found at ${PY_BIN}. Did bootstrap run?" >&2
+  ci_error "typecheck python missing" "py_bin=${PY_BIN} hint=run_bootstrap"
   exit 1
 fi
 
@@ -37,4 +38,5 @@ for mod in modules:
 print("[ci] typecheck: import smoke OK for", ", ".join(modules))
 PY
 
+ci_info "typecheck import smoke OK"
 report_status success

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/logging.sh"
 report_status() {
   if [ -x "${SCRIPT_DIR}/report.sh" ]; then
     "${SCRIPT_DIR}/report.sh" "$1" || true
@@ -23,6 +24,6 @@ fi
 export DEKSDENFLOW_DB_PATH="${DEKSDENFLOW_DB_PATH:-/tmp/deksdenflow-ci.sqlite}"
 export DEKSDENFLOW_REDIS_URL="${DEKSDENFLOW_REDIS_URL:-fakeredis://}"
 
-echo "[ci] bootstrap: ready (venv=${VENV_PATH}, db=${DEKSDENFLOW_DB_PATH}, redis=${DEKSDENFLOW_REDIS_URL})"
+ci_info "bootstrap ready" "venv=${VENV_PATH} db=${DEKSDENFLOW_DB_PATH} redis=${DEKSDENFLOW_REDIS_URL}"
 
 report_status success

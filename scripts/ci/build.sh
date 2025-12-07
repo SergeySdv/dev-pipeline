@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/logging.sh"
 report_status() {
   if [ -x "${SCRIPT_DIR}/report.sh" ]; then
     "${SCRIPT_DIR}/report.sh" "$1" || true
@@ -11,12 +12,12 @@ trap 'report_status failure' ERR
 
 if command -v docker >/dev/null 2>&1; then
   DOCKER_BUILDKIT=1 docker build --pull -t deksdenflow-ci .
-  echo "[ci] build: docker image built (tag=deksdenflow-ci)."
+  ci_info "build docker image" "tag=deksdenflow-ci"
 elif command -v docker-compose >/dev/null 2>&1; then
   docker-compose config -q
-  echo "[ci] build: docker not available; validated docker-compose config instead."
+  ci_warn "build skipped docker" "reason=docker_missing action=validate_compose"
 else
-  echo "[ci] build: docker/docker-compose not available; skipping build."
+  ci_warn "build skipped" "reason=docker_and_compose_missing"
 fi
 
 report_status success

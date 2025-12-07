@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import builtins
 import json
 import os
 import sys
@@ -17,6 +18,31 @@ DEFAULT_API_BASE = os.environ.get("DEKSDENFLOW_API_BASE", "http://localhost:8010
 DEFAULT_TOKEN = os.environ.get("DEKSDENFLOW_API_TOKEN")
 DEFAULT_PROJECT_TOKEN = os.environ.get("DEKSDENFLOW_PROJECT_TOKEN")
 log = get_logger(__name__)
+_ORIGINAL_PRINT = builtins.print
+
+
+def _log_print(*args, **kwargs) -> None:
+    """
+    Mirror CLI stdout/stderr to structured logs while preserving user-facing output.
+    """
+    stream = kwargs.get("file", sys.stdout)
+    message = " ".join(str(a) for a in args)
+    try:
+        log.info(
+            "cli_output",
+            extra={
+                "output": message,
+                "stream": "stderr" if stream is sys.stderr else "stdout",
+            },
+        )
+    except Exception:
+        # Logging should never break CLI UX; fall back to plain print.
+        pass
+    _ORIGINAL_PRINT(*args, **kwargs)
+
+
+def install_cli_print_logger() -> None:
+    builtins.print = _log_print
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -573,6 +599,7 @@ q) Quit
 def run_cli(argv: Optional[List[str]] = None, *, transport: Optional[Any] = None) -> int:
     args = parse_args(argv)
     init_cli_logging(os.environ.get("DEKSDENFLOW_LOG_LEVEL", "INFO"), json_output=json_logging_from_env())
+    install_cli_print_logger()
     client = build_client(args, transport=transport)
     log.info(
         "cli_start",
