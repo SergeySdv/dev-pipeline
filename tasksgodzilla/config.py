@@ -13,7 +13,8 @@ class Config(BaseModel):
     - TASKSGODZILLA_DB_URL (preferred) or TASKSGODZILLA_DB_PATH for SQLite fallback.
     - TASKSGODZILLA_ENV (default: local)
     - TASKSGODZILLA_API_TOKEN (optional bearer token)
-    - TASKSGODZILLA_REDIS_URL (queue backend; required, use fakeredis:// for tests)
+    - TASKSGODZILLA_REDIS_URL (queue backend; required)
+    - TASKSGODZILLA_INLINE_RQ_WORKER (optional; run a background RQ worker inside the API process for tests/dev)
     - TASKSGODZILLA_LOG_LEVEL (default: INFO)
     - TASKSGODZILLA_WEBHOOK_TOKEN (optional shared secret)
     - PROTOCOL_*_MODEL (defaults for planning/decompose/exec/QA)
@@ -41,6 +42,7 @@ class Config(BaseModel):
     auto_qa_after_exec: bool = Field(default=False)
     spec_audit_interval_seconds: Optional[int] = Field(default=None)
     skip_simple_decompose: bool = Field(default=False)
+    inline_rq_worker: bool = Field(default=False)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -100,6 +102,12 @@ def load_config() -> Config:
         "yes",
         "on",
     )
+    inline_rq_worker = os.environ.get("TASKSGODZILLA_INLINE_RQ_WORKER", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     return Config(
         db_url=db_url,
         db_path=db_path,
@@ -120,4 +128,5 @@ def load_config() -> Config:
         auto_qa_after_exec=auto_qa_after_exec,
         spec_audit_interval_seconds=int(spec_audit_interval_seconds) if spec_audit_interval_seconds else None,
         skip_simple_decompose=skip_simple_decompose,
+        inline_rq_worker=inline_rq_worker,
     )

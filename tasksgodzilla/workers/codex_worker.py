@@ -193,21 +193,18 @@ def _enqueue_trigger_target(
         )
         return None
     queue = None
-    force_inline = False
     if config.redis_url:
         try:
             queue = RedisQueue(config.redis_url)
-            force_inline = getattr(queue, "_is_fakeredis", False)
-            if not force_inline:
-                job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
-                db.append_event(
-                    protocol_run_id,
-                    "trigger_enqueued",
-                    "Triggered step enqueued for execution.",
-                    step_run_id=step_run_id,
-                    metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-                )
-                return job.asdict()
+            job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
+            db.append_event(
+                protocol_run_id,
+                "trigger_enqueued",
+                "Triggered step enqueued for execution.",
+                step_run_id=step_run_id,
+                metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+            )
+            return job.asdict()
         except Exception as exc:  # pragma: no cover - best effort
             db.append_event(
                 protocol_run_id,
@@ -229,7 +226,7 @@ def _enqueue_trigger_target(
             target_qa_skip = False
     except Exception:
         target = None
-    if (queue is None or force_inline) and target_qa_skip:
+    if queue is None and target_qa_skip:
         db.append_event(
             protocol_run_id,
             "trigger_pending",
@@ -238,7 +235,7 @@ def _enqueue_trigger_target(
             metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
         )
         return None
-    # Inline fallback for dev/local without Redis, or when using fakeredis.
+    # Inline fallback for dev/local without Redis.
     try:
         target = target or db.get_step_run(step_run_id)
         merged_state = dict(target.runtime_state or {})
@@ -247,7 +244,7 @@ def _enqueue_trigger_target(
         db.append_event(
             protocol_run_id,
             "trigger_executed_inline",
-            "Triggered step executed inline (no queue configured or fakeredis).",
+            "Triggered step executed inline (no queue configured).",
             step_run_id=step_run_id,
             metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
         )

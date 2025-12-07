@@ -7,10 +7,10 @@
 - `docs/` and `prompts/` contain process guidance and reusable agent prompts; `schemas/` stores JSON Schemas; `alembic/` tracks DB migrations.
 
 ## Build, Test, and Development Commands
-- Bootstrap CI/local env: `scripts/ci/bootstrap.sh` (`python3 -m venv .venv`, install `requirements-orchestrator.txt` + `ruff`, defaults `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite`, `TASKSGODZILLA_REDIS_URL=fakeredis://`).
+- Bootstrap CI/local env: `scripts/ci/bootstrap.sh` (`python3 -m venv .venv`, install `requirements-orchestrator.txt` + `ruff`, defaults `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite`, `TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15`).
 - Lint: `scripts/ci/lint.sh` (`ruff check tasksgodzilla scripts tests --select E9,F63,F7,F82`).
 - Typecheck: `scripts/ci/typecheck.sh` (compileall + import smoke for config, API app, and CLIs).
-- Tests: `scripts/ci/test.sh` (`pytest -q --disable-warnings --maxfail=1` with fakeredis + temp SQLite). API locally: `.venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010`; worker: `.venv/bin/python scripts/rq_worker.py`.
+- Tests: `scripts/ci/test.sh` (`pytest -q --disable-warnings --maxfail=1` with temp SQLite and a real Redis URL). API locally: `.venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010`; worker: `.venv/bin/python scripts/rq_worker.py`.
 - Build: `scripts/ci/build.sh` (`docker build -t tasksgodzilla-ci .`; falls back to `docker-compose config -q` if Docker is absent). Full stack: `docker-compose up --build`.
 
 ## Coding Style & Naming Conventions
@@ -21,7 +21,7 @@
 
 ## Testing Guidelines
 - Add/extend `pytest` cases next to existing patterns (e.g., `tests/test_storage.py` for DB access, `tests/test_workers_auto_qa.py` for queue flows).
-- Prefer small, isolated units; use `fakeredis://` for Redis-dependent tests and temp SQLite DBs for storage.
+- Prefer small, isolated units; use a real Redis instance (`TASKSGODZILLA_REDIS_URL`, defaulting to `redis://localhost:6379/15`) and temp SQLite DBs for storage; enable the inline worker with `TASKSGODZILLA_INLINE_RQ_WORKER=true` when you need background processing inside API tests.
 - Keep golden path + error path assertions; mock Codex/HTTP calls with `httpx` test clients where possible.
 
 ## Commit & Pull Request Guidelines
@@ -32,5 +32,5 @@
 
 ## Security & Configuration Tips
 - Never commit real tokens or DB/Redis URLs; rely on env vars (`TASKSGODZILLA_REDIS_URL`, `TASKSGODZILLA_DB_URL`/`TASKSGODZILLA_DB_PATH`, `TASKSGODZILLA_API_TOKEN`).
-- Prefer `fakeredis://` and SQLite for local work; use Postgres + rotated tokens in shared stacks.
+- Prefer SQLite for local work with a local Redis instance; use Postgres + rotated tokens in shared stacks.
 - Keep queue/CI callbacks consistent via `scripts/ci/report.sh` and `TASKSGODZILLA_PROTOCOL_RUN_ID` when branch detection is ambiguous.

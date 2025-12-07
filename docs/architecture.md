@@ -32,7 +32,7 @@ projects/
 ## Control plane (orchestrator)
 - FastAPI API (`tasksgodzilla/api/app.py`) with bearer/project-token auth, queue stats, metrics, events feed, and webhook listeners.
 - Storage via SQLite (default) or Postgres (`TASKSGODZILLA_DB_URL`), initialized with Alembic migrations.
-- Redis/RQ queue (`tasksgodzilla/jobs.py`, `worker_runtime.py`) with fakeredis support for local dev; workers process planning/execution/QA/PR jobs.
+- Redis/RQ queue (`tasksgodzilla/jobs.py`, `worker_runtime.py`) with optional inline worker for local dev (`TASKSGODZILLA_INLINE_RQ_WORKER=true`); workers process planning/execution/QA/PR jobs.
 - ProtocolSpec/StepSpec lives on `ProtocolRun.template_config` and drives step creation, engine selection, prompt/output resolution, and QA policy via a shared resolver + engine registry.
 - Thin web console (`/console`) backed by the API for projects, protocol runs, steps, recent events, and queue visibility.
 
@@ -41,7 +41,7 @@ graph LR
   User["Console / API clients"] --> API["FastAPI orchestrator"]
   API --> Repo["Repo resolver\n(local_path or projects/<project_id>/<repo>)"]
   API --> DB[(SQLite or Postgres)]
-  API --> Queue["Redis/RQ queue (fakeredis inline in dev)"]
+  API --> Queue["Redis/RQ queue (inline worker optional in dev)"]
   API --> Spec["ProtocolSpec/StepSpec\nstored on ProtocolRun.template_config"]
   Queue --> Runner["Engine runner\n(prompt/output resolver + QA)"]
   Runner --> Registry["Engine registry\n(Codex, CodeMachine, ... engines)"]
@@ -107,7 +107,7 @@ flowchart LR
 
 ## Runtime configuration (env vars)
 - `TASKSGODZILLA_DB_URL` / `TASKSGODZILLA_DB_PATH` — Postgres URL or SQLite path (SQLite default).
-- `TASKSGODZILLA_REDIS_URL` — required Redis/RQ URL; use `fakeredis://` for local inline dev.
+- `TASKSGODZILLA_REDIS_URL` — required Redis/RQ URL; e.g., `redis://localhost:6379/15` or `redis://localhost:6380/0` (docker-compose). Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to run an inline worker in the API process for local dev/tests.
 - `TASKSGODZILLA_API_TOKEN` / `TASKSGODZILLA_WEBHOOK_TOKEN` — bearer auth + webhook HMAC/token validation.
 - `TASKSGODZILLA_AUTO_QA_AFTER_EXEC` / `TASKSGODZILLA_AUTO_QA_ON_CI` — enqueue QA after exec or on CI success.
 - `TASKSGODZILLA_MAX_TOKENS_PER_STEP` / `TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL` + `TASKSGODZILLA_TOKEN_BUDGET_MODE=strict|warn|off` — guardrails for Codex calls.
@@ -124,7 +124,7 @@ flowchart LR
 - `run_quality_job` — use StepSpec QA config (engine/model/prompt/policy) to build QA, then mark completed/failed/blocked or loop per policy.
 - `open_pr_job` — push branch and open PR/MR via `gh`/`glab` if available.
 - `codemachine_import_job` — parse `.codemachine` config, emit `ProtocolSpec`/`StepSpec` (engines, QA, policies), persist template, and create steps from the spec.
-- Workers: RQ workers (`scripts/rq_worker.py`) for Redis; API auto-starts a background RQ worker thread when `fakeredis://` is used.
+- Workers: RQ workers (`scripts/rq_worker.py`) for Redis; API can auto-start a background RQ worker thread when `TASKSGODZILLA_INLINE_RQ_WORKER=true` (dev/test convenience).
 
 ## Data model (core fields)
 - Project: `id`, `name`, `git_url`, `local_path`, `base_branch`, `ci_provider`, `default_models`, `secrets` (optional `api_token`).
@@ -149,7 +149,7 @@ flowchart LR
 - Webhook mapping: branch name (or explicit `protocol_run_id` param) maps CI events to runs; success can auto-enqueue QA, merge events complete the protocol.
 
 ## Deployment modes
-- Local dev: `make orchestrator-setup && TASKSGODZILLA_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py`; background worker thread handles jobs inline.
+- Local dev: `make orchestrator-setup && TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15 TASKSGODZILLA_INLINE_RQ_WORKER=true .venv/bin/python scripts/api_server.py`; background worker thread handles jobs inline.
 - Local host app + compose dependencies: `make compose-deps` (brings up Redis:6380, Postgres:5433) then run API/workers on host with `TASKSGODZILLA_DB_URL=postgresql://tasksgodzilla:tasksgodzilla@localhost:5433/tasksgodzilla` and `TASKSGODZILLA_REDIS_URL=redis://localhost:6380/0`.
 - Docker Compose full stack: `docker compose up --build -d` for API + worker + codex-worker + Redis + Postgres (API on http://localhost:8011, default token `changeme` unless overridden); use `docker compose logs -f api worker codex-worker` for troubleshooting.
 - Production: prefer external Redis + Postgres; run API separately from RQ workers; lock down `TASKSGODZILLA_API_TOKEN`/`TASKSGODZILLA_WEBHOOK_TOKEN`.
@@ -199,12 +199,12 @@ flowchart LR
 - **TerraformManager workflow plan (`docs/terraformmanager-workflow-plan.md`)**  
   - Checklists for cloning/running the TerraformManager demo under `projects/`, covering API/CLI/UI validation and optional infra tooling; serves as an example end-to-end ops workflow.
 - **Orchestrator (alpha)**  
-  - `tasksgodzilla/storage.py` supports SQLite and Postgres; `alembic/` carries migrations for both. `tasksgodzilla/api/app.py` exposes projects/protocols/steps/events, queue inspection, metrics, webhook listeners, CodeMachine import, and actions (start/pause/resume/run/rerun/run_qa/approve/open_pr). Redis/RQ is the queue backend with fakeredis fallback; the API spins up a background RQ worker thread when fakeredis is used. `scripts/api_server.py` runs the API, `scripts/rq_worker.py` runs dedicated workers, and `tasksgodzilla/api/frontend` hosts the console UI assets.
+  - `tasksgodzilla/storage.py` supports SQLite and Postgres; `alembic/` carries migrations for both. `tasksgodzilla/api/app.py` exposes projects/protocols/steps/events, queue inspection, metrics, webhook listeners, CodeMachine import, and actions (start/pause/resume/run/rerun/run_qa/approve/open_pr). Redis/RQ is the queue backend; set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to spin up a background RQ worker thread inside the API for local dev/tests. `scripts/api_server.py` runs the API, `scripts/rq_worker.py` runs dedicated workers, and `tasksgodzilla/api/frontend` hosts the console UI assets.
   - Worker jobs cover planning, execution, QA, project setup, PR open, and CodeMachine import. Execution/QA paths share the spec-driven resolver + engine registry; loop/trigger policies from StepSpecs (often CodeMachine modules) drive retries or inline triggers with runtime_state updates and events.
 
 ## Operational workflows
 1. **Run the orchestrator + console**  
-   - `make orchestrator-setup && TASKSGODZILLA_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py` (SQLite/fakeredis) or `docker-compose up --build` (Postgres/Redis). Visit `/console` for projects/protocols/steps/events; queue and metrics available at `/queues*` and `/metrics`. With fakeredis, the API auto-starts a background RQ worker thread for inline processing.
+   - `make orchestrator-setup && TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15 TASKSGODZILLA_INLINE_RQ_WORKER=true .venv/bin/python scripts/api_server.py` (SQLite + local Redis) or `docker-compose up --build` (Postgres/Redis). Visit `/console` for projects/protocols/steps/events; queue and metrics available at `/queues*` and `/metrics`. With `TASKSGODZILLA_INLINE_RQ_WORKER=true`, the API auto-starts a background RQ worker thread for inline processing.
 2. **Bootstrap a repo**  
    - Run `python3 scripts/project_setup.py --base-branch <branch> [--init-if-needed] [--run-discovery]` or follow `prompts/project-init.prompt.md`. Creates docs/prompts/CI/scripts/schema, ensures git state, and optionally runs Codex discovery to prefill CI hooks.
    - Onboarding records the resolved repo path (stored on the Project) and can auto-configure `origin`/git identity; it emits `setup_clarifications` with recommended CI/model/branch policies and can block when `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true`.
@@ -228,8 +228,8 @@ flowchart LR
 - **Worktrees/branches:** Each protocol lives in its own Git worktree under `../worktrees/NNNN-[task]/` with a same-named branch from `origin/<base>`. `.protocols/` sits inside the worktree; numbering scans both `.protocols/` and `../worktrees/`.
 - **Commit format:** `feat(protocol): add plan for ... [protocol-NNNN/00]` for initial plan; subsequent commits use `type(scope): subject [protocol-NNNN/XX]` as defined in `protocol-new.prompt.md`.
 - **Models/env vars:** Planning/decompose/exec/QA models configurable via `PROTOCOL_PLANNING_MODEL`, `PROTOCOL_DECOMPOSE_MODEL`, `PROTOCOL_EXEC_MODEL`, `PROTOCOL_QA_MODEL`, `PROTOCOL_DISCOVERY_MODEL`; defaults favor `gpt-5.1-high`/`codex-5.1-max` families. Token budgets enforced via `TASKSGODZILLA_MAX_TOKENS_*` with `strict|warn|off` modes.
-- **Queue/runtime:** Redis/RQ is the canonical backend; fakeredis keeps local/dev hermetic and triggers a background RQ worker thread from the API to process jobs inline. Trigger policies are bounded by `MAX_INLINE_TRIGGER_DEPTH` to avoid unbounded recursion.
-- **External tooling:** Codex CLI (mandatory for orchestrators), optional `gh`/`glab` for PR/MR automation. The dataset helper requires `reportlab`. Redis/RQ is required for the orchestrator queue; fakeredis works for local/dev.
+- **Queue/runtime:** Redis/RQ is the canonical backend; `TASKSGODZILLA_INLINE_RQ_WORKER=true` triggers a background RQ worker thread from the API to process jobs inline during dev/tests. Trigger policies are bounded by `MAX_INLINE_TRIGGER_DEPTH` to avoid unbounded recursion.
+- **External tooling:** Codex CLI (mandatory for orchestrators), optional `gh`/`glab` for PR/MR automation. The dataset helper requires `reportlab`. Redis/RQ is required for the orchestrator queue.
 - **Git hygiene:** Scripts avoid destructive commands; `project_setup` warns if `origin` missing or base branch absent. `.gitignore` excludes local assets (`projects/`, dataset files, generated reports).
 - **Statuses:** ProtocolRun `pending → planning → planned → running → (paused|blocked|failed|cancelled|completed)`; StepRun `pending → running → needs_qa → (completed|failed|cancelled|blocked)` with events recorded per transition.
 

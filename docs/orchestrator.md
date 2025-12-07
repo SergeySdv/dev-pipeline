@@ -3,10 +3,10 @@
 Central API/queue/worker slice for coordinating TasksGodzilla protocols. Ships with SQLite/Postgres persistence, Redis/RQ queue, webhook-aware API, and a lightweight web console.
 
 ## Quickstart
-Local (SQLite + fakeredis):
+Local (SQLite + Redis):
 ```bash
 make orchestrator-setup
-TASKSGODZILLA_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py
+TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15 TASKSGODZILLA_INLINE_RQ_WORKER=true .venv/bin/python scripts/api_server.py
 # API at http://localhost:8010 (console at /console)
 ```
 
@@ -25,16 +25,16 @@ TASKSGODZILLA_REDIS_URL=redis://localhost:6380/0 \
 .venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010
 ```
 
-Redis is required; the API fails fast if it cannot reach `TASKSGODZILLA_REDIS_URL`.
-When `fakeredis://` is used, the API also starts a background RQ worker thread for inline job processing.
+Redis is required; the API fails fast if it cannot reach `TASKSGODZILLA_REDIS_URL`.  
+Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to start a background RQ worker thread for inline job processing during local development.
 
 ## Components
 - `tasksgodzilla/storage.py`: SQLite/Postgres DAO for Projects/ProtocolRuns/StepRuns/Events; migrations under `alembic/`.
 - `tasksgodzilla/domain.py`: status enums and dataclasses for the core entities.
 - `tasksgodzilla/api/app.py`: FastAPI app with bearer/project-token auth, console assets at `/console`, queue stats, metrics, webhook listeners, and project/protocol/step actions.
 - `tasksgodzilla/git_utils.py`: repo resolution helpers (honor stored `projects.local_path` or clone under `TASKSGODZILLA_PROJECTS_ROOT` using `projects/<project_id>/<repo_name>`) plus remote branch list/delete.
-- `tasksgodzilla/jobs.py`: Redis/RQ-backed queue abstraction; fakeredis supported for tests/dev.
-- `tasksgodzilla/worker_runtime.py`: job processors and background worker helper (auto-starts when using fakeredis); `scripts/rq_worker.py` runs dedicated workers.
+- `tasksgodzilla/jobs.py`: Redis/RQ-backed queue abstraction.
+- `tasksgodzilla/worker_runtime.py`: job processors and background worker helper (auto-starts when `TASKSGODZILLA_INLINE_RQ_WORKER=true`); `scripts/rq_worker.py` runs dedicated workers.
 - `tasksgodzilla/codemachine/*`: loader + runtime adapter for `.codemachine` workspaces, including loop/trigger policy helpers and prompt resolution with placeholders/specifications.
 - `tasksgodzilla/spec.py` + `tasksgodzilla/spec_tools.py`: unified ProtocolSpec/StepSpec schema helpers, prompt/output resolver + engine registry hooks, and spec audit/backfill.
 - `tasksgodzilla/logging.py`: structured logging helpers with request IDs.

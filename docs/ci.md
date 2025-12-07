@@ -4,10 +4,10 @@ Both GitHub Actions and GitLab CI call the same shell hooks under `scripts/ci/`.
 
 ## Scripts implemented
 
-- `scripts/ci/bootstrap.sh` — creates `.venv`, installs `requirements-orchestrator.txt` + `ruff`, exports `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite` and `TASKSGODZILLA_REDIS_URL=fakeredis://`.
+- `scripts/ci/bootstrap.sh` — creates `.venv`, installs `requirements-orchestrator.txt` + `ruff`, exports `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite` and `TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15` (Redis must be running).
 - `scripts/ci/lint.sh` — `ruff check tasksgodzilla scripts tests --select E9,F63,F7,F82` (syntax/undefined names).
 - `scripts/ci/typecheck.sh` — `compileall` + import smoke for `tasksgodzilla.config`, API app, and CLI entrypoints.
-- `scripts/ci/test.sh` — `pytest -q --disable-warnings --maxfail=1` with fakeredis and temp SQLite.
+- `scripts/ci/test.sh` — `pytest -q --disable-warnings --maxfail=1` with temp SQLite and a real Redis URL from `TASKSGODZILLA_REDIS_URL`.
 - `scripts/ci/build.sh` — `docker build -t tasksgodzilla-ci .` if Docker exists; otherwise `docker-compose config -q`.
 
 Each script exits non-zero on failure and reports status via `scripts/ci/report.sh` when configured.

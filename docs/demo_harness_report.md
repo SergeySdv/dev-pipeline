@@ -13,8 +13,8 @@
 - TerraformManager automation is partial: checklist script has a smoke option for help commands but does not yet execute the workflow end-to-end (API/CLI/UI).
 
 ## How to run the full demo harness (API + worker)
-1. Env: export `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite`, `TASKSGODZILLA_REDIS_URL=fakeredis://` (or a real Redis URL), and set `VENV_PATH=.venv` if you use a local venv.
-2. Start API: `.venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010` (SQLite + fakeredis will run inline worker threads when fakeredis is configured).
+1. Env: export `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite`, `TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15` (or your Redis URL), and set `VENV_PATH=.venv` if you use a local venv.
+2. Start API: `.venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010` (set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to run an inline worker thread when developing locally).
 3. Start worker (if using real Redis): `.venv/bin/python scripts/rq_worker.py` with the same env vars.
 4. Run the harness end-to-end from another shell: `.venv/bin/python scripts/demo_harness.py` (or `make demo-harness`). This executes onboarding → planning stub → spec audit → step execution → QA skip and asserts protocol completion.
 5. Capture outputs: harness logs are printed to stdout; planning output can be copied from `.protocols/<run>/.tmp/planning.json` if you need to inspect it.

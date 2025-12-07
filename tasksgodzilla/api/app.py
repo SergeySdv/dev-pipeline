@@ -18,8 +18,7 @@ from tasksgodzilla.codemachine import ConfigError, config_to_template_payload, l
 from tasksgodzilla.logging import log_extra, setup_logging, json_logging_from_env
 from tasksgodzilla.metrics import metrics
 from tasksgodzilla.storage import BaseDatabase, create_database
-from tasksgodzilla.worker_runtime import BackgroundWorker, RQWorkerThread
-from tasksgodzilla.worker_runtime import drain_once
+from tasksgodzilla.worker_runtime import RQWorkerThread, drain_once
 from tasksgodzilla.health import check_db
 from tasksgodzilla.workers.state import maybe_complete_protocol
 from tasksgodzilla.workers import codemachine_worker
@@ -82,6 +81,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db  # type: ignore[attr-defined]
     app.state.queue = queue  # type: ignore[attr-defined]
     app.state.metrics = metrics  # type: ignore[attr-defined]
+    app.state.worker = None  # type: ignore[attr-defined]
     worker = None
     spec_audit_stop: Optional[threading.Event] = None
     spec_audit_thread: Optional[threading.Thread] = None
@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
 
         spec_audit_thread = threading.Thread(target=_spec_audit_cron, daemon=True)
         spec_audit_thread.start()
-    if isinstance(queue, jobs.RedisQueue) and queue.is_fakeredis:
+    if config.inline_rq_worker and isinstance(queue, jobs.RedisQueue):
         worker = RQWorkerThread(queue)
         app.state.worker = worker  # type: ignore[attr-defined]
         worker.start()
@@ -151,8 +151,8 @@ def get_queue(request: Request) -> jobs.BaseQueue:
     return request.app.state.queue  # type: ignore[attr-defined]
 
 
-def get_worker(request: Request) -> RQWorkerThread:
-    return request.app.state.worker  # type: ignore[attr-defined]
+def get_worker(request: Request) -> Optional[RQWorkerThread]:
+    return getattr(request.app.state, "worker", None)  # type: ignore[attr-defined]
 
 
 def get_protocol_project(protocol_run_id: int, db: BaseDatabase) -> int:
@@ -1148,8 +1148,7 @@ async def github_webhook(
                 request=request,
             )
             try:
-                # Inline drain for fakeredis so auto-QA completes in dev/test without a separate worker.
-                if isinstance(queue, jobs.RedisQueue) and queue.is_fakeredis:
+                if config.inline_rq_worker:
                     drain_once(queue, db)
             except Exception:
                 pass

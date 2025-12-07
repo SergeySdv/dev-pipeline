@@ -1,4 +1,3 @@
-import os
 import tempfile
 from pathlib import Path
 
@@ -13,11 +12,12 @@ except ImportError:  # pragma: no cover
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_github_webhook_updates_step_and_protocol() -> None:
+def test_github_webhook_updates_step_and_protocol(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(Path(tmpdir) / "db.sqlite"))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -49,11 +49,12 @@ def test_github_webhook_updates_step_and_protocol() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_gitlab_webhook_updates_step() -> None:
+def test_gitlab_webhook_updates_step(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(Path(tmpdir) / "db.sqlite"))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -81,11 +82,12 @@ def test_gitlab_webhook_updates_step() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_gitlab_webhook_failure_blocks_and_records_event() -> None:
+def test_gitlab_webhook_failure_blocks_and_records_event(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(Path(tmpdir) / "db.sqlite"))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -119,11 +121,12 @@ def test_gitlab_webhook_failure_blocks_and_records_event() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_github_pr_merge_completes_protocol() -> None:
+def test_github_pr_merge_completes_protocol(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(Path(tmpdir) / "db.sqlite"))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -156,10 +159,12 @@ def test_github_pr_merge_completes_protocol() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_gitlab_merge_request_updates_protocol() -> None:
+def test_gitlab_merge_request_updates_protocol(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(Path(tmpdir) / "db.sqlite")
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(Path(tmpdir) / "db.sqlite"))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             proj = client.post(
@@ -191,11 +196,12 @@ def test_gitlab_merge_request_updates_protocol() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_github_webhook_triggers_auto_qa_when_enabled(monkeypatch) -> None:
+def test_github_webhook_triggers_auto_qa_when_enabled(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(Path(tmpdir) / "db.sqlite"))
         monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
-        monkeypatch.setenv("TASKSGODZILLA_REDIS_URL", "fakeredis://")
         monkeypatch.setenv("TASKSGODZILLA_AUTO_QA_ON_CI", "true")
         monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
         repo_root = Path(tmpdir) / "repo"

@@ -120,10 +120,10 @@ Modals: `g` new project, `R` new protocol, `i` import CodeMachine, `A` spec audi
 
 ## Quick setup & URLs
 
-Start the API locally (SQLite + fakeredis):
+Start the API locally (SQLite + Redis):
 ```bash
 make orchestrator-setup
-TASKSGODZILLA_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py
+TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15 TASKSGODZILLA_INLINE_RQ_WORKER=true .venv/bin/python scripts/api_server.py
 # Console at http://localhost:8010/console (use 8011 if running via docker compose; token from TASKSGODZILLA_API_TOKEN if set)
 ```
 

@@ -14,9 +14,9 @@ from tasksgodzilla.cli.main import run_cli
 
 
 @pytest.fixture
-def transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> httpx.ASGITransport:
+def transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, redis_env: str) -> httpx.ASGITransport:
     monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(tmp_path / "cli.sqlite"))
-    monkeypatch.setenv("TASKSGODZILLA_REDIS_URL", "fakeredis://")
+    monkeypatch.setenv("TASKSGODZILLA_REDIS_URL", redis_env)
     monkeypatch.setenv("TASKSGODZILLA_API_BASE", "http://testserver")
     monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
     config = load_config()

@@ -7,8 +7,8 @@
 - Structured logging extended (JSON option via `TASKSGODZILLA_LOG_JSON`); workers/CLIs/API share logger init, request IDs, and standard exit codes; events now include protocol/step IDs and workers log job start/end with IDs.
 - Makefile helpers: `orchestrator-setup`, `deps`, `migrate`.
 - Compose stack + Dockerfile for `tasksgodzilla-core`; optional codex-worker service; K8s manifests for API/worker with probes and resource limits.
-- Redis/RQ required for orchestration; fakeredis wired for tests/dev and API now fails fast when Redis is unreachable.
-- Queue/worker updates: RQ enqueue includes retries; `RedisQueue.claim` supports in-process background worker for fakeredis/dev. Execution now lands in `needs_qa` and can auto-enqueue QA via `TASKSGODZILLA_AUTO_QA_AFTER_EXEC`; CI success can auto-enqueue QA via `TASKSGODZILLA_AUTO_QA_ON_CI`.
+- Redis/RQ required for orchestration; optional inline RQ worker via `TASKSGODZILLA_INLINE_RQ_WORKER` for local dev/tests; API fails fast when Redis is unreachable.
+- Queue/worker updates: RQ enqueue includes retries; `RedisQueue.claim` supports in-process background worker when inline processing is enabled. Execution now lands in `needs_qa` and can auto-enqueue QA via `TASKSGODZILLA_AUTO_QA_AFTER_EXEC`; CI success can auto-enqueue QA via `TASKSGODZILLA_AUTO_QA_ON_CI`.
 - CI callbacks: `scripts/ci/report.sh` posts GitHub/GitLab-style payloads back to `/webhooks/*` using `TASKSGODZILLA_API_BASE` (optional `TASKSGODZILLA_API_TOKEN`/`TASKSGODZILLA_WEBHOOK_TOKEN`).
 - Console now includes a recent activity feed backed by `/events` (project-filterable) so ops can monitor runs without drilling into each protocol.
 - CI reporter supports `TASKSGODZILLA_PROTOCOL_RUN_ID` to disambiguate branches when posting webhook-style status updates.
@@ -24,7 +24,7 @@ make orchestrator-setup \
 ```
 Then start API: `.venv/bin/python scripts/api_server.py`
 # Or use docker-compose: `docker compose up --build` (API on :8011)
-# Redis URL required: set `TASKSGODZILLA_REDIS_URL` (use `fakeredis://` for local/testing; compose host is redis://localhost:6380/0).
+# Redis URL required: set `TASKSGODZILLA_REDIS_URL` (e.g., redis://localhost:6379/15 or compose host redis://localhost:6380/0); enable `TASKSGODZILLA_INLINE_RQ_WORKER=true` for inline processing in dev/tests.
 
 ## Next focus
 - Refine token accounting with real usage data instead of heuristic.

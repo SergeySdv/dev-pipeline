@@ -1,4 +1,3 @@
-import os
 import tempfile
 from pathlib import Path
 
@@ -13,12 +12,13 @@ except ImportError:  # pragma: no cover - fastapi not installed in minimal envs
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_api_projects_protocols_steps_end_to_end() -> None:
+def test_api_projects_protocols_steps_end_to_end(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "api-test.sqlite"
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(db_path)
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             queue = client.app.state.queue  # type: ignore[attr-defined]
@@ -107,12 +107,13 @@ def test_api_projects_protocols_steps_end_to_end() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_protocol_spec_endpoint_exposes_hash_and_spec() -> None:
+def test_protocol_spec_endpoint_exposes_hash_and_spec(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "api-test.sqlite"
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(db_path)
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             project = client.post(
@@ -142,12 +143,13 @@ def test_protocol_spec_endpoint_exposes_hash_and_spec() -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_spec_audit_endpoint_enqueues_job() -> None:
+def test_spec_audit_endpoint_enqueues_job(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "api-test.sqlite"
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(db_path)
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             project = client.post(

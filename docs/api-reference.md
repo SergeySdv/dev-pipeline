@@ -87,7 +87,7 @@ Status conflicts return 409 (e.g., starting an already-running protocol).
 - `scripts/ci/report.sh success|failure` can call these endpoints from CI with `TASKSGODZILLA_API_BASE`, `TASKSGODZILLA_API_TOKEN`, `TASKSGODZILLA_WEBHOOK_TOKEN`, `TASKSGODZILLA_PROTOCOL_RUN_ID` for explicit mapping.
 
 ## Queue/runtime notes
-- Backend: Redis/RQ; when `TASKSGODZILLA_REDIS_URL=fakeredis://`, the API starts a background RQ worker thread for inline job processing.
+- Backend: Redis/RQ; set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to have the API start a background RQ worker thread for inline job processing during local development.
 - Jobs: `project_setup_job`, `plan_protocol_job`, `execute_step_job`, `run_quality_job`, `open_pr_job`, `codemachine_import_job`.
 - CodeMachine policies: loop/trigger policies on steps may reset statuses or inline-trigger other steps (depth-limited) with events and `runtime_state` recorded.
 - Token budgets: `TASKSGODZILLA_MAX_TOKENS_PER_STEP` / `TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL` with mode `TASKSGODZILLA_TOKEN_BUDGET_MODE=strict|warn|off`; overruns raise (strict) or log (warn).

@@ -47,7 +47,7 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
    ```
 
 Logging tip: set `TASKSGODZILLA_LOG_JSON=true` to emit structured JSON logs from CLIs/workers/API.
-Redis is required for orchestration; set `TASKSGODZILLA_REDIS_URL` (use `fakeredis://` for local testing).
+Redis is required for orchestration; set `TASKSGODZILLA_REDIS_URL` (e.g., `redis://localhost:6379/15` or the compose endpoint `redis://localhost:6380/0`). Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` when you want the API to run a lightweight background worker in the same process for local dev/tests.
 
 ### Protocol pipeline expectations (real work)
 - The protocol pipeline scaffolds `.protocols/NNNN-task/`, but the steps are for **real code changes** (features, fixes, tests). Plan files are the contract; the work happens in the codebase.
@@ -68,7 +68,7 @@ Redis is required for orchestration; set `TASKSGODZILLA_REDIS_URL` (use `fakered
 - Import `.codemachine` workspaces with `POST /projects/{id}/codemachine/import` to persist the template graph and emit `ProtocolSpec`/`StepSpec` entries (engines, policies, QA) for the run.
 - CodeMachine steps now use the unified engine runner and spec-driven prompt/output resolver; outputs are written to `.protocols/<protocol>/` and to `aux.codemachine` targets, and QA follows the spec `qa_policy` (skip/light/full) rather than being implicitly skipped.
 - Module policies (loop/trigger) attach to matching agents and drive retries or inline triggers. Loop limits and trigger depth are recorded in `runtime_state` and surfaced as events.
-- When `TASKSGODZILLA_REDIS_URL=fakeredis://`, the API spins up a background RQ worker thread to process jobs inline for local dev.
+- Enable `TASKSGODZILLA_INLINE_RQ_WORKER=true` if you want the API to process queue items inline without a dedicated worker during local development.
 
 ## Git onboarding & branch controls
 
@@ -108,11 +108,11 @@ Useful commands:
 - Logs: `docker compose logs -f api worker codex-worker`
 - Stop/clean: `docker compose down -v`
 
-Local (SQLite + fakeredis) without Docker:
+Local (SQLite + Redis) without Docker:
 
 ```bash
 make orchestrator-setup
-TASKSGODZILLA_REDIS_URL=fakeredis:// .venv/bin/python scripts/api_server.py
+TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15 TASKSGODZILLA_INLINE_RQ_WORKER=true .venv/bin/python scripts/api_server.py
 # open http://localhost:8010/console (use 8011 if running via docker compose) and set API token if configured
 ```
 
@@ -186,7 +186,7 @@ graph TD
   Console --> API["Orchestrator API (FastAPI)"]
   API --> Repo["Repo resolver\n(local_path or projects/<project_id>/<repo>)"]
   API --> DB[(DB: Postgres/SQLite)]
-  API --> Queue["Queue (Redis/RQ; fakeredis inline in dev)"]
+  API --> Queue["Queue (Redis/RQ; inline worker optional for dev)"]
   API --> Spec["ProtocolSpec/StepSpec\nstored on ProtocolRun.template_config"]
   Queue --> Runner["Engine runner\n(prompt/output resolver + QA)"]
   Runner --> Registry["Engine registry\n(Codex, CodeMachine, ... engines)"]

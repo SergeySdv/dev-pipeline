@@ -14,7 +14,7 @@
 Observability
 -------------
 - API endpoints:
-  - `GET /queues` shows per-queue counts (queued/started/finished/failed) and identifies the backend (Redis/RQ; fakeredis is reported as Redis).
+  - `GET /queues` shows per-queue counts (queued/started/finished/failed) and identifies the backend (Redis/RQ).
   - `GET /queues/jobs` lists jobs with payload, timestamps (enqueued/started/ended when available), and result/exception info for `queued/started/finished/failed`.
 - RQ CLI:
   ```bash

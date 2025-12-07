@@ -56,19 +56,10 @@ class RedisQueue:
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("Redis/RQ not installed; install redis rq or omit TASKSGODZILLA_REDIS_URL") from exc
 
-        use_fake = redis_url.startswith("fakeredis://")
-        if use_fake:
-            try:
-                import fakeredis  # type: ignore
-            except ImportError as exc:  # pragma: no cover - optional dependency
-                raise RuntimeError("fakeredis not installed; add fakeredis or use a real Redis URL") from exc
-            self._redis = fakeredis.FakeRedis.from_url("redis://localhost")
-        else:
-            self._redis = redis.Redis.from_url(redis_url)
+        self._redis = redis.Redis.from_url(redis_url)
 
         self._queue_cls = Queue
         self._queues: Dict[str, Queue] = {}
-        self._is_fakeredis = use_fake
         self._retry_cls = Retry
 
     def _get_queue(self, name: str):
@@ -205,10 +196,6 @@ class RedisQueue:
             }
         return stats
 
-    @property
-    def is_fakeredis(self) -> bool:
-        return self._is_fakeredis
-
     def get_rq_queue(self, name: str = "default"):
         return self._get_queue(name)
 
@@ -219,5 +206,5 @@ class RedisQueue:
 
 def create_queue(redis_url: Optional[str]) -> BaseQueue:
     if not redis_url:
-        raise RuntimeError("Redis queue required; set TASKSGODZILLA_REDIS_URL (use fakeredis:// for tests)")
+        raise RuntimeError("Redis queue required; set TASKSGODZILLA_REDIS_URL")
     return RedisQueue(redis_url)

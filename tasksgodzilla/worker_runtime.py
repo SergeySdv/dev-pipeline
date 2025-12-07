@@ -185,7 +185,7 @@ class BackgroundWorker:
 
 class RQWorkerThread:
     """
-    Lightweight RQ SimpleWorker loop for test/dev when using fakeredis.
+    Lightweight RQ SimpleWorker loop for test/dev when an inline worker is desired.
     """
 
     def __init__(self, redis_queue: RedisQueue, poll_interval: float = 0.25) -> None:
@@ -206,7 +206,7 @@ class RQWorkerThread:
 
     def _loop(self) -> None:
         q = self.redis_queue.get_rq_queue("default")
-        # Re-create worker each burst to avoid stale state in fakeredis and sidestep signal handling.
+        # Re-create worker each burst to avoid stale state and sidestep signal handling.
         while not self._stop.is_set():
             worker = self._worker_cls([q], connection=self.redis_queue.redis_connection)
             try:

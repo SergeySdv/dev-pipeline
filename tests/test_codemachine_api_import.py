@@ -1,4 +1,3 @@
-import os
 import tempfile
 from pathlib import Path
 
@@ -18,12 +17,13 @@ def _write(path: Path, content: str) -> None:
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
-def test_codemachine_import_inline_creates_steps_and_template() -> None:
+def test_codemachine_import_inline_creates_steps_and_template(
+    redis_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "api-test.sqlite"
-        os.environ["TASKSGODZILLA_DB_PATH"] = str(db_path)
-        os.environ.pop("TASKSGODZILLA_API_TOKEN", None)
-        os.environ["TASKSGODZILLA_REDIS_URL"] = "fakeredis://"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
 
         workspace = Path(tmpdir) / "workspace"
         config_dir = workspace / ".codemachine" / "config"
