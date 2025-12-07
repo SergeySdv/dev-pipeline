@@ -164,3 +164,35 @@ def test_spec_audit_endpoint_enqueues_job(
             assert resp.status_code == 200
             body = resp.json()
             assert body["job"]["job_type"] == "spec_audit_job"
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_codex_runs_api_round_trip(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "runs-api.sqlite"
+        runs_dir = Path(tmpdir) / "runs"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("CODEX_RUNS_DIR", str(runs_dir))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            resp = client.post("/codex/runs/start", json={"job_type": "bootstrap", "params": {"foo": "bar"}})
+            assert resp.status_code == 200
+            run = resp.json()
+            run_id = run["run_id"]
+            assert Path(run["log_path"]).exists()
+
+            list_resp = client.get("/codex/runs")
+            assert list_resp.status_code == 200
+            assert any(item["run_id"] == run_id for item in list_resp.json())
+
+            detail = client.get(f"/codex/runs/{run_id}")
+            assert detail.status_code == 200
+            assert detail.json()["status"] == "running"
+
+            logs = client.get(f"/codex/runs/{run_id}/logs")
+            assert logs.status_code == 200
+            console_html = client.get("/console/runs")
+            assert console_html.status_code == 200

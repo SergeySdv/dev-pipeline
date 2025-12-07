@@ -1,13 +1,15 @@
+import html
 import time
 import threading
 import uuid
+from dataclasses import asdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 import json
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -23,6 +25,7 @@ from tasksgodzilla.health import check_db
 from tasksgodzilla.workers.state import maybe_complete_protocol
 from tasksgodzilla.workers import codemachine_worker
 from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, SPEC_META_KEY, protocol_spec_hash
+from tasksgodzilla.run_registry import RunRegistry
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -153,6 +156,10 @@ def get_queue(request: Request) -> jobs.BaseQueue:
 
 def get_worker(request: Request) -> Optional[RQWorkerThread]:
     return getattr(request.app.state, "worker", None)  # type: ignore[attr-defined]
+
+
+def get_run_registry(db: BaseDatabase = Depends(get_db)) -> RunRegistry:
+    return RunRegistry(db)
 
 
 def get_protocol_project(protocol_run_id: int, db: BaseDatabase) -> int:
@@ -393,6 +400,77 @@ def console() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+@app.get("/console/runs", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+def codex_runs_console(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: BaseDatabase = Depends(get_db),
+) -> HTMLResponse:
+    runs = db.list_codex_runs(limit=limit)
+    rows = []
+    for run in runs:
+        status = run.status.lower()
+        run_id_safe = html.escape(run.run_id)
+        log_cell = f'<a href="/codex/runs/{run_id_safe}/logs">logs</a>' if run.log_path else "-"
+        rows.append(
+            "<tr>"
+            f"<td>{run_id_safe}</td>"
+            f"<td>{html.escape(run.job_type)}</td>"
+            f"<td><span class='pill status-{html.escape(status)}'>{html.escape(run.status)}</span></td>"
+            f"<td>{html.escape(run.prompt_version or '-')}</td>"
+            f"<td>{html.escape(run.created_at or '')}</td>"
+            f"<td>{html.escape(run.started_at or '-')}</td>"
+            f"<td>{html.escape(run.finished_at or '-')}</td>"
+            f"<td>{log_cell}</td>"
+            "</tr>"
+        )
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='8'>No runs yet</td></tr>"
+    content = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <title>Codex Runs</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 24px; background: #f8fafc; color: #0f172a; }}
+            h2 {{ margin-bottom: 4px; }}
+            p {{ margin-top: 0; color: #475569; }}
+            table {{ border-collapse: collapse; width: 100%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }}
+            th, td {{ border: 1px solid #e2e8f0; padding: 8px; font-size: 14px; text-align: left; }}
+            th {{ background: #f1f5f9; font-weight: 600; }}
+            .pill {{ border-radius: 999px; padding: 2px 8px; font-size: 12px; text-transform: lowercase; }}
+            .status-running {{ background: #dbeafe; color: #1d4ed8; }}
+            .status-succeeded {{ background: #dcfce7; color: #166534; }}
+            .status-failed {{ background: #fee2e2; color: #b91c1c; }}
+            .status-cancelled {{ background: #fef9c3; color: #854d0e; }}
+            .status-queued {{ background: #e2e8f0; color: #475569; }}
+            a {{ color: #0ea5e9; }}
+        </style>
+    </head>
+    <body>
+        <h2>Codex Runs</h2>
+        <p>Showing up to {len(runs)} run(s).</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Run ID</th>
+                    <th>Job Type</th>
+                    <th>Status</th>
+                    <th>Prompt Version</th>
+                    <th>Created</th>
+                    <th>Started</th>
+                    <th>Finished</th>
+                    <th>Logs</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=content)
+
+
 @app.get("/health", response_model=schemas.Health)
 def health() -> schemas.Health:
     db_status = check_db(app.state.db)  # type: ignore[attr-defined]
@@ -406,6 +484,62 @@ def metrics_endpoint():
     from fastapi import Response
 
     return Response(content=data, media_type="text/plain; version=0.0.4")
+
+
+@app.get("/codex/runs", response_model=list[schemas.CodexRunOut], dependencies=[Depends(require_auth)])
+def list_codex_runs(
+    job_type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: BaseDatabase = Depends(get_db),
+):
+    runs = db.list_codex_runs(job_type=job_type, status=status, limit=limit)
+    return [asdict(run) for run in runs]
+
+
+@app.post("/codex/runs/start", response_model=schemas.CodexRunOut, dependencies=[Depends(require_auth)])
+def start_codex_run(
+    payload: schemas.CodexRunCreate,
+    registry: RunRegistry = Depends(get_run_registry),
+) -> dict:
+    log_path = Path(payload.log_path) if payload.log_path else None
+    run = registry.start_run(
+        job_type=payload.job_type,
+        run_id=payload.run_id,
+        params=payload.params,
+        prompt_version=payload.prompt_version,
+        log_path=log_path,
+        cost_tokens=payload.cost_tokens,
+        cost_cents=payload.cost_cents,
+    )
+    return asdict(run)
+
+
+@app.get("/codex/runs/{run_id}", response_model=schemas.CodexRunOut, dependencies=[Depends(require_auth)])
+def get_codex_run(run_id: str, db: BaseDatabase = Depends(get_db)) -> dict:
+    try:
+        run = db.get_codex_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return asdict(run)
+
+
+@app.get("/codex/runs/{run_id}/logs", response_class=PlainTextResponse, dependencies=[Depends(require_auth)])
+def get_codex_run_logs(run_id: str, db: BaseDatabase = Depends(get_db)) -> PlainTextResponse:
+    try:
+        run = db.get_codex_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run.log_path:
+        raise HTTPException(status_code=404, detail="Log path not recorded")
+    log_path = Path(run.log_path)
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
+    try:
+        content = log_path.read_text(encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - filesystem edge
+        raise HTTPException(status_code=500, detail=f"Unable to read log file: {exc}") from exc
+    return PlainTextResponse(content=content or "")
 
 
 @app.post("/projects", response_model=schemas.ProjectOut, dependencies=[Depends(require_auth)])

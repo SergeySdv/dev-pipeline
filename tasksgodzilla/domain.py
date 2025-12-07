@@ -84,3 +84,29 @@ class Event:
     protocol_name: Optional[str] = None
     project_id: Optional[int] = None
     project_name: Optional[str] = None
+
+
+class CodexRunStatus:
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class CodexRun:
+    run_id: str
+    job_type: str
+    status: str
+    created_at: str
+    updated_at: str
+    started_at: Optional[str]
+    finished_at: Optional[str]
+    prompt_version: Optional[str]
+    params: Optional[dict]
+    result: Optional[dict]
+    error: Optional[str]
+    log_path: Optional[str]
+    cost_tokens: Optional[int]
+    cost_cents: Optional[int]

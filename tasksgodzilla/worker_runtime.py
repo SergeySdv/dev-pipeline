@@ -1,5 +1,7 @@
+import logging
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 from tasksgodzilla.config import load_config
@@ -7,9 +9,10 @@ from tasksgodzilla.domain import ProtocolStatus, StepStatus
 from tasksgodzilla.errors import TasksGodzillaError
 from tasksgodzilla.jobs import BaseQueue, Job, RedisQueue
 from tasksgodzilla.storage import BaseDatabase, Database, create_database
+from tasksgodzilla.run_registry import RunRegistry
 from tasksgodzilla.workers import codex_worker, onboarding_worker, codemachine_worker, spec_worker
 from tasksgodzilla.metrics import metrics
-from tasksgodzilla.logging import get_logger, log_extra, setup_logging, json_logging_from_env
+from tasksgodzilla.logging import RequestIdFilter, get_logger, log_extra, setup_logging, json_logging_from_env
 
 
 log = get_logger("tasksgodzilla.worker")
@@ -80,12 +83,24 @@ def _run_job_with_handling(
     rethrow: bool = False,
 ) -> Job:
     start = time.time()
+    registry = RunRegistry(db)
+    run = registry.start_run(job.job_type, run_id=job.job_id or None, params=job.payload)
+    log_path = Path(run.log_path) if run.log_path else None  # type: ignore[arg-type]
+    file_handler: Optional[logging.Handler] = None
+    if log_path:
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setLevel(logging.INFO)
+        file_handler.addFilter(RequestIdFilter({"run_id": run.run_id}))
+        formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s run=%(run_id)s")
+        file_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(file_handler)
     try:
         process_job(job, db)
         job.status = "finished"
         job.ended_at = time.time()
         metrics.inc_job(job.job_type, "completed")
         metrics.observe_job_duration(job.job_type, "completed", job.ended_at - start)
+        registry.mark_succeeded(job.job_id, result={"status": "completed"})
         return job
     except Exception as exc:  # pragma: no cover - best effort
         job.attempts += 1
@@ -137,9 +152,16 @@ def _run_job_with_handling(
                     pass
             metrics.inc_job(job.job_type, "failed")
             metrics.observe_job_duration(job.job_type, "failed", job.ended_at - start)
+            try:
+                registry.mark_failed(job.job_id, error=str(exc))
+            except Exception:  # pragma: no cover - best effort
+                pass
         if rethrow:
             raise
         return job
+    finally:
+        if file_handler:
+            logging.getLogger().removeHandler(file_handler)
 
 
 def drain_once(queue: BaseQueue, db: BaseDatabase) -> Optional[Job]:

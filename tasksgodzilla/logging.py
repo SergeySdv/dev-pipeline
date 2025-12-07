@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-STANDARD_FIELDS = ("request_id", "job_id", "project_id", "protocol_run_id", "step_run_id")
+STANDARD_FIELDS = ("request_id", "run_id", "job_id", "project_id", "protocol_run_id", "step_run_id")
 
 
 class RequestIdFilter(logging.Filter):
@@ -16,6 +16,7 @@ class RequestIdFilter(logging.Filter):
         super().__init__()
         self.defaults = {
             "request_id": "-",
+            "run_id": "-",
             "job_id": "-",
             "project_id": "-",
             "protocol_run_id": "-",
@@ -97,6 +98,7 @@ def json_logging_from_env() -> bool:
 def log_extra(
     *,
     request_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     job_id: Optional[str] = None,
     project_id: Optional[int] = None,
     protocol_run_id: Optional[int] = None,
@@ -110,6 +112,8 @@ def log_extra(
     payload: Dict[str, Any] = {}
     if request_id is not None:
         payload["request_id"] = request_id
+    if run_id is not None:
+        payload["run_id"] = run_id
     if job_id is not None:
         payload["job_id"] = job_id
     if project_id is not None:

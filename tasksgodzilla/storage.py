@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - Postgres optional
     dict_row = None  # type: ignore
     ConnectionPool = None  # type: ignore
 
-from .domain import Event, Project, ProtocolRun, StepRun
+from .domain import CodexRun, Event, Project, ProtocolRun, StepRun
 
 SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -71,6 +71,25 @@ CREATE TABLE IF NOT EXISTS events (
     metadata TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS codex_runs (
+    run_id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    finished_at DATETIME,
+    prompt_version TEXT,
+    params TEXT,
+    result TEXT,
+    error TEXT,
+    log_path TEXT,
+    cost_tokens INTEGER,
+    cost_cents INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_codex_runs_job_status ON codex_runs(job_type, status, created_at);
 """
 
 SCHEMA_POSTGRES = """
@@ -128,7 +147,28 @@ CREATE TABLE IF NOT EXISTS events (
     metadata JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS codex_runs (
+    run_id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP,
+    prompt_version TEXT,
+    params JSONB,
+    result JSONB,
+    error TEXT,
+    log_path TEXT,
+    cost_tokens INTEGER,
+    cost_cents INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_codex_runs_job_status ON codex_runs(job_type, status, created_at);
 """
+
+_UNSET = object()
 
 
 class BaseDatabase(Protocol):
@@ -153,6 +193,10 @@ class BaseDatabase(Protocol):
     def append_event(self, protocol_run_id: int, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None, step_run_id: Optional[int] = None, request_id: Optional[str] = None, job_id: Optional[str] = None) -> Event: ...
     def list_events(self, protocol_run_id: int) -> List[Event]: ...
     def list_recent_events(self, limit: int = 50, project_id: Optional[int] = None) -> List[Event]: ...
+    def create_codex_run(self, run_id: str, job_type: str, status: str, prompt_version: Optional[str] = None, params: Optional[dict] = None, log_path: Optional[str] = None, started_at: Optional[str] = None, cost_tokens: Optional[int] = None, cost_cents: Optional[int] = None) -> CodexRun: ...
+    def update_codex_run(self, run_id: str, *, status: Optional[str] = None, prompt_version: Any = _UNSET, params: Any = _UNSET, result: Any = _UNSET, error: Any = _UNSET, log_path: Any = _UNSET, cost_tokens: Any = _UNSET, cost_cents: Any = _UNSET, started_at: Any = _UNSET, finished_at: Any = _UNSET) -> CodexRun: ...
+    def get_codex_run(self, run_id: str) -> CodexRun: ...
+    def list_codex_runs(self, job_type: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[CodexRun]: ...
 
 
 class Database:
@@ -519,6 +563,123 @@ class Database:
         rows = self._fetchall(base, tuple(params))
         return [self._row_to_event(row) for row in rows]
 
+    def create_codex_run(
+        self,
+        run_id: str,
+        job_type: str,
+        status: str,
+        prompt_version: Optional[str] = None,
+        params: Optional[dict] = None,
+        log_path: Optional[str] = None,
+        started_at: Optional[str] = None,
+        cost_tokens: Optional[int] = None,
+        cost_cents: Optional[int] = None,
+    ) -> CodexRun:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO codex_runs (run_id, job_type, status, prompt_version, params, log_path, started_at, cost_tokens, cost_cents)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    job_type,
+                    status,
+                    prompt_version,
+                    json.dumps(params) if params is not None else None,
+                    log_path,
+                    started_at,
+                    cost_tokens,
+                    cost_cents,
+                ),
+            )
+            conn.commit()
+        return self.get_codex_run(run_id)
+
+    def update_codex_run(
+        self,
+        run_id: str,
+        *,
+        status: Optional[str] = None,
+        prompt_version: Any = _UNSET,
+        params: Any = _UNSET,
+        result: Any = _UNSET,
+        error: Any = _UNSET,
+        log_path: Any = _UNSET,
+        cost_tokens: Any = _UNSET,
+        cost_cents: Any = _UNSET,
+        started_at: Any = _UNSET,
+        finished_at: Any = _UNSET,
+    ) -> CodexRun:
+        updates: list[str] = []
+        values: list[Any] = []
+        if status is not None:
+            updates.append("status = ?")
+            values.append(status)
+        if prompt_version is not _UNSET:
+            updates.append("prompt_version = ?")
+            values.append(prompt_version)
+        if params is not _UNSET:
+            updates.append("params = ?")
+            values.append(json.dumps(params) if params is not None else None)
+        if result is not _UNSET:
+            updates.append("result = ?")
+            values.append(json.dumps(result) if result is not None else None)
+        if error is not _UNSET:
+            updates.append("error = ?")
+            values.append(error)
+        if log_path is not _UNSET:
+            updates.append("log_path = ?")
+            values.append(log_path)
+        if cost_tokens is not _UNSET:
+            updates.append("cost_tokens = ?")
+            values.append(cost_tokens)
+        if cost_cents is not _UNSET:
+            updates.append("cost_cents = ?")
+            values.append(cost_cents)
+        if started_at is not _UNSET:
+            updates.append("started_at = ?")
+            values.append(started_at)
+        if finished_at is not _UNSET:
+            updates.append("finished_at = ?")
+            values.append(finished_at)
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        set_clause = ", ".join(updates)
+        values.append(run_id)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE codex_runs SET {set_clause} WHERE run_id = ?", tuple(values))
+            conn.commit()
+        return self.get_codex_run(run_id)
+
+    def get_codex_run(self, run_id: str) -> CodexRun:
+        row = self._fetchone("SELECT * FROM codex_runs WHERE run_id = ?", (run_id,))
+        if row is None:
+            raise KeyError(f"Codex run {run_id} not found")
+        return self._row_to_codex_run(row)
+
+    def list_codex_runs(
+        self,
+        job_type: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[CodexRun]:
+        limit = max(1, min(int(limit), 500))
+        base = "SELECT * FROM codex_runs"
+        params: list[Any] = []
+        where: list[str] = []
+        if job_type:
+            where.append("job_type = ?")
+            params.append(job_type)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if where:
+            base += " WHERE " + " AND ".join(where)
+        base += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._fetchall(base, tuple(params))
+        return [self._row_to_codex_run(row) for row in rows]
+
     @staticmethod
     def _parse_json(value: Any) -> Optional[dict]:
         if value is None:
@@ -595,6 +756,26 @@ class Database:
             summary=row["summary"],
             created_at=Database._coerce_ts(row["created_at"]),
             updated_at=Database._coerce_ts(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _row_to_codex_run(row: Any) -> CodexRun:
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        return CodexRun(
+            run_id=row["run_id"],
+            job_type=row["job_type"],
+            status=row["status"],
+            created_at=Database._coerce_ts(row["created_at"]),
+            updated_at=Database._coerce_ts(row["updated_at"]),
+            started_at=Database._coerce_ts(row["started_at"]) if "started_at" in keys and row["started_at"] is not None else None,
+            finished_at=Database._coerce_ts(row["finished_at"]) if "finished_at" in keys and row["finished_at"] is not None else None,
+            prompt_version=row["prompt_version"] if "prompt_version" in keys else None,
+            params=Database._parse_json(row["params"]) if "params" in keys else None,
+            result=Database._parse_json(row["result"]) if "result" in keys else None,
+            error=row["error"] if "error" in keys else None,
+            log_path=row["log_path"] if "log_path" in keys else None,
+            cost_tokens=row["cost_tokens"] if "cost_tokens" in keys else None,
+            cost_cents=row["cost_cents"] if "cost_cents" in keys else None,
         )
 
     @staticmethod
@@ -1009,6 +1190,127 @@ class PostgresDatabase:
         params.append(limit)
         rows = self._fetchall(base, tuple(params))
         return [Database._row_to_event(row) for row in rows]  # type: ignore[arg-type]
+
+    def create_codex_run(
+        self,
+        run_id: str,
+        job_type: str,
+        status: str,
+        prompt_version: Optional[str] = None,
+        params: Optional[dict] = None,
+        log_path: Optional[str] = None,
+        started_at: Optional[str] = None,
+        cost_tokens: Optional[int] = None,
+        cost_cents: Optional[int] = None,
+    ) -> CodexRun:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO codex_runs (run_id, job_type, status, prompt_version, params, log_path, started_at, cost_tokens, cost_cents)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING run_id
+                    """,
+                    (
+                        run_id,
+                        job_type,
+                        status,
+                        prompt_version,
+                        json.dumps(params) if params is not None else None,
+                        log_path,
+                        started_at,
+                        cost_tokens,
+                        cost_cents,
+                    ),
+                )
+            conn.commit()
+        return self.get_codex_run(run_id)
+
+    def update_codex_run(
+        self,
+        run_id: str,
+        *,
+        status: Optional[str] = None,
+        prompt_version: Any = _UNSET,
+        params: Any = _UNSET,
+        result: Any = _UNSET,
+        error: Any = _UNSET,
+        log_path: Any = _UNSET,
+        cost_tokens: Any = _UNSET,
+        cost_cents: Any = _UNSET,
+        started_at: Any = _UNSET,
+        finished_at: Any = _UNSET,
+    ) -> CodexRun:
+        updates: list[str] = []
+        values: list[Any] = []
+        if status is not None:
+            updates.append("status = %s")
+            values.append(status)
+        if prompt_version is not _UNSET:
+            updates.append("prompt_version = %s")
+            values.append(prompt_version)
+        if params is not _UNSET:
+            updates.append("params = %s")
+            values.append(json.dumps(params) if params is not None else None)
+        if result is not _UNSET:
+            updates.append("result = %s")
+            values.append(json.dumps(result) if result is not None else None)
+        if error is not _UNSET:
+            updates.append("error = %s")
+            values.append(error)
+        if log_path is not _UNSET:
+            updates.append("log_path = %s")
+            values.append(log_path)
+        if cost_tokens is not _UNSET:
+            updates.append("cost_tokens = %s")
+            values.append(cost_tokens)
+        if cost_cents is not _UNSET:
+            updates.append("cost_cents = %s")
+            values.append(cost_cents)
+        if started_at is not _UNSET:
+            updates.append("started_at = %s")
+            values.append(started_at)
+        if finished_at is not _UNSET:
+            updates.append("finished_at = %s")
+            values.append(finished_at)
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        set_clause = ", ".join(updates)
+        values.append(run_id)
+        query = f"UPDATE codex_runs SET {set_clause} WHERE run_id = %s"
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, tuple(values))
+            conn.commit()
+        return self.get_codex_run(run_id)
+
+    def get_codex_run(self, run_id: str) -> CodexRun:
+        row = self._fetchone("SELECT * FROM codex_runs WHERE run_id = %s", (run_id,))
+        if row is None:
+            raise KeyError(f"Codex run {run_id} not found")
+        return Database._row_to_codex_run(row)  # type: ignore[arg-type]
+
+    def list_codex_runs(
+        self,
+        job_type: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[CodexRun]:
+        limit = max(1, min(int(limit), 500))
+        base = "SELECT * FROM codex_runs"
+        params: list[Any] = []
+        where: list[str] = []
+        if job_type:
+            where.append("job_type = %s")
+            params.append(job_type)
+        if status:
+            where.append("status = %s")
+            params.append(status)
+        if where:
+            base += " WHERE " + " AND ".join(where)
+        base += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+        rows = self._fetchall(base, tuple(params))
+        return [Database._row_to_codex_run(row) for row in rows]  # type: ignore[arg-type]
 
 
 def create_database(db_path: Path, db_url: Optional[str] = None, pool_size: int = 5) -> BaseDatabase:

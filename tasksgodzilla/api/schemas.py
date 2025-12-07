@@ -96,6 +96,33 @@ class EventOut(BaseModel):
     project_name: Optional[str] = None
 
 
+class CodexRunCreate(BaseModel):
+    job_type: str
+    prompt_version: Optional[str] = None
+    params: Optional[dict] = None
+    run_id: Optional[str] = None
+    log_path: Optional[str] = None
+    cost_tokens: Optional[int] = None
+    cost_cents: Optional[int] = None
+
+
+class CodexRunOut(BaseModel):
+    run_id: str
+    job_type: str
+    status: str
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    prompt_version: Optional[str] = None
+    params: Optional[dict] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
+    log_path: Optional[str] = None
+    cost_tokens: Optional[int] = None
+    cost_cents: Optional[int] = None
+
+
 class ActionResponse(BaseModel):
     message: str
     job: Optional[dict] = None

@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from tasksgodzilla.domain import ProtocolStatus, StepStatus
+from tasksgodzilla.domain import CodexRunStatus, ProtocolStatus, StepStatus
 from tasksgodzilla.storage import Database
 
 
@@ -66,3 +66,44 @@ def test_storage_round_trip_creates_records() -> None:
         assert len(recent) == 1
         assert recent[0].protocol_name == "0001-demo"
         assert recent[0].project_name == "demo"
+
+
+def test_codex_run_registry_round_trip() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "orchestrator.sqlite"
+        db = Database(db_path)
+        db.init_schema()
+
+        run_id = "run-123"
+        created = db.create_codex_run(
+            run_id=run_id,
+            job_type="bootstrap",
+            status=CodexRunStatus.RUNNING,
+            prompt_version="v1",
+            params={"hello": "world"},
+            log_path="/tmp/runs/run-123/logs.txt",
+            started_at="2024-01-01T00:00:00Z",
+        )
+        assert created.run_id == run_id
+        assert created.job_type == "bootstrap"
+        assert created.prompt_version == "v1"
+        assert created.params == {"hello": "world"}
+        assert created.log_path.endswith("logs.txt")
+
+        updated = db.update_codex_run(
+            run_id,
+            status=CodexRunStatus.SUCCEEDED,
+            result={"ok": True},
+            cost_tokens=42,
+            cost_cents=5,
+            finished_at="2024-01-01T00:30:00Z",
+        )
+        assert updated.status == CodexRunStatus.SUCCEEDED
+        assert updated.result == {"ok": True}
+        assert updated.cost_tokens == 42
+        assert updated.cost_cents == 5
+        assert updated.finished_at is not None
+
+        runs = db.list_codex_runs(job_type="bootstrap")
+        assert runs
+        assert runs[0].run_id == run_id
