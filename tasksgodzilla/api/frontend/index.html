@@ -106,7 +106,6 @@
           <h3>Recent activity</h3>
           <div class="panel-actions">
             <button id="refreshOperations" type="button">Refresh</button>
-            <button id="runSpecAudit" type="button">Spec audit</button>
           </div>
         </div>
         <div id="operationsList"></div>
@@ -117,6 +116,8 @@
         <div class="panel-header">
           <h3>Spec audits</h3>
           <div class="panel-actions">
+            <input id="auditInterval" class="input-inline" type="number" min="30" placeholder="Interval sec" />
+            <button id="runSpecAudit" type="button">Run audit</button>
             <button id="refreshAudits" type="button">Refresh</button>
           </div>
         </div>

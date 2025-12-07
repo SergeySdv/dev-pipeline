@@ -57,22 +57,37 @@ async def lifespan(app: FastAPI):
     spec_audit_thread: Optional[threading.Thread] = None
     if config.spec_audit_interval_seconds:
         spec_audit_stop = threading.Event()
-        interval = max(30, int(config.spec_audit_interval_seconds))
+        interval_default = max(30, int(config.spec_audit_interval_seconds))
+        next_runs: dict[int, float] = {}
 
         def _spec_audit_cron() -> None:
             while not spec_audit_stop.is_set():
+                now = time.time()
                 try:
-                    queue.enqueue(
-                        "spec_audit_job",
-                        {
-                            "project_id": None,
-                            "protocol_id": None,
-                            "backfill_missing": True,
-                        },
-                    )
+                    projects = db.list_projects()
+                    for proj in projects:
+                        secrets = proj.secrets or {}
+                        interval = secrets.get("spec_audit_interval_seconds") or interval_default
+                        try:
+                            interval = int(interval)
+                        except Exception:
+                            interval = interval_default
+                        if interval < 30:
+                            interval = 30
+                        last_next = next_runs.get(proj.id, 0)
+                        if now >= last_next:
+                            queue.enqueue(
+                                "spec_audit_job",
+                                {
+                                    "project_id": proj.id,
+                                    "protocol_id": None,
+                                    "backfill_missing": True,
+                                },
+                            )
+                            next_runs[proj.id] = now + interval
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.warning("Spec audit cron failed to enqueue", extra={"error": str(exc)})
-                spec_audit_stop.wait(interval)
+                spec_audit_stop.wait(5)
 
         spec_audit_thread = threading.Thread(target=_spec_audit_cron, daemon=True)
         spec_audit_thread.start()
