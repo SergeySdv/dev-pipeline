@@ -533,11 +533,16 @@ class TuiDashboard(App):
 
     async def _show_modal(self, screen: ModalScreen[Any]) -> Any:
         self.modal_open = True
+        loop = asyncio.get_running_loop()
+        result_future: asyncio.Future[Any] = loop.create_future()
+
+        def _on_dismiss(result: Any) -> None:
+            if not result_future.done():
+                result_future.set_result(result)
+
         try:
-            await self.push_screen(screen)
-            if hasattr(screen, "dismissed"):
-                return await screen.dismissed.wait()
-            return None
+            await self.push_screen(screen, callback=_on_dismiss)
+            return await result_future
         finally:
             self.modal_open = False
 
