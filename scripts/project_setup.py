@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -24,12 +25,21 @@ try:
 except Exception:  # pragma: no cover - fallback when deps missing
     load_config = None
 try:
-    from deksdenflow.logging import init_cli_logging, json_logging_from_env, EXIT_DEP_MISSING, EXIT_RUNTIME_ERROR  # type: ignore  # noqa: E402
+    from deksdenflow.logging import (  # type: ignore  # noqa: E402
+        init_cli_logging,
+        json_logging_from_env,
+        EXIT_DEP_MISSING,
+        EXIT_RUNTIME_ERROR,
+        get_logger,
+    )
 except Exception:  # pragma: no cover - fallback when deps missing
     init_cli_logging = None
     json_logging_from_env = lambda: False  # type: ignore
     EXIT_DEP_MISSING = 3  # type: ignore
     EXIT_RUNTIME_ERROR = 1  # type: ignore
+    get_logger = logging.getLogger  # type: ignore
+
+log = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +81,15 @@ def main() -> None:
     if init_cli_logging:
         init_cli_logging(getattr(config, "log_level", "INFO"), json_output=json_logging_from_env())
     args = parse_args()
+    log.info(
+        "project_setup_start",
+        extra={
+            "clone_url": args.clone_url,
+            "clone_dir": args.clone_dir,
+            "base_branch": args.base_branch,
+            "run_discovery": args.run_discovery,
+        },
+    )
 
     repo_root: Path
     if args.clone_url:
@@ -82,6 +101,7 @@ def main() -> None:
         repo_root = clone_repo(args.clone_url, default_dir.resolve())
     else:
         repo_root = ensure_git_repo(args.base_branch, args.init_if_needed)
+    log.info("project_setup_repo_ready", extra={"repo_root": str(repo_root)})
 
     # Ensure subsequent commands operate inside the repo
     os.chdir(repo_root)
@@ -96,13 +116,19 @@ def main() -> None:
             discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
             run_codex_discovery(repo_root, discovery_model)
     except FileNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
+        log.error("project_setup_dependency_missing", extra={"error": str(exc)})
         sys.exit(EXIT_DEP_MISSING)
     except Exception as exc:  # pragma: no cover - defensive
-        print(f"Project setup failed: {exc}", file=sys.stderr)
+        log.error(
+            "project_setup_failed",
+            extra={"error": str(exc), "error_type": exc.__class__.__name__},
+        )
         sys.exit(EXIT_RUNTIME_ERROR)
 
-    print("Project setup completed. Review any placeholders and customize CI scripts for your stack.")
+    log.info(
+        "project_setup_complete",
+        extra={"repo_root": str(repo_root)},
+    )
 
 
 if __name__ == "__main__":

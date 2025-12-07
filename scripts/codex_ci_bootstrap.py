@@ -16,7 +16,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from deksdenflow.project_setup import run_codex_discovery  # noqa: E402
 from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import init_cli_logging, json_logging_from_env, EXIT_DEP_MISSING, EXIT_RUNTIME_ERROR  # noqa: E402
+from deksdenflow.logging import (  # noqa: E402
+    init_cli_logging,
+    json_logging_from_env,
+    EXIT_DEP_MISSING,
+    EXIT_RUNTIME_ERROR,
+    get_logger,
+)
+
+log = get_logger(__name__)
 
 
 def main() -> None:
@@ -57,6 +65,16 @@ def main() -> None:
     if not prompt_path.is_absolute():
         prompt_path = repo_root / prompt_path
 
+    log.info(
+        "codex_ci_bootstrap_start",
+        extra={
+            "repo_root": str(repo_root),
+            "model": args.model,
+            "prompt_path": str(prompt_path),
+            "sandbox": args.sandbox,
+            "skip_git_check": args.skip_git_check,
+        },
+    )
     try:
         run_codex_discovery(
             repo_root=repo_root,
@@ -67,16 +85,22 @@ def main() -> None:
             strict=True,
         )
     except FileNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
+        log.error("codex_ci_bootstrap_missing_dep", extra={"error": str(exc)})
         sys.exit(EXIT_DEP_MISSING)
     except subprocess.CalledProcessError as exc:
-        print(f"Codex discovery failed (exit {exc.returncode}): {exc}", file=sys.stderr)
+        log.error(
+            "codex_ci_bootstrap_failed",
+            extra={"error": str(exc), "returncode": exc.returncode, "error_type": exc.__class__.__name__},
+        )
         sys.exit(exc.returncode or EXIT_RUNTIME_ERROR)
     except Exception as exc:  # pragma: no cover - defensive
-        print(f"Unexpected error: {exc}", file=sys.stderr)
+        log.error(
+            "codex_ci_bootstrap_unexpected",
+            extra={"error": str(exc), "error_type": exc.__class__.__name__},
+        )
         sys.exit(EXIT_RUNTIME_ERROR)
 
-    print("Codex discovery complete. Review scripts/ci/* for generated commands.")
+    log.info("codex_ci_bootstrap_complete", extra={"repo_root": str(repo_root), "prompt_path": str(prompt_path)})
 
 
 if __name__ == "__main__":

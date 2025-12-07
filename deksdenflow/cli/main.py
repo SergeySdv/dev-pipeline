@@ -9,13 +9,14 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from deksdenflow.cli.client import APIClient, APIClientError
 from deksdenflow.config import load_config
-from deksdenflow.logging import EXIT_RUNTIME_ERROR, EXIT_OK, init_cli_logging, json_logging_from_env
+from deksdenflow.logging import EXIT_RUNTIME_ERROR, EXIT_OK, init_cli_logging, json_logging_from_env, get_logger
 from deksdenflow.spec_tools import audit_specs
 from deksdenflow.storage import create_database
 
 DEFAULT_API_BASE = os.environ.get("DEKSDENFLOW_API_BASE", "http://localhost:8010")
 DEFAULT_TOKEN = os.environ.get("DEKSDENFLOW_API_TOKEN")
 DEFAULT_PROJECT_TOKEN = os.environ.get("DEKSDENFLOW_PROJECT_TOKEN")
+log = get_logger(__name__)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -573,6 +574,14 @@ def run_cli(argv: Optional[List[str]] = None, *, transport: Optional[Any] = None
     args = parse_args(argv)
     init_cli_logging(os.environ.get("DEKSDENFLOW_LOG_LEVEL", "INFO"), json_output=json_logging_from_env())
     client = build_client(args, transport=transport)
+    log.info(
+        "cli_start",
+        extra={
+            "command": args.command or "interactive",
+            "api_base": getattr(client, "base_url", None),
+            "as_json": getattr(args, "as_json", False),
+        },
+    )
     try:
         if args.command is None:
             run_interactive(client)
@@ -594,11 +603,12 @@ def run_cli(argv: Optional[List[str]] = None, *, transport: Optional[Any] = None
             print("Unknown command")
             return EXIT_RUNTIME_ERROR
     except APIClientError as exc:
-        print(str(exc), file=sys.stderr)
+        log.error("cli_api_error", extra={"error": str(exc), "error_type": exc.__class__.__name__})
         return EXIT_RUNTIME_ERROR
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        log.error("cli_input_error", extra={"error": str(exc), "error_type": exc.__class__.__name__})
         return EXIT_RUNTIME_ERROR
+    log.info("cli_complete", extra={"command": args.command or "interactive"})
     return EXIT_OK
 
 

@@ -26,7 +26,15 @@ from deksdenflow.pipeline import (  # noqa: E402
     write_protocol_files,
 )
 from deksdenflow.config import load_config  # noqa: E402
-from deksdenflow.logging import init_cli_logging, json_logging_from_env, EXIT_DEP_MISSING, EXIT_RUNTIME_ERROR  # noqa: E402
+from deksdenflow.logging import (  # noqa: E402
+    init_cli_logging,
+    json_logging_from_env,
+    EXIT_DEP_MISSING,
+    EXIT_RUNTIME_ERROR,
+    get_logger,
+)
+
+logger = get_logger(__name__)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -76,11 +84,14 @@ if __name__ == "__main__":
     try:
         run_pipeline(cli_args)
     except FileNotFoundError as e:
-        print(f"Dependency missing: {e}", file=sys.stderr)
+        logger.error("Dependency missing", extra={"error": str(e), "error_type": e.__class__.__name__})
         sys.exit(EXIT_DEP_MISSING)
     except subprocess.CalledProcessError as e:
-        print(f"Command failed: {e}", file=sys.stderr)
+        logger.error(
+            "Command failed",
+            extra={"error": str(e), "returncode": e.returncode, "error_type": e.__class__.__name__},
+        )
         sys.exit(e.returncode or EXIT_RUNTIME_ERROR)
     except Exception as e:  # pragma: no cover - defensive
-        print(f"Error: {e}", file=sys.stderr)
+        logger.error("protocol_pipeline_unhandled_error", extra={"error": str(e), "error_type": e.__class__.__name__})
         sys.exit(EXIT_RUNTIME_ERROR)

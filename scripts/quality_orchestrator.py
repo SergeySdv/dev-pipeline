@@ -19,8 +19,11 @@ from deksdenflow.logging import (
     json_logging_from_env,
     EXIT_DEP_MISSING,
     EXIT_RUNTIME_ERROR,
+    get_logger,
 )  # noqa: E402
 from deksdenflow.qa import QualityResult, run_quality_check  # noqa: E402
+
+log = get_logger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,6 +72,17 @@ def main() -> None:
     prompt_path = Path(args.prompt_file).resolve()
     report_path = Path(args.report_file) if args.report_file else None
 
+    log.info(
+        "quality_orchestrator_start",
+        extra={
+            "protocol_root": str(protocol_root),
+            "step_file": str(step_path),
+            "prompt_file": str(prompt_path),
+            "report_path": str(report_path) if report_path else None,
+            "model": args.model,
+            "sandbox": args.sandbox,
+        },
+    )
     try:
         qa_result: QualityResult = run_quality_check(
             protocol_root=protocol_root,
@@ -81,15 +95,24 @@ def main() -> None:
             token_budget_mode=config.token_budget_mode,
         )
     except FileNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
+        log.error("quality_orchestrator_missing_dep", extra={"error": str(exc)})
         sys.exit(EXIT_DEP_MISSING)
     except Exception as exc:
-        print(f"Codex QA run failed: {exc}", file=sys.stderr)
+        log.error(
+            "quality_orchestrator_failed",
+            extra={"error": str(exc), "error_type": exc.__class__.__name__},
+        )
         sys.exit(EXIT_RUNTIME_ERROR)
 
-    print(f"QA report written to {qa_result.report_path}")
+    log.info(
+        "quality_orchestrator_complete",
+        extra={
+            "report_path": str(qa_result.report_path),
+            "verdict": qa_result.verdict,
+        },
+    )
     if qa_result.verdict.upper() == "FAIL":
-        print("QA verdict: FAIL")
+        log.warning("quality_orchestrator_verdict_fail", extra={"report_path": str(qa_result.report_path)})
         sys.exit(EXIT_RUNTIME_ERROR)
 
 

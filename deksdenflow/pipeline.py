@@ -9,6 +9,9 @@ from typing import Dict, List, Optional
 
 from .codex import run_codex_exec, run_command, enforce_token_budget
 from .config import load_config
+from .logging import get_logger
+
+log = get_logger(__name__)
 
 
 def prompt(text: str, default: str = "") -> str:
@@ -71,6 +74,10 @@ def create_worktree(repo_root: Path, protocol_name: str, base_branch: str) -> Pa
             f"origin/{base_branch}",
         ],
         cwd=repo_root,
+    )
+    log.info(
+        "worktree_created",
+        extra={"protocol_name": protocol_name, "base_branch": base_branch, "worktree_path": str(worktree_path)},
     )
     return worktree_path
 
@@ -219,6 +226,7 @@ def write_protocol_files(protocol_root: Path, data: Dict[str, object]) -> None:
         target = protocol_root / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+    log.info("protocol_files_written", extra={"protocol_root": str(protocol_root)})
 
 
 def open_draft_pr_or_mr(
@@ -230,8 +238,13 @@ def open_draft_pr_or_mr(
     base_branch: str,
     platform: str,
 ) -> None:
-    # Commit protocol artifacts
-    print("Creating initial commit for protocol artifacts...")
+    context = {
+        "protocol_name": protocol_name,
+        "protocol_number": protocol_number,
+        "base_branch": base_branch,
+        "platform": platform,
+    }
+    log.info("commit_protocol_artifacts", extra={**context, "protocol_root": str(protocol_root)})
     run(
         ["git", "add", str(protocol_root)],
         cwd=worktree_root,
@@ -241,8 +254,7 @@ def open_draft_pr_or_mr(
     )
     run(["git", "commit", "-m", commit_message], cwd=worktree_root)
 
-    # Push branch
-    print(f"Pushing branch {protocol_name} to origin...")
+    log.info("push_protocol_branch", extra={**context, "worktree_root": str(worktree_root)})
     run(
         ["git", "push", "--set-upstream", "origin", protocol_name],
         cwd=worktree_root,
@@ -256,9 +268,9 @@ def open_draft_pr_or_mr(
 
     if platform == "github":
         if shutil.which("gh") is None:
-            print("gh CLI not found; cannot auto-create GitHub PR. Please create it manually.")
+            log.warning("pr_cli_missing", extra={**context, "cli": "gh"})
             return
-        print("Creating Draft GitHub PR via gh...")
+        log.info("create_draft_pr", extra={**context, "cli": "gh"})
         run(
             [
                 "gh",
@@ -276,9 +288,9 @@ def open_draft_pr_or_mr(
         )
     elif platform == "gitlab":
         if shutil.which("glab") is None:
-            print("glab CLI not found; cannot auto-create GitLab MR. Please create it manually.")
+            log.warning("pr_cli_missing", extra={**context, "cli": "glab"})
             return
-        print("Creating Draft GitLab MR via glab...")
+        log.info("create_draft_mr", extra={**context, "cli": "glab"})
         run(
             [
                 "glab",
@@ -297,13 +309,13 @@ def open_draft_pr_or_mr(
             cwd=worktree_root,
         )
     else:
-        print(f"Unknown PR/MR platform '{platform}', skipping auto-creation.")
+        log.warning("unknown_pr_platform", extra=context)
 
 
 def run_pipeline(args) -> None:
     config = load_config()
     repo_root = detect_repo_root()
-    print(f"Detected repo root: {repo_root}")
+    log.info("protocol_pipeline_start", extra={"repo_root": str(repo_root)})
 
     # Use the stricter of per-step or per-protocol budgets when present.
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
@@ -318,27 +330,31 @@ def run_pipeline(args) -> None:
 
     protocol_number = next_protocol_number(repo_root)
     protocol_name = f"{protocol_number}-{task_short_name_slug}"
+    context = {
+        "protocol_number": protocol_number,
+        "protocol_name": protocol_name,
+        "base_branch": base_branch,
+    }
 
-    print()
-    print("Planned protocol:")
-    print(f"  Number : {protocol_number}")
-    print(f"  Name   : {protocol_name}")
-    print(f"  Branch : {protocol_name} (from origin/{base_branch})")
-    print(f"  Description: {description}")
+    log.info(
+        "protocol_plan_prepared",
+        extra={**context, "description": description},
+    )
     confirm = prompt("Proceed with creating worktree and protocol?", "y")
     if confirm.lower() not in ("y", "yes"):
-        print("Aborted.")
+        log.info("protocol_pipeline_aborted", extra={**context, "reason": "user_declined"})
         return
 
     worktree_root = create_worktree(repo_root, protocol_name, base_branch)
-    print(f"Created worktree at: {worktree_root}")
+    context["worktree_root"] = str(worktree_root)
 
     protocol_root = worktree_root / ".protocols" / protocol_name
+    context["protocol_root"] = str(protocol_root)
     templates_section = load_templates(repo_root)
 
     planning_schema = repo_root / "schemas" / "protocol-planning.schema.json"
     if not planning_schema.is_file():
-        print(f"Planning schema not found at {planning_schema}")
+        log.error("planning_schema_not_found", extra={"planning_schema": str(planning_schema), **context})
         sys.exit(1)
 
     tmp_dir = worktree_root / ".protocols" / protocol_name / ".tmp"
@@ -358,7 +374,7 @@ def run_pipeline(args) -> None:
 
     enforce_token_budget(planning_text, budget_limit, "planning", mode=config.token_budget_mode)
 
-    print("Running Codex planning step with model:", planning_model)
+    log.info("planning_step", extra={**context, "model": planning_model})
     run_codex_exec(
         model=planning_model,
         cwd=worktree_root,
@@ -370,7 +386,7 @@ def run_pipeline(args) -> None:
 
     planning_data = json.loads(planning_output.read_text(encoding="utf-8"))
     write_protocol_files(protocol_root, planning_data)
-    print(f"Wrote protocol files into {protocol_root}")
+    log.info("protocol_files_ready", extra={**context, "protocol_root": str(protocol_root)})
 
     plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
     decomposition_model = args.decompose_model or config.decompose_model or os.environ.get("PROTOCOL_DECOMPOSE_MODEL", "gpt-5.1-high")
@@ -391,7 +407,7 @@ def run_pipeline(args) -> None:
 
         enforce_token_budget(decompose_text, budget_limit, f"decompose:{step_file.name}", mode=config.token_budget_mode)
 
-        print(f"Decomposing step file {step_file.name} with model {decomposition_model}")
+        log.info("decompose_step", extra={**context, "step_file": step_file.name, "model": decomposition_model})
         run_codex_exec(
             model=decomposition_model,
             cwd=worktree_root,
@@ -405,8 +421,7 @@ def run_pipeline(args) -> None:
 
     # Optionally create Draft PR/MR
     if args.pr_platform:
-        print()
-        print(f"Auto-creating Draft { 'PR' if args.pr_platform == 'github' else 'MR' } on {args.pr_platform}...")
+        log.info("auto_pr_requested", extra={**context, "platform": args.pr_platform})
         open_draft_pr_or_mr(
             worktree_root=worktree_root,
             protocol_root=protocol_root,
@@ -422,10 +437,9 @@ def run_pipeline(args) -> None:
         exec_model = args.exec_model or config.exec_model or os.environ.get("PROTOCOL_EXEC_MODEL", "codex-5.1-max-xhigh")
         step_path = protocol_root / args.run_step
         if not step_path.is_file():
-            print(f"Requested step file {step_path} not found; skipping auto-run.")
+            log.warning("auto_run_step_missing", extra={**context, "step_file": str(step_path)})
         else:
-            print()
-            print(f"Auto-running step {args.run_step} with model {exec_model}...")
+            log.info("auto_run_step", extra={**context, "step_file": str(step_path), "model": exec_model})
             plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
             step_content = step_path.read_text(encoding="utf-8")
             exec_prompt = execute_step_prompt(
@@ -443,16 +457,16 @@ def run_pipeline(args) -> None:
                 sandbox="workspace-write",
             )
 
-    print()
-    print("Protocol planning and decomposition complete.")
-    print(f"- Worktree: {worktree_root}")
-    print(f"- Protocol folder: {protocol_root}")
-    print()
-    print("Next steps (manual execution):")
-    print(f"- Review and adjust {protocol_root/'plan.md'} and step files as needed.")
-    print(f"- Commit protocol artifacts and open a Draft PR/MR if not already open.")
-    print("- Use Codex CLI with a strong coding model (e.g. codex-5.1-max-xhigh) from the worktree root")
-    print("  to execute individual steps following the protocol workflow.")
-    print()
-    print("Example command:")
-    print(f"  codex --model codex-5.1-max-xhigh --cd {worktree_root} --sandbox workspace-write --ask-for-approval on-request \"Follow .protocols/{protocol_name}/plan.md and current step file to implement the next step.\"")
+    log.info(
+        "protocol_pipeline_complete",
+        extra={
+            **context,
+            "next_steps": [
+                "Review plan.md and step files",
+                "Commit protocol artifacts and open Draft PR/MR if needed",
+                "Execute steps with Codex from the worktree root",
+            ],
+            "worktree": str(worktree_root),
+            "protocol_root": str(protocol_root),
+        },
+    )

@@ -6,7 +6,10 @@ from typing import Optional
 from . import codex
 from .errors import CodexCommandError
 from deksdenflow.engines import EngineRequest, registry
+from deksdenflow.logging import get_logger
 import deksdenflow.engines_codex  # noqa: F401 - ensure Codex engine is registered
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -88,11 +91,25 @@ def run_quality_check(
     token_budget_mode: str = "strict",
     engine_id: Optional[str] = None,
 ) -> QualityResult:
+    log.info(
+        "qa_run_start",
+        extra={
+            "protocol_root": str(protocol_root),
+            "step_file": str(step_file),
+            "model": model,
+            "prompt_file": str(prompt_file),
+            "sandbox": sandbox,
+            "engine_id": engine_id or "default",
+        },
+    )
     if shutil.which("codex") is None:
+        log.error("codex_cli_missing", extra={"protocol_root": str(protocol_root)})
         raise FileNotFoundError("codex CLI not found in PATH")
     if not step_file.is_file():
+        log.error("qa_step_missing", extra={"step_file": str(step_file), "protocol_root": str(protocol_root)})
         raise FileNotFoundError(f"Step file not found: {step_file}")
     if not prompt_file.is_file():
+        log.error("qa_prompt_missing", extra={"prompt_file": str(prompt_file), "protocol_root": str(protocol_root)})
         raise FileNotFoundError(f"Prompt file not found: {prompt_file}")
 
     prompt_prefix = prompt_file.read_text(encoding="utf-8")
@@ -107,6 +124,15 @@ def run_quality_check(
     # the CLI directly so existing mocks against `codex.run_process` continue to work.
     engine = registry.get(engine_id) if engine_id else registry.get_default()
     if engine.metadata.id == "codex":
+        log.info(
+            "qa_exec_codex",
+            extra={
+                "protocol_root": str(protocol_root),
+                "step_file": str(step_file),
+                "model": model,
+                "sandbox": sandbox,
+            },
+        )
         proc = codex.run_process(
             [
                 "codex",
@@ -129,6 +155,16 @@ def run_quality_check(
         report_text = (proc.stdout or "").strip()
         result_metadata = {"returncode": proc.returncode, "sandbox": sandbox}
     else:
+        log.info(
+            "qa_exec_engine",
+            extra={
+                "protocol_root": str(protocol_root),
+                "step_file": str(step_file),
+                "model": model,
+                "engine_id": engine.metadata.id,
+                "sandbox": sandbox,
+            },
+        )
         req = EngineRequest(
             project_id=0,
             protocol_run_id=0,
@@ -148,4 +184,14 @@ def run_quality_check(
     report_path.write_text(report_text, encoding="utf-8")
     verdict = determine_verdict(report_text)
 
+    log.info(
+        "qa_run_complete",
+        extra={
+            "protocol_root": str(protocol_root),
+            "step_file": str(step_file),
+            "report_path": str(report_path),
+            "verdict": verdict,
+            "engine_id": engine.metadata.id,
+        },
+    )
     return QualityResult(report_path=report_path, verdict=verdict, output=report_text)

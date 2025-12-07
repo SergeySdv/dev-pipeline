@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Optional
 
 from . import codex
+from .logging import get_logger
+
+log = get_logger(__name__)
 
 # Map of target paths -> template paths (relative to repo root of this starter)
 BASE_FILES = {
@@ -46,9 +49,9 @@ def ensure_git_repo(base_branch: str, init_if_needed: bool) -> Path:
         return Path(out.stdout.strip())
     except Exception:
         if not init_if_needed:
-            print("Not a git repository. Re-run with --init-if-needed to git init.")
+            log.error("git_repo_missing", extra={"init_if_needed": init_if_needed, "cwd": str(Path.cwd())})
             sys.exit(1)
-        print(f"Initializing git repository with base branch {base_branch}...")
+        log.info("git_repo_init", extra={"base_branch": base_branch})
         codex.run_process(["git", "init", "-b", base_branch], capture_output=False, text=True)
         out = codex.run_process(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
         return Path(out.stdout.strip())
@@ -58,7 +61,7 @@ def ensure_remote_origin(repo_root: Path) -> None:
     try:
         codex.run_process(["git", "remote", "get-url", "origin"], cwd=repo_root, capture_output=True, text=True)
     except Exception:
-        print("Warning: no remote 'origin' configured. Add one with `git remote add origin <url>`.")
+        log.warning("git_origin_missing", extra={"repo_root": str(repo_root)})
 
 
 def ensure_base_branch(repo_root: Path, base_branch: str) -> None:
@@ -70,7 +73,7 @@ def ensure_base_branch(repo_root: Path, base_branch: str) -> None:
             text=True,
         )
     except Exception:
-        print(f"Warning: base branch '{base_branch}' does not exist locally. Create it or fetch it before running pipelines.")
+        log.warning("base_branch_missing", extra={"repo_root": str(repo_root), "base_branch": base_branch})
 
 
 def copy_if_missing(target: Path, source: Path) -> None:
@@ -81,10 +84,10 @@ def copy_if_missing(target: Path, source: Path) -> None:
         shutil.copyfile(source, target)
         if source.stat().st_mode & 0o111:
             target.chmod(source.stat().st_mode)
-        print(f"Created {target} from template.")
+        log.info("template_copied", extra={"target": str(target), "source": str(source)})
     else:
         target.write_text(PLACEHOLDER, encoding="utf-8")
-        print(f"Created placeholder {target} (template missing).")
+        log.info("template_placeholder_created", extra={"target": str(target), "source": str(source)})
 
 
 def make_executable(path: Path) -> None:
@@ -108,10 +111,10 @@ def ensure_assets(repo_root: Path) -> None:
 
 def clone_repo(url: str, target_dir: Path) -> Path:
     if target_dir.exists():
-        print(f"Clone target {target_dir} already exists. Using existing directory.")
+        log.info("clone_target_exists", extra={"target_dir": str(target_dir)})
         return target_dir
     target_dir.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Cloning {url} into {target_dir} ...")
+    log.info("clone_repo", extra={"url": url, "target_dir": str(target_dir)})
     codex.run_process(["git", "clone", url, str(target_dir)], capture_output=False, text=True)
     return target_dir
 
@@ -134,19 +137,30 @@ def run_codex_discovery(
     if shutil.which("codex") is None:
         msg = "codex CLI not found; skipping discovery."
         if strict:
+            log.error("codex_cli_missing", extra={"repo_root": str(repo_root), "model": model})
             raise FileNotFoundError(msg)
-        print(msg)
+        log.warning("codex_cli_missing", extra={"repo_root": str(repo_root), "model": model})
         return
 
     prompt_path = prompt_file if prompt_file else repo_root / "prompts" / "repo-discovery.prompt.md"
     if not prompt_path.is_file():
         msg = f"repo-discovery prompt not found at {prompt_path}; skipping discovery."
         if strict:
+            log.error("discovery_prompt_missing", extra={"prompt_path": str(prompt_path), "repo_root": str(repo_root)})
             raise FileNotFoundError(msg)
-        print(msg)
+        log.warning("discovery_prompt_missing", extra={"prompt_path": str(prompt_path), "repo_root": str(repo_root)})
         return
 
-    print(f"Running discovery with codex model {model} ...")
+    log.info(
+        "run_codex_discovery",
+        extra={
+            "repo_root": str(repo_root),
+            "model": model,
+            "prompt_path": str(prompt_path),
+            "sandbox": sandbox,
+            "strict": strict,
+        },
+    )
     prompt_text = prompt_path.read_text(encoding="utf-8")
 
     cmd = [
@@ -171,3 +185,4 @@ def run_codex_discovery(
         check=True,
         input_text=prompt_text,
     )
+    log.info("codex_discovery_complete", extra={"repo_root": str(repo_root), "model": model})
