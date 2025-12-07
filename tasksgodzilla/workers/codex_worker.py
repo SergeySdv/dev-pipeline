@@ -4,6 +4,7 @@ Codex worker: resolves protocol context, runs engine-backed planning/exec/QA, an
 
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -248,6 +249,35 @@ def _resolve_qa_prompt_path(qa_cfg: dict, protocol_root: Path, workspace: Path) 
     if prompt_ref:
         return resolve_spec_path(str(prompt_ref), protocol_root, workspace=workspace)
     return (workspace / "prompts" / "quality-validator.prompt.md").resolve()
+
+
+def _resolve_step_path_for_qa(protocol_root: Path, step_name: str, workspace: Path) -> Path:
+    """
+    Resolve a step path for QA purposes, falling back to spec path resolution.
+    """
+    step_path = (protocol_root / step_name).resolve()
+    if step_path.exists():
+        return step_path
+    alt = (protocol_root / f"{step_name}.md").resolve()
+    if alt.exists():
+        return alt
+    return resolve_spec_path(step_name, protocol_root, workspace=workspace)
+
+
+def _append_protocol_log(protocol_root: Path, message: str) -> None:
+    """
+    Best-effort log.md appender for automatic state notes.
+    """
+    log_path = protocol_root / "log.md"
+    try:
+        if not log_path.exists():
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        entry = f"- {timestamp} - {message}\n"
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(entry)
+    except Exception:
+        return
 
 
 def infer_step_type(filename: str) -> str:
@@ -650,6 +680,8 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     auto_clone = auto_clone_enabled()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
     step_spec = get_step_spec(run.template_config, step.step_name)
+    qa_cfg = (step_spec.get("qa") if step_spec else {}) or {}
+    qa_policy = qa_cfg.get("policy")
     template_cfg = run.template_config or {}
     protocol_spec = template_cfg.get(PROTOCOL_SPEC_KEY) if isinstance(template_cfg, dict) else None
     spec_hash_val = protocol_spec_hash(protocol_spec) if protocol_spec else None
@@ -664,6 +696,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     )
     db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
     codemachine = is_codemachine_run(run)
+    step_path: Optional[Path] = None
     repo_root: Optional[Path] = None
 
     def _stub_execute(reason: str) -> None:
@@ -808,6 +841,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         if "codemachine" not in resolution.outputs.aux:
             resolution.outputs.aux["codemachine"] = default_codemachine
         resolution.workdir = workspace_root
+        step_path = resolution.prompt_path
     else:
         step_path = resolution.prompt_path
         if not step_path.exists():
@@ -943,7 +977,6 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 )
                 db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
 
-    db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=f"Executed via {kind.title()}; pending QA", model=exec_model, engine_id=engine_id)
     outputs_meta = exec_result.metadata.get("outputs") if exec_result else {}
     base_meta = {
         "protocol_run_id": run.id,
@@ -969,10 +1002,12 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     db.append_event(
         step.protocol_run_id,
         "step_completed",
-        f"Step executed via {kind.title()}. QA required.",
+        f"Step executed via {kind.title()}. {'Inline QA running.' if qa_policy == 'light' else 'QA required.'}",
         step_run_id=step.id,
         metadata=base_meta,
     )
+    _append_protocol_log(protocol_root, f"{step.step_name} executed via {kind.title()} ({exec_model or engine_id}); QA {'inline' if qa_policy == 'light' else 'pending'}.")
+
     trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
     if trigger_decision and trigger_decision.get("applied"):
         db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
@@ -983,6 +1018,116 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             source="exec_completed",
             inline_depth=trigger_decision.get("inline_depth", 0),
         )
+
+    if qa_policy == "light":
+        qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, workspace_root)
+        qa_prompt_version = prompt_version(qa_prompt_path)
+        step_path_for_qa = _resolve_step_path_for_qa(protocol_root, step.step_name, workspace_root)
+        qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
+        qa_body = build_prompt(protocol_root, step_path_for_qa)
+        qa_prompt_full = f"{qa_prefix}\\n\\n{qa_body}\\n\\nKeep this QA brief; focus on must-fix issues only."
+        qa_model = qa_cfg.get("model") or (project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max")
+        qa_engine_id = qa_cfg.get("engine_id") or step.engine_id or registry.get_default().metadata.id
+        try:
+            registry.get(qa_engine_id)
+        except KeyError as exc:  # pragma: no cover - defensive
+            db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Inline QA unavailable; run full QA", model=exec_model, engine_id=engine_id)
+            db.append_event(
+                step.protocol_run_id,
+                "qa_inline_error",
+                f"Inline QA unavailable: {exc}",
+                step_run_id=step.id,
+                metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
+            )
+            _append_protocol_log(protocol_root, f"{step.step_name} inline QA unavailable; run full QA.")
+            if getattr(config, "auto_qa_after_exec", False):
+                handle_quality(step.id, db, job_id=job_id)
+            return
+
+        qa_tokens = _budget_and_tokens(qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit)
+        try:
+            qa_result = run_qa_unified(
+                resolution,
+                project_id=project.id,
+                protocol_run_id=run.id,
+                step_run_id=step.id,
+                qa_prompt_path=qa_prompt_path,
+                qa_prompt_text=qa_prompt_full,
+                qa_engine_id=qa_engine_id,
+                qa_model=qa_model,
+                sandbox="read-only",
+            )
+            report_text = (
+                qa_result.result.stdout.strip()
+                if qa_result and qa_result.result and getattr(qa_result.result, "stdout", None)
+                else ""
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Inline QA error; run full QA", model=exec_model, engine_id=engine_id)
+            db.append_event(
+                step.protocol_run_id,
+                "qa_inline_error",
+                f"Inline QA failed: {exc}",
+                step_run_id=step.id,
+                metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
+            )
+            _append_protocol_log(protocol_root, f"{step.step_name} inline QA errored; run full QA.")
+            if getattr(config, "auto_qa_after_exec", False):
+                handle_quality(step.id, db, job_id=job_id)
+            return
+
+        report_path = protocol_root / "quality-report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_text, encoding="utf-8")
+        verdict = determine_verdict(report_text).upper()
+        qa_meta = {
+            **base_meta,
+            "estimated_tokens": {"exec": exec_tokens, "qa": qa_tokens},
+            "prompt_versions": {"exec": resolution.prompt_version, "qa": qa_prompt_version},
+            "qa_engine_id": qa_engine_id,
+            "qa_model": qa_model,
+        }
+        if verdict == "FAIL":
+            db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL (inline)", model=exec_model, engine_id=engine_id)
+            db.append_event(
+                step.protocol_run_id,
+                "qa_failed_inline",
+                "Inline QA failed.",
+                step_run_id=step.id,
+                metadata=qa_meta,
+            )
+            _append_protocol_log(protocol_root, f"{step.step_name} inline QA FAIL ({qa_model}).")
+            loop_decision = apply_loop_policies(step, db, reason="qa_failed")
+            if loop_decision and loop_decision.get("applied"):
+                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            else:
+                db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            metrics.inc_qa_verdict("fail")
+        else:
+            db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS (inline)", model=exec_model, engine_id=engine_id)
+            db.append_event(
+                step.protocol_run_id,
+                "qa_passed_inline",
+                "Inline QA passed.",
+                step_run_id=step.id,
+                metadata=qa_meta,
+            )
+            _append_protocol_log(protocol_root, f"{step.step_name} inline QA PASS ({qa_model}).")
+            trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
+            if trigger_decision and trigger_decision.get("applied"):
+                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+                _enqueue_trigger_target(
+                    trigger_decision["target_step_id"],
+                    run.id,
+                    db,
+                    source="qa_passed",
+                    inline_depth=trigger_decision.get("inline_depth", 0),
+                )
+            maybe_complete_protocol(step.protocol_run_id, db)
+            metrics.inc_qa_verdict("pass")
+        return
+
+    db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=f"Executed via {kind.title()}; pending QA", model=exec_model, engine_id=engine_id)
     if getattr(config, "auto_qa_after_exec", False):
         db.append_event(
             step.protocol_run_id,
@@ -1003,6 +1148,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
     config = load_config()
     auto_clone = auto_clone_enabled()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
+    workspace_hint, protocol_hint = _protocol_and_workspace_paths(run, project)
     log.info(
         "Running QA",
         extra={
@@ -1027,6 +1173,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
             step_run_id=step.id,
             metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
         )
+        _append_protocol_log(protocol_hint, f"{step.step_name} QA skipped by policy.")
         trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_policy")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
@@ -1085,15 +1232,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
     protocol_root = worktree / ".protocols" / run.protocol_name
     qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, worktree)
     qa_prompt_version = prompt_version(qa_prompt_path)
-    step_path = (protocol_root / step.step_name).resolve()
-    if not step_path.exists():
-        alt = protocol_root / f"{step.step_name}.md"
-        if alt.exists():
-            step_path = alt
-        else:
-            resolved = resolve_spec_path(step.step_name, protocol_root, workspace=worktree)
-            if resolved.exists():
-                step_path = resolved
+    step_path = _resolve_step_path_for_qa(protocol_root, step.step_name, worktree)
 
     qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
     qa_body = build_prompt(protocol_root, step_path)
@@ -1205,6 +1344,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
                 "spec_hash": spec_hash_val,
             },
         )
+        _append_protocol_log(protocol_root, f"{step.step_name} QA FAIL ({qa_model}).")
         loop_decision = apply_loop_policies(step, db, reason="qa_failed")
         if loop_decision and loop_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
@@ -1227,6 +1367,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
                 "spec_hash": spec_hash_val,
             },
         )
+        _append_protocol_log(protocol_root, f"{step.step_name} QA PASS ({qa_model}).")
         trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)

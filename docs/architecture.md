@@ -142,6 +142,7 @@ flowchart LR
 - Metrics: `/metrics` exposes Prometheus counters/histograms for requests, jobs, tokens, webhooks.
 - Logging: structured logs via `tasksgodzilla.logging` with request/job/project/protocol/step IDs; JSON toggle via env. API runs uvicorn with `log_config=None` so the central formatter/filter stays active; workers/QA/CI helpers pass job IDs through.
 - Events: persisted timeline per protocol/step; surfaced in console and `/events` API.
+- Protocol logs: workers append timestamped notes to `.protocols/.../log.md` after execution and QA when the file exists.
 
 ## Core building blocks
 - **Protocol assets and schema**  
@@ -151,11 +152,12 @@ flowchart LR
 - **Protocol pipeline (`scripts/protocol_pipeline.py`)**  
   - Interactive CLI that: detects repo root, prompts for base branch/short name/description; creates a Git worktree/branch `NNNN-[task]` from `origin/<base>`; and builds protocol artifacts.  
   - Uses Codex CLI twice: (1) planning (`run_codex_exec` with `planning_prompt`, validated against the JSON schema) to produce `plan.md`, `context.md`, `log.md`, `00-setup.md`, and step files; (2) step decomposition (`decompose_step_prompt`) for each non-setup step.  
+  - Optional `--skip-simple-decompose` flag (or `PROTOCOL_SKIP_SIMPLE_DECOMPOSE=true`) skips the second AI pass for short/simple steps using a conservative heuristic.  
   - Optional flags: `--pr-platform github|gitlab` to auto-commit/push and open Draft PR/MR (requires `gh`/`glab`); `--run-step` to auto-execute a step via Codex using `execute_step_prompt`.  
   - Model defaults come from env (`PROTOCOL_PLANNING_MODEL`, `PROTOCOL_DECOMPOSE_MODEL`, `PROTOCOL_EXEC_MODEL`) with fallbacks (`gpt-5.1-high`, etc.). Temporary artifacts live in `.protocols/<name>/.tmp/`.
 - **QA orchestrator (`scripts/quality_orchestrator.py`)**  
   - Builds a QA prompt from `plan.md`, `context.md`, `log.md`, the current step file, git status, and last commit, then calls Codex with `prompts/quality-validator.prompt.md`.  
-  - Writes `quality-report.md`; exits non-zero on Codex failure or `VERDICT: FAIL` to gate CI/pipelines.
+  - Writes `quality-report.md`; exits non-zero on Codex failure or `VERDICT: FAIL` to gate CI/pipelines. Steps marked `qa.policy=light` run the QA pass inline during execution and short-circuit the extra queue hop.
 - **Project setup (`scripts/project_setup.py`)**  
   - Ensures a repo exists (optionally `git init -b <base>`), warns if `origin` or base branch is missing, and materializes starter assets from `BASE_FILES`. Copies from this starter repo when available; otherwise writes placeholders.  
   - Marks CI scripts executable and can optionally run Codex discovery via `--run-discovery`/`PROTOCOL_DISCOVERY_MODEL`.

@@ -74,6 +74,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         choices=["github", "gitlab"],
         help="If set, auto-commit protocol artifacts, push branch, and create Draft PR/MR on the chosen platform.",
     )
+    parser.add_argument(
+        "--skip-simple-decompose",
+        action="store_true",
+        help="Skip the decomposition pass for steps that already look simple.",
+    )
     return parser.parse_args(argv)
 
 

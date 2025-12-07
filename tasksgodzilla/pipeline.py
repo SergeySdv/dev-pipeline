@@ -26,6 +26,20 @@ def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", lower).strip("-") or "task"
 
 
+def is_simple_step(content: str, max_lines: int = 12, max_chars: int = 1200, max_bullets: int = 6) -> bool:
+    """
+    Heuristic to decide whether a step is already granular enough to skip decomposition.
+    Treats short steps with few bullets and modest length as simple.
+    """
+    if len(content) > max_chars:
+        return False
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    if len(lines) > max_lines:
+        return False
+    bullet_lines = [ln for ln in lines if ln.startswith(("-", "*", "+")) or re.match(r"^\\d+\\.", ln)]
+    return len(bullet_lines) <= max_bullets
+
+
 def run(cmd: List[str], cwd: Path) -> None:
     run_command(cmd, cwd=cwd)
 
@@ -390,11 +404,22 @@ def run_pipeline(args) -> None:
 
     plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
     decomposition_model = args.decompose_model or config.decompose_model or os.environ.get("PROTOCOL_DECOMPOSE_MODEL", "gpt-5.1-high")
+    skip_simple = getattr(args, "skip_simple_decompose", False) or getattr(config, "skip_simple_decompose", False)
 
     for step_file in protocol_root.glob("*.md"):
         if step_file.name.lower().startswith("00-setup"):
             continue
         step_content = step_file.read_text(encoding="utf-8")
+        if skip_simple and is_simple_step(step_content):
+            log.info(
+                "decompose_step_skipped",
+                extra={
+                    **context,
+                    "step_file": step_file.name,
+                    "reason": "simple_step",
+                },
+            )
+            continue
         tmp_step = tmp_dir / f"{step_file.name}.decomposed"
 
         decompose_text = decompose_step_prompt(

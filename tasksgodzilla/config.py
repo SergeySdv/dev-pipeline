@@ -40,6 +40,7 @@ class Config(BaseModel):
     auto_qa_on_ci: bool = Field(default=False)
     auto_qa_after_exec: bool = Field(default=False)
     spec_audit_interval_seconds: Optional[int] = Field(default=None)
+    skip_simple_decompose: bool = Field(default=False)
 
     class Config:
         arbitrary_types_allowed = True
@@ -82,6 +83,12 @@ def load_config() -> Config:
     token_budget_mode = os.environ.get("TASKSGODZILLA_TOKEN_BUDGET_MODE", "strict")
     db_pool_size = int(os.environ.get("TASKSGODZILLA_DB_POOL_SIZE", "5"))
     spec_audit_interval_seconds = os.environ.get("TASKSGODZILLA_SPEC_AUDIT_INTERVAL_SECONDS")
+    skip_simple_decompose = os.environ.get("PROTOCOL_SKIP_SIMPLE_DECOMPOSE", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     auto_qa_on_ci = os.environ.get("TASKSGODZILLA_AUTO_QA_ON_CI", "false").lower() in (
         "1",
         "true",
@@ -113,4 +120,5 @@ def load_config() -> Config:
         auto_qa_on_ci=auto_qa_on_ci,
         auto_qa_after_exec=auto_qa_after_exec,
         spec_audit_interval_seconds=int(spec_audit_interval_seconds) if spec_audit_interval_seconds else None,
+        skip_simple_decompose=skip_simple_decompose,
     )
