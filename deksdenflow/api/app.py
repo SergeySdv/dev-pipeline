@@ -27,6 +27,7 @@ import hmac
 import hashlib
 
 from . import schemas
+from deksdenflow.git_utils import delete_remote_branch, list_remote_branches, resolve_project_repo_path
 
 logger = setup_logging(json_output=json_logging_from_env())
 auth_scheme = HTTPBearer(auto_error=False)
@@ -314,6 +315,66 @@ def get_project(project_id: int, db: BaseDatabase = Depends(get_db), request: Re
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return schemas.ProjectOut(**project.__dict__)
+
+
+@app.get("/projects/{project_id}/branches", response_model=schemas.BranchListResponse, dependencies=[Depends(require_auth)])
+def list_branches(project_id: int, db: BaseDatabase = Depends(get_db), request: Request = None) -> schemas.BranchListResponse:
+    if request:
+        require_project_access(project_id, request, db)
+    try:
+        project = db.get_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        repo_root = resolve_project_repo_path(project.git_url, project.name, project.local_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    branches = list_remote_branches(repo_root)
+    record_event(db, protocol_run_id=0, event_type="branches_listed", message="Listed remote branches.", metadata={"project_id": project.id, "branches": branches}, request=request)
+    return schemas.BranchListResponse(branches=branches)
+
+
+@app.post("/projects/{project_id}/branches/{branch:path}/delete", dependencies=[Depends(require_auth)])
+def delete_branch(
+    project_id: int,
+    branch: str,
+    payload: schemas.BranchDeleteRequest,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+):
+    if request:
+        require_project_access(project_id, request, db)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="confirm=true required to delete a remote branch")
+    try:
+        project = db.get_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        repo_root = resolve_project_repo_path(project.git_url, project.name, project.local_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        delete_remote_branch(repo_root, branch)
+    except Exception as exc:
+        record_event(
+            db,
+            protocol_run_id=0,
+            event_type="branch_delete_failed",
+            message=f"Failed to delete remote branch {branch}: {exc}",
+            metadata={"project_id": project.id, "branch": branch},
+            request=request,
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    record_event(
+        db,
+        protocol_run_id=0,
+        event_type="branch_deleted",
+        message=f"Deleted remote branch {branch}.",
+        metadata={"project_id": project.id, "branch": branch},
+        request=request,
+    )
+    return {"deleted": True, "branch": branch}
 
 
 @app.post("/projects/{project_id}/protocols", response_model=schemas.ProtocolRunOut, dependencies=[Depends(require_auth)])

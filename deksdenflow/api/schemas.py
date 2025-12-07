@@ -23,6 +23,14 @@ class ProjectOut(ProjectCreate):
     updated_at: str
 
 
+class BranchListResponse(BaseModel):
+    branches: list[str]
+
+
+class BranchDeleteRequest(BaseModel):
+    confirm: bool = False
+
+
 class ProtocolRunCreate(BaseModel):
     protocol_name: str
     status: str = "pending"
