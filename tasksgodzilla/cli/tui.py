@@ -150,6 +150,14 @@ class TuiDashboard(App):
         background: $surface-darken-1;
     }
 
+    .banner {
+        text-align: center;
+        padding: 1 2;
+        color: $primary;
+        background: $surface-darken-1;
+        border: tall $primary 30%;
+    }
+
     #main { layout: horizontal; height: 1fr; }
     #left, #middle, #right { width: 1fr; padding: 1; }
     #projects-panel, #protocols-panel, #steps-panel, #events-panel, #step-details {
@@ -182,6 +190,8 @@ class TuiDashboard(App):
 
     status_message = reactive("Ready")
     refreshing = reactive(False)
+    TITLE = "TasksGodzilla TUI"
+    SUB_TITLE = "Orchestrator console"
 
     def __init__(self, client: APIClient, refresh_interval: float = 4.0) -> None:
         super().__init__()
@@ -199,6 +209,7 @@ class TuiDashboard(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        yield Static("TASKSGODZILLA • ORCHESTRATOR TUI", classes="banner")
         with Vertical(id="layout"):
             with Horizontal(id="main"):
                 with Vertical(id="left"):

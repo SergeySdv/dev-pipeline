@@ -19,6 +19,14 @@ DEFAULT_TOKEN = os.environ.get("TASKSGODZILLA_API_TOKEN")
 DEFAULT_PROJECT_TOKEN = os.environ.get("TASKSGODZILLA_PROJECT_TOKEN")
 log = get_logger(__name__)
 _ORIGINAL_PRINT = builtins.print
+BANNER = r"""
+████████╗ █████╗ ███████╗██╗  ██╗███████╗ ██████╗  ██████╗ ██████╗ ██╗██╗     ██╗      █████╗ 
+╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝██╔════╝██╔═══██╗██╔════╝██╔════╝ ██║██║     ██║     ██╔══██╗
+   ██║   ███████║███████╗█████╔╝ ███████╗██║   ██║██║     ██║  ███╗██║██║     ██║     ███████║
+   ██║   ██╔══██║╚════██║██╔═██╗ ╚════██║██║   ██║██║     ██║   ██║██║██║     ██║     ██╔══██║
+   ██║   ██║  ██║███████║██║  ██╗███████║╚██████╔╝╚██████╗╚██████╔╝██║███████╗███████╗██║  ██║
+   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+"""
 
 
 def _log_print(*args, **kwargs) -> None:
@@ -611,6 +619,8 @@ def run_cli(argv: Optional[List[str]] = None, *, transport: Optional[Any] = None
     )
     try:
         if args.command is None:
+            if not args.as_json:
+                print(BANNER)
             run_interactive(client)
         elif args.command == "projects":
             handle_projects(client, args)
