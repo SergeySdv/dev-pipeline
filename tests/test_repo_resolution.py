@@ -41,3 +41,17 @@ def test_ensure_local_repo_respects_auto_clone_flag(tmp_path, monkeypatch) -> No
     monkeypatch.setenv("DEKSDENFLOW_AUTO_CLONE", "false")
     with pytest.raises(FileNotFoundError):
         project_setup.ensure_local_repo("https://example.com/repo.git", "demo", projects_root=projects_root, clone_if_missing=None)
+
+
+def test_configure_git_remote_prefers_github_ssh(tmp_path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=repo_root, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], cwd=repo_root, check=True)
+    monkeypatch.setenv("DEKSDENFLOW_GH_SSH", "true")
+
+    origin = project_setup.configure_git_remote(repo_root, "https://github.com/example/demo.git", prefer_ssh_remote=True)
+
+    assert origin == "git@github.com:example/demo.git"
+    out = subprocess.run(["git", "remote", "get-url", "origin"], cwd=repo_root, capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "git@github.com:example/demo.git"

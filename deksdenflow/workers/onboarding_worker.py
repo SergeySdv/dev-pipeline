@@ -3,7 +3,16 @@ from typing import Optional
 
 from deksdenflow.domain import ProtocolStatus
 from deksdenflow.logging import get_logger, log_extra
-from deksdenflow.project_setup import ensure_assets, ensure_local_repo, DEFAULT_PROJECTS_ROOT
+import os
+
+from deksdenflow.project_setup import (
+    DEFAULT_PROJECTS_ROOT,
+    configure_git_identity,
+    configure_git_remote,
+    ensure_assets,
+    ensure_local_repo,
+    prefer_github_ssh,
+)
 from deksdenflow.storage import BaseDatabase
 
 log = get_logger(__name__)
@@ -77,6 +86,40 @@ def handle_project_setup(project_id: int, db: BaseDatabase, protocol_run_id: Opt
                 protocol_run_id,
                 "setup_warning",
                 f"Skipped asset provisioning: {exc}",
+                metadata={"path": str(repo_path)},
+            )
+        try:
+            prefer_ssh = prefer_github_ssh()
+            origin = configure_git_remote(repo_path, project.git_url, prefer_ssh_remote=prefer_ssh)
+            if origin:
+                db.append_event(
+                    protocol_run_id,
+                    "setup_git_remote",
+                    f"Configured git origin (ssh={prefer_ssh}).",
+                    metadata={"origin": origin},
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            db.append_event(
+                protocol_run_id,
+                "setup_warning",
+                f"Git remote configuration skipped: {exc}",
+                metadata={"path": str(repo_path)},
+            )
+        try:
+            user = os.environ.get("DEKSDENFLOW_GIT_USER")
+            email = os.environ.get("DEKSDENFLOW_GIT_EMAIL")
+            if configure_git_identity(repo_path, user, email):
+                db.append_event(
+                    protocol_run_id,
+                    "setup_git_identity",
+                    "Configured git user.name/user.email.",
+                    metadata={"user": user, "email": email},
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            db.append_event(
+                protocol_run_id,
+                "setup_warning",
+                f"Git identity configuration skipped: {exc}",
                 metadata={"path": str(repo_path)},
             )
         db.update_protocol_status(protocol_run_id, ProtocolStatus.COMPLETED)

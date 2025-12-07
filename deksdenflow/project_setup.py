@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -133,6 +134,55 @@ def local_repo_dir(git_url: str, project_name: Optional[str] = None, projects_ro
 
 def auto_clone_enabled() -> bool:
     return os.environ.get("DEKSDENFLOW_AUTO_CLONE", "true").lower() in ("1", "true", "yes", "on")
+
+
+def prefer_github_ssh() -> bool:
+    return os.environ.get("DEKSDENFLOW_GH_SSH", "true").lower() in ("1", "true", "yes", "on")
+
+
+def github_ssh_url(git_url: str) -> Optional[str]:
+    """
+    Convert https://github.com/owner/repo(.git) to git@github.com:owner/repo.git.
+    """
+    m = re.match(r"https?://github.com/([^/]+/[^/]+?)(?:\.git)?$", git_url)
+    if not m:
+        return None
+    return f"git@github.com:{m.group(1)}.git"
+
+
+def configure_git_remote(repo_root: Path, git_url: str, prefer_ssh_remote: bool = False) -> Optional[str]:
+    """
+    Ensure origin remote exists and optionally rewrite to SSH for GitHub.
+    Returns the final origin URL.
+    """
+    origin_url = None
+    try:
+        out = codex.run_process(["git", "remote", "get-url", "origin"], cwd=repo_root, capture_output=True, text=True)
+        origin_url = out.stdout.strip()
+    except Exception:
+        try:
+            codex.run_process(["git", "remote", "add", "origin", git_url], cwd=repo_root, capture_output=True, text=True)
+            origin_url = git_url
+        except Exception:
+            return None
+
+    if prefer_ssh_remote:
+        ssh_url = github_ssh_url(origin_url or git_url)
+        if ssh_url and ssh_url != origin_url:
+            codex.run_process(["git", "remote", "set-url", "origin", ssh_url], cwd=repo_root, capture_output=True, text=True)
+            origin_url = ssh_url
+    return origin_url
+
+
+def configure_git_identity(repo_root: Path, user: Optional[str], email: Optional[str]) -> bool:
+    """
+    Configure git user.name/user.email when provided. Returns True when set.
+    """
+    if not user or not email:
+        return False
+    codex.run_process(["git", "config", "user.name", user], cwd=repo_root, capture_output=True, text=True)
+    codex.run_process(["git", "config", "user.email", email], cwd=repo_root, capture_output=True, text=True)
+    return True
 
 
 def clone_repo(url: str, target_dir: Path) -> Path:
