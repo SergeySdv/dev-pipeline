@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT NOT NULL,
     git_url TEXT NOT NULL,
     base_branch TEXT NOT NULL,
+    local_path TEXT,
     ci_provider TEXT,
     secrets TEXT,
     default_models TEXT,
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     git_url TEXT NOT NULL,
+    local_path TEXT,
     base_branch TEXT NOT NULL,
     ci_provider TEXT,
     secrets JSONB,
@@ -131,7 +133,8 @@ CREATE TABLE IF NOT EXISTS events (
 
 class BaseDatabase(Protocol):
     def init_schema(self) -> None: ...
-    def create_project(self, name: str, git_url: str, base_branch: str, ci_provider: Optional[str], default_models: Optional[dict], secrets: Optional[dict] = None) -> Project: ...
+    def create_project(self, name: str, git_url: str, base_branch: str, ci_provider: Optional[str], default_models: Optional[dict], secrets: Optional[dict] = None, local_path: Optional[str] = None) -> Project: ...
+    def update_project_local_path(self, project_id: int, local_path: str) -> Project: ...
     def get_project(self, project_id: int) -> Project: ...
     def list_projects(self) -> List[Project]: ...
     def create_protocol_run(self, project_id: int, protocol_name: str, status: str, base_branch: str, worktree_path: Optional[str], protocol_root: Optional[str], description: Optional[str], template_config: Optional[dict] = None, template_source: Optional[dict] = None) -> ProtocolRun: ...
@@ -169,6 +172,11 @@ class Database:
     def init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQLITE)
+            # Backward-compatible migration: add local_path column if missing
+            cur = conn.execute("PRAGMA table_info(projects)")
+            cols = [r[1] for r in cur.fetchall()]
+            if "local_path" not in cols:
+                conn.execute("ALTER TABLE projects ADD COLUMN local_path TEXT")
             conn.commit()
 
     def _fetchone(self, query: str, params: Iterable[Any]) -> Optional[sqlite3.Row]:
@@ -191,16 +199,17 @@ class Database:
         ci_provider: Optional[str],
         default_models: Optional[dict],
         secrets: Optional[dict] = None,
+        local_path: Optional[str] = None,
     ) -> Project:
         default_models_json = json.dumps(default_models) if default_models else None
         secrets_json = json.dumps(secrets) if secrets else None
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO projects (name, git_url, base_branch, ci_provider, default_models, secrets)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO projects (name, git_url, base_branch, ci_provider, default_models, secrets, local_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, git_url, base_branch, ci_provider, default_models_json, secrets_json),
+                (name, git_url, base_branch, ci_provider, default_models_json, secrets_json, local_path),
             )
             project_id = cur.lastrowid
             conn.commit()
@@ -211,6 +220,15 @@ class Database:
         if row is None:
             raise KeyError(f"Project {project_id} not found")
         return self._row_to_project(row)
+
+    def update_project_local_path(self, project_id: int, local_path: str) -> Project:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE projects SET local_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (local_path, project_id),
+            )
+            conn.commit()
+        return self.get_project(project_id)
 
     def list_projects(self) -> List[Project]:
         rows = self._fetchall("SELECT * FROM projects ORDER BY created_at DESC")
@@ -529,6 +547,7 @@ class Database:
             id=row["id"],
             name=row["name"],
             git_url=row["git_url"],
+            local_path=row["local_path"] if "local_path" in set(row.keys()) else None,
             base_branch=row["base_branch"],
             ci_provider=row["ci_provider"],
             secrets=secrets,
@@ -645,6 +664,14 @@ class PostgresDatabase:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA_POSTGRES)
+                try:
+                    cur.execute(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name='projects' AND column_name='local_path'"
+                    )
+                    if not cur.fetchone():
+                        cur.execute("ALTER TABLE projects ADD COLUMN local_path TEXT")
+                except Exception:
+                    pass
             conn.commit()
 
     def _fetchone(self, query: str, params: Iterable[Any]) -> Optional[Dict[str, Any]]:
@@ -669,6 +696,7 @@ class PostgresDatabase:
         ci_provider: Optional[str],
         default_models: Optional[dict],
         secrets: Optional[dict] = None,
+        local_path: Optional[str] = None,
     ) -> Project:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -676,13 +704,23 @@ class PostgresDatabase:
                 secrets_json = json.dumps(secrets) if secrets is not None else None
                 cur.execute(
                     """
-                    INSERT INTO projects (name, git_url, base_branch, ci_provider, default_models, secrets)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO projects (name, git_url, base_branch, ci_provider, default_models, secrets, local_path)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (name, git_url, base_branch, ci_provider, default_models_json, secrets_json),
+                    (name, git_url, base_branch, ci_provider, default_models_json, secrets_json, local_path),
                 )
                 project_id = cur.fetchone()["id"]
+            conn.commit()
+        return self.get_project(project_id)
+
+    def update_project_local_path(self, project_id: int, local_path: str) -> Project:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE projects SET local_path = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (local_path, project_id),
+                )
             conn.commit()
         return self.get_project(project_id)
 

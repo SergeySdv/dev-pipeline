@@ -10,6 +10,7 @@ class Health(BaseModel):
 class ProjectCreate(BaseModel):
     name: str
     git_url: str
+    local_path: Optional[str] = None
     base_branch: str = "main"
     ci_provider: Optional[str] = None
     default_models: Optional[dict] = None

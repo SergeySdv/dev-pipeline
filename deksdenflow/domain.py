@@ -29,6 +29,7 @@ class Project:
     id: int
     name: str
     git_url: str
+    local_path: Optional[str]
     base_branch: str
     ci_provider: Optional[str]
     secrets: Optional[dict]

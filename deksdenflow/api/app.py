@@ -272,6 +272,7 @@ def create_project(
     project = db.create_project(
         name=payload.name,
         git_url=payload.git_url,
+        local_path=payload.local_path,
         base_branch=payload.base_branch,
         ci_provider=payload.ci_provider,
         default_models=payload.default_models,

@@ -37,20 +37,26 @@ def handle_project_setup(project_id: int, db: BaseDatabase, protocol_run_id: Opt
         protocol_run_id = run.id
 
     db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
-    db.append_event(protocol_run_id, "setup_started", f"Onboarding {project.name}")
+    db.append_event(
+        protocol_run_id,
+        "setup_started",
+        f"Onboarding {project.name}",
+        metadata={"git_url": project.git_url, "local_path": project.local_path},
+    )
 
     try:
-        repo_path = Path(project.git_url).expanduser()
+        repo_hint = project.local_path or project.git_url
+        repo_path = Path(repo_hint).expanduser()
         repo_preexisting = repo_path.exists()
         try:
-            repo_path = ensure_local_repo(project.git_url, project.name)
+            repo_path = ensure_local_repo(repo_hint, project.name)
         except FileNotFoundError:
             db.append_event(
                 protocol_run_id,
                 "setup_pending_clone",
-                f"Repo path {project.git_url} not present locally. "
+                f"Repo path {repo_hint} not present locally. "
                 "Set DEKSDENFLOW_AUTO_CLONE=true or clone manually before running setup.",
-                metadata={"git_url": project.git_url, "projects_root": str(DEFAULT_PROJECTS_ROOT)},
+                metadata={"git_url": project.git_url, "local_path": project.local_path, "projects_root": str(DEFAULT_PROJECTS_ROOT)},
             )
             db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
             db.append_event(protocol_run_id, "setup_blocked", "Setup blocked until repository is present.")
@@ -72,6 +78,17 @@ def handle_project_setup(project_id: int, db: BaseDatabase, protocol_run_id: Opt
                 "Repository cloned for project setup.",
                 metadata={"path": str(repo_path), "git_url": project.git_url},
             )
+        if not project.local_path or Path(project.local_path).expanduser() != repo_path:
+            try:
+                db.update_project_local_path(project.id, str(repo_path))
+                db.append_event(
+                    protocol_run_id,
+                    "setup_local_path_recorded",
+                    "Recorded project local_path for future runs.",
+                    metadata={"local_path": str(repo_path)},
+                )
+            except Exception:
+                pass
 
         try:
             ensure_assets(repo_path)

@@ -118,18 +118,54 @@ def _repo_name_from_url(git_url: str, fallback: Optional[str] = None) -> str:
     return tail or (fallback or "project")
 
 
+def _namespace_from_git_url(git_url: str, project_name: Optional[str], base_root: Path) -> Path:
+    """
+    Build a namespaced path (host/owner/repo) for remote URLs.
+    Falls back to project_name/repo_name when parsing fails.
+    """
+    root = base_root
+    try:
+        if "://" in git_url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(git_url)
+            host = parsed.hostname or "unknown"
+            path = parsed.path.strip("/")
+        elif git_url.startswith("git@"):
+            m = re.match(r"git@([^:]+):(.+)", git_url)
+            host = m.group(1) if m else "unknown"
+            path = m.group(2) if m else _repo_name_from_url(git_url, project_name)
+        else:
+            return root / _repo_name_from_url(git_url, project_name)
+        parts = [p for p in path.split("/") if p]
+        if parts and parts[-1].endswith(".git"):
+            parts[-1] = parts[-1][:-4]
+        if len(parts) >= 2:
+            return root / host / parts[0] / parts[1]
+        if parts:
+            return root / host / parts[0]
+    except Exception:
+        pass
+    return root / _repo_name_from_url(git_url, project_name)
+
+
 def local_repo_dir(git_url: str, project_name: Optional[str] = None, projects_root: Optional[Path] = None) -> Path:
     """
     Derive a local path for a repository. If git_url already points to an existing
-    path, return it; otherwise, map the URL to Projects/<repo-name>.
+    path, return it; otherwise, map the URL to Projects/<host>/<owner>/<repo>.
     """
     url_path = Path(git_url).expanduser()
     if url_path.exists():
         return url_path
-    root = Path(projects_root or DEFAULT_PROJECTS_ROOT).expanduser()
-    root.mkdir(parents=True, exist_ok=True)
-    repo_name = _repo_name_from_url(git_url, project_name)
-    return (root / repo_name).resolve()
+    base_root = Path(projects_root) if projects_root else Path(DEFAULT_PROJECTS_ROOT)
+    base_root = base_root.expanduser()
+    if "github" in git_url or "gitlab" in git_url or git_url.startswith("git@"):
+        target = _namespace_from_git_url(git_url, project_name, base_root)
+    else:
+        target = base_root / _repo_name_from_url(git_url, project_name)
+    target = target.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def auto_clone_enabled() -> bool:
