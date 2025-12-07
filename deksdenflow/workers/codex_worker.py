@@ -23,7 +23,6 @@ from deksdenflow.codemachine.runtime_adapter import (
     output_paths,
 )
 from deksdenflow.pipeline import (
-    detect_repo_root,
     execute_step_prompt,
     planning_prompt,
     decompose_step_prompt,
@@ -36,6 +35,7 @@ from deksdenflow.workers.state import maybe_complete_protocol
 from deksdenflow.metrics import metrics
 from deksdenflow.engines import EngineRequest, registry
 from deksdenflow.jobs import RedisQueue
+from deksdenflow.project_setup import ensure_local_repo, local_repo_dir, auto_clone_enabled
 from deksdenflow.spec import (
     PROTOCOL_SPEC_KEY,
     build_spec_from_protocol_files,
@@ -88,6 +88,62 @@ class ExecContext:
     aux_outputs: Dict[str, Path]
     spec_hash: Optional[str]
     prompt_files: list[str]
+
+
+def _repo_root_or_block(
+    project,
+    run: ProtocolRun,
+    db: BaseDatabase,
+    *,
+    job_id: Optional[str] = None,
+    clone_if_missing: Optional[bool] = None,
+    block_on_missing: bool = True,
+) -> Optional[Path]:
+    """
+    Resolve (and optionally clone) the project repository. Marks the protocol as blocked and
+    emits an event when the repo is unavailable.
+    """
+    try:
+        repo_root = ensure_local_repo(project.git_url, project.name, clone_if_missing=clone_if_missing)
+    except FileNotFoundError as exc:
+        db.append_event(
+            run.id,
+            "repo_missing",
+            f"Repository not present locally: {exc}",
+            metadata={"git_url": project.git_url},
+        )
+        if block_on_missing:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return None
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning(
+            "Repo unavailable",
+            extra={
+                **_log_context(run=run, job_id=job_id, project_id=project.id),
+                "error": str(exc),
+                "error_type": exc.__class__.__name__,
+            },
+        )
+        db.append_event(
+            run.id,
+            "repo_clone_failed",
+            f"Repository clone failed: {exc}",
+            metadata={"git_url": project.git_url},
+        )
+        if block_on_missing:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return None
+    if not repo_root.exists():
+        db.append_event(
+            run.id,
+            "repo_missing",
+            "Repository path not available locally.",
+            metadata={"git_url": project.git_url, "resolved_path": str(repo_root)},
+        )
+        if block_on_missing:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return None
+    return repo_root
 
 
 def _enqueue_trigger_target(
@@ -183,6 +239,7 @@ def _resolve_codex_context(
     project,
     step_spec: Optional[dict],
     job_id: Optional[str] = None,
+    repo_root: Optional[Path] = None,
 ) -> tuple[ExecContext, list[str]]:
     """
     Resolve prompt, engine/model, outputs, and paths for a Codex-backed step.
@@ -196,9 +253,9 @@ def _resolve_codex_context(
         if tmpl_spec:
             spec_hash_val = protocol_spec_hash(tmpl_spec)
 
-    repo_root = Path(project.git_url) if Path(project.git_url).exists() else detect_repo_root()
+    repo_root_path = (repo_root or local_repo_dir(project.git_url, project.name)).resolve()
     worktree = _load_project_with_context(
-        repo_root,
+        repo_root_path,
         run.protocol_name,
         run.base_branch,
         protocol_run_id=run.id,
@@ -252,7 +309,7 @@ def _resolve_codex_context(
         prompt_version=prompt_version(step_path),
         workdir=worktree,
         protocol_root=protocol_root,
-        repo_root=repo_root,
+        repo_root=repo_root_path,
         agent_id=None,
         outputs_cfg=outputs_cfg,
         protocol_output_path=resolved_protocol_out,
@@ -268,7 +325,8 @@ def _protocol_and_workspace_paths(run: ProtocolRun, project) -> tuple[Path, Path
     Best-effort resolution of workspace/protocol roots for prompt resolution
     before a worktree is loaded.
     """
-    workspace_root = Path(run.worktree_path or project.git_url or ".").resolve()
+    workspace_base = Path(run.worktree_path).expanduser() if run.worktree_path else local_repo_dir(project.git_url, project.name)
+    workspace_root = workspace_base.resolve()
     protocol_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace_root / ".protocols" / run.protocol_name)
     return workspace_root, protocol_root
 
@@ -299,7 +357,8 @@ def _resolve_codemachine_context(
     Resolve prompt, engine/model, and output paths for a CodeMachine-backed step.
     Returns (context_dict, validation_errors).
     """
-    workspace = Path(run.worktree_path or project.git_url or ".").resolve()
+    workspace_base = Path(run.worktree_path).expanduser() if run.worktree_path else local_repo_dir(project.git_url, project.name)
+    workspace = workspace_base.resolve()
     codemachine_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace / ".codemachine")
     placeholders = template_cfg.get("placeholders") or {}
     spec_hash_val = None
@@ -584,7 +643,7 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
             "branch": run.protocol_name,
         },
     )
-    if shutil.which("codex") is None or not Path(project.git_url).exists():
+    if shutil.which("codex") is None:
         db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
         spec_hash_val = None
         run = db.get_protocol_run(protocol_run_id)
@@ -595,13 +654,16 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         db.append_event(
             protocol_run_id,
             "planned",
-            "Protocol planned (stub; codex or repo unavailable).",
+            "Protocol planned (stub; codex unavailable).",
             step_run_id=None,
             metadata={"spec_hash": spec_hash_val, "spec_validated": False},
         )
         return
 
-    repo_root = Path(project.git_url) if Path(project.git_url).exists() else detect_repo_root()
+    repo_root = _repo_root_or_block(project, run, db, job_id=job_id)
+    if repo_root is None:
+        return
+
     worktree = _load_project_with_context(
         repo_root,
         run.protocol_name,
@@ -728,6 +790,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     run = db.get_protocol_run(step.protocol_run_id)
     project = db.get_project(run.project_id)
     config = load_config()
+    auto_clone = auto_clone_enabled()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
     step_spec = get_step_spec(run.template_config, step.step_name)
     spec_hash_val = None
@@ -746,12 +809,14 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     )
     db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
     codemachine = is_codemachine_run(run)
-    if not codemachine and (shutil.which("codex") is None or not Path(project.git_url).exists()):
-        db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Executed via stub (codex/repo unavailable)")
+    repo_root: Optional[Path] = None
+
+    def _stub_execute(reason: str) -> None:
+        db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=f"Executed via stub ({reason})")
         db.append_event(
             step.protocol_run_id,
             "step_completed",
-            "Step executed (stub; codex/repo unavailable). QA required.",
+            f"Step executed (stub; {reason}). QA required.",
             step_run_id=step.id,
             metadata={"spec_hash": spec_hash_val},
         )
@@ -774,11 +839,33 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 metadata={"source": "auto_after_exec"},
             )
             handle_quality(step.id, db, job_id=job_id)
+
+    if codemachine:
+        repo_root = _repo_root_or_block(project, run, db, job_id=job_id)
+        if repo_root is None:
+            db.update_step_status(step.id, StepStatus.BLOCKED, summary="Repository unavailable")
+            return
+    elif shutil.which("codex") is None:
+        _stub_execute("codex unavailable")
         return
+    else:
+        repo_root = _repo_root_or_block(
+            project,
+            run,
+            db,
+            job_id=job_id,
+            block_on_missing=auto_clone,
+        )
+        if repo_root is None:
+            if auto_clone:
+                db.update_step_status(step.id, StepStatus.BLOCKED, summary="Repository unavailable")
+                return
+            _stub_execute("repository unavailable")
+            return
     ctx, spec_errors = (
         _resolve_codemachine_context(step, run, project, config, run.template_config or {}, step_spec, job_id=job_id)
-        if is_codemachine_run(run)
-        else _resolve_codex_context(step, run, project, step_spec, job_id=job_id)
+        if codemachine
+        else _resolve_codex_context(step, run, project, step_spec, job_id=job_id, repo_root=repo_root)
     )
     spec_hash_val = spec_hash_val or ctx.spec_hash
     if spec_errors:
@@ -1132,6 +1219,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
     run = db.get_protocol_run(step.protocol_run_id)
     project = db.get_project(run.project_id)
     config = load_config()
+    auto_clone = auto_clone_enabled()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
     log.info(
         "Running QA",
@@ -1199,16 +1287,13 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         return
     qa_model = qa_cfg.get("model") or (project.default_models.get("qa", "codex-5.1-max") if project.default_models else "codex-5.1-max")
     qa_engine_id = qa_cfg.get("engine_id") or step.engine_id
-    repo_path = workspace_root if workspace_root.exists() else None
-    repo_missing = repo_path is None
-    repo_not_git = bool(repo_path) and not (repo_path / ".git").exists()
-    if shutil.which("codex") is None or (is_codemachine_run(run) and (repo_missing or repo_not_git)) or repo_path is None:
-        db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA passed (stub; codex/repo unavailable)")
+    def _qa_stub(reason: str) -> None:
+        db.update_step_status(step.id, StepStatus.COMPLETED, summary=f"QA passed (stub; {reason})")
         metrics.inc_qa_verdict("pass")
         db.append_event(
             step.protocol_run_id,
             "qa_passed",
-            "QA passed (stub; codex/repo unavailable).",
+            f"QA passed (stub; {reason}).",
             step_run_id=step.id,
             metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model, "spec_hash": spec_hash_val},
         )
@@ -1221,27 +1306,65 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
                 db,
                 source="qa_stub_pass",
                 inline_depth=trigger_decision.get("inline_depth", 0),
-        )
+            )
         maybe_complete_protocol(step.protocol_run_id, db)
+
+    if shutil.which("codex") is None:
+        _qa_stub("codex unavailable")
         return
-    repo_root = repo_path or detect_repo_root()
-    worktree = _load_project_with_context(
-        repo_root,
-        run.protocol_name,
-        run.base_branch,
-        protocol_run_id=run.id,
-        project_id=run.project_id,
+    repo_root = _repo_root_or_block(
+        project,
+        run,
+        db,
         job_id=job_id,
+        block_on_missing=auto_clone,
     )
+    if repo_root is None:
+        if auto_clone:
+            db.update_step_status(step.id, StepStatus.BLOCKED, summary="QA blocked; repository unavailable")
+            return
+        _qa_stub("repository unavailable")
+        return
+    if (repo_root / ".git").exists():
+        worktree = _load_project_with_context(
+            repo_root,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=run.project_id,
+            job_id=job_id,
+        )
+    elif auto_clone:
+        db.update_step_status(step.id, StepStatus.BLOCKED, summary="QA blocked; repository not initialized")
+        db.append_event(
+            step.protocol_run_id,
+            "repo_missing",
+            "Repository missing .git data; cannot run QA.",
+            step_run_id=step.id,
+            metadata={"git_url": project.git_url, "resolved_path": str(repo_root)},
+        )
+        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        return
+    else:
+        worktree = repo_root
     protocol_root = worktree / ".protocols" / run.protocol_name
     qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, worktree)
     qa_prompt_version = prompt_version(qa_prompt_path)
-    qa_prompt = build_prompt(protocol_root, protocol_root / step.step_name)
+    step_path = (protocol_root / step.step_name).resolve()
+    if not step_path.exists():
+        alt = protocol_root / f"{step.step_name}.md"
+        if alt.exists():
+            step_path = alt
+        else:
+            resolved = resolve_spec_path(step.step_name, protocol_root, workspace=worktree)
+            if resolved.exists():
+                step_path = resolved
+    qa_prompt = build_prompt(protocol_root, step_path)
     qa_tokens = _budget_and_tokens(qa_prompt, qa_model, "qa", config.token_budget_mode, budget_limit)
     try:
         result = run_quality_check(
             protocol_root=protocol_root,
-            step_file=protocol_root / step.step_name,
+            step_file=step_path,
             model=qa_model,
             prompt_file=qa_prompt_path,
             sandbox="read-only",
@@ -1301,6 +1424,9 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
             maybe_complete_protocol(step.protocol_run_id, db)
             metrics.inc_qa_verdict("pass")
     except Exception as exc:  # pragma: no cover - best effort
+        if not auto_clone and isinstance(exc, FileNotFoundError):
+            _qa_stub(str(exc))
+            return
         log.warning(
             "QA job failed",
             extra={
@@ -1324,7 +1450,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
 def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str] = None) -> None:
     run = db.get_protocol_run(protocol_run_id)
     project = db.get_project(run.project_id)
-    repo_root = Path(project.git_url) if Path(project.git_url).exists() else None
+    repo_root = _repo_root_or_block(project, run, db, job_id=job_id)
     if not repo_root:
         db.append_event(
             run.id,

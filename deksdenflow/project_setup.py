@@ -8,6 +8,7 @@ from . import codex
 from .logging import get_logger
 
 log = get_logger(__name__)
+DEFAULT_PROJECTS_ROOT = Path(os.environ.get("DEKSDENFLOW_PROJECTS_ROOT", "Projects")).expanduser()
 
 # Map of target paths -> template paths (relative to repo root of this starter)
 BASE_FILES = {
@@ -109,6 +110,31 @@ def ensure_assets(repo_root: Path) -> None:
         make_executable(repo_root / "scripts" / "ci" / name)
 
 
+def _repo_name_from_url(git_url: str, fallback: Optional[str] = None) -> str:
+    tail = git_url.rstrip("/").split("/")[-1] if git_url else ""
+    if tail.endswith(".git"):
+        tail = tail[:-4]
+    return tail or (fallback or "project")
+
+
+def local_repo_dir(git_url: str, project_name: Optional[str] = None, projects_root: Optional[Path] = None) -> Path:
+    """
+    Derive a local path for a repository. If git_url already points to an existing
+    path, return it; otherwise, map the URL to Projects/<repo-name>.
+    """
+    url_path = Path(git_url).expanduser()
+    if url_path.exists():
+        return url_path
+    root = Path(projects_root or DEFAULT_PROJECTS_ROOT).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    repo_name = _repo_name_from_url(git_url, project_name)
+    return (root / repo_name).resolve()
+
+
+def auto_clone_enabled() -> bool:
+    return os.environ.get("DEKSDENFLOW_AUTO_CLONE", "true").lower() in ("1", "true", "yes", "on")
+
+
 def clone_repo(url: str, target_dir: Path) -> Path:
     if target_dir.exists():
         log.info("clone_target_exists", extra={"target_dir": str(target_dir)})
@@ -117,6 +143,28 @@ def clone_repo(url: str, target_dir: Path) -> Path:
     log.info("clone_repo", extra={"url": url, "target_dir": str(target_dir)})
     codex.run_process(["git", "clone", url, str(target_dir)], capture_output=False, text=True)
     return target_dir
+
+
+def ensure_local_repo(
+    git_url: str,
+    project_name: Optional[str] = None,
+    *,
+    projects_root: Optional[Path] = None,
+    clone_if_missing: Optional[bool] = None,
+) -> Path:
+    """
+    Return a local path for the repository, cloning it if it does not already exist.
+
+    clone_if_missing defaults to the DEKSDENFLOW_AUTO_CLONE env flag (true by default).
+    Raises FileNotFoundError when cloning is disabled and the repo is missing.
+    """
+    target = local_repo_dir(git_url, project_name, projects_root=projects_root)
+    if target.exists():
+        return target
+    should_clone = auto_clone_enabled() if clone_if_missing is None else clone_if_missing
+    if not should_clone:
+        raise FileNotFoundError(f"Repository not present locally at {target}")
+    return clone_repo(git_url, target)
 
 
 def run_codex_discovery(

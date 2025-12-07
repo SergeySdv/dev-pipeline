@@ -21,6 +21,7 @@ fi
 export PYTHONPATH="${PYTHONPATH:-.}"
 export DEKSDENFLOW_DB_PATH="${DEKSDENFLOW_DB_PATH:-/tmp/deksdenflow-test.sqlite}"
 export DEKSDENFLOW_REDIS_URL="${DEKSDENFLOW_REDIS_URL:-fakeredis://}"
+export DEKSDENFLOW_AUTO_CLONE="${DEKSDENFLOW_AUTO_CLONE:-false}"
 
 "${PYTEST_BIN}" -q --disable-warnings --maxfail=1
 

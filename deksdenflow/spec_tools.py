@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 from deksdenflow.codemachine import config_to_template_payload, load_codemachine_config
 from deksdenflow.codemachine.runtime_adapter import is_codemachine_run
 from deksdenflow.domain import ProtocolRun
+from deksdenflow.project_setup import local_repo_dir
 from deksdenflow.spec import (
     PROTOCOL_SPEC_KEY,
     build_spec_from_codemachine_config,
@@ -20,7 +21,8 @@ from deksdenflow.storage import BaseDatabase
 
 
 def _workspace_and_protocol_root(run: ProtocolRun, project) -> Tuple[Path, Path]:
-    workspace = Path(run.worktree_path or project.git_url or ".").resolve()
+    workspace_base = Path(run.worktree_path).expanduser() if run.worktree_path else local_repo_dir(project.git_url, project.name)
+    workspace = workspace_base.resolve()
     protocol_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace / ".protocols" / run.protocol_name)
     return workspace, protocol_root
 

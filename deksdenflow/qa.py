@@ -28,20 +28,23 @@ def build_prompt(protocol_root: Path, step_file: Path) -> str:
     context = read_file(protocol_root / "context.md")
     log = read_file(protocol_root / "log.md")
     step = read_file(step_file)
-
-    git_status = codex.run_process(
-        ["git", "status", "--porcelain"], cwd=protocol_root.parent.parent, capture_output=True, text=True
-    ).stdout.strip()
-    last_commit = ""
-    try:
-        last_commit = codex.run_process(
-            ["git", "log", "-1", "--pretty=format:%s"],
-            cwd=protocol_root.parent.parent,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except Exception:
-        last_commit = "(no commits yet)"
+    repo_root = protocol_root.parent.parent
+    git_status = "(not a git repo)"
+    last_commit = "(no commits yet)"
+    if (repo_root / ".git").exists():
+        try:
+            git_status = codex.run_process(
+                ["git", "status", "--porcelain"], cwd=repo_root, capture_output=True, text=True
+            ).stdout.strip()
+            last_commit = codex.run_process(
+                ["git", "log", "-1", "--pretty=format:%s"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        except Exception:
+            git_status = "(git status unavailable)"
+            last_commit = last_commit or "(no commits yet)"
 
     return f"""You are a QA orchestrator. Validate the current protocol step. Follow the checklist and output Markdown only (no fences).
 
