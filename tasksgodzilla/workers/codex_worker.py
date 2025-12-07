@@ -4,9 +4,8 @@ Codex worker: resolves protocol context, runs engine-backed planning/exec/QA, an
 
 import json
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 import tasksgodzilla.engines_codex  # noqa: F401 - ensure Codex engine is registered
 
@@ -44,7 +43,6 @@ from tasksgodzilla.spec import (
     create_steps_from_spec,
     get_step_spec,
     protocol_spec_hash,
-    resolve_outputs_map,
     resolve_spec_path,
     update_spec_meta,
     validate_step_spec_paths,
@@ -71,25 +69,6 @@ def _log_context(
         protocol_run_id=protocol_run_id or (run.id if run else None),
         step_run_id=step.id if step else None,
     )
-
-
-@dataclass
-class ExecContext:
-    kind: str  # "codex" or "codemachine"
-    engine_id: str
-    model: str
-    prompt_text: str
-    prompt_path: Path
-    prompt_version: str
-    workdir: Path
-    protocol_root: Path
-    repo_root: Optional[Path]
-    agent_id: Optional[str]
-    outputs_cfg: Optional[dict]
-    protocol_output_path: Optional[Path]
-    aux_outputs: Dict[str, Path]
-    spec_hash: Optional[str]
-    prompt_files: list[str]
 
 
 def _repo_root_or_block(
@@ -249,93 +228,6 @@ def _budget_and_tokens(prompt_text: str, model: str, phase: str, token_budget_mo
     return estimated
 
 
-def _resolve_codex_context(
-    step: StepRun,
-    run: ProtocolRun,
-    project,
-    step_spec: Optional[dict],
-    job_id: Optional[str] = None,
-    repo_root: Optional[Path] = None,
-) -> tuple[ExecContext, list[str]]:
-    """
-    Resolve prompt, engine/model, outputs, and paths for a Codex-backed step.
-    Returns (ExecContext, validation_errors).
-    """
-    step_spec = step_spec or get_step_spec(run.template_config, step.step_name)
-    template_cfg = run.template_config or {}
-    spec_hash_val = None
-    if isinstance(template_cfg, dict):
-        tmpl_spec = template_cfg.get(PROTOCOL_SPEC_KEY)
-        if tmpl_spec:
-            spec_hash_val = protocol_spec_hash(tmpl_spec)
-
-    repo_root_path = (repo_root or local_repo_dir(project.git_url, project.name)).resolve()
-    worktree = _load_project_with_context(
-        repo_root_path,
-        run.protocol_name,
-        run.base_branch,
-        protocol_run_id=run.id,
-        project_id=project.id,
-        job_id=job_id,
-    )
-    protocol_root = worktree / ".protocols" / run.protocol_name
-    plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
-
-    prompt_ref = step_spec.get("prompt_ref") if step_spec else None
-    if prompt_ref:
-        step_path = resolve_spec_path(prompt_ref, protocol_root, workspace=worktree)
-        if not step_path.exists():
-            fallback = (protocol_root / step.step_name).resolve()
-            if fallback.exists():
-                step_path = fallback
-    else:
-        step_path = (protocol_root / step.step_name).resolve()
-        if not step_path.exists():
-            step_path = resolve_spec_path(step.step_name, protocol_root, workspace=worktree)
-
-    step_content = step_path.read_text(encoding="utf-8") if step_path.exists() else ""
-    exec_prompt = execute_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_path.name, step_content)
-    outputs_cfg = step_spec.get("outputs") if step_spec else None
-    resolved_protocol_out: Optional[Path] = None
-    resolved_aux_outs: Dict[str, Path] = {}
-    if outputs_cfg:
-        default_protocol_out = step_path if step_path else (protocol_root / step.step_name).resolve()
-        resolved_protocol_out, resolved_aux_outs = resolve_outputs_map(
-            outputs_cfg,
-            base=protocol_root,
-            workspace=worktree,
-            default_protocol=default_protocol_out,
-            default_aux={},
-            prefer_workspace=True,
-        )
-    spec_errors = validate_step_spec_paths(protocol_root, step_spec or {}, workspace=worktree)
-    exec_model = (
-        (step_spec.get("model") if step_spec else None)
-        or step.model
-        or (project.default_models.get("exec") if project.default_models else None)
-        or "codex-5.1-max-xhigh"
-    )
-    engine_id = (step_spec.get("engine_id") if step_spec else None) or step.engine_id or registry.get_default().metadata.id
-    ctx = ExecContext(
-        kind="codex",
-        engine_id=engine_id,
-        model=exec_model,
-        prompt_text=exec_prompt,
-        prompt_path=step_path,
-        prompt_version=prompt_version(step_path),
-        workdir=worktree,
-        protocol_root=protocol_root,
-        repo_root=repo_root_path,
-        agent_id=None,
-        outputs_cfg=outputs_cfg,
-        protocol_output_path=resolved_protocol_out,
-        aux_outputs=resolved_aux_outs,
-        spec_hash=spec_hash_val,
-        prompt_files=[],
-    )
-    return ctx, spec_errors
-
-
 def _protocol_and_workspace_paths(run: ProtocolRun, project) -> tuple[Path, Path]:
     """
     Best-effort resolution of workspace/protocol roots for prompt resolution
@@ -356,87 +248,6 @@ def _resolve_qa_prompt_path(qa_cfg: dict, protocol_root: Path, workspace: Path) 
     if prompt_ref:
         return resolve_spec_path(str(prompt_ref), protocol_root, workspace=workspace)
     return (workspace / "prompts" / "quality-validator.prompt.md").resolve()
-
-
-def _resolve_codemachine_context(
-    step: StepRun,
-    run: ProtocolRun,
-    project,
-    config,
-    template_cfg: dict,
-    step_spec: Optional[dict],
-    *,
-    job_id: Optional[str] = None,
-    with_spec_errors: bool = True,
-) -> tuple[ExecContext, list[str]]:
-    """
-    Resolve prompt, engine/model, and output paths for a CodeMachine-backed step.
-    Returns (context_dict, validation_errors).
-    """
-    workspace_base = Path(run.worktree_path).expanduser() if run.worktree_path else local_repo_dir(project.git_url, project.name)
-    workspace = workspace_base.resolve()
-    codemachine_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace / ".codemachine")
-    placeholders = template_cfg.get("placeholders") or {}
-    spec_hash_val = None
-    if isinstance(template_cfg, dict):
-        template_spec = template_cfg.get(PROTOCOL_SPEC_KEY)
-        if template_spec:
-            spec_hash_val = protocol_spec_hash(template_spec)
-
-    agent = find_agent_for_step(step, template_cfg)
-    if not agent:
-        raise ValueError("CodeMachine agent not found")
-
-    agent_id = str(agent.get("id") or agent.get("agent_id") or step.step_name)
-    prompt_text, prompt_path = build_prompt_text(agent, codemachine_root, placeholders, step_spec=step_spec, workspace=workspace)
-    cm_prompt_ver = prompt_version(prompt_path)
-    engine_defaults = (template_cfg.get("template") or {}).get("engineDefaults") or {}
-    engine_id = (
-        (step_spec.get("engine_id") if step_spec else None)
-        or step.engine_id
-        or agent.get("engine_id")
-        or engine_defaults.get("execute")
-        or registry.get_default().metadata.id
-    )
-    model = (
-        (step_spec.get("model") if step_spec else None)
-        or step.model
-        or agent.get("model")
-        or engine_defaults.get("executeModel")
-        or (project.default_models.get("exec") if project.default_models else None)
-        or getattr(config, "exec_model", None)
-        or registry.get(engine_id).metadata.default_model
-        or "codex-5.1-max-xhigh"
-    )
-    outputs_cfg = step_spec.get("outputs") if step_spec else None
-    default_protocol, default_codemachine = output_paths(workspace, codemachine_root, run, step, agent_id)
-    protocol_output_path, aux_outputs = resolve_outputs_map(
-        outputs_cfg,
-        base=codemachine_root,
-        workspace=workspace,
-        default_protocol=default_protocol,
-        default_aux={"codemachine": default_codemachine},
-        prefer_workspace=True,
-    )
-    spec_errors = validate_step_spec_paths(codemachine_root, step_spec or {}, workspace=workspace) if with_spec_errors else []
-    ctx = ExecContext(
-        kind="codemachine",
-        engine_id=engine_id,
-        model=model,
-        prompt_text=prompt_text,
-        prompt_path=prompt_path,
-        prompt_version=cm_prompt_ver,
-        workdir=workspace,
-        protocol_root=codemachine_root,
-        repo_root=None,
-        agent_id=agent_id,
-        outputs_cfg=outputs_cfg,
-        protocol_output_path=protocol_output_path,
-        aux_outputs=aux_outputs,
-        spec_hash=spec_hash_val,
-        prompt_files=[str(prompt_path)],
-    )
-    return ctx, spec_errors
 
 
 def infer_step_type(filename: str) -> str:
