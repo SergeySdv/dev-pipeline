@@ -65,9 +65,9 @@ def parse_args() -> argparse.Namespace:
         help="Optional: directory name for clone (default: repo name from URL).",
     )
     parser.add_argument(
-        "--run-discovery",
+        "--skip-discovery",
         action="store_true",
-        help="Run Codex-driven repository discovery/config prep (requires codex CLI).",
+        help="Skip Codex-driven repository discovery/config prep (default: run when codex CLI and prompt are present).",
     )
     parser.add_argument(
         "--discovery-model",
@@ -84,12 +84,12 @@ def main() -> None:
     log.info(
         "project_setup_start",
         extra={
-            "clone_url": args.clone_url,
-            "clone_dir": args.clone_dir,
-            "base_branch": args.base_branch,
-            "run_discovery": args.run_discovery,
-        },
-    )
+        "clone_url": args.clone_url,
+        "clone_dir": args.clone_dir,
+        "base_branch": args.base_branch,
+        "skip_discovery": args.skip_discovery,
+    },
+)
 
     repo_root: Path
     if args.clone_url:
@@ -112,7 +112,7 @@ def main() -> None:
         ensure_base_branch(repo_root, args.base_branch)
         ensure_assets(repo_root)
 
-        if args.run_discovery:
+        if not args.skip_discovery:
             discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
             run_codex_discovery(repo_root, discovery_model)
     except FileNotFoundError as exc:

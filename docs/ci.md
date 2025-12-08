@@ -8,8 +8,10 @@ Both GitHub Actions and GitLab CI call the same shell hooks under `scripts/ci/`.
 - `scripts/ci/typecheck.sh` — `compileall` + import smoke for `tasksgodzilla.config`, API app, and CLI entrypoints.
 - `scripts/ci/test.sh` — `pytest -q --disable-warnings --maxfail=1` with temp SQLite and a real Redis URL from `TASKSGODZILLA_REDIS_URL`.
 - `scripts/ci/build.sh` — `docker build -t tasksgodzilla-ci .` if Docker exists; otherwise `docker-compose config -q`.
-- Optional: `scripts/codex_ci_bootstrap.py` (bash) to run Codex discovery for a target repo:  
-  `bash scripts/codex_ci_bootstrap.py --model gpt-5.1-codex-max --prompt-file prompts/repo-discovery.prompt.md --repo-root <repo-root> --sandbox workspace-write [--skip-git-check]` (requires `codex` CLI; writes discovery docs under `tasksgodzilla/` in the target repo).
+- Onboard any repo (GitHub/GitLab/local) with one command:  
+  `python scripts/onboard_repo.py --git-url <url-or-path> [--base-branch main] [--ci-provider github|gitlab] [--skip-discovery]`.  
+  This clones/reuses the repo, copies starter assets, runs Codex discovery when available, and registers the project in the local database (no ProtocolSpec generation).
+- `scripts/project_setup.py` now runs Codex discovery by default; pass `--skip-discovery` to opt out.
 
 ## Local parity
 ```bash

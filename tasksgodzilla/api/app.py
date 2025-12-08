@@ -26,6 +26,7 @@ from tasksgodzilla.workers.state import maybe_complete_protocol
 from tasksgodzilla.workers import codemachine_worker
 from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, SPEC_META_KEY, protocol_spec_hash
 from tasksgodzilla.run_registry import RunRegistry
+from tasksgodzilla.services import OrchestratorService, OnboardingService
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -170,6 +171,16 @@ def get_protocol_project(protocol_run_id: int, db: BaseDatabase) -> int:
 def get_step_project(step_run_id: int, db: BaseDatabase) -> int:
     step = db.get_step_run(step_run_id)
     return get_protocol_project(step.protocol_run_id, db)
+
+
+def get_orchestrator(db: BaseDatabase = Depends(get_db)) -> OrchestratorService:
+    """Dependency helper to construct an OrchestratorService for API routes."""
+    return OrchestratorService(db=db)
+
+
+def get_onboarding_service(db: BaseDatabase = Depends(get_db)) -> OnboardingService:
+    """Dependency helper to construct an OnboardingService for API routes."""
+    return OnboardingService(db=db)
 
 
 def require_auth(
@@ -661,6 +672,7 @@ def create_protocol_run(
     project_id: int,
     payload: schemas.ProtocolRunCreate,
     db: BaseDatabase = Depends(get_db),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ProtocolRunOut:
     if request:
@@ -669,7 +681,7 @@ def create_protocol_run(
         db.get_project(project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    run = db.create_protocol_run(
+    run = orchestrator.create_protocol_run(
         project_id=project_id,
         protocol_name=payload.protocol_name,
         status=payload.status,
@@ -799,6 +811,7 @@ def start_protocol(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ActionResponse:
     if request:
@@ -811,10 +824,10 @@ def start_protocol(
     if run.status not in (ProtocolStatus.PENDING, ProtocolStatus.PLANNED, ProtocolStatus.PAUSED):
         raise HTTPException(status_code=409, detail="Protocol already running or terminal")
     try:
-        db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNING, expected_status=run.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
-    job = queue.enqueue("plan_protocol_job", {"protocol_run_id": protocol_run_id}).asdict()
+        job_obj = orchestrator.start_protocol_run(protocol_run_id, queue)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job = job_obj.asdict()
     record_event(
         db,
         protocol_run_id,
@@ -830,6 +843,7 @@ def start_protocol(
 def pause_protocol(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ProtocolRunOut:
     if request:
@@ -842,9 +856,9 @@ def pause_protocol(
     if run.status in (ProtocolStatus.CANCELLED, ProtocolStatus.COMPLETED, ProtocolStatus.FAILED):
         raise HTTPException(status_code=409, detail="Protocol already terminal")
     try:
-        run = db.update_protocol_status(protocol_run_id, ProtocolStatus.PAUSED, expected_status=run.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
+        run = orchestrator.pause_protocol(protocol_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     record_event(db, protocol_run_id, "paused", "Protocol paused by user.", request=request)
     return _protocol_out(run, db=db)
 
@@ -853,6 +867,7 @@ def pause_protocol(
 def resume_protocol(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ProtocolRunOut:
     if request:
@@ -865,9 +880,9 @@ def resume_protocol(
     if run.status != ProtocolStatus.PAUSED:
         raise HTTPException(status_code=409, detail="Protocol is not paused")
     try:
-        run = db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING, expected_status=run.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
+        run = orchestrator.resume_protocol(protocol_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     record_event(db, protocol_run_id, "resumed", "Protocol resumed by user.", request=request)
     return _protocol_out(run, db=db)
 
@@ -876,6 +891,7 @@ def resume_protocol(
 def cancel_protocol(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ProtocolRunOut:
     if request:
@@ -888,13 +904,9 @@ def cancel_protocol(
     if run.status == ProtocolStatus.CANCELLED:
         return _protocol_out(run, db=db)
     try:
-        run = db.update_protocol_status(protocol_run_id, ProtocolStatus.CANCELLED, expected_status=run.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Protocol state changed; retry")
-    steps = db.list_step_runs(protocol_run_id)
-    for step in steps:
-        if step.status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.NEEDS_QA):
-            db.update_step_status(step.id, StepStatus.CANCELLED, summary="Cancelled with protocol", expected_status=step.status)
+        run = orchestrator.cancel_protocol(protocol_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     record_event(db, protocol_run_id, "cancelled", "Protocol cancelled by user.", request=request)
     return _protocol_out(run, db=db)
 
@@ -904,21 +916,19 @@ def run_next_step(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ActionResponse:
     if request:
         project_id = get_protocol_project(protocol_run_id, db)
         require_project_access(project_id, request, db)
-    steps = db.list_step_runs(protocol_run_id)
-    target = next((s for s in steps if s.status in (StepStatus.PENDING, StepStatus.BLOCKED, StepStatus.FAILED)), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="No pending or failed steps to run")
     try:
-        step = db.update_step_status(target.id, StepStatus.RUNNING, expected_status=target.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Step state changed; retry")
-    db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
-    job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+        step, job_obj = orchestrator.enqueue_next_step(protocol_run_id, queue)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job = job_obj.asdict()
     record_event(
         db,
         protocol_run_id,
@@ -936,26 +946,19 @@ def retry_latest_step(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ActionResponse:
     if request:
         project_id = get_protocol_project(protocol_run_id, db)
         require_project_access(project_id, request, db)
-    steps = db.list_step_runs(protocol_run_id)
-    target = next((s for s in reversed(steps) if s.status in (StepStatus.FAILED, StepStatus.BLOCKED)), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="No failed or blocked steps to retry")
     try:
-        step = db.update_step_status(
-            target.id,
-            StepStatus.RUNNING,
-            retries=target.retries + 1,
-            expected_status=target.status,
-        )
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Step state changed; retry")
-    db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
-    job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+        step, job_obj = orchestrator.retry_latest_step(protocol_run_id, queue)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job = job_obj.asdict()
     record_event(
         db,
         protocol_run_id,
@@ -1013,23 +1016,21 @@ def run_step(
     step_id: int,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ActionResponse:
     try:
         step = db.get_step_run(step_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if step.status not in (StepStatus.PENDING, StepStatus.BLOCKED, StepStatus.FAILED):
-        raise HTTPException(status_code=409, detail="Step already running or completed")
     if request:
         project_id = get_protocol_project(step.protocol_run_id, db)
         require_project_access(project_id, request, db)
     try:
-        step = db.update_step_status(step.id, StepStatus.RUNNING, expected_status=step.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Step state changed; retry")
-    db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
-    job = queue.enqueue("execute_step_job", {"step_run_id": step.id}).asdict()
+        job_obj = orchestrator.run_step(step.id, queue)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job = job_obj.asdict()
     record_event(
         db,
         step.protocol_run_id,
@@ -1047,22 +1048,21 @@ def run_step_qa(
     step_id: int,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ActionResponse:
     try:
         step = db.get_step_run(step_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if step.status in (StepStatus.COMPLETED, StepStatus.CANCELLED):
-        raise HTTPException(status_code=409, detail="Step already completed or cancelled")
     if request:
         project_id = get_protocol_project(step.protocol_run_id, db)
         require_project_access(project_id, request, db)
     try:
-        step = db.update_step_status(step.id, StepStatus.NEEDS_QA, expected_status=step.status)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Step state changed; retry")
-    job = queue.enqueue("run_quality_job", {"step_run_id": step.id}).asdict()
+        job_obj = orchestrator.run_step_qa(step.id, queue)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job = job_obj.asdict()
     record_event(
         db,
         step.protocol_run_id,
@@ -1080,12 +1080,13 @@ def open_pr_now(
     protocol_run_id: int,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
     request: Request = None,
 ) -> schemas.ActionResponse:
     if request:
         project_id = get_protocol_project(protocol_run_id, db)
         require_project_access(project_id, request, db)
-    job = queue.enqueue("open_pr_job", {"protocol_run_id": protocol_run_id}).asdict()
+    job = orchestrator.enqueue_open_protocol_pr(protocol_run_id, queue).asdict()
     record_event(
         db,
         protocol_run_id,
@@ -1163,6 +1164,59 @@ def onboarding_summary(project_id: int, db: BaseDatabase = Depends(get_db), requ
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _onboarding_summary(project, db)
+
+
+@app.post(
+    "/projects/{project_id}/onboarding/actions/start",
+    response_model=schemas.ActionResponse,
+    dependencies=[Depends(require_auth)],
+)
+def start_onboarding(
+    project_id: int,
+    db: BaseDatabase = Depends(get_db),
+    queue: jobs.BaseQueue = Depends(get_queue),
+    onboarding: OnboardingService = Depends(get_onboarding_service),
+    request: Request = None,
+) -> schemas.ActionResponse:
+    """
+    Trigger (or re-trigger) onboarding for an existing project. This mirrors the
+    behaviour used in `POST /projects` but can be called explicitly from the
+    console.
+    """
+    if request:
+        require_project_access(project_id, request, db)
+    try:
+        project = db.get_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    protocol_name = f"setup-{project.id}"
+    try:
+        setup_run = db.find_protocol_run_by_name(protocol_name)
+    except Exception:
+        setup_run = None
+    if not setup_run:
+        setup_run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name=protocol_name,
+            status=ProtocolStatus.PENDING,
+            base_branch=project.base_branch,
+            worktree_path=None,
+            protocol_root=None,
+            description="Project setup and bootstrap",
+        )
+    record_event(
+        db,
+        protocol_run_id=setup_run.id,
+        event_type="setup_enqueued",
+        message="Project setup enqueued.",
+        request=request,
+    )
+    job = queue.enqueue(
+        "project_setup_job",
+        {"project_id": project.id, "protocol_run_id": setup_run.id},
+    ).asdict()
+    return schemas.ActionResponse(message="Project setup enqueued", job=job)
 
 
 @app.get("/queues", dependencies=[Depends(require_auth)])

@@ -82,6 +82,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     proj_onboarding = proj_sub.add_parser("onboarding", help="Show onboarding status for a project")
     proj_onboarding.add_argument("project_id", type=int)
 
+    proj_onboarding_start = proj_sub.add_parser("onboarding-start", help="Start or restart onboarding for a project")
+    proj_onboarding_start.add_argument("project_id", type=int)
+
     # Protocols
     protocols = subparsers.add_parser("protocols", help="Protocol run commands")
     proto_sub = protocols.add_subparsers(dest="action")
@@ -258,6 +261,13 @@ def handle_projects(client: APIClient, args: argparse.Namespace) -> None:
             print("Recent events:")
             for ev in events[-8:]:
                 print(f"- {format_ts(ev.get('created_at'))} {ev.get('event_type')}: {ev.get('message','')}")
+    elif args.action == "onboarding-start":
+        resp = client.post(f"/projects/{args.project_id}/onboarding/actions/start", {})
+        if args.as_json:
+            print(json.dumps(resp, indent=2))
+        else:
+            job = resp.get("job") or {}
+            print(f"Onboarding enqueued (job_id={job.get('job_id')}).")
 
 
 def handle_protocols(client: APIClient, args: argparse.Namespace) -> None:

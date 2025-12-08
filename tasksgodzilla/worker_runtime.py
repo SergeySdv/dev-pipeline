@@ -10,9 +10,10 @@ from tasksgodzilla.errors import TasksGodzillaError
 from tasksgodzilla.jobs import BaseQueue, Job, RedisQueue
 from tasksgodzilla.storage import BaseDatabase, Database, create_database
 from tasksgodzilla.run_registry import RunRegistry
-from tasksgodzilla.workers import codex_worker, onboarding_worker, codemachine_worker, spec_worker
+from tasksgodzilla.workers import codex_worker, codemachine_worker, spec_worker
 from tasksgodzilla.metrics import metrics
 from tasksgodzilla.logging import RequestIdFilter, get_logger, log_extra, setup_logging, json_logging_from_env
+from tasksgodzilla.services import ExecutionService, OnboardingService, OrchestratorService, QualityService
 
 
 log = get_logger("tasksgodzilla.worker")
@@ -35,19 +36,23 @@ def process_job(job: Job, db: BaseDatabase) -> None:
         },
     )
     if job.job_type == "plan_protocol_job":
-        codex_worker.handle_plan_protocol(job.payload["protocol_run_id"], db, job_id=job.job_id)
+        orchestrator = OrchestratorService(db=db)
+        orchestrator.plan_protocol(job.payload["protocol_run_id"], job_id=job.job_id)
     elif job.job_type == "execute_step_job":
-        codex_worker.handle_execute_step(job.payload["step_run_id"], db, job_id=job.job_id)
+        executor = ExecutionService(db=db)
+        executor.execute_step(job.payload["step_run_id"], job_id=job.job_id)
     elif job.job_type == "run_quality_job":
-        codex_worker.handle_quality(job.payload["step_run_id"], db, job_id=job.job_id)
+        qa_service = QualityService(db=db)
+        qa_service.run_for_step_run(job.payload["step_run_id"], job_id=job.job_id)
     elif job.job_type == "project_setup_job":
-        onboarding_worker.handle_project_setup(
+        onboarding = OnboardingService(db=db)
+        onboarding.run_project_setup_job(
             job.payload["project_id"],
-            db,
             protocol_run_id=job.payload.get("protocol_run_id"),
         )
     elif job.job_type == "open_pr_job":
-        codex_worker.handle_open_pr(job.payload["protocol_run_id"], db, job_id=job.job_id)
+        orchestrator = OrchestratorService(db=db)
+        orchestrator.open_protocol_pr(job.payload["protocol_run_id"], job_id=job.job_id)
     elif job.job_type == "codemachine_import_job":
         codemachine_worker.handle_import_job(job.payload, db)
     elif job.job_type == "spec_audit_job":

@@ -28,3 +28,4 @@ scripts/generate_dataset_report.py
 .tasksgodzilla.sqlite
 .tasksgodzilla.sqlite-journal
 /tui-rs/target/
+runs/

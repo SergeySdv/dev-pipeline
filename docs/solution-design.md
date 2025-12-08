@@ -7,7 +7,7 @@ This document captures the current state of the system, the risks that block ful
 ### 1.1 Strengths
 - Protocol-driven, git-first workflow. Each protocol lives in its own worktree/branch under `.protocols/NNNN-[task]/`, giving deterministic naming, isolation, and traceability.
 - Codex CLI as the core engine. `protocol_pipeline.py` enforces a JSON schema for planning and step decomposition; `quality_orchestrator.py` builds rich QA context and gates pipelines via `quality-report.md` and exit codes.
-- Good bootstrap story. `project_setup.py` and `codex_ci_bootstrap.py` simplify repo prep and CI hook generation; dual GitHub/GitLab CI entrypoints keep portability.
+- Good bootstrap story. `onboard_repo.py` handles repo prep, discovery, ProtocolSpec generation, and project registration in one step; dual GitHub/GitLab CI entrypoints keep portability.
 - Prompt library + schemas. Prompts live in `prompts/*.prompt.md`, separated from orchestration code, with JSON schemas defining contracts for agent output.
 - Early orchestrator slice already exists. `tasksgodzilla/storage.py`, `tasksgodzilla/api/app.py`, and `scripts/api_server.py` show the direction and reduce greenfield risk.
 
@@ -52,7 +52,7 @@ This document captures the current state of the system, the risks that block ful
 - All transitions append Events with correlation IDs to keep a full audit trail.
 
 ### 2.5 Core flows
-- **Project onboarding**: Console calls `/projects` to register; orchestrator enqueues `project_setup` job to clone and run `project_setup.py`/`codex_ci_bootstrap.py`; user selects models/QA strictness; project shows as ready.
+- **Project onboarding**: Console calls `/projects` to register; orchestrator enqueues `project_setup` job (or operators run `scripts/onboard_repo.py` locally) to clone, ensure starter assets, run Codex discovery by default, and record the project as ready (no ProtocolSpec required for CI bootstrap–only repos).
 - Repos resolve via stored `local_path` or per-project clones under `TASKSGODZILLA_PROJECTS_ROOT` (`projects/<project_id>/<repo_name>`); onboarding auto-runs discovery, records the path, configures git origin/identity when env vars are set, and emits clarifications (blocking when `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true`) for CI/model/branch policy choices.
 
 Workspace layout (default):

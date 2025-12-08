@@ -1,0 +1,410 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+import os
+import shutil
+
+from tasksgodzilla.logging import get_logger, log_extra
+from tasksgodzilla.project_setup import (
+    DEFAULT_PROJECTS_ROOT,
+    configure_git_identity,
+    configure_git_remote,
+    ensure_assets,
+    ensure_local_repo,
+    local_repo_dir,
+    prefer_github_ssh,
+    run_codex_discovery,
+)
+from tasksgodzilla.storage import BaseDatabase
+from tasksgodzilla.domain import ProtocolStatus
+from tasksgodzilla.git_utils import resolve_project_repo_path
+
+log = get_logger(__name__)
+
+
+@dataclass
+class OnboardingService:
+    """Project onboarding and workspace-setup facade.
+
+    This wraps the helpers in `tasksgodzilla.project_setup` and DB operations so
+    that API/CLI layers can use a single service entrypoint during onboarding.
+    """
+
+    db: BaseDatabase
+
+    def register_project(
+        self,
+        name: str,
+        git_url: str,
+        base_branch: str,
+        *,
+        ci_provider: Optional[str] = None,
+        default_models: Optional[dict] = None,
+        secrets: Optional[dict] = None,
+    ):
+        """Create a new project row in the database."""
+        project = self.db.create_project(
+            name=name,
+            git_url=git_url,
+            base_branch=base_branch,
+            ci_provider=ci_provider,
+            default_models=default_models,
+            secrets=secrets,
+        )
+        log.info(
+            "onboarding_register_project",
+            extra={"project_id": project.id, "git_url": project.git_url, "base_branch": project.base_branch},
+        )
+        return project
+
+    def ensure_workspace(
+        self,
+        project_id: int,
+        *,
+        clone_if_missing: Optional[bool] = None,
+        run_discovery_pass: bool = False,
+        discovery_model: Optional[str] = None,
+    ) -> Path:
+        """Ensure the project's repository exists locally and starter assets are present."""
+        project = self.db.get_project(project_id)
+
+        repo_root = ensure_local_repo(
+            project.git_url,
+            project_name=project.name,
+            project_id=project.id,
+            clone_if_missing=clone_if_missing,
+        )
+        ensure_assets(repo_root)
+        self.db.update_project_local_path(project.id, str(repo_root))
+
+        if run_discovery_pass:
+            model = discovery_model or "gpt-5.1-codex-max"
+            try:
+                run_codex_discovery(repo_root, model=model)
+            except Exception as exc:  # pragma: no cover - best effort
+                log.warning(
+                    "onboarding_discovery_failed",
+                    extra={"project_id": project.id, "repo_root": str(repo_root), "error": str(exc)},
+                )
+
+        log.info(
+            "onboarding_workspace_ready",
+            extra={"project_id": project.id, "repo_root": str(repo_root)},
+        )
+        return repo_root
+
+    def run_project_setup_job(self, project_id: int, protocol_run_id: Optional[int] = None) -> None:
+        """Run the full project-setup flow for a project.
+
+        This mirrors `onboarding_worker.handle_project_setup` but lives in the
+        services layer so callers can rely on a stable API while the worker is
+        gradually simplified.
+        """
+        project = self.db.get_project(project_id)
+        if protocol_run_id is None:
+            run = self.db.create_protocol_run(
+                project_id=project.id,
+                protocol_name=f"setup-{project.id}",
+                status=ProtocolStatus.PENDING,
+                base_branch=project.base_branch,
+                worktree_path=None,
+                protocol_root=None,
+                description="Project setup and bootstrap",
+            )
+            protocol_run_id = run.id
+
+        self.db.update_protocol_status(protocol_run_id, ProtocolStatus.RUNNING)
+        self.db.append_event(
+            protocol_run_id,
+            "setup_started",
+            f"Onboarding {project.name}",
+            metadata={"git_url": project.git_url, "local_path": project.local_path},
+        )
+
+        try:
+            # Resolve or clone the repository and record local_path.
+            default_repo_path = local_repo_dir(project.git_url, project.name, project_id=project.id)
+            repo_hint = project.local_path or str(default_repo_path)
+            candidate_paths = [default_repo_path]
+            if project.local_path:
+                candidate_paths.append(Path(project.local_path).expanduser())
+            repo_preexisting = any(path.exists() for path in candidate_paths)
+            try:
+                # Use the shared resolver so auto-clone behaviour remains aligned
+                # with the rest of the orchestrator.
+                repo_path = resolve_project_repo_path(
+                    project.git_url,
+                    project.name,
+                    project.local_path,
+                    project_id=project.id,
+                )
+            except FileNotFoundError:
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_pending_clone",
+                    f"Repo path {repo_hint} not present locally. "
+                    "Set TASKSGODZILLA_AUTO_CLONE=true or clone manually before running setup.",
+                    metadata={
+                        "git_url": project.git_url,
+                        "local_path": project.local_path,
+                        "projects_root": str(DEFAULT_PROJECTS_ROOT),
+                    },
+                )
+                self.db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
+                self.db.append_event(protocol_run_id, "setup_blocked", "Setup blocked until repository is present.")
+                return
+            except Exception as exc:  # pragma: no cover - defensive
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_clone_failed",
+                    f"Repo clone failed: {exc}",
+                    metadata={"git_url": project.git_url, "projects_root": str(DEFAULT_PROJECTS_ROOT)},
+                )
+                self.db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
+                return
+
+            if repo_path.exists() and not repo_preexisting:
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_cloned",
+                    "Repository cloned for project setup.",
+                    metadata={"path": str(repo_path), "git_url": project.git_url},
+                )
+            if not project.local_path or Path(project.local_path).expanduser() != repo_path:
+                try:
+                    self.db.update_project_local_path(project.id, str(repo_path))
+                    self.db.append_event(
+                        protocol_run_id,
+                        "setup_local_path_recorded",
+                        "Recorded project local_path for future runs.",
+                        metadata={"local_path": str(repo_path)},
+                    )
+                except Exception:
+                    pass
+
+            # Discovery with event tracking.
+            self._run_discovery(repo_path, protocol_run_id)
+
+            # Ensure starter assets; warn but continue on failures.
+            try:
+                ensure_assets(repo_path)
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_assets",
+                    "Ensured starter assets (docs/prompts/CI scripts).",
+                    metadata={"path": str(repo_path)},
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_warning",
+                    f"Skipped asset provisioning: {exc}",
+                    metadata={"path": str(repo_path)},
+                )
+
+            # Git remote and identity configuration.
+            try:
+                prefer_ssh = prefer_github_ssh()
+                origin = configure_git_remote(repo_path, project.git_url, prefer_ssh_remote=prefer_ssh)
+                if origin:
+                    self.db.append_event(
+                        protocol_run_id,
+                        "setup_git_remote",
+                        f"Configured git origin (ssh={prefer_ssh}).",
+                        metadata={"path": str(repo_path), "origin": origin},
+                    )
+                user = os.environ.get("TASKSGODZILLA_GIT_USER")
+                email = os.environ.get("TASKSGODZILLA_GIT_EMAIL")
+                if configure_git_identity(repo_path, user, email):
+                    self.db.append_event(
+                        protocol_run_id,
+                        "setup_git_identity",
+                        "Configured git user.name/user.email.",
+                        metadata={"user": user, "email": email},
+                    )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_warning",
+                    f"Git identity configuration skipped: {exc}",
+                    metadata={"path": str(repo_path)},
+                )
+
+            # Clarifications with optional blocking.
+            questions = _build_clarifications(project, repo_path)
+            blocking = require_onboarding_clarifications()
+            self.db.append_event(
+                protocol_run_id,
+                "setup_clarifications",
+                "Review onboarding clarifications and confirm settings.",
+                metadata={"questions": questions, "blocking": blocking},
+            )
+            if blocking:
+                self.db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_blocked",
+                    "Awaiting onboarding clarification responses.",
+                    metadata={"questions": [q.get("key") for q in questions]},
+                )
+            else:
+                self.db.update_protocol_status(protocol_run_id, ProtocolStatus.COMPLETED)
+                self.db.append_event(protocol_run_id, "setup_completed", "Project setup job finished.")
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception(
+                "Project setup failed",
+                extra={
+                    **log_extra(project_id=project_id, protocol_run_id=protocol_run_id),
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            self.db.update_protocol_status(protocol_run_id, ProtocolStatus.FAILED)
+            self.db.append_event(protocol_run_id, "setup_failed", f"Setup failed: {exc}")
+
+    def _run_discovery(self, repo_path: Path, protocol_run_id: int) -> None:
+        """
+        Trigger Codex discovery automatically during onboarding. Emits events so
+        console/TUI/CLI can show progress regardless of success/failure/skip.
+        """
+        model = os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
+        timeout_env = os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "15")
+        try:
+            timeout_seconds = int(timeout_env)
+        except Exception:
+            timeout_seconds = 15
+        prompt_path = repo_path / "prompts" / "repo-discovery.prompt.md"
+        fallback_prompt = Path(__file__).resolve().parents[2] / "prompts" / "repo-discovery.prompt.md"
+
+        if shutil.which("codex") is None:
+            self.db.append_event(
+                protocol_run_id,
+                "setup_discovery_skipped",
+                "Discovery skipped: codex CLI not available.",
+                metadata={"path": str(repo_path), "model": model},
+            )
+            return
+
+        if not prompt_path.exists() and fallback_prompt.exists():
+            prompt_path = fallback_prompt
+
+        if not prompt_path.exists():
+            self.db.append_event(
+                protocol_run_id,
+                "setup_discovery_skipped",
+                "Discovery skipped: repo-discovery prompt missing.",
+                metadata={"path": str(repo_path)},
+            )
+            return
+
+        self.db.append_event(
+            protocol_run_id,
+            "setup_discovery_started",
+            "Running Codex repository discovery.",
+            metadata={
+                "path": str(repo_path),
+                "model": model,
+                "prompt": str(prompt_path),
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+        try:
+            run_codex_discovery(repo_path, model, prompt_file=prompt_path, timeout_seconds=timeout_seconds)
+            self.db.append_event(
+                protocol_run_id,
+                "setup_discovery_completed",
+                "Discovery finished.",
+                metadata={"path": str(repo_path), "model": model},
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            self.db.append_event(
+                protocol_run_id,
+                "setup_discovery_warning",
+                f"Discovery failed or was skipped: {exc}",
+                metadata={"path": str(repo_path), "model": model},
+            )
+
+
+def require_onboarding_clarifications() -> bool:
+    return os.environ.get("TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _build_clarifications(project, repo_path: Path):
+    """
+    Produce a list of clarification questions with recommended values to surface in UI/CLI/TUI.
+    """
+    recommended_ci = project.ci_provider or "github"
+    recommended_models = project.default_models or {
+        "planning": "gpt-5.1-high",
+        "exec": "codex-5.1-max-xhigh",
+    }
+    prefer_ssh = prefer_github_ssh()
+    git_user = os.environ.get("TASKSGODZILLA_GIT_USER") or ""
+    git_email = os.environ.get("TASKSGODZILLA_GIT_EMAIL") or ""
+    base_branch = project.base_branch or "main"
+    required_checks = [
+        "scripts/ci/test.sh",
+        "scripts/ci/lint.sh",
+        "scripts/ci/typecheck.sh",
+        "scripts/ci/build.sh",
+    ]
+    return [
+        {
+            "key": "ci_provider",
+            "question": "Which CI provider should be used for PR/MR automation?",
+            "recommended": recommended_ci,
+            "options": ["github", "gitlab"],
+        },
+        {
+            "key": "prefer_ssh",
+            "question": "Use SSH for Git operations?",
+            "recommended": prefer_ssh,
+            "detected": prefer_ssh,
+        },
+        {
+            "key": "git_identity",
+            "question": "Set git user.name / user.email for bot pushes?",
+            "recommended": {
+                "user": git_user or "Demo Bot",
+                "email": git_email or "demo-bot@example.com",
+            },
+            "detected": {"user": git_user or None, "email": git_email or None},
+        },
+        {
+            "key": "branch_naming",
+            "question": "Base branch and naming pattern for protocol branches?",
+            "recommended": {"base_branch": base_branch, "pattern": "<number>-<task>"},
+        },
+        {
+            "key": "required_checks",
+            "question": "Required checks before merge?",
+            "recommended": required_checks,
+        },
+        {
+            "key": "pr_policy",
+            "question": "PR policy (draft vs ready, auto-assign reviewers)?",
+            "recommended": {"mode": "draft", "auto_assign": False},
+        },
+        {
+            "key": "default_models",
+            "question": "Default models for planning/exec/QA?",
+            "recommended": recommended_models,
+        },
+        {
+            "key": "secrets",
+            "question": "Project secrets/tokens to inject?",
+            "recommended": ["TASKSGODZILLA_API_TOKEN", "TASKSGODZILLA_WEBHOOK_TOKEN"],
+        },
+        {
+            "key": "codex_discovery",
+            "question": "Run Codex discovery to auto-fill workflows?",
+            "recommended": True,
+        },
+    ]

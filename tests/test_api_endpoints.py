@@ -1,4 +1,8 @@
+import os
+import shutil
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -104,6 +108,165 @@ def test_api_projects_protocols_steps_end_to_end(
 
             ops = client.get("/events", params={"project_id": project_id}).json()
             assert any(o["protocol_run_id"] == protocol_run_id for o in ops)
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_onboarding_start_endpoint_enqueues_setup(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "api-test.sqlite"
+        repo_path = Path(tmpdir) / "repo"
+        repo_path.mkdir(parents=True, exist_ok=True)
+        # Minimal git init to satisfy onboarding path resolution.
+        subprocess.run(["git", "init"], cwd=repo_path, check=True)
+        (repo_path / "README.md").write_text("demo", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True)
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "tester",
+            "GIT_AUTHOR_EMAIL": "tester@example.com",
+            "GIT_COMMITTER_NAME": "tester",
+            "GIT_COMMITTER_EMAIL": "tester@example.com",
+        }
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo_path, check=True, env=env)
+
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
+
+        # Treat Codex as unavailable so discovery is skipped gracefully.
+        import tasksgodzilla.services.onboarding as onboarding_mod
+
+        monkeypatch.setattr(
+            onboarding_mod.shutil,
+            "which",
+            lambda name: None if name == "codex" else shutil.which(name),
+        )
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            # Create project (uses local path to avoid clone).
+            proj = client.post(
+                "/projects",
+                json={
+                    "name": "demo",
+                    "git_url": str(repo_path),
+                    "local_path": str(repo_path),
+                    "base_branch": "main",
+                },
+            ).json()
+            project_id = proj["id"]
+
+            # Trigger onboarding explicitly.
+            resp = client.post(f"/projects/{project_id}/onboarding/actions/start")
+            assert resp.status_code == 200
+            job = resp.json()["job"]
+            assert job["job_type"] == "project_setup_job"
+
+            # Wait briefly for inline worker to process onboarding.
+            setup_run_id = client.get(f"/projects/{project_id}/onboarding").json()["protocol_run_id"]
+            assert setup_run_id is not None
+
+            for _ in range(10):
+                summary = client.get(f"/projects/{project_id}/onboarding").json()
+                if summary["status"] in ("completed", "blocked"):
+                    break
+                time.sleep(0.2)
+            else:
+                assert False, "Expected onboarding to complete or block"
+
+            # Expect completion when repo is present locally.
+            assert summary["status"] == "completed"
+            events = client.get(f"/protocols/{setup_run_id}/events").json()
+            assert any(ev["event_type"] == "setup_completed" for ev in events)
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_run_step_qa_uses_orchestrator(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "api-test.sqlite"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            project = client.post(
+                "/projects",
+                json={
+                    "name": "demo",
+                    "git_url": "git@example.com/demo.git",
+                    "base_branch": "main",
+                },
+            ).json()
+            project_id = project["id"]
+            run = client.post(
+                f"/projects/{project_id}/protocols",
+                json={
+                    "protocol_name": "0002-demo",
+                    "status": "pending",
+                    "base_branch": "main",
+                },
+            ).json()
+            protocol_run_id = run["id"]
+            step = client.post(
+                f"/protocols/{protocol_run_id}/steps",
+                json={
+                    "step_index": 0,
+                    "step_name": "01-work",
+                    "step_type": "work",
+                    "status": "pending",
+                },
+            ).json()
+            step_id = step["id"]
+
+            resp = client.post(f"/steps/{step_id}/actions/run_qa")
+            assert resp.status_code == 200
+            job = resp.json()["job"]
+            assert job["job_type"] == "run_quality_job"
+
+            # Allow inline worker a moment; ensure step is marked needs_qa or completed.
+        for _ in range(5):
+            steps = client.get(f"/protocols/{protocol_run_id}/steps").json()
+            step_after = next((s for s in steps if s["id"] == step_id), None)
+            if step_after and step_after["status"] in ("needs_qa", "completed", "failed", "blocked"):
+                break
+            time.sleep(0.2)
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_open_pr_action_enqueues_job(redis_env: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "api-test.sqlite"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
+        # Ensure the inline worker is disabled so open_pr_job is only enqueued.
+        monkeypatch.setenv("TASKSGODZILLA_INLINE_RQ_WORKER", "false")
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            project = client.post(
+                "/projects",
+                json={
+                    "name": "demo",
+                    "git_url": "git@example.com/demo.git",
+                    "base_branch": "main",
+                },
+            ).json()
+            project_id = project["id"]
+            run = client.post(
+                f"/projects/{project_id}/protocols",
+                json={
+                    "protocol_name": "0003-demo",
+                    "status": "pending",
+                    "base_branch": "main",
+                },
+            ).json()
+            protocol_run_id = run["id"]
+
+            resp = client.post(f"/protocols/{protocol_run_id}/actions/open_pr")
+            assert resp.status_code == 200
+            job = resp.json()["job"]
+            assert job["job_type"] == "open_pr_job"
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
