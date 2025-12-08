@@ -41,6 +41,50 @@ Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to start a background RQ worker thread
 - `scripts/api_server.py`: uvicorn runner for the API.
 - `scripts/ci_trigger.py` and `scripts/ci/report.sh`: optional helpers to trigger CI and to post webhook-style results back into the orchestrator.
 
+## Services Layer
+
+The orchestrator uses a **service-oriented architecture** under `tasksgodzilla/services/` to provide stable, testable APIs for protocol lifecycle management. Services wrap existing worker implementations while establishing clear boundaries for future refactoring.
+
+### Application Services
+
+- **`OrchestratorService`** (`tasksgodzilla/services/orchestrator.py`)  
+  High-level protocol lifecycle management: create/start/pause/resume/cancel protocols, enqueue steps, handle retries. Used by API endpoints and worker job handlers.
+
+- **`SpecService`** (`tasksgodzilla/services/spec.py`)  
+  Build and validate ProtocolSpec/StepSpec from protocol files or CodeMachine configs. Ensures StepRun rows exist for each spec entry.
+
+- **`ExecutionService`** (`tasksgodzilla/services/execution.py`)  
+  Execute individual steps via the engine registry. Thin facade over worker implementation.
+
+- **`QualityService`** (`tasksgodzilla/services/quality.py`)  
+  Run QA checks for steps using spec-defined policies (skip/light/full). Delegates to worker for orchestrated runs or provides direct evaluation API.
+
+- **`OnboardingService`** (`tasksgodzilla/services/onboarding.py`)  
+  Project registration, workspace setup, and discovery flows. Handles repo cloning, starter assets, and clarifications.
+
+- **`DecompositionService`** (`tasksgodzilla/services/decomposition.py`)  
+  Step decomposition using existing pipeline helpers. Applies heuristics to skip simple steps.
+
+- **`PromptService`** (`tasksgodzilla/services/prompts.py`)  
+  Resolve prompt files with version fingerprinting.
+
+### Platform Services
+
+- **`QueueService`** (`tasksgodzilla/services/platform/queue.py`)  
+  Semantic enqueue helpers wrapping BaseQueue: `enqueue_plan_protocol`, `enqueue_execute_step`, `enqueue_run_quality`, etc.
+
+- **`TelemetryService`** (`tasksgodzilla/services/platform/telemetry.py`)  
+  Token observation and metrics delegation.
+
+### Integration Points
+
+- **API** (`tasksgodzilla/api/app.py`): Uses `OrchestratorService` and `OnboardingService` for protocol/project actions.
+- **Workers** (`tasksgodzilla/worker_runtime.py`): All job types (`plan_protocol_job`, `execute_step_job`, `run_quality_job`, `project_setup_job`, `open_pr_job`) delegate to services.
+- **Tests**: Comprehensive service-level tests in `tests/test_*service*.py` (31 tests across 6 files) ensure services work independently of worker internals.
+
+See `docs/services-architecture.md` for detailed service design and `docs/services-status.md` for implementation status.
+
+
 ## Workspace layout (per project)
 ```text
 projects/                  # TASKSGODZILLA_PROJECTS_ROOT (default)

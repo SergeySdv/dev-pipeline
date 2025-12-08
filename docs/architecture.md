@@ -31,6 +31,7 @@ projects/
 
 ## Control plane (orchestrator)
 - FastAPI API (`tasksgodzilla/api/app.py`) with bearer/project-token auth, queue stats, metrics, events feed, and webhook listeners.
+- **Services layer** (`tasksgodzilla/services/*`): Service-oriented architecture providing stable APIs for protocol lifecycle, execution, QA, onboarding, and spec management. See `docs/orchestrator.md` (Services Layer section) and `docs/services-architecture.md` for details.
 - Storage via SQLite (default) or Postgres (`TASKSGODZILLA_DB_URL`), initialized with Alembic migrations.
 - Redis/RQ queue (`tasksgodzilla/jobs.py`, `worker_runtime.py`) with optional inline worker for local dev (`TASKSGODZILLA_INLINE_RQ_WORKER=true`); workers process planning/execution/QA/PR jobs.
 - ProtocolSpec/StepSpec lives on `ProtocolRun.template_config` and drives step creation, engine selection, prompt/output resolution, and QA policy via a shared resolver + engine registry.

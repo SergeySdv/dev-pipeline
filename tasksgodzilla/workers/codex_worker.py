@@ -11,7 +11,8 @@ from typing import List, Optional
 
 import tasksgodzilla.engines_codex  # noqa: F401 - ensure Codex engine is registered
 
-from tasksgodzilla.codex import run_process, enforce_token_budget, estimate_tokens
+from tasksgodzilla.codex import run_process
+
 from tasksgodzilla.config import load_config
 from tasksgodzilla.logging import get_logger, log_extra
 from tasksgodzilla.domain import ProtocolRun, ProtocolStatus, StepRun, StepStatus
@@ -33,16 +34,16 @@ from tasksgodzilla.pipeline import (
     write_protocol_files,
 )
 from tasksgodzilla.storage import BaseDatabase
-from tasksgodzilla.ci import trigger_ci
+
 from tasksgodzilla.qa import build_prompt, determine_verdict
 from tasksgodzilla.workers.state import maybe_complete_protocol
 from tasksgodzilla.metrics import metrics
 from tasksgodzilla.engines import EngineRequest, registry
 from tasksgodzilla.engine_resolver import resolve_prompt_and_outputs
 from tasksgodzilla.workers.unified_runner import execute_step_unified, run_qa_unified
-from tasksgodzilla.jobs import RedisQueue
+from tasksgodzilla.jobs import BaseQueue
 from tasksgodzilla.project_setup import auto_clone_enabled, local_repo_dir
-from tasksgodzilla.git_utils import create_github_pr, resolve_project_repo_path
+from tasksgodzilla.git_utils import resolve_project_repo_path
 from tasksgodzilla.spec import (
     PROTOCOL_SPEC_KEY,
     build_spec_from_protocol_files,
@@ -54,27 +55,18 @@ from tasksgodzilla.spec import (
     validate_step_spec_paths,
     validate_protocol_spec,
 )
+from tasksgodzilla.services.git import GitService
+
+from tasksgodzilla.services.budget import BudgetService
+from tasksgodzilla.services.orchestrator import OrchestratorService
 
 log = get_logger(__name__)
-MAX_INLINE_TRIGGER_DEPTH = 3
+# MAX_INLINE_TRIGGER_DEPTH moved to OrchestratorService
 SINGLE_WORKTREE = os.environ.get("TASKSGODZILLA_SINGLE_WORKTREE", "true").lower() in ("1", "true", "yes", "on")
 DEFAULT_WORKTREE_BRANCH = os.environ.get("TASKSGODZILLA_WORKTREE_BRANCH", "tasksgodzilla-worktree")
 
 
-def _worktree_branch_name(protocol_name: str) -> str:
-    """
-    Resolve the branch name to use for worktrees. Defaults to a shared branch to
-    avoid creating many per-protocol branches unless overridden.
-    """
-    if not SINGLE_WORKTREE:
-        return protocol_name
-    return DEFAULT_WORKTREE_BRANCH
 
-
-def _worktree_path(repo_root: Path, protocol_name: str) -> tuple[Path, str]:
-    branch_name = _worktree_branch_name(protocol_name)
-    worktrees_root = repo_root.parent / "worktrees"
-    return worktrees_root / branch_name, branch_name
 
 
 def _log_context(
@@ -95,185 +87,13 @@ def _log_context(
     )
 
 
-def _repo_root_or_block(
-    project,
-    run: ProtocolRun,
-    db: BaseDatabase,
-    *,
-    job_id: Optional[str] = None,
-    clone_if_missing: Optional[bool] = None,
-    block_on_missing: bool = True,
-) -> Optional[Path]:
-    """
-    Resolve (and optionally clone) the project repository. Marks the protocol as blocked and
-    emits an event when the repo is unavailable.
-    """
-    try:
-        repo_root = resolve_project_repo_path(
-            project.git_url,
-            project.name,
-            project.local_path,
-            project_id=project.id,
-            clone_if_missing=clone_if_missing,
-        )
-    except FileNotFoundError as exc:
-        db.append_event(
-            run.id,
-            "repo_missing",
-            f"Repository not present locally: {exc}",
-            metadata={"git_url": project.git_url},
-        )
-        if block_on_missing:
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        return None
-    except Exception as exc:  # pragma: no cover - defensive
-        log.warning(
-            "Repo unavailable",
-            extra={
-                **_log_context(run=run, job_id=job_id, project_id=project.id),
-                "error": str(exc),
-                "error_type": exc.__class__.__name__,
-            },
-        )
-        db.append_event(
-            run.id,
-            "repo_clone_failed",
-            f"Repository clone failed: {exc}",
-            metadata={"git_url": project.git_url},
-        )
-        if block_on_missing:
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        return None
-    if not repo_root.exists():
-        db.append_event(
-            run.id,
-            "repo_missing",
-            "Repository path not available locally.",
-            metadata={"git_url": project.git_url, "resolved_path": str(repo_root)},
-        )
-        if block_on_missing:
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        return None
-    return repo_root
 
 
-def _remote_branch_exists(repo_root: Path, branch: str) -> bool:
-    try:
-        result = run_process(
-            ["git", "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
 
 
-def _enqueue_trigger_target(
-    step_run_id: int,
-    protocol_run_id: int,
-    db: BaseDatabase,
-    source: str,
-    inline_depth: int = 0,
-) -> Optional[dict]:
-    """
-    Enqueue a triggered step for execution. If Redis is unavailable, fall back
-    to synchronous inline execution to mirror CodeMachine's immediate trigger behavior.
-    """
-    config = load_config()
-    if inline_depth >= MAX_INLINE_TRIGGER_DEPTH:
-        db.append_event(
-            protocol_run_id,
-            "trigger_inline_depth_exceeded",
-            f"Inline trigger depth exceeded ({inline_depth}/{MAX_INLINE_TRIGGER_DEPTH}).",
-            step_run_id=step_run_id,
-            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-        )
-        return None
-    queue = None
-    if config.redis_url:
-        try:
-            queue = RedisQueue(config.redis_url)
-            job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
-            db.append_event(
-                protocol_run_id,
-                "trigger_enqueued",
-                "Triggered step enqueued for execution.",
-                step_run_id=step_run_id,
-                metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-            )
-            return job.asdict()
-        except Exception as exc:  # pragma: no cover - best effort
-            db.append_event(
-                protocol_run_id,
-                "trigger_enqueue_failed",
-                f"Failed to enqueue triggered step: {exc}",
-                step_run_id=step_run_id,
-                metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-            )
-            return None
-    target: Optional[StepRun] = None
-    target_qa_skip = False
-    try:
-        target = db.get_step_run(step_run_id)
-        try:
-            run = db.get_protocol_run(protocol_run_id)
-            target_spec = get_step_spec(run.template_config, target.step_name) or {}
-            target_qa_skip = (target_spec.get("qa") or {}).get("policy") == "skip"
-        except Exception:
-            target_qa_skip = False
-    except Exception:
-        target = None
-    if queue is None and target_qa_skip:
-        db.append_event(
-            protocol_run_id,
-            "trigger_pending",
-            "Triggered step pending; no queue configured.",
-            step_run_id=step_run_id,
-            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-        )
-        return None
-    # Inline fallback for dev/local without Redis.
-    try:
-        target = target or db.get_step_run(step_run_id)
-        merged_state = dict(target.runtime_state or {})
-        merged_state["inline_trigger_depth"] = inline_depth
-        db.update_step_status(step_run_id, StepStatus.RUNNING, summary="Triggered (inline)", runtime_state=merged_state)
-        db.append_event(
-            protocol_run_id,
-            "trigger_executed_inline",
-            "Triggered step executed inline (no queue configured).",
-            step_run_id=step_run_id,
-            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-        )
-        handle_execute_step(step_run_id, db)
-        return {"inline": True, "target_step_id": step_run_id}
-    except Exception as exc:  # pragma: no cover - best effort
-        db.append_event(
-            protocol_run_id,
-            "trigger_inline_failed",
-            f"Inline trigger failed: {exc}",
-            step_run_id=step_run_id,
-            metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
-        )
-        try:
-            db.update_step_status(step_run_id, StepStatus.FAILED, summary=f"Trigger inline failed: {exc}")
-        except Exception:
-            pass
-        return None
 
 
-def _budget_and_tokens(prompt_text: str, model: str, phase: str, token_budget_mode: str, max_tokens: Optional[int]) -> int:
-    """
-    Enforce configured token budgets and record estimated usage for observability.
-    Returns the estimated token count for the prompt.
-    """
-    enforce_token_budget(prompt_text, max_tokens, phase, mode=token_budget_mode)
-    estimated = estimate_tokens(prompt_text)
-    metrics.observe_tokens(phase, model, estimated)
-    return estimated
+
 
 
 def _protocol_and_workspace_paths(run: ProtocolRun, project) -> tuple[Path, Path]:
@@ -371,207 +191,10 @@ def sync_step_runs_from_protocol(protocol_root: Path, protocol_run_id: int, db: 
     return create_steps_from_spec(protocol_run_id, spec, db, existing_names=existing)
 
 
-def load_project(
-    repo_root: Path,
-    protocol_name: str,
-    base_branch: str,
-    *,
-    protocol_run_id: Optional[int] = None,
-    project_id: Optional[int] = None,
-    job_id: Optional[str] = None,
-) -> Path:
-    worktree, branch_name = _worktree_path(repo_root, protocol_name)
-    if not worktree.exists():
-        log.info(
-            "creating_worktree",
-            extra={
-                **_log_context(protocol_run_id=protocol_run_id, project_id=project_id, job_id=job_id),
-                "protocol_name": protocol_name,
-                "branch": branch_name,
-                "base_branch": base_branch,
-            },
-        )
-        run_process(
-            [
-                "git",
-                "worktree",
-                "add",
-                "--checkout",
-                "-b",
-                branch_name,
-                str(worktree),
-                f"origin/{base_branch}",
-            ],
-            cwd=repo_root,
-        )
-    return worktree
 
 
-def _load_project_with_context(
-    repo_root: Path,
-    protocol_name: str,
-    base_branch: str,
-    *,
-    protocol_run_id: Optional[int] = None,
-    project_id: Optional[int] = None,
-    job_id: Optional[str] = None,
-) -> Path:
-    """
-    Call `load_project`, but tolerate monkeypatched versions in tests that only
-    accept positional args. This preserves logging when our implementation is
-    used while keeping compatibility with simple stubs.
-    """
-    try:
-        return load_project(
-            repo_root,
-            protocol_name,
-            base_branch,
-            protocol_run_id=protocol_run_id,
-            project_id=project_id,
-            job_id=job_id,
-        )
-    except TypeError:
-        return load_project(repo_root, protocol_name, base_branch)
 
 
-def git_push_and_open_pr(
-    worktree: Path,
-    protocol_name: str,
-    base_branch: str,
-    *,
-    protocol_run_id: Optional[int] = None,
-    project_id: Optional[int] = None,
-    job_id: Optional[str] = None,
-) -> bool:
-    pushed = False
-    branch_exists = False
-    commit_attempted = False
-    try:
-        run_process(["git", "add", "."], cwd=worktree, capture_output=True, text=True)
-        try:
-            commit_attempted = True
-            run_process(
-                ["git", "commit", "-m", f"chore: sync protocol {protocol_name}"],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-            )
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "nothing to commit" in msg or "no changes added to commit" in msg or "clean" in msg:
-                log.info(
-                    "No changes to commit; pushing existing branch state",
-                    extra={
-                        **_log_context(protocol_run_id=protocol_run_id, project_id=project_id, job_id=job_id),
-                        "protocol_name": protocol_name,
-                        "base_branch": base_branch,
-                    },
-                )
-            else:
-                raise
-        run_process(
-            ["git", "push", "--set-upstream", "origin", protocol_name],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-        )
-        pushed = True
-    except Exception as exc:
-        branch_exists = _remote_branch_exists(worktree, protocol_name)
-        log.warning(
-            "Failed to push branch",
-            extra={
-                **_log_context(protocol_run_id=protocol_run_id, project_id=project_id, job_id=job_id),
-                "protocol_name": protocol_name,
-                "base_branch": base_branch,
-                "error": str(exc),
-                "error_type": exc.__class__.__name__,
-                "branch_exists": branch_exists,
-                "commit_attempted": commit_attempted,
-            },
-        )
-        if not branch_exists:
-            try:
-                run_process(
-                    ["git", "push", "--set-upstream", "origin", protocol_name],
-                    cwd=worktree,
-                    capture_output=True,
-                    text=True,
-                )
-                return True
-            except Exception:
-                return False
-    # Attempt PR/MR creation if CLI is available
-    pr_title = f"WIP: {protocol_name}"
-    pr_body = f"Protocol {protocol_name} in progress"
-    if shutil.which("gh"):
-        try:
-            run_process(
-                [
-                    "gh",
-                    "pr",
-                    "create",
-                    "--title",
-                    pr_title,
-                    "--body",
-                    pr_body,
-                    "--base",
-                    base_branch,
-                ],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-            )
-        except Exception:
-            pass
-    elif shutil.which("glab"):
-        try:
-            run_process(
-                [
-                    "glab",
-                    "mr",
-                    "create",
-                    "--title",
-                    pr_title,
-                    "--description",
-                    pr_body,
-                    "--target-branch",
-                    base_branch,
-                ],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-            )
-        except Exception:
-            pass
-    else:
-        if create_github_pr(worktree, head=protocol_name, base=base_branch, title=pr_title, body=pr_body):
-            pushed = True
-    return pushed or branch_exists
-
-
-def trigger_ci_pipeline(
-    repo_root: Path,
-    branch: str,
-    ci_provider: Optional[str],
-    *,
-    protocol_run_id: Optional[int] = None,
-    project_id: Optional[int] = None,
-    job_id: Optional[str] = None,
-) -> bool:
-    """Best-effort CI trigger after push (gh/glab)."""
-    provider = (ci_provider or "github").lower()
-    result = trigger_ci(provider, repo_root, branch)
-    log.info(
-        "CI trigger",
-        extra={
-            **_log_context(protocol_run_id=protocol_run_id, project_id=project_id, job_id=job_id),
-            "provider": provider,
-            "branch": branch,
-            "triggered": result,
-        },
-    )
-    return result
 
 
 def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str] = None) -> None:
@@ -581,7 +204,9 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
     planning_prompt_path = None
     workspace_hint: Optional[Path] = None
     protocol_hint: Optional[Path] = None
-    branch_name = _worktree_branch_name(run.protocol_name)
+    git_service = GitService(db)
+    budget_service = BudgetService()
+    branch_name = git_service.get_branch_name(run.protocol_name)
 
     def _stub_plan(reason: str, *, error: Optional[str] = None) -> None:
         workspace_root, protocol_root = _protocol_and_workspace_paths(run, project)
@@ -646,11 +271,11 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         _stub_plan("codex unavailable")
         return
 
-    repo_root = _repo_root_or_block(project, run, db, job_id=job_id)
+    repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
     if repo_root is None:
         return
 
-    worktree = _load_project_with_context(
+    worktree = git_service.ensure_worktree(
         repo_root,
         run.protocol_name,
         run.base_branch,
@@ -681,8 +306,9 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         worktree_root=worktree,
         templates_section=templates,
     )
-    planning_tokens = _budget_and_tokens(planning_text, planning_model, "planning", config.token_budget_mode, budget_limit)
-
+    planning_tokens = budget_service.check_and_track(
+        planning_text, planning_model, "planning", config.token_budget_mode, budget_limit
+    )
     engine = registry.get_default()
     planning_request = EngineRequest(
         project_id=project.id,
@@ -798,8 +424,9 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
             step_file.name,
             step_content,
         )
-        decompose_tokens += _budget_and_tokens(dec_text, decompose_model, "decompose", config.token_budget_mode, budget_limit)
-
+        decompose_tokens += budget_service.check_and_track(
+            dec_text, decompose_model, "decompose", config.token_budget_mode, budget_limit
+        )
         decompose_request = EngineRequest(
             project_id=project.id,
             protocol_run_id=run.id,
@@ -850,18 +477,18 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
     )
 
     # Best-effort push/PR to surface changes in CI
-    pushed = git_push_and_open_pr(
+    pushed = git_service.push_and_open_pr(
         worktree,
-        branch_name,
+        run.protocol_name,
         run.base_branch,
         protocol_run_id=run.id,
         project_id=project.id,
         job_id=job_id,
     )
     if pushed:
-        triggered = trigger_ci_pipeline(
+        triggered = git_service.trigger_ci(
             repo_root,
-            branch_name,
+            run.protocol_name,
             project.ci_provider,
             protocol_run_id=run.id,
             project_id=project.id,
@@ -876,7 +503,10 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     run = db.get_protocol_run(step.protocol_run_id)
     project = db.get_project(run.project_id)
     config = load_config()
-    branch_name = _worktree_branch_name(run.protocol_name)
+    git_service = GitService(db)
+    budget_service = BudgetService()
+    orchestrator = OrchestratorService(db)
+    branch_name = git_service.get_branch_name(run.protocol_name)
     auto_clone = auto_clone_enabled()
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
     step_spec = get_step_spec(run.template_config, step.step_name)
@@ -920,10 +550,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_policy")
             if trigger_decision and trigger_decision.get("applied"):
                 db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-                _enqueue_trigger_target(
+                orchestrator.trigger_step(
                     trigger_decision["target_step_id"],
                     run.id,
-                    db,
                     source="qa_skipped_policy",
                     inline_depth=trigger_decision.get("inline_depth", 0),
                 )
@@ -940,10 +569,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         trigger_decision = apply_trigger_policies(step, db, reason="exec_stub")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
+            orchestrator.trigger_step(
                 trigger_decision["target_step_id"],
                 run.id,
-                db,
                 source="exec_stub",
                 inline_depth=trigger_decision.get("inline_depth", 0),
             )
@@ -958,15 +586,14 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             handle_quality(step.id, db, job_id=job_id)
 
     if codemachine:
-        repo_root = _repo_root_or_block(project, run, db, job_id=job_id)
+        repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
         if repo_root is None:
             db.update_step_status(step.id, StepStatus.BLOCKED, summary="Repository unavailable")
             return
     else:
-        repo_root = _repo_root_or_block(
+        repo_root = git_service.ensure_repo_or_block(
             project,
             run,
-            db,
             job_id=job_id,
             block_on_missing=False,
             clone_if_missing=auto_clone,
@@ -982,7 +609,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         if shutil.which("codex") is None:
             _stub_execute("codex unavailable")
             return
-        worktree = _load_project_with_context(
+        worktree = git_service.ensure_worktree(
             repo_root,
             run.protocol_name,
             run.base_branch,
@@ -1115,7 +742,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         _stub_execute("codex unavailable")
         return
 
-    exec_tokens = _budget_and_tokens(resolution.prompt_text, exec_model, "exec", config.token_budget_mode, budget_limit)
+    exec_tokens = budget_service.check_and_track(
+        resolution.prompt_text, exec_model, "exec", config.token_budget_mode, budget_limit
+    )
     db.append_event(
         step.protocol_run_id,
         "step_started",
@@ -1167,10 +796,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         trigger_decision = apply_trigger_policies(step, db, reason="exec_failed")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
+            orchestrator.trigger_step(
                 trigger_decision["target_step_id"],
                 run.id,
-                db,
                 source="exec_failed",
                 inline_depth=trigger_decision.get("inline_depth", 0),
             )
@@ -1179,18 +807,18 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         return
 
     if kind == "codex":
-        pushed = git_push_and_open_pr(
+        pushed = git_service.push_and_open_pr(
             workspace_root,
-            branch_name,
+            run.protocol_name,
             run.base_branch,
             protocol_run_id=run.id,
             project_id=project.id,
             job_id=job_id,
         )
         if pushed:
-            triggered = trigger_ci_pipeline(
+            triggered = git_service.trigger_ci(
                 workspace_root,
-                branch_name,
+                run.protocol_name,
                 project.ci_provider,
                 protocol_run_id=run.id,
                 project_id=project.id,
@@ -1200,7 +828,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 db.append_event(step.protocol_run_id, "ci_triggered", "CI triggered after push.", step_run_id=step.id, metadata={"branch": run.protocol_name})
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
         else:
-            if _remote_branch_exists(workspace_root, run.protocol_name):
+            if git_service.remote_branch_exists(workspace_root, run.protocol_name):
                 db.append_event(
                     step.protocol_run_id,
                     "open_pr_branch_exists",
@@ -1253,10 +881,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
     trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
     if trigger_decision and trigger_decision.get("applied"):
         db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        _enqueue_trigger_target(
+        orchestrator.trigger_step(
             trigger_decision["target_step_id"],
             run.id,
-            db,
             source="exec_completed",
             inline_depth=trigger_decision.get("inline_depth", 0),
         )
@@ -1291,7 +918,9 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 handle_quality(step.id, db, job_id=job_id)
             return
 
-        qa_tokens = _budget_and_tokens(qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit)
+        qa_tokens = budget_service.check_and_track(
+            qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit
+        )
         try:
             qa_result = run_qa_unified(
                 resolution,
@@ -1363,11 +992,10 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
             if trigger_decision and trigger_decision.get("applied"):
                 db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-                _enqueue_trigger_target(
+                orchestrator.trigger_step(
                     trigger_decision["target_step_id"],
                     run.id,
-                    db,
-                    source="qa_passed",
+                    source="qa_stub_pass",
                     inline_depth=trigger_decision.get("inline_depth", 0),
                 )
             maybe_complete_protocol(step.protocol_run_id, db)
@@ -1393,7 +1021,29 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
     run = db.get_protocol_run(step.protocol_run_id)
     project = db.get_project(run.project_id)
     config = load_config()
-    auto_clone = auto_clone_enabled()
+    git_service = GitService(db)
+    budget_service = BudgetService()
+    orchestrator = OrchestratorService(db)
+
+    repo_root = git_service.ensure_repo_or_block(
+        project, run, job_id=job_id, block_on_missing=False
+    )
+    # If missing but we are single-worktree, likely repo is at projects/local_path. If missing, fail.
+    # Actually, QA might run on a machine without the worktree if sandboxed?
+    # For now assume same machine.
+    if not repo_root or not repo_root.exists():
+        repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
+        if not repo_root:
+            return
+
+    worktree = git_service.ensure_worktree(
+        repo_root,
+        run.protocol_name,
+        run.base_branch,
+        protocol_run_id=run.id,
+        project_id=project.id,
+        job_id=job_id,
+    )
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
     workspace_hint, protocol_hint = _protocol_and_workspace_paths(run, project)
     log.info(
@@ -1426,46 +1076,14 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_policy")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
+            orchestrator.trigger_step(
                 trigger_decision["target_step_id"],
                 run.id,
-                db,
-                source="qa_skipped_policy",
+                source="exec_failed",
                 inline_depth=trigger_decision.get("inline_depth", 0),
             )
         maybe_complete_protocol(step.protocol_run_id, db)
         return
-
-    repo_root = _repo_root_or_block(
-        project,
-        run,
-        db,
-        job_id=job_id,
-        block_on_missing=auto_clone,
-    )
-    if repo_root is None:
-        db.update_step_status(step.id, StepStatus.BLOCKED, summary="QA blocked; repository unavailable")
-        db.append_event(
-            step.protocol_run_id,
-            "qa_blocked_repo",
-            "QA blocked; repository unavailable.",
-            step_run_id=step.id,
-            metadata={"spec_hash": spec_hash_val},
-        )
-        db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
-        return
-
-    if (repo_root / ".git").exists():
-        worktree = _load_project_with_context(
-            repo_root,
-            run.protocol_name,
-            run.base_branch,
-            protocol_run_id=run.id,
-            project_id=run.project_id,
-            job_id=job_id,
-        )
-    else:
-        worktree = repo_root
 
     protocol_root = worktree / ".protocols" / run.protocol_name
     qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, worktree)
@@ -1511,10 +1129,9 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         trigger_decision = apply_trigger_policies(step, db, reason="qa_stub_pass")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
+            orchestrator.trigger_step(
                 trigger_decision["target_step_id"],
                 run.id,
-                db,
                 source="qa_stub_pass",
                 inline_depth=trigger_decision.get("inline_depth", 0),
             )
@@ -1531,7 +1148,9 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         protocol_spec=protocol_spec,
         default_engine_id=qa_engine_id,
     )
-    qa_tokens = _budget_and_tokens(qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit)
+    qa_tokens = budget_service.check_and_track(
+        qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit
+    )
 
     try:
         qa_result = run_qa_unified(
@@ -1633,10 +1252,9 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
         if trigger_decision and trigger_decision.get("applied"):
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            _enqueue_trigger_target(
+            orchestrator.trigger_step(
                 trigger_decision["target_step_id"],
                 run.id,
-                db,
                 source="qa_passed",
                 inline_depth=trigger_decision.get("inline_depth", 0),
             )
@@ -1647,7 +1265,9 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
 def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str] = None) -> None:
     run = db.get_protocol_run(protocol_run_id)
     project = db.get_project(run.project_id)
-    repo_root = _repo_root_or_block(project, run, db, job_id=job_id)
+    git_service = GitService(db)
+    
+    repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
     if not repo_root:
         db.append_event(
             run.id,
@@ -1657,7 +1277,7 @@ def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str]
         )
         return
     try:
-        worktree = _load_project_with_context(
+        worktree = git_service.ensure_worktree(
             repo_root,
             run.protocol_name,
             run.base_branch,
@@ -1665,9 +1285,10 @@ def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str]
             project_id=project.id,
             job_id=job_id,
         )
-        pushed = git_push_and_open_pr(
+        branch_name = git_service.get_branch_name(run.protocol_name)
+        pushed = git_service.push_and_open_pr(
             worktree,
-            branch_name,
+            run.protocol_name,
             run.base_branch,
             protocol_run_id=run.id,
             project_id=project.id,
@@ -1675,7 +1296,7 @@ def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str]
         )
         if pushed:
             db.append_event(run.id, "open_pr", "Branch pushed and PR/MR requested.", metadata={"branch": branch_name})
-            triggered = trigger_ci_pipeline(
+            triggered = git_service.trigger_ci(
                 repo_root,
                 branch_name,
                 project.ci_provider,
@@ -1692,7 +1313,7 @@ def handle_open_pr(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str]
                 )
             db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
         else:
-            if _remote_branch_exists(repo_root, run.protocol_name):
+            if git_service._remote_branch_exists(repo_root, run.protocol_name):
                 db.append_event(
                     run.id,
                     "open_pr_branch_exists",

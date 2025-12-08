@@ -7,15 +7,12 @@ from typing import Optional, Tuple
 from tasksgodzilla.logging import get_logger
 from tasksgodzilla.storage import BaseDatabase
 from tasksgodzilla.domain import ProtocolRun, ProtocolStatus, StepRun, StepStatus
-from tasksgodzilla.jobs import BaseQueue, Job
-from tasksgodzilla.workers.codex_worker import (
-    handle_plan_protocol,
-    handle_execute_step,
-    handle_open_pr,
-    sync_step_runs_from_protocol,
-)
+from tasksgodzilla.jobs import BaseQueue, Job, RedisQueue
+from tasksgodzilla.config import load_config
 
 log = get_logger(__name__)
+
+MAX_INLINE_TRIGGER_DEPTH = 3
 
 
 @dataclass
@@ -68,7 +65,7 @@ class OrchestratorService:
     def start_protocol_run(self, protocol_run_id: int, queue: BaseQueue) -> Job:
         """Transition a protocol to PLANNING and enqueue the planning job.
 
-        Raises ValueError when the protocol is not in a state that can be started.
+        Raises ValueError when the protocol is not a state that can be started.
         """
         run = self.db.get_protocol_run(protocol_run_id)
         if run.status not in (ProtocolStatus.PENDING, ProtocolStatus.PLANNED, ProtocolStatus.PAUSED):
@@ -132,11 +129,13 @@ class OrchestratorService:
 
     def plan_protocol(self, protocol_run_id: int, job_id: Optional[str] = None) -> None:
         """Plan a protocol run by delegating to the Codex worker."""
+        from tasksgodzilla.workers.codex_worker import handle_plan_protocol
         log.info("orchestrator_plan_protocol", extra={"protocol_run_id": protocol_run_id, "job_id": job_id})
         handle_plan_protocol(protocol_run_id, self.db, job_id=job_id)
 
     def execute_step(self, step_run_id: int, job_id: Optional[str] = None) -> None:
         """Execute a single step via the existing worker implementation."""
+        from tasksgodzilla.workers.codex_worker import handle_execute_step
         log.info("orchestrator_execute_step", extra={"step_run_id": step_run_id, "job_id": job_id})
         handle_execute_step(step_run_id, self.db, job_id=job_id)
 
@@ -203,6 +202,7 @@ class OrchestratorService:
 
     def open_protocol_pr(self, protocol_run_id: int, job_id: Optional[str] = None) -> None:
         """Open PR/MR for a protocol using the existing worker implementation."""
+        from tasksgodzilla.workers.codex_worker import handle_open_pr
         handle_open_pr(protocol_run_id, self.db, job_id=job_id)
 
     def enqueue_open_protocol_pr(self, protocol_run_id: int, queue: BaseQueue) -> Job:
@@ -216,4 +216,124 @@ class OrchestratorService:
 
     def sync_steps_from_protocol(self, protocol_run_id: int, protocol_root: Path) -> int:
         """Ensure StepRun rows exist for each protocol step file."""
+        from tasksgodzilla.workers.codex_worker import sync_step_runs_from_protocol
         return sync_step_runs_from_protocol(protocol_root, protocol_run_id, self.db)
+
+    def check_and_complete_protocol(self, protocol_run_id: int) -> bool:
+        """Mark protocol as completed if all steps are in terminal state.
+        
+        Returns True if the protocol was transitioned to completed.
+        """
+        run = self.db.get_protocol_run(protocol_run_id)
+        if run.status in (ProtocolStatus.COMPLETED, ProtocolStatus.CANCELLED, ProtocolStatus.FAILED, ProtocolStatus.BLOCKED):
+            return False
+
+        steps = self.db.list_step_runs(protocol_run_id)
+        if not steps:
+            return False
+
+        terminal = {StepStatus.COMPLETED, StepStatus.CANCELLED}
+        if any(step.status not in terminal for step in steps):
+            return False
+
+        self.db.update_protocol_status(protocol_run_id, ProtocolStatus.COMPLETED)
+        self.db.append_event(protocol_run_id, "protocol_completed", "All steps completed; protocol closed.")
+        log.info("protocol_completed", extra={"protocol_run_id": run.id, "project_id": run.project_id})
+        return True
+
+    def trigger_step(
+        self,
+        step_run_id: int,
+        protocol_run_id: int,
+        source: str,
+        inline_depth: int = 0
+    ) -> Optional[dict]:
+        """Trigger execution of a step, either via queue or inline fallback."""
+        from tasksgodzilla.workers.codex_worker import handle_execute_step, get_step_spec
+
+        config = load_config()
+        if inline_depth >= MAX_INLINE_TRIGGER_DEPTH:
+            self.db.append_event(
+                protocol_run_id,
+                "trigger_inline_depth_exceeded",
+                f"Inline trigger depth exceeded ({inline_depth}/{MAX_INLINE_TRIGGER_DEPTH}).",
+                step_run_id=step_run_id,
+                metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+            )
+            return None
+
+        queue = None
+        if config.redis_url:
+            try:
+                queue = RedisQueue(config.redis_url)
+                job = queue.enqueue("execute_step_job", {"step_run_id": step_run_id})
+                self.db.append_event(
+                    protocol_run_id,
+                    "trigger_enqueued",
+                    "Triggered step enqueued for execution.",
+                    step_run_id=step_run_id,
+                    metadata={"job_id": job.job_id, "target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+                )
+                return job.asdict()
+            except Exception as exc:  # pragma: no cover - best effort
+                self.db.append_event(
+                    protocol_run_id,
+                    "trigger_enqueue_failed",
+                    f"Failed to enqueue triggered step: {exc}",
+                    step_run_id=step_run_id,
+                    metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+                )
+                return None
+
+        target: Optional[StepRun] = None
+        target_qa_skip = False
+        try:
+            target = self.db.get_step_run(step_run_id)
+            try:
+                run = self.db.get_protocol_run(protocol_run_id)
+                target_spec = get_step_spec(run.template_config, target.step_name) or {}
+                target_qa_skip = (target_spec.get("qa") or {}).get("policy") == "skip"
+            except Exception:
+                target_qa_skip = False
+        except Exception:
+            target = None
+
+        if queue is None and target_qa_skip:
+            self.db.append_event(
+                protocol_run_id,
+                "trigger_pending",
+                "Triggered step pending; no queue configured.",
+                step_run_id=step_run_id,
+                metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+            )
+            return None
+
+        # Inline fallback for dev/local without Redis.
+        try:
+            target = target or self.db.get_step_run(step_run_id)
+            merged_state = dict(target.runtime_state or {})
+            merged_state["inline_trigger_depth"] = inline_depth
+            self.db.update_step_status(step_run_id, StepStatus.RUNNING, summary="Triggered (inline)", runtime_state=merged_state)
+            self.db.append_event(
+                protocol_run_id,
+                "trigger_executed_inline",
+                "Triggered step executed inline (no queue configured).",
+                step_run_id=step_run_id,
+                metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+            )
+            handle_execute_step(step_run_id, self.db)
+            return {"inline": True, "target_step_id": step_run_id}
+        except Exception as exc:  # pragma: no cover - best effort
+            self.db.append_event(
+                protocol_run_id,
+                "trigger_inline_failed",
+                f"Inline trigger failed: {exc}",
+                step_run_id=step_run_id,
+                metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
+            )
+            try:
+                self.db.update_step_status(step_run_id, StepStatus.FAILED, summary=f"Trigger inline failed: {exc}")
+            except Exception:
+                pass
+            return None
+

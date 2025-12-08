@@ -57,21 +57,35 @@ service-oriented refactor. It complements `STATUS.md` (orchestrator track) and
     `OrchestratorService`, `SpecService`, `DecompositionService`, and `QualityService`.
   - Leave `codex_worker` as a thin adapter (or retire it once all callers use services).
 
-- [ ] **Service-level tests**
+- [x] **Service-level tests**
   - Add focused tests for each service:
-    - Orchestrator: protocol lifecycle transitions and policy behaviour.
-    - Execution: correct engine/model selection and output handling.
-    - Quality: QA policy handling and verdict propagation.
-    - Onboarding: project creation and workspace/onboarding flows.
-    - Spec: spec build/validate + step creation.
-  - Ensure tests do not depend on legacy worker internals.
+    - [x] Orchestrator: protocol lifecycle transitions and policy behaviour (`tests/test_orchestrator_service.py` - 10 tests)
+    - [x] Execution: correct delegation to worker (`tests/test_execution_service.py` - 2 tests)
+    - [x] Quality: QA delegation and direct evaluation (`tests/test_quality_service.py` - 4 tests)
+    - [x] Onboarding: project creation and workspace/onboarding flows (`tests/test_onboarding_service.py` - 2 tests)
+    - [x] Spec: spec build/validate + step creation (`tests/test_spec_service.py` - 6 tests)
+    - [x] Platform services: Queue and Telemetry (`tests/test_platform_services.py` - 7 tests)
+  - Tests use mocks and do not depend on legacy worker internals.
 
-- [ ] **Docs and migration notes**
-  - Update `docs/orchestrator.md` and `docs/architecture.md` to reference the
-    services layer as the main integration surface.
-  - Add short migration notes for contributors: “use services, not workers”.
+- [x] **Docs and migration notes**
+  - [x] Updated `docs/orchestrator.md` to include Services Layer section with all 9 services documented
+  - [x] Updated `docs/architecture.md` to reference services layer in control plane section
+  - [x] Created `docs/services-migration-guide.md` with comprehensive migration patterns and examples for contributors
+  - Services layer is now documented as the primary integration surface
 
 ## Current focus
 
-- Stabilize the initial `tasksgodzilla.services.*` APIs.
-- Identify and document the first API/CLI endpoints to migrate to services.
+- ✅ Service-level tests complete (31 tests across 6 test files)
+- ✅ Documentation updated to reflect services as primary integration surface
+- ✅ **Phase 1 Quick Wins Complete:**
+  - Created `CodeMachineService` for workspace imports
+  - Added `check_and_complete_protocol` to `OrchestratorService`
+  - Removed all direct worker imports from `api/app.py`
+  - All API routes now use services exclusively
+- ✅ **Phase 2 Structural Improvements Complete:**
+  - Extracted git logic to `GitService`
+  - Refactored `codex_worker.py` to use `GitService`
+  - Added comprehensive tests for `GitService` (40 total service tests)
+  - Added unit tests for `CodeMachineService`
+- Next: Phase 3 - Deep Refactoring (Budget, Triggers, Worker Slim-down)
+

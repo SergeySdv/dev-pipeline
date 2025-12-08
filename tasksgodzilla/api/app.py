@@ -22,11 +22,9 @@ from tasksgodzilla.metrics import metrics
 from tasksgodzilla.storage import BaseDatabase, create_database
 from tasksgodzilla.worker_runtime import RQWorkerThread, drain_once
 from tasksgodzilla.health import check_db
-from tasksgodzilla.workers.state import maybe_complete_protocol
-from tasksgodzilla.workers import codemachine_worker
 from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, SPEC_META_KEY, protocol_spec_hash
 from tasksgodzilla.run_registry import RunRegistry
-from tasksgodzilla.services import OrchestratorService, OnboardingService
+from tasksgodzilla.services import OrchestratorService, OnboardingService, CodeMachineService
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -181,6 +179,11 @@ def get_orchestrator(db: BaseDatabase = Depends(get_db)) -> OrchestratorService:
 def get_onboarding_service(db: BaseDatabase = Depends(get_db)) -> OnboardingService:
     """Dependency helper to construct an OnboardingService for API routes."""
     return OnboardingService(db=db)
+
+
+def get_codemachine_service(db: BaseDatabase = Depends(get_db)) -> CodeMachineService:
+    """Dependency helper to construct a CodeMachineService for API routes."""
+    return CodeMachineService(db=db)
 
 
 def require_auth(
@@ -729,6 +732,7 @@ def import_codemachine(
     payload: schemas.CodeMachineImportRequest,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    codemachine_service: CodeMachineService = Depends(get_codemachine_service),
     request: Request = None,
 ) -> schemas.CodeMachineImportResponse:
     if request:
@@ -775,7 +779,7 @@ def import_codemachine(
         )
 
     try:
-        codemachine_worker.import_codemachine_workspace(project.id, run.id, payload.workspace_path, db)
+        codemachine_service.import_workspace(project.id, run.id, payload.workspace_path)
     except ConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     run = db.get_protocol_run(run.id)
@@ -784,6 +788,7 @@ def import_codemachine(
         message="Imported CodeMachine workspace.",
         job=None,
     )
+
 
 
 @app.get("/projects/{project_id}/protocols", response_model=list[schemas.ProtocolRunOut], dependencies=[Depends(require_auth)])
@@ -1099,7 +1104,12 @@ def open_pr_now(
 
 
 @app.post("/steps/{step_id}/actions/approve", response_model=schemas.StepRunOut, dependencies=[Depends(require_auth)])
-def approve_step(step_id: int, db: BaseDatabase = Depends(get_db), request: Request = None) -> schemas.StepRunOut:
+def approve_step(
+    step_id: int,
+    db: BaseDatabase = Depends(get_db),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
+    request: Request = None
+) -> schemas.StepRunOut:
     if request:
         try:
             project_id = get_step_project(step_id, db)
@@ -1118,8 +1128,9 @@ def approve_step(step_id: int, db: BaseDatabase = Depends(get_db), request: Requ
         step_run_id=step.id,
         request=request,
     )
-    maybe_complete_protocol(step.protocol_run_id, db)
+    orchestrator.check_and_complete_protocol(step.protocol_run_id)
     return schemas.StepRunOut(**step.__dict__)
+
 
 
 @app.get("/protocols/{protocol_run_id}/events", response_model=list[schemas.EventOut], dependencies=[Depends(require_auth)])
@@ -1240,6 +1251,7 @@ async def github_webhook(
     protocol_run_id: Optional[int] = None,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
 ) -> schemas.ActionResponse:
     body = await request.body()
     payload = json.loads(body.decode("utf-8") or "{}")
@@ -1342,7 +1354,7 @@ async def github_webhook(
                 pass
         else:
             db.update_step_status(step.id, StepStatus.COMPLETED, summary="CI passed")
-            maybe_complete_protocol(run.id, db)
+            orchestrator.check_and_complete_protocol(run.id)
     elif step and normalized in running_states:
         db.update_step_status(step.id, StepStatus.RUNNING, summary="CI running")
     elif step and normalized in failure_states:
@@ -1382,6 +1394,7 @@ async def gitlab_webhook(
     protocol_run_id: Optional[int] = None,
     db: BaseDatabase = Depends(get_db),
     queue: jobs.BaseQueue = Depends(get_queue),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
 ) -> schemas.ActionResponse:
     body = await request.body()
     payload = json.loads(body.decode("utf-8") or "{}")
@@ -1462,7 +1475,7 @@ async def gitlab_webhook(
             )
         else:
             db.update_step_status(step.id, StepStatus.COMPLETED, summary="CI passed")
-            maybe_complete_protocol(run.id, db)
+            orchestrator.check_and_complete_protocol(run.id)
     elif step and normalized in running_states:
         db.update_step_status(step.id, StepStatus.RUNNING, summary="CI running")
     elif step and normalized in failure_states:

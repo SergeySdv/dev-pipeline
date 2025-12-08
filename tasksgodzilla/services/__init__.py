@@ -12,6 +12,9 @@ from .onboarding import OnboardingService
 from .quality import QualityService
 from .spec import SpecService
 from .orchestrator import OrchestratorService
+from .codemachine import CodeMachineService
+from .git import GitService
+from .budget import BudgetService
 
 __all__ = [
     "ExecutionService",
@@ -19,5 +22,7 @@ __all__ = [
     "QualityService",
     "SpecService",
     "OrchestratorService",
+    "CodeMachineService",
+    "GitService",
+    "BudgetService",
 ]
-
