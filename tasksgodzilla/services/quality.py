@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Dict, Any
 
 from tasksgodzilla.config import load_config
 from tasksgodzilla.logging import get_logger
-from tasksgodzilla.qa import QualityResult, run_quality_check
+from tasksgodzilla.qa import QualityResult, run_quality_check, determine_verdict
 from tasksgodzilla.storage import BaseDatabase
+from tasksgodzilla.domain import StepRun, ProtocolRun, StepStatus
+from tasksgodzilla.metrics import metrics
+from tasksgodzilla.engines import registry
+from tasksgodzilla.workers.unified_runner import run_qa_unified
+from tasksgodzilla.engine_resolver import StepResolution
 
 if TYPE_CHECKING:
     from tasksgodzilla.workers.codex_worker import handle_quality
@@ -28,17 +33,269 @@ class QualityService:
     default_model: Optional[str] = None
 
     def run_for_step_run(self, step_run_id: int, job_id: Optional[str] = None) -> None:
-        """
-        Run QA for a StepRun using the orchestrator's existing worker logic.
-
-        This is primarily used by background jobs (run_quality_job) and can be
-        refactored over time to move logic fully into the service layer.
-        """
+        """Run QA for a StepRun."""
+        import shutil
+        from tasksgodzilla.config import load_config
+        from tasksgodzilla.domain import ProtocolStatus
+        from tasksgodzilla.engine_resolver import resolve_prompt_and_outputs
+        from tasksgodzilla.engines import registry
+        from tasksgodzilla.errors import CodexCommandError
+        from tasksgodzilla.logging import get_logger, log_extra
+        from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, get_step_spec, protocol_spec_hash
+        from tasksgodzilla.services.budget import BudgetService
+        from tasksgodzilla.services.git import GitService
+        from tasksgodzilla.services.orchestrator import OrchestratorService
+        from tasksgodzilla.services.prompts import PromptService
+        from tasksgodzilla.services.spec import SpecService
+        from tasksgodzilla.workers.unified_runner import run_qa_unified
+        
         if self.db is None:
             raise ValueError("QualityService.db is required for step-run QA")
-        # Lazy import to avoid circular dependency
-        from tasksgodzilla.workers.codex_worker import handle_quality
-        handle_quality(step_run_id, self.db, job_id=job_id)
+        
+        log = get_logger(__name__)
+        step = self.db.get_step_run(step_run_id)
+        run = self.db.get_protocol_run(step.protocol_run_id)
+        project = self.db.get_project(run.project_id)
+        config = load_config()
+        git_service = GitService(self.db)
+        budget_service = BudgetService()
+        orchestrator = OrchestratorService(self.db)
+        spec_service = SpecService(self.db)
+
+        repo_root = git_service.ensure_repo_or_block(
+            project, run, job_id=job_id, block_on_missing=False
+        )
+        if not repo_root or not repo_root.exists():
+            repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
+            if not repo_root:
+                return
+
+        worktree = git_service.ensure_worktree(
+            repo_root,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=project.id,
+            job_id=job_id,
+        )
+        budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
+        workspace_hint, protocol_hint = spec_service.resolve_protocol_paths(run, project)
+        
+        log.info(
+            "Running QA",
+            extra={
+                **log_extra(
+                    job_id=job_id,
+                    project_id=run.project_id,
+                    protocol_run_id=run.id,
+                    step_run_id=step.id,
+                ),
+                "protocol_name": run.protocol_name,
+                "branch": run.protocol_name,
+                "step_name": step.step_name,
+            },
+        )
+        
+        step_spec = get_step_spec(run.template_config, step.step_name) or {}
+        if not step_spec:
+            step_spec = {"id": step.step_name, "name": step.step_name, "prompt_ref": step.step_name}
+        template_cfg = run.template_config or {}
+        protocol_spec = template_cfg.get(PROTOCOL_SPEC_KEY) if isinstance(template_cfg, dict) else None
+        spec_hash_val = protocol_spec_hash(protocol_spec) if protocol_spec else None
+        qa_cfg = (step_spec.get("qa") if step_spec else {}) or {}
+        qa_policy = qa_cfg.get("policy")
+        
+        if qa_policy == "skip":
+            self.db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped (policy)")
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_skipped_policy",
+                "QA skipped by policy.",
+                step_run_id=step.id,
+                metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
+            )
+            spec_service.append_protocol_log(protocol_hint, f"{step.step_name} QA skipped by policy.")
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
+            return
+
+        protocol_root = worktree / ".protocols" / run.protocol_name
+        prompt_service = PromptService(workspace_root=worktree)
+        qa_prompt_path, qa_prompt_version = prompt_service.resolve_qa_prompt(qa_cfg, protocol_root, worktree)
+        step_path = prompt_service.resolve_step_path_for_qa(protocol_root, step.step_name, worktree)
+        qa_context = prompt_service.build_qa_context(protocol_root, step_path, worktree)
+
+        qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
+        qa_body = f"""You are a QA orchestrator. Validate the current protocol step. Follow the checklist and output Markdown only (no fences).
+
+plan.md:
+{qa_context['plan']}
+
+context.md:
+{qa_context['context']}
+
+log.md (may be empty):
+{qa_context['log']}
+
+Step file ({qa_context['step_name']}):
+{qa_context['step']}
+
+Git status (porcelain):
+{qa_context['git_status']}
+
+Latest commit message:
+{qa_context['last_commit']}
+
+Use the format from the quality-validator prompt. If any blocking issue, verdict = FAIL."""
+        qa_prompt_full = f"{qa_prefix}\\n\\n{qa_body}"
+
+        qa_model = (
+            qa_cfg.get("model")
+            or (project.default_models.get("qa") if project.default_models else None)
+            or config.qa_model
+            or "codex-5.1-max"
+        )
+        qa_engine_id = qa_cfg.get("engine_id") or step.engine_id or registry.get_default().metadata.id
+
+        try:
+            registry.get(qa_engine_id)
+        except KeyError as exc:  # pragma: no cover - defensive guard
+            self.db.update_step_status(step.id, StepStatus.BLOCKED, summary=str(exc))
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_error",
+                f"QA failed to run: {exc}",
+                step_run_id=step.id,
+                metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
+            )
+            self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            return
+
+        def _qa_stub(reason: str) -> None:
+            self.db.update_step_status(step.id, StepStatus.COMPLETED, summary=f"QA passed (stub; {reason})")
+            metrics.inc_qa_verdict("pass")
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_passed",
+                f"QA passed (stub; {reason}).",
+                step_run_id=step.id,
+                metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model, "spec_hash": spec_hash_val},
+            )
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
+
+        if qa_engine_id == "codex" and shutil.which("codex") is None:
+            _qa_stub("codex unavailable")
+            return
+
+        resolution = resolve_prompt_and_outputs(
+            step_spec or {},
+            protocol_root=protocol_root,
+            workspace_root=worktree,
+            protocol_spec=protocol_spec,
+            default_engine_id=qa_engine_id,
+        )
+        qa_tokens = budget_service.check_and_track(
+            qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit
+        )
+
+        try:
+            qa_result = run_qa_unified(
+                resolution,
+                project_id=project.id,
+                protocol_run_id=run.id,
+                step_run_id=step.id,
+                qa_prompt_path=qa_prompt_path,
+                qa_prompt_text=qa_prompt_full,
+                qa_engine_id=qa_engine_id,
+                qa_model=qa_model,
+                sandbox="read-only",
+            )
+        except CodexCommandError as exc:
+            self.db.update_step_status(step.id, StepStatus.FAILED, summary=f"QA error: {exc}")
+            self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_error",
+                f"QA failed to run: {exc}",
+                step_run_id=step.id,
+                metadata={"error": str(exc), "error_type": exc.__class__.__name__, "engine_id": qa_engine_id, "spec_hash": spec_hash_val},
+            )
+            log.warning(
+                "qa_codex_failed",
+                extra={
+                    **log_extra(job_id=job_id, project_id=run.project_id, protocol_run_id=run.id, step_run_id=step.id),
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            raise
+        except Exception as exc:  # pragma: no cover - best effort
+            log.warning(
+                "QA job failed",
+                extra={
+                    **log_extra(job_id=job_id, project_id=run.project_id, protocol_run_id=run.id, step_run_id=step.id),
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            self.db.update_step_status(step.id, StepStatus.FAILED, summary=f"QA error: {exc}")
+            self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_error",
+                f"QA failed to run: {exc}",
+                step_run_id=step.id,
+                metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model},
+            )
+            metrics.inc_qa_verdict("fail")
+            return
+            
+        if not qa_result or not getattr(qa_result, "result", None):
+            _qa_stub("qa engine unavailable")
+            return
+
+        report_text = qa_result.result.stdout.strip() if getattr(qa_result.result, "stdout", None) else ""
+        report_path = protocol_root / "quality-report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_text, encoding="utf-8")
+        verdict = determine_verdict(report_text).upper()
+
+        if verdict == "FAIL":
+            self.db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_failed",
+                "QA failed via engine.",
+                step_run_id=step.id,
+                metadata={
+                    "protocol_run_id": run.id,
+                    "step_run_id": step.id,
+                    "estimated_tokens": {"qa": qa_tokens},
+                    "prompt_versions": {"qa": qa_prompt_version},
+                    "model": qa_model,
+                    "spec_hash": spec_hash_val,
+                },
+            )
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} QA FAIL ({qa_model}).")
+            orchestrator.handle_step_completion(step.id, qa_verdict="FAIL")
+            metrics.inc_qa_verdict("fail")
+        else:
+            self.db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS")
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_passed",
+                "QA passed via engine.",
+                step_run_id=step.id,
+                metadata={
+                    "protocol_run_id": run.id,
+                    "step_run_id": step.id,
+                    "estimated_tokens": {"qa": qa_tokens},
+                    "prompt_versions": {"qa": qa_prompt_version},
+                    "model": qa_model,
+                    "spec_hash": spec_hash_val},
+            )
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} QA PASS ({qa_model}).")
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
+            metrics.inc_qa_verdict("pass")
 
     def evaluate_step(
         self,
@@ -86,3 +343,165 @@ class QualityService:
             token_budget_mode=config.token_budget_mode,
             engine_id=engine_id,
         )
+
+    def run_inline_qa(
+        self,
+        step: StepRun,
+        run: ProtocolRun,
+        project: Any,
+        resolution: StepResolution,
+        qa_cfg: Dict[str, Any],
+        qa_context: Dict[str, str],
+        protocol_root: Path,
+        workspace_root: Path,
+        qa_prompt_path: Path,
+        qa_prompt_version: str,
+        spec_hash_val: Optional[str],
+        exec_model: str,
+        engine_id: str,
+        exec_tokens: int,
+        base_meta: Dict[str, Any],
+    ) -> None:
+        """
+        Run inline (light) QA for a step after execution.
+        
+        This method handles the inline QA workflow, including:
+        - Building the QA prompt
+        - Running the QA check
+        - Determining the verdict
+        - Updating step status and events
+        - Calling orchestrator for completion handling
+        """
+        if self.db is None:
+            raise ValueError("QualityService.db is required for inline QA")
+        
+        from tasksgodzilla.services.budget import BudgetService
+        from tasksgodzilla.services.orchestrator import OrchestratorService
+        from tasksgodzilla.services.spec import SpecService
+        
+        config = load_config()
+        budget_service = BudgetService()
+        orchestrator = OrchestratorService(self.db)
+        spec_service = SpecService(self.db)
+        budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
+        
+        qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
+        qa_body = f"""You are a QA orchestrator. Validate the current protocol step. Follow the checklist and output Markdown only (no fences).
+
+plan.md:
+{qa_context['plan']}
+
+context.md:
+{qa_context['context']}
+
+log.md (may be empty):
+{qa_context['log']}
+
+Step file ({qa_context['step_name']}):
+{qa_context['step']}
+
+Git status (porcelain):
+{qa_context['git_status']}
+
+Latest commit message:
+{qa_context['last_commit']}
+
+Use the format from the quality-validator prompt. If any blocking issue, verdict = FAIL."""
+        qa_prompt_full = f"{qa_prefix}\\n\\n{qa_body}\\n\\nKeep this QA brief; focus on must-fix issues only."
+        
+        qa_model = (
+            qa_cfg.get("model")
+            or (project.default_models.get("qa") if project.default_models else None)
+            or config.qa_model
+            or "codex-5.1-max"
+        )
+        qa_engine_id = qa_cfg.get("engine_id") or step.engine_id or registry.get_default().metadata.id
+        
+        try:
+            registry.get(qa_engine_id)
+        except KeyError as exc:  # pragma: no cover - defensive
+            self.db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Inline QA unavailable; run full QA", model=exec_model, engine_id=engine_id)
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_inline_error",
+                f"Inline QA unavailable: {exc}",
+                step_run_id=step.id,
+                metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
+            )
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA unavailable; run full QA.")
+            if getattr(config, "auto_qa_after_exec", False):
+                self.run_for_step_run(step.id)
+            return
+
+        qa_tokens = budget_service.check_and_track(
+            qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit
+        )
+        
+        try:
+            qa_result = run_qa_unified(
+                resolution,
+                project_id=project.id,
+                protocol_run_id=run.id,
+                step_run_id=step.id,
+                qa_prompt_path=qa_prompt_path,
+                qa_prompt_text=qa_prompt_full,
+                qa_engine_id=qa_engine_id,
+                qa_model=qa_model,
+                sandbox="read-only",
+            )
+            report_text = (
+                qa_result.result.stdout.strip()
+                if qa_result and qa_result.result and getattr(qa_result.result, "stdout", None)
+                else ""
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            self.db.update_step_status(step.id, StepStatus.NEEDS_QA, summary="Inline QA error; run full QA", model=exec_model, engine_id=engine_id)
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_inline_error",
+                f"Inline QA failed: {exc}",
+                step_run_id=step.id,
+                metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
+            )
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA errored; run full QA.")
+            if getattr(config, "auto_qa_after_exec", False):
+                self.run_for_step_run(step.id)
+            return
+
+        report_path = protocol_root / "quality-report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_text, encoding="utf-8")
+        verdict = determine_verdict(report_text).upper()
+        
+        qa_meta = {
+            **base_meta,
+            "estimated_tokens": {"exec": exec_tokens, "qa": qa_tokens},
+            "prompt_versions": {"exec": resolution.prompt_version, "qa": qa_prompt_version},
+            "qa_engine_id": qa_engine_id,
+            "qa_model": qa_model,
+        }
+        
+        if verdict == "FAIL":
+            self.db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL (inline)", model=exec_model, engine_id=engine_id)
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_failed_inline",
+                "Inline QA failed.",
+                step_run_id=step.id,
+                metadata=qa_meta,
+            )
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA FAIL ({qa_model}).")
+            orchestrator.handle_step_completion(step.id, qa_verdict="FAIL")
+            metrics.inc_qa_verdict("fail")
+        else:
+            self.db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS (inline)", model=exec_model, engine_id=engine_id)
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_passed_inline",
+                "Inline QA passed.",
+                step_run_id=step.id,
+                metadata=qa_meta,
+            )
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA PASS ({qa_model}).")
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
+            metrics.inc_qa_verdict("pass")
