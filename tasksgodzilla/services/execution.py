@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from tasksgodzilla.storage import BaseDatabase
-from tasksgodzilla.workers.codex_worker import handle_execute_step
+
+if TYPE_CHECKING:
+    from tasksgodzilla.workers.codex_worker import handle_execute_step
 
 
 @dataclass
@@ -19,5 +21,7 @@ class ExecutionService:
 
     def execute_step(self, step_run_id: int, job_id: Optional[str] = None) -> None:
         """Execute the given StepRun via the Codex worker."""
+        # Lazy import to avoid circular dependency
+        from tasksgodzilla.workers.codex_worker import handle_execute_step
         handle_execute_step(step_run_id, self.db, job_id=job_id)
 

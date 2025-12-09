@@ -19,7 +19,7 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
    # Optional: --clone-url <git-url> --run-discovery
    ```
 
-   This adds docs/prompts/CI/schema/pipeline scripts and can auto-fill CI commands via Codex discovery.
+   This adds docs/prompts/CI/schema/pipeline scripts and can auto-fill CI commands via Codex discovery. The setup process uses the **OnboardingService** to handle project initialization, repository resolution, and configuration.
 2. Fill CI commands in `scripts/ci/*.sh` for your stack (Node, Python, Java, Go, etc.). Workflows already call these scripts.
 3. Generate a protocol for your next task:
 
@@ -28,7 +28,7 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
    # Optional: --pr-platform github|gitlab, --run-step 01-some-step.md
    ```
 
-   This creates a worktree/branch `NNNN-<task>`, `.protocols/NNNN-<task>/plan.md` + step files, and can open a Draft PR/MR.
+   This creates a worktree/branch `NNNN-<task>`, `.protocols/NNNN-<task>/plan.md` + step files, and can open a Draft PR/MR. The pipeline uses **OrchestratorService** for protocol lifecycle management, **SpecService** for protocol spec building, and **GitService** for worktree/branch operations.
 4. Execute steps with Codex:
 
    ```bash
@@ -36,6 +36,8 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
      --sandbox workspace-write --ask-for-approval on-request \
      "Follow .protocols/NNNN-<task>/plan.md and the current step file to implement the next step."
    ```
+
+   Step execution is managed by **ExecutionService**, which resolves prompts via **PromptService**, tracks budgets via **BudgetService**, and dispatches to the appropriate engine.
 
 5. Validate a step (optional QA gate):
 
@@ -45,6 +47,8 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
      --step-file 01-some-step.md \
      --model codex-5.1-max
    ```
+
+   Quality validation uses **QualityService** to evaluate step outputs and determine pass/fail verdicts.
 
 Logging tip: set `TASKSGODZILLA_LOG_JSON=true` to emit structured JSON logs from CLIs/workers/API.
 Redis is required for orchestration; set `TASKSGODZILLA_REDIS_URL` (e.g., `redis://localhost:6379/15` or the compose endpoint `redis://localhost:6380/0`). Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` when you want the API to run a lightweight background worker in the same process for local dev/tests.
@@ -156,9 +160,11 @@ python -m tasksgodzilla.cli.tui           # panel-based dashboard with keybindin
 - `scripts/codex_ci_bootstrap.py` — helper to run Codex (codex-5.1-max by default) with the discovery prompt to fill CI scripts.
 - `scripts/quality_orchestrator.py` — Codex QA validator that checks a protocol step and writes a report.
 - `Makefile` — helper targets: `deps` (install orchestrator deps in `.venv`), `migrate` (alembic upgrade), `orchestrator-setup` (deps + migrate).
+- `tasksgodzilla/services/` — **Services layer** (primary integration point): Orchestrator, Execution, Quality, Onboarding, Spec, Prompt, Decomposition, Git, Budget, CodeMachine services, plus platform services (Queue, Storage, Telemetry, Engines).
+- `tasksgodzilla/api/` — **FastAPI application** that exposes HTTP endpoints by calling services.
 - `tasksgodzilla/api/frontend/` — lightweight web console assets served from `/console`.
 - `tasksgodzilla/codemachine/` — loaders/runtime adapters for `.codemachine` workspaces plus loop/trigger policy helpers.
-- `tasksgodzilla/workers/` — job handlers for Codex execution, CodeMachine import, onboarding, and state helpers.
+- `tasksgodzilla/workers/` — **Thin job adapters** that deserialize queue payloads and delegate to services.
 - `alembic/` — migrations for Postgres/SQLite schema (projects, protocol_runs, step_runs, events).
 
 ## How to use the prompts
@@ -180,28 +186,39 @@ The core idea: ship improvements in parallel streams with strict, explicit proto
 
 ## Architecture (Mermaid)
 
+The TasksGodzilla orchestrator uses a **services architecture** where business logic is encapsulated in cohesive service modules. The API and workers are thin adapters that delegate to services for all operations.
+
 ```mermaid
 graph TD
   U["User (console/API client)"] --> Console["Console (web/TUI)"]
   Console --> API["Orchestrator API (FastAPI)"]
-  API --> Repo["Repo resolver\n(local_path or projects/<project_id>/<repo>)"]
-  API --> DB[(DB: Postgres/SQLite)]
-  API --> Queue["Queue (Redis/RQ; inline worker optional for dev)"]
-  API --> Spec["ProtocolSpec/StepSpec\nstored on ProtocolRun.template_config"]
-  Queue --> Runner["Engine runner\n(prompt/output resolver + QA)"]
+  API --> Services["Services Layer\n(Orchestrator, Execution, Quality,\nGit, Budget, Spec, Prompt, etc.)"]
+  Services --> DB[(DB: Postgres/SQLite)]
+  Services --> Queue["Queue (Redis/RQ; inline worker optional for dev)"]
+  Services --> Spec["ProtocolSpec/StepSpec\nstored on ProtocolRun.template_config"]
+  Queue --> Workers["Workers (thin job adapters)\ndelegate to services"]
+  Workers --> Services
+  Services --> Runner["Engine runner\n(prompt/output resolver + QA)"]
   Runner --> Registry["Engine registry\n(Codex, CodeMachine, ... engines)"]
   Runner --> Outputs["Outputs map\n(.protocols + aux paths)"]
   Outputs --> Prot[".protocols/NNNN-[task] artifacts"]
   Outputs --> Aux["Aux outputs (e.g., .codemachine/outputs)"]
-  Queue --> GW["Git/CI Worker\n(clone/worktrees/PR/webhooks/branches)"]
-  Queue --> OW["Onboarding Worker\n(project setup/spec audit)"]
-  GW --> Git["Git worktrees/branches"]
-  GW --> CI["CI (GitHub/GitLab)"]
+  Services --> Git["Git worktrees/branches"]
+  Services --> CI["CI (GitHub/GitLab)"]
   CI --> Webhooks["Webhooks / report.sh"]
   Webhooks --> API
   Spec --> Runner
   Git --> Prot
 ```
+
+### Services Layer
+
+The services layer (`tasksgodzilla/services/`) is the primary integration point for all business logic:
+
+- **Application Services**: Orchestrator, Execution, Quality, Onboarding, Spec, Prompt, Decomposition, Git, Budget, CodeMachine
+- **Platform Services**: Queue, Storage, Telemetry, Engines
+
+Services have clear responsibilities and dependencies. The API and workers are thin adapters that deserialize requests/payloads and delegate to services. This architecture ensures a single source of truth for each concern and makes the codebase maintainable and testable.
 
 ## Workflow overview (Mermaid)
 

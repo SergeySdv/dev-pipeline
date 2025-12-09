@@ -216,8 +216,9 @@ class OrchestratorService:
 
     def sync_steps_from_protocol(self, protocol_run_id: int, protocol_root: Path) -> int:
         """Ensure StepRun rows exist for each protocol step file."""
-        from tasksgodzilla.workers.codex_worker import sync_step_runs_from_protocol
-        return sync_step_runs_from_protocol(protocol_root, protocol_run_id, self.db)
+        from tasksgodzilla.services.spec import SpecService
+        spec_service = SpecService(self.db)
+        return spec_service.sync_step_runs_from_protocol(protocol_root, protocol_run_id)
 
     def check_and_complete_protocol(self, protocol_run_id: int) -> bool:
         """Mark protocol as completed if all steps are in terminal state.
@@ -241,6 +242,119 @@ class OrchestratorService:
         log.info("protocol_completed", extra={"protocol_run_id": run.id, "project_id": run.project_id})
         return True
 
+    def apply_trigger_policy(
+        self,
+        step: StepRun,
+        reason: str = "qa_passed",
+        inline_depth: int = 0
+    ) -> Optional[dict]:
+        """Apply trigger policies to a step and enqueue target steps.
+        
+        Evaluates trigger policies attached to the step and triggers target steps
+        based on policy configuration. Handles inline vs queued triggers and enforces
+        MAX_INLINE_TRIGGER_DEPTH.
+        
+        Args:
+            step: The step run to evaluate policies for
+            reason: The reason for triggering (e.g., "qa_passed", "exec_completed")
+            inline_depth: Current inline trigger depth for recursion control
+            
+        Returns:
+            Dict with trigger details if a policy was applied, None otherwise
+        """
+        from tasksgodzilla.codemachine.policy_runtime import apply_trigger_policies
+        
+        trigger_decision = apply_trigger_policies(step, self.db, reason=reason)
+        if not trigger_decision or not trigger_decision.get("applied"):
+            return None
+            
+        target_step_id = trigger_decision.get("target_step_id")
+        if not target_step_id:
+            return trigger_decision
+            
+        # Trigger the target step
+        self.trigger_step(
+            target_step_id,
+            step.protocol_run_id,
+            source=reason,
+            inline_depth=inline_depth
+        )
+        
+        return trigger_decision
+
+    def apply_loop_policy(
+        self,
+        step: StepRun,
+        reason: str = "qa_failed"
+    ) -> Optional[dict]:
+        """Apply loop policies to a step and reset step status when conditions are met.
+        
+        Evaluates loop policies attached to the step and resets target steps to PENDING
+        when loop conditions are met. Updates runtime_state with loop counts and enforces
+        max_iterations limits.
+        
+        Args:
+            step: The step run to evaluate policies for
+            reason: The reason for looping (e.g., "qa_failed", "exec_failed")
+            
+        Returns:
+            Dict with loop details if a policy was applied, None otherwise
+        """
+        from tasksgodzilla.codemachine.policy_runtime import apply_loop_policies
+        
+        return apply_loop_policies(step, self.db, reason=reason)
+
+    def handle_step_completion(
+        self,
+        step_run_id: int,
+        qa_verdict: Optional[str] = None
+    ) -> None:
+        """Handle step completion workflow including policies and protocol completion.
+        
+        Applies trigger and loop policies based on the step outcome, checks if the
+        protocol is complete, and updates statuses appropriately.
+        
+        Args:
+            step_run_id: The ID of the step that completed
+            qa_verdict: Optional QA verdict ("PASS" or "FAIL")
+        """
+        step = self.db.get_step_run(step_run_id)
+        
+        # Determine the reason based on step status and QA verdict
+        if qa_verdict == "FAIL" or step.status == StepStatus.FAILED:
+            reason = "qa_failed" if qa_verdict == "FAIL" else "exec_failed"
+            
+            # Apply loop policy for failures
+            loop_decision = self.apply_loop_policy(step, reason=reason)
+            if loop_decision and loop_decision.get("applied"):
+                self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
+                return
+                
+            # Apply trigger policy even on failure
+            trigger_decision = self.apply_trigger_policy(step, reason=reason)
+            if trigger_decision and trigger_decision.get("applied"):
+                self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
+            else:
+                self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.BLOCKED)
+                
+        elif qa_verdict == "PASS" or step.status == StepStatus.COMPLETED:
+            reason = "qa_passed" if qa_verdict == "PASS" else "exec_completed"
+            
+            # Apply trigger policy for success
+            trigger_decision = self.apply_trigger_policy(step, reason=reason)
+            if trigger_decision and trigger_decision.get("applied"):
+                self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
+                
+            # Check if protocol is complete
+            self.check_and_complete_protocol(step.protocol_run_id)
+            
+        elif step.status == StepStatus.NEEDS_QA:
+            # Step completed execution but needs QA
+            reason = "exec_completed"
+            trigger_decision = self.apply_trigger_policy(step, reason=reason)
+            if trigger_decision and trigger_decision.get("applied"):
+                self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
+
     def trigger_step(
         self,
         step_run_id: int,
@@ -249,7 +363,8 @@ class OrchestratorService:
         inline_depth: int = 0
     ) -> Optional[dict]:
         """Trigger execution of a step, either via queue or inline fallback."""
-        from tasksgodzilla.workers.codex_worker import handle_execute_step, get_step_spec
+        from tasksgodzilla.workers.codex_worker import handle_execute_step
+        from tasksgodzilla.spec import get_step_spec
 
         config = load_config()
         if inline_depth >= MAX_INLINE_TRIGGER_DEPTH:

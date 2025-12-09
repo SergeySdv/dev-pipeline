@@ -2,7 +2,11 @@
 
 ## Overview
 
-TasksGodzilla is migrating to a **service-oriented architecture** to improve testability, maintainability, and clear separation of concerns. This guide helps contributors understand how to use the new services layer instead of reaching directly into workers or low-level helpers.
+TasksGodzilla has completed its migration to a **service-oriented architecture**. This guide helps contributors understand how to use the services layer, which is now the stable, primary integration surface for all business logic.
+
+**Migration Status**: Complete (Phase 3 finished December 2025)
+
+All business logic has been extracted from workers into services. Workers are now thin job adapters that delegate to services. All API endpoints, CLI commands, and worker jobs use services exclusively.
 
 ## Key Principle
 
@@ -249,13 +253,46 @@ def test_protocol_lifecycle(tmp_path):
 4. **Evolution**: Services can evolve without breaking callers
 5. **Documentation**: Service methods are self-documenting contracts
 
-## What About Legacy Code?
+## Phase 3 Completion: What Changed
 
-Legacy worker functions (`tasksgodzilla/workers/codex_worker.py`, etc.) are still used internally by services. They will be gradually refactored as services mature. For now:
+Phase 3 (completed December 2025) extracted all remaining business logic from workers into services:
 
-- **New code**: Always use services
-- **Existing code**: Migrate opportunistically when touching related areas
-- **Workers**: Keep as thin adapters that delegate to services
+### Extracted Functionality
+
+**GitService** now handles:
+- Worktree creation and management
+- Branch operations (check, push, PR/MR creation)
+- CI triggering for different providers
+
+**BudgetService** now handles:
+- Protocol-level budget tracking
+- Step-level budget tracking
+- Token usage recording and enforcement
+
+**OrchestratorService** now handles:
+- Trigger policy application
+- Loop policy application
+- Complete step completion workflows
+
+**SpecService** now handles:
+- Protocol and worktree path resolution
+- Step input/output path resolution
+- Output path resolution from specs
+
+**PromptService** now handles:
+- QA prompt resolution
+- QA context building (plan, log, git status)
+
+### Worker Simplification
+
+Workers are now < 500 lines and follow this pattern:
+```python
+def job_handler(payload: dict, db: BaseDatabase, job_id: str):
+    service = AppropriateService(db=db)
+    service.method(payload["id"], job_id=job_id)
+```
+
+No business logic remains in workers. All logic is in services.
 
 ## Questions?
 

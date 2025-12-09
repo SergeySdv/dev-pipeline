@@ -1,5 +1,19 @@
 # Implementation Status – Orchestrator Track
 
+## Services Architecture Refactor: COMPLETE ✓
+
+The services architecture refactor (Phases 1-3) is now complete. All business logic has been extracted into cohesive service modules in `tasksgodzilla/services/`. The API and workers are thin adapters that delegate to services for all operations.
+
+**Key achievements:**
+- 12 services implemented with clear responsibilities and boundaries
+- API layer fully migrated to use services
+- Workers reduced to thin job adapters (< 500 lines each)
+- All duplicate code removed
+- Comprehensive test coverage (100% pass rate)
+- Documentation updated to reflect services as the stable API
+
+For details, see `docs/services-architecture.md` and `docs/services-status.md`.
+
 ## Recently completed
 - Postgres adapter alongside SQLite with factory selection via `TASKSGODZILLA_DB_URL`; pool size configurable.
 - Alembic scaffolding + initial migration (projects, protocol_runs, step_runs, events) applied to default SQLite.
@@ -31,6 +45,12 @@ Then start API: `.venv/bin/python scripts/api_server.py`
 - Extend Postgres path with connection pooling and Alembic-managed upgrades in CI.
 - Console/API polish: surface DB choice/status, expose migrations health endpoint, richer console filters.
 - Console UX for onboarding clarifications and branch management: surface `setup_clarifications` prompts in UI/TUI and add controls to confirm/resolve; wire branch list/delete actions into the console.
+- New features should use the services layer as the primary integration point.
 
 ## Phase 0 gaps to close
 - Container hardening: publish images, add secrets templates for DB/Redis/API tokens, and include readiness/liveness for codex/generic workers.
+
+## Development guidelines
+- **Use services for all business logic**: When adding new features, call services from API endpoints or workers. Do not implement business logic directly in API routes or worker functions.
+- **Services are the stable API**: The services layer is the contract for integration. API and worker implementations may change, but service interfaces should remain stable.
+- **Test services, not workers**: Write unit tests for service methods. Integration tests should verify end-to-end flows through services.

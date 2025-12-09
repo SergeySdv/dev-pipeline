@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from tasksgodzilla.config import load_config
 from tasksgodzilla.logging import get_logger
 from tasksgodzilla.qa import QualityResult, run_quality_check
 from tasksgodzilla.storage import BaseDatabase
-from tasksgodzilla.workers.codex_worker import handle_quality
+
+if TYPE_CHECKING:
+    from tasksgodzilla.workers.codex_worker import handle_quality
 
 log = get_logger(__name__)
 
@@ -34,6 +36,8 @@ class QualityService:
         """
         if self.db is None:
             raise ValueError("QualityService.db is required for step-run QA")
+        # Lazy import to avoid circular dependency
+        from tasksgodzilla.workers.codex_worker import handle_quality
         handle_quality(step_run_id, self.db, job_id=job_id)
 
     def evaluate_step(

@@ -30,31 +30,107 @@ projects/
 `TASKSGODZILLA_PROJECTS_ROOT` overrides the `projects/` root; `local_path` overrides the repo path when provided.
 
 ## Control plane (orchestrator)
-- FastAPI API (`tasksgodzilla/api/app.py`) with bearer/project-token auth, queue stats, metrics, events feed, and webhook listeners.
-- **Services layer** (`tasksgodzilla/services/*`): Service-oriented architecture providing stable APIs for protocol lifecycle, execution, QA, onboarding, and spec management. See `docs/orchestrator.md` (Services Layer section) and `docs/services-architecture.md` for details.
-- Storage via SQLite (default) or Postgres (`TASKSGODZILLA_DB_URL`), initialized with Alembic migrations.
-- Redis/RQ queue (`tasksgodzilla/jobs.py`, `worker_runtime.py`) with optional inline worker for local dev (`TASKSGODZILLA_INLINE_RQ_WORKER=true`); workers process planning/execution/QA/PR jobs.
-- ProtocolSpec/StepSpec lives on `ProtocolRun.template_config` and drives step creation, engine selection, prompt/output resolution, and QA policy via a shared resolver + engine registry.
-- Thin web console (`/console`) backed by the API for projects, protocol runs, steps, recent events, and queue visibility.
+
+The orchestrator uses a **service-oriented architecture** where services are the primary integration layer for all business logic. The architecture consists of three main layers:
+
+### Services Layer (Primary Integration Surface)
+
+**Application Services** (`tasksgodzilla/services/`):
+- **OrchestratorService**: Protocol lifecycle management (create, start, pause, resume, cancel), step orchestration, trigger/loop policy application
+- **ExecutionService**: Step execution via engine registry, prompt/output resolution
+- **QualityService**: QA evaluation with policy-driven workflows (skip/light/full)
+- **SpecService**: ProtocolSpec/StepSpec building, validation, and step run materialization
+- **OnboardingService**: Project registration, workspace setup, discovery flows
+- **DecompositionService**: Step decomposition with heuristics
+- **PromptService**: Prompt resolution with version fingerprinting
+- **GitService**: Git operations, worktree management, PR/MR creation, CI triggering
+- **BudgetService**: Token budget tracking and enforcement
+- **CodeMachineService**: CodeMachine workspace import and management
+
+**Platform Services** (`tasksgodzilla/services/platform/`):
+- **QueueService**: Semantic job enqueue operations wrapping Redis/RQ
+- **TelemetryService**: Token observation, metrics, and event logging
+- **StorageService**: Repository layer over BaseDatabase (future)
+- **EnginesService**: Engine registry and model selection policies
+
+All API endpoints, CLI commands, and worker jobs delegate to services. Services provide stable, testable contracts and are the single source of truth for business logic. See `docs/services-architecture.md` for detailed service design and `docs/services-migration-guide.md` for usage patterns.
+
+### Interface Layer
+
+- **FastAPI API** (`tasksgodzilla/api/app.py`): HTTP endpoints with bearer/project-token auth, queue stats, metrics, events feed, and webhook listeners. All endpoints use services.
+- **CLI** (`tasksgodzilla/cli/main.py`, `scripts/tasksgodzilla_cli.py`): Command-line interface for protocol operations
+- **TUI** (`tasksgodzilla/cli/tui.py`, `tui-rs`): Terminal UI for interactive protocol management
+- **Web Console** (`/console`): Lightweight web UI for projects, protocol runs, steps, events, and queue visibility
+
+### Infrastructure Layer
+
+- **Storage**: SQLite (default) or Postgres (`TASKSGODZILLA_DB_URL`), initialized with Alembic migrations
+- **Queue**: Redis/RQ (`tasksgodzilla/jobs.py`, `worker_runtime.py`) with optional inline worker for local dev (`TASKSGODZILLA_INLINE_RQ_WORKER=true`)
+- **Workers**: Thin job adapters (`tasksgodzilla/workers/*`) that deserialize payloads and delegate to services
+- **Engines**: Pluggable execution engines (Codex, CodeMachine) via registry pattern
 
 ```mermaid
-graph LR
-  User["Console / API clients"] --> API["FastAPI orchestrator"]
-  API --> Repo["Repo resolver\n(local_path or projects/<project_id>/<repo>)"]
-  API --> DB[(SQLite or Postgres)]
-  API --> Queue["Redis/RQ queue (inline worker optional in dev)"]
-  API --> Spec["ProtocolSpec/StepSpec\nstored on ProtocolRun.template_config"]
-  Queue --> Runner["Engine runner\n(prompt/output resolver + QA)"]
-  Runner --> Registry["Engine registry\n(Codex, CodeMachine, ... engines)"]
-  Runner --> Outputs["Outputs map\n(.protocols + aux paths)"]
-  Outputs --> Protocols[".protocols/NNNN-[task] artifacts"]
-  Outputs --> Aux["Aux outputs (e.g., .codemachine/outputs)"]
-  Queue --> GitW["Git/CI worker\n(clone/worktrees/PR/webhooks/branches)"]
-  Queue --> OnboardW["Onboarding worker\n(project setup/spec audit)"]
-  GitW --> Git["Git + CI jobs"]
-  Git --> Webhooks["CI webhooks/report.sh"]
-  Webhooks --> API
-  Spec --> Runner
+graph TB
+  subgraph "Interface Layer"
+    Console["Web Console"]
+    API["FastAPI API"]
+    CLI["CLI"]
+    TUI["TUI"]
+  end
+  
+  subgraph "Services Layer (Primary Integration)"
+    Orchestrator["OrchestratorService"]
+    Execution["ExecutionService"]
+    Quality["QualityService"]
+    Spec["SpecService"]
+    Onboarding["OnboardingService"]
+    Git["GitService"]
+    Budget["BudgetService"]
+    Prompts["PromptService"]
+    Queue["QueueService"]
+    Telemetry["TelemetryService"]
+  end
+  
+  subgraph "Infrastructure Layer"
+    DB[(Database)]
+    Redis["Redis/RQ"]
+    Workers["Workers (thin adapters)"]
+    Engines["Engine Registry"]
+  end
+  
+  Console --> API
+  CLI --> Orchestrator
+  TUI --> API
+  API --> Orchestrator
+  API --> Onboarding
+  
+  Orchestrator --> Execution
+  Orchestrator --> Quality
+  Orchestrator --> Spec
+  Orchestrator --> Queue
+  
+  Execution --> Spec
+  Execution --> Prompts
+  Execution --> Budget
+  Execution --> Engines
+  
+  Quality --> Spec
+  Quality --> Prompts
+  Quality --> Engines
+  
+  Onboarding --> Git
+  Onboarding --> Telemetry
+  
+  Queue --> Redis
+  Redis --> Workers
+  Workers --> Orchestrator
+  Workers --> Execution
+  Workers --> Quality
+  
+  Orchestrator --> DB
+  Spec --> DB
+  Git --> DB
+  Telemetry --> DB
 ```
 
 ### Worktree creation (Mermaid)

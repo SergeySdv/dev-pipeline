@@ -2,6 +2,8 @@
 
 HTTP API for managing projects, protocol runs, steps, events, queues, and CI/webhook signals. Default base: `http://localhost:8011` (compose; use 8010 for direct local runs).
 
+**Architecture Note**: All API endpoints use the services layer (`tasksgodzilla/services/`) as the primary integration surface. Endpoints delegate business logic to services (OrchestratorService, ExecutionService, QualityService, OnboardingService, etc.) rather than calling workers or database operations directly. This provides stable, testable contracts and clear separation of concerns.
+
 - Auth: set `TASKSGODZILLA_API_TOKEN` in the API env and send `Authorization: Bearer <token>`. If unset, auth is skipped.
 - Per-project token (optional): `X-Project-Token: <project secrets.api_token>`.
 - Content type: `application/json` for all JSON bodies. Responses use standard HTTP codes (400/401/404/409 on validation/auth/state conflicts).
@@ -19,6 +21,7 @@ HTTP API for managing projects, protocol runs, steps, events, queues, and CI/web
 - `POST /projects`
   - Body: `{ "name": str, "git_url": str, "base_branch": "main", "ci_provider": str|null, "default_models": obj|null, "secrets": obj|null, "local_path": str|null }`
   - Response: Project object with `id`, timestamps.
+  - **Service**: Uses `OnboardingService.register_project()` to create project and enqueue setup
   - Behavior: persists `local_path` when provided so future jobs resolve the repo without recomputing; falls back to cloning under `TASKSGODZILLA_PROJECTS_ROOT` (default `projects/<project_id>/<repo_name>`) when missing.
   - Side effects: enqueues `project_setup_job` protocol run for onboarding progress visibility and onboarding clarifications.
 - `GET /projects` → list of projects.
@@ -40,35 +43,56 @@ Event visibility
   - Response:
     - `enqueue=true`: `{ protocol_run: ProtocolRun, job: {job_id,...}, message }` after enqueuing `codemachine_import_job`.
     - `enqueue=false` (default): `{ protocol_run: ProtocolRun, job: null, message }` after immediate import.
+  - **Service**: Uses `CodeMachineService.import_workspace()` for immediate import or `QueueService.enqueue_codemachine_import()` for async
   - Behavior: parses `.codemachine/config/*.js` + `template.json`, persists `template_config`/`template_source`, and creates StepRuns for main agents with module policies attached.
 
 ## Protocol runs
 - `POST /projects/{id}/protocols`
   - Body: `{ "protocol_name": str, "status": "pending"|..., "base_branch": "main", "worktree_path": str|null, "protocol_root": str|null, "description": str|null, "template_config": obj|null, "template_source": obj|null }`
   - Response: ProtocolRun object.
+  - **Service**: Uses `OrchestratorService.create_protocol_run()`
 - `GET /projects/{id}/protocols` → list protocol runs for project.
 - `GET /protocols/{id}` → protocol run.
 
 ### Protocol actions
-All return `{ "message": str, "job": obj|null }` unless noted.
-- `POST /protocols/{id}/actions/start` → enqueues `plan_protocol_job` (409 if not pending/planned/paused).
-- `POST /protocols/{id}/actions/pause` / `resume` / `cancel` → updates status, cancels pending steps on cancel.
-- `POST /protocols/{id}/actions/run_next_step` → moves first pending/blocked/failed step to running and enqueues `execute_step_job`.
-- `POST /protocols/{id}/actions/retry_latest` → retries latest failed/blocked step.
-- `POST /protocols/{id}/actions/open_pr` → enqueues `open_pr_job`.
+All return `{ "message": str, "job": obj|null }` unless noted. All actions use `OrchestratorService` methods.
+- `POST /protocols/{id}/actions/start`
+  - **Service**: `OrchestratorService.start_protocol_run()` → enqueues `plan_protocol_job`
+  - Returns 409 if not pending/planned/paused
+- `POST /protocols/{id}/actions/pause`
+  - **Service**: `OrchestratorService.pause_protocol()` → updates status
+- `POST /protocols/{id}/actions/resume`
+  - **Service**: `OrchestratorService.resume_protocol()` → updates status
+- `POST /protocols/{id}/actions/cancel`
+  - **Service**: `OrchestratorService.cancel_protocol()` → updates status, cancels pending steps
+- `POST /protocols/{id}/actions/run_next_step`
+  - **Service**: `OrchestratorService.enqueue_next_step()` → moves first pending/blocked/failed step to running and enqueues `execute_step_job`
+- `POST /protocols/{id}/actions/retry_latest`
+  - **Service**: `OrchestratorService` → retries latest failed/blocked step
+- `POST /protocols/{id}/actions/open_pr`
+  - **Service**: `QueueService.enqueue_open_pr()` → enqueues `open_pr_job`
+
 Status conflicts return 409 (e.g., starting an already-running protocol).
 
 ## Steps
 - `POST /protocols/{id}/steps`
   - Body: `{ "step_index": int>=0, "step_name": str, "step_type": str, "status": "pending"|..., "model": str|null, "summary": str|null, "engine_id": str|null, "policy": obj|[obj]|null }`
   - Creates a StepRun (no job enqueued).
+  - **Service**: Direct database operation (no service wrapper needed for simple CRUD)
 - `GET /protocols/{id}/steps` → list StepRuns.
 - `GET /steps/{id}` → StepRun.
 
 ### Step actions
-- `POST /steps/{id}/actions/run` → sets to running, enqueues `execute_step_job`.
-- `POST /steps/{id}/actions/run_qa` → sets to `needs_qa`, enqueues `run_quality_job`.
-- `POST /steps/{id}/actions/approve` → marks completed, may complete protocol.
+All step actions use services for business logic:
+- `POST /steps/{id}/actions/run`
+  - **Service**: `ExecutionService.execute_step()` via `QueueService.enqueue_execute_step()`
+  - Sets to running, enqueues `execute_step_job`
+- `POST /steps/{id}/actions/run_qa`
+  - **Service**: `QualityService.run_for_step_run()` via `QueueService.enqueue_run_quality()`
+  - Sets to `needs_qa`, enqueues `run_quality_job`
+- `POST /steps/{id}/actions/approve`
+  - **Service**: `OrchestratorService.handle_step_completion()`
+  - Marks completed, may complete protocol
 
 ## Events & queues
 - `GET /protocols/{id}/events` → events for a protocol.
@@ -88,9 +112,12 @@ Status conflicts return 409 (e.g., starting an already-running protocol).
 
 ## Queue/runtime notes
 - Backend: Redis/RQ; set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to have the API start a background RQ worker thread for inline job processing during local development.
+- **Service Integration**: All jobs are enqueued via `QueueService` and processed by workers that delegate to services
 - Jobs: `project_setup_job`, `plan_protocol_job`, `execute_step_job`, `run_quality_job`, `open_pr_job`, `codemachine_import_job`.
-- CodeMachine policies: loop/trigger policies on steps may reset statuses or inline-trigger other steps (depth-limited) with events and `runtime_state` recorded.
-- Token budgets: `TASKSGODZILLA_MAX_TOKENS_PER_STEP` / `TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL` with mode `TASKSGODZILLA_TOKEN_BUDGET_MODE=strict|warn|off`; overruns raise (strict) or log (warn).
+  - Workers are thin adapters: deserialize payload → call service method → return
+  - Business logic lives in services, not workers
+- CodeMachine policies: loop/trigger policies on steps may reset statuses or inline-trigger other steps (depth-limited) with events and `runtime_state` recorded. Handled by `OrchestratorService.apply_trigger_policy()` and `OrchestratorService.apply_loop_policy()`.
+- Token budgets: `TASKSGODZILLA_MAX_TOKENS_PER_STEP` / `TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL` with mode `TASKSGODZILLA_TOKEN_BUDGET_MODE=strict|warn|off`; overruns raise (strict) or log (warn). Enforced by `BudgetService`.
 
 ## Curl examples
 

@@ -18,7 +18,6 @@ from tasksgodzilla.logging import get_logger, log_extra
 from tasksgodzilla.domain import ProtocolRun, ProtocolStatus, StepRun, StepStatus
 from tasksgodzilla.prompt_utils import prompt_version
 from tasksgodzilla.errors import CodexCommandError
-from tasksgodzilla.codemachine.policy_runtime import apply_loop_policies, apply_trigger_policies
 from tasksgodzilla.codemachine.runtime_adapter import (
     build_prompt_text,
     find_agent_for_step,
@@ -35,15 +34,13 @@ from tasksgodzilla.pipeline import (
 )
 from tasksgodzilla.storage import BaseDatabase
 
-from tasksgodzilla.qa import build_prompt, determine_verdict
-from tasksgodzilla.workers.state import maybe_complete_protocol
+from tasksgodzilla.qa import determine_verdict
 from tasksgodzilla.metrics import metrics
 from tasksgodzilla.engines import EngineRequest, registry
 from tasksgodzilla.engine_resolver import resolve_prompt_and_outputs
 from tasksgodzilla.workers.unified_runner import execute_step_unified, run_qa_unified
 from tasksgodzilla.jobs import BaseQueue
-from tasksgodzilla.project_setup import auto_clone_enabled, local_repo_dir
-from tasksgodzilla.git_utils import resolve_project_repo_path
+from tasksgodzilla.project_setup import auto_clone_enabled
 from tasksgodzilla.spec import (
     PROTOCOL_SPEC_KEY,
     build_spec_from_protocol_files,
@@ -56,9 +53,10 @@ from tasksgodzilla.spec import (
     validate_protocol_spec,
 )
 from tasksgodzilla.services.git import GitService
-
 from tasksgodzilla.services.budget import BudgetService
 from tasksgodzilla.services.orchestrator import OrchestratorService
+from tasksgodzilla.services.spec import SpecService
+from tasksgodzilla.services.prompts import PromptService
 
 log = get_logger(__name__)
 # MAX_INLINE_TRIGGER_DEPTH moved to OrchestratorService
@@ -93,110 +91,6 @@ def _log_context(
 
 
 
-
-
-
-def _protocol_and_workspace_paths(run: ProtocolRun, project) -> tuple[Path, Path]:
-    """
-    Best-effort resolution of workspace/protocol roots for prompt resolution
-    before a worktree is loaded.
-    """
-    if run.worktree_path:
-        workspace_base = Path(run.worktree_path).expanduser()
-    elif project.local_path and Path(project.local_path).expanduser().exists():
-        workspace_base = Path(project.local_path).expanduser()
-    else:
-        workspace_base = local_repo_dir(project.git_url, project.name, project_id=project.id)
-    workspace_root = workspace_base.resolve()
-    protocol_root = Path(run.protocol_root).resolve() if run.protocol_root else (workspace_root / ".protocols" / run.protocol_name)
-    return workspace_root, protocol_root
-
-
-def _resolve_qa_prompt_path(qa_cfg: dict, protocol_root: Path, workspace: Path) -> Path:
-    """
-    Resolve the QA prompt path (default or spec-provided) against the protocol
-    root and workspace, allowing prompts outside `.protocols/`.
-    """
-    prompt_ref = qa_cfg.get("prompt") if isinstance(qa_cfg, dict) else None
-    if prompt_ref:
-        return resolve_spec_path(str(prompt_ref), protocol_root, workspace=workspace)
-    return (workspace / "prompts" / "quality-validator.prompt.md").resolve()
-
-
-def _resolve_step_path_for_qa(protocol_root: Path, step_name: str, workspace: Path) -> Path:
-    """
-    Resolve a step path for QA purposes, falling back to spec path resolution.
-    """
-    step_path = (protocol_root / step_name).resolve()
-    if step_path.exists():
-        return step_path
-    alt = (protocol_root / f"{step_name}.md").resolve()
-    if alt.exists():
-        return alt
-    return resolve_spec_path(step_name, protocol_root, workspace=workspace)
-
-
-def _append_protocol_log(protocol_root: Path, message: str) -> None:
-    """
-    Best-effort log.md appender for automatic state notes.
-    """
-    log_path = protocol_root / "log.md"
-    try:
-        if not log_path.exists():
-            return
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        entry = f"- {timestamp} - {message}\n"
-        with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(entry)
-    except Exception:
-        return
-
-
-def infer_step_type(filename: str) -> str:
-    lower = filename.lower()
-    if lower.startswith("00-") or "setup" in lower:
-        return "setup"
-    if "qa" in lower:
-        return "qa"
-    return "work"
-
-
-def sync_step_runs_from_protocol(protocol_root: Path, protocol_run_id: int, db: BaseDatabase) -> int:
-    """
-    Ensure StepRun rows exist for each step file in the protocol directory.
-    """
-    run = db.get_protocol_run(protocol_run_id)
-    template_config = dict(run.template_config or {})
-    spec = template_config.get(PROTOCOL_SPEC_KEY)
-    if not spec:
-        spec = build_spec_from_protocol_files(protocol_root)
-        template_config[PROTOCOL_SPEC_KEY] = spec
-        db.update_protocol_template(protocol_run_id, template_config, run.template_source)
-    workspace_root = protocol_root.parent.parent if protocol_root.parent.name == ".protocols" else protocol_root.parent
-    validation_errors = validate_protocol_spec(protocol_root, spec, workspace=workspace_root)
-    if validation_errors:
-        for err in validation_errors:
-            db.append_event(
-                protocol_run_id,
-                "spec_validation_error",
-                err,
-                metadata={"protocol_root": str(protocol_root), "spec_hash": protocol_spec_hash(spec)},
-            )
-        update_spec_meta(db, protocol_run_id, template_config, run.template_source, status="invalid", errors=validation_errors)
-        db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
-        return 0
-    else:
-        update_spec_meta(db, protocol_run_id, template_config, run.template_source, status="valid", errors=[])
-    existing = {s.step_name for s in db.list_step_runs(protocol_run_id)}
-    return create_steps_from_spec(protocol_run_id, spec, db, existing_names=existing)
-
-
-
-
-
-
-
-
 def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optional[str] = None) -> None:
     run = db.get_protocol_run(protocol_run_id)
     project = db.get_project(run.project_id)
@@ -206,10 +100,11 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
     protocol_hint: Optional[Path] = None
     git_service = GitService(db)
     budget_service = BudgetService()
+    spec_service = SpecService(db)
     branch_name = git_service.get_branch_name(run.protocol_name)
 
     def _stub_plan(reason: str, *, error: Optional[str] = None) -> None:
-        workspace_root, protocol_root = _protocol_and_workspace_paths(run, project)
+        workspace_root, protocol_root = spec_service.resolve_protocol_paths(run, project)
         if workspace_hint:
             workspace_root = workspace_hint
         if protocol_hint:
@@ -386,7 +281,7 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         )
         raise
     write_protocol_files(protocol_root, data)
-    created_steps = sync_step_runs_from_protocol(protocol_root, protocol_run_id, db)
+    created_steps = spec_service.sync_step_runs_from_protocol(protocol_root, protocol_run_id)
 
     # Decompose steps
     plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
@@ -547,16 +442,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 step_run_id=step.id,
                 metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
             )
-            trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_policy")
-            if trigger_decision and trigger_decision.get("applied"):
-                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-                orchestrator.trigger_step(
-                    trigger_decision["target_step_id"],
-                    run.id,
-                    source="qa_skipped_policy",
-                    inline_depth=trigger_decision.get("inline_depth", 0),
-                )
-            maybe_complete_protocol(step.protocol_run_id, db)
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
             return
         db.update_step_status(step.id, StepStatus.NEEDS_QA, summary=summary)
         db.append_event(
@@ -566,15 +452,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             step_run_id=step.id,
             metadata={"spec_hash": spec_hash_val},
         )
-        trigger_decision = apply_trigger_policies(step, db, reason="exec_stub")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            orchestrator.trigger_step(
-                trigger_decision["target_step_id"],
-                run.id,
-                source="exec_stub",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
+        orchestrator.apply_trigger_policy(step, reason="exec_stub")
         if getattr(config, "auto_qa_after_exec", False):
             db.append_event(
                 step.protocol_run_id,
@@ -790,20 +668,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
             step_run_id=step.id,
             metadata={"protocol_run_id": run.id, "step_run_id": step.id, "model": exec_model},
         )
-        loop_decision = apply_loop_policies(step, db, reason="exec_failed")
-        if loop_decision and loop_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        trigger_decision = apply_trigger_policies(step, db, reason="exec_failed")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            orchestrator.trigger_step(
-                trigger_decision["target_step_id"],
-                run.id,
-                source="exec_failed",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        else:
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        orchestrator.handle_step_completion(step.id, qa_verdict="FAIL")
         return
 
     if kind == "codex":
@@ -876,24 +741,37 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
         step_run_id=step.id,
         metadata=base_meta,
     )
-    _append_protocol_log(protocol_root, f"{step.step_name} executed via {kind.title()} ({exec_model or engine_id}); QA {'inline' if qa_policy == 'light' else 'pending'}.")
+    spec_service.append_protocol_log(protocol_root, f"{step.step_name} executed via {kind.title()} ({exec_model or engine_id}); QA {'inline' if qa_policy == 'light' else 'pending'}.")
 
-    trigger_decision = apply_trigger_policies(step, db, reason="exec_completed")
-    if trigger_decision and trigger_decision.get("applied"):
-        db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        orchestrator.trigger_step(
-            trigger_decision["target_step_id"],
-            run.id,
-            source="exec_completed",
-            inline_depth=trigger_decision.get("inline_depth", 0),
-        )
+    orchestrator.apply_trigger_policy(step, reason="exec_completed")
 
     if qa_policy == "light":
-        qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, workspace_root)
-        qa_prompt_version = prompt_version(qa_prompt_path)
-        step_path_for_qa = _resolve_step_path_for_qa(protocol_root, step.step_name, workspace_root)
+        prompt_service = PromptService(workspace_root=workspace_root)
+        qa_prompt_path, qa_prompt_version = prompt_service.resolve_qa_prompt(qa_cfg, protocol_root, workspace_root)
+        step_path_for_qa = prompt_service.resolve_step_path_for_qa(protocol_root, step.step_name, workspace_root)
+        qa_context = prompt_service.build_qa_context(protocol_root, step_path_for_qa, workspace_root)
         qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
-        qa_body = build_prompt(protocol_root, step_path_for_qa)
+        qa_body = f"""You are a QA orchestrator. Validate the current protocol step. Follow the checklist and output Markdown only (no fences).
+
+plan.md:
+{qa_context['plan']}
+
+context.md:
+{qa_context['context']}
+
+log.md (may be empty):
+{qa_context['log']}
+
+Step file ({qa_context['step_name']}):
+{qa_context['step']}
+
+Git status (porcelain):
+{qa_context['git_status']}
+
+Latest commit message:
+{qa_context['last_commit']}
+
+Use the format from the quality-validator prompt. If any blocking issue, verdict = FAIL."""
         qa_prompt_full = f"{qa_prefix}\\n\\n{qa_body}\\n\\nKeep this QA brief; focus on must-fix issues only."
         qa_model = (
             qa_cfg.get("model")
@@ -913,7 +791,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 step_run_id=step.id,
                 metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
             )
-            _append_protocol_log(protocol_root, f"{step.step_name} inline QA unavailable; run full QA.")
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA unavailable; run full QA.")
             if getattr(config, "auto_qa_after_exec", False):
                 handle_quality(step.id, db, job_id=job_id)
             return
@@ -947,7 +825,7 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 step_run_id=step.id,
                 metadata={"engine_id": qa_engine_id, "spec_hash": spec_hash_val},
             )
-            _append_protocol_log(protocol_root, f"{step.step_name} inline QA errored; run full QA.")
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA errored; run full QA.")
             if getattr(config, "auto_qa_after_exec", False):
                 handle_quality(step.id, db, job_id=job_id)
             return
@@ -972,12 +850,8 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 step_run_id=step.id,
                 metadata=qa_meta,
             )
-            _append_protocol_log(protocol_root, f"{step.step_name} inline QA FAIL ({qa_model}).")
-            loop_decision = apply_loop_policies(step, db, reason="qa_failed")
-            if loop_decision and loop_decision.get("applied"):
-                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            else:
-                db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA FAIL ({qa_model}).")
+            orchestrator.handle_step_completion(step.id, qa_verdict="FAIL")
             metrics.inc_qa_verdict("fail")
         else:
             db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS (inline)", model=exec_model, engine_id=engine_id)
@@ -988,17 +862,8 @@ def handle_execute_step(step_run_id: int, db: BaseDatabase, job_id: Optional[str
                 step_run_id=step.id,
                 metadata=qa_meta,
             )
-            _append_protocol_log(protocol_root, f"{step.step_name} inline QA PASS ({qa_model}).")
-            trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
-            if trigger_decision and trigger_decision.get("applied"):
-                db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-                orchestrator.trigger_step(
-                    trigger_decision["target_step_id"],
-                    run.id,
-                    source="qa_stub_pass",
-                    inline_depth=trigger_decision.get("inline_depth", 0),
-                )
-            maybe_complete_protocol(step.protocol_run_id, db)
+            spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA PASS ({qa_model}).")
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
             metrics.inc_qa_verdict("pass")
         return
 
@@ -1024,6 +889,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
     git_service = GitService(db)
     budget_service = BudgetService()
     orchestrator = OrchestratorService(db)
+    spec_service = SpecService(db)
 
     repo_root = git_service.ensure_repo_or_block(
         project, run, job_id=job_id, block_on_missing=False
@@ -1045,7 +911,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
         job_id=job_id,
     )
     budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
-    workspace_hint, protocol_hint = _protocol_and_workspace_paths(run, project)
+    workspace_hint, protocol_hint = spec_service.resolve_protocol_paths(run, project)
     log.info(
         "Running QA",
         extra={
@@ -1072,26 +938,38 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
             step_run_id=step.id,
             metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
         )
-        _append_protocol_log(protocol_hint, f"{step.step_name} QA skipped by policy.")
-        trigger_decision = apply_trigger_policies(step, db, reason="qa_skipped_policy")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            orchestrator.trigger_step(
-                trigger_decision["target_step_id"],
-                run.id,
-                source="exec_failed",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        maybe_complete_protocol(step.protocol_run_id, db)
+        spec_service.append_protocol_log(protocol_hint, f"{step.step_name} QA skipped by policy.")
+        orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
         return
 
     protocol_root = worktree / ".protocols" / run.protocol_name
-    qa_prompt_path = _resolve_qa_prompt_path(qa_cfg, protocol_root, worktree)
-    qa_prompt_version = prompt_version(qa_prompt_path)
-    step_path = _resolve_step_path_for_qa(protocol_root, step.step_name, worktree)
+    prompt_service = PromptService(workspace_root=worktree)
+    qa_prompt_path, qa_prompt_version = prompt_service.resolve_qa_prompt(qa_cfg, protocol_root, worktree)
+    step_path = prompt_service.resolve_step_path_for_qa(protocol_root, step.step_name, worktree)
+    qa_context = prompt_service.build_qa_context(protocol_root, step_path, worktree)
 
     qa_prefix = qa_prompt_path.read_text(encoding="utf-8") if qa_prompt_path.exists() else ""
-    qa_body = build_prompt(protocol_root, step_path)
+    qa_body = f"""You are a QA orchestrator. Validate the current protocol step. Follow the checklist and output Markdown only (no fences).
+
+plan.md:
+{qa_context['plan']}
+
+context.md:
+{qa_context['context']}
+
+log.md (may be empty):
+{qa_context['log']}
+
+Step file ({qa_context['step_name']}):
+{qa_context['step']}
+
+Git status (porcelain):
+{qa_context['git_status']}
+
+Latest commit message:
+{qa_context['last_commit']}
+
+Use the format from the quality-validator prompt. If any blocking issue, verdict = FAIL."""
     qa_prompt_full = f"{qa_prefix}\\n\\n{qa_body}"
 
     qa_model = (
@@ -1126,16 +1004,7 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
             step_run_id=step.id,
             metadata={"prompt_versions": {"qa": qa_prompt_version}, "model": qa_model, "spec_hash": spec_hash_val},
         )
-        trigger_decision = apply_trigger_policies(step, db, reason="qa_stub_pass")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            orchestrator.trigger_step(
-                trigger_decision["target_step_id"],
-                run.id,
-                source="qa_stub_pass",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        maybe_complete_protocol(step.protocol_run_id, db)
+        orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
 
     if qa_engine_id == "codex" and shutil.which("codex") is None:
         _qa_stub("codex unavailable")
@@ -1225,12 +1094,8 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
                 "spec_hash": spec_hash_val,
             },
         )
-        _append_protocol_log(protocol_root, f"{step.step_name} QA FAIL ({qa_model}).")
-        loop_decision = apply_loop_policies(step, db, reason="qa_failed")
-        if loop_decision and loop_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-        else:
-            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        spec_service.append_protocol_log(protocol_root, f"{step.step_name} QA FAIL ({qa_model}).")
+        orchestrator.handle_step_completion(step.id, qa_verdict="FAIL")
         metrics.inc_qa_verdict("fail")
     else:
         db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA verdict: PASS")
@@ -1248,17 +1113,8 @@ def handle_quality(step_run_id: int, db: BaseDatabase, job_id: Optional[str] = N
                 "spec_hash": spec_hash_val,
             },
         )
-        _append_protocol_log(protocol_root, f"{step.step_name} QA PASS ({qa_model}).")
-        trigger_decision = apply_trigger_policies(step, db, reason="qa_passed")
-        if trigger_decision and trigger_decision.get("applied"):
-            db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
-            orchestrator.trigger_step(
-                trigger_decision["target_step_id"],
-                run.id,
-                source="qa_passed",
-                inline_depth=trigger_decision.get("inline_depth", 0),
-            )
-        maybe_complete_protocol(step.protocol_run_id, db)
+        spec_service.append_protocol_log(protocol_root, f"{step.step_name} QA PASS ({qa_model}).")
+        orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
         metrics.inc_qa_verdict("pass")
 
 
