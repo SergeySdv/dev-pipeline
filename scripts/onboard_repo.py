@@ -46,7 +46,7 @@ def run_discovery(repo_root: Path, model: Optional[str], skip: bool) -> None:
         return
     discovery_model = model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
     try:
-        run_codex_discovery(repo_root, discovery_model)
+        run_codex_discovery(repo_root, discovery_model, use_pipeline=True)
     except FileNotFoundError as exc:
         log.warning("Discovery skipped: %s", exc)
     except Exception as exc:  # pragma: no cover - best effort

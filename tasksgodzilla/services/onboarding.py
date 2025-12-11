@@ -134,7 +134,7 @@ class OnboardingService:
         if run_discovery_pass:
             model = discovery_model or "gpt-5.1-codex-max"
             try:
-                run_codex_discovery(repo_root, model=model)
+                run_codex_discovery(repo_root, model=model, use_pipeline=True)
             except Exception as exc:  # pragma: no cover - best effort
                 log.warning(
                     "onboarding_discovery_failed",
@@ -363,7 +363,13 @@ class OnboardingService:
             },
         )
         try:
-            run_codex_discovery(repo_path, model, prompt_file=prompt_path, timeout_seconds=timeout_seconds)
+            run_codex_discovery(
+                repo_path,
+                model,
+                prompt_file=prompt_path,
+                timeout_seconds=timeout_seconds,
+                use_pipeline=True,
+            )
             self.db.append_event(
                 protocol_run_id,
                 "setup_discovery_completed",

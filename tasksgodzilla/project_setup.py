@@ -23,9 +23,14 @@ BASE_FILES = {
     "prompts/protocol-pipeline.prompt.md": "prompts/protocol-pipeline.prompt.md",
     "prompts/project-setup.prompt.md": "prompts/project-setup.prompt.md",
     "prompts/repo-discovery.prompt.md": "prompts/repo-discovery.prompt.md",
+    "prompts/discovery-inventory.prompt.md": "prompts/discovery-inventory.prompt.md",
+    "prompts/discovery-architecture.prompt.md": "prompts/discovery-architecture.prompt.md",
+    "prompts/discovery-api-reference.prompt.md": "prompts/discovery-api-reference.prompt.md",
+    "prompts/discovery-ci-notes.prompt.md": "prompts/discovery-ci-notes.prompt.md",
     "prompts/java-testing.prompt.md": "prompts/java-testing.prompt.md",
     "scripts/codex_ci_bootstrap.py": "scripts/codex_ci_bootstrap.py",
     "scripts/quality_orchestrator.py": "scripts/quality_orchestrator.py",
+    "scripts/discovery_pipeline.py": "scripts/discovery_pipeline.py",
     "prompts/quality-validator.prompt.md": "prompts/quality-validator.prompt.md",
     "schemas/protocol-planning.schema.json": "schemas/protocol-planning.schema.json",
     "scripts/protocol_pipeline.py": "scripts/protocol_pipeline.py",
@@ -284,6 +289,7 @@ def run_codex_discovery(
     skip_git_check: bool = True,
     strict: bool = False,
     timeout_seconds: Optional[int] = None,
+    use_pipeline: Optional[bool] = None,
 ) -> None:
     """
     Run Codex discovery (repo analysis + CI suggestions) with the repo-discovery prompt.
@@ -298,6 +304,26 @@ def run_codex_discovery(
             log.error("codex_cli_missing", extra={"repo_root": str(repo_root), "model": model})
             raise FileNotFoundError(msg)
         log.warning("codex_cli_missing", extra={"repo_root": str(repo_root), "model": model})
+        return
+
+    pipeline_enabled = use_pipeline
+    if pipeline_enabled is None:
+        pipeline_enabled = os.environ.get("TASKSGODZILLA_DISCOVERY_PIPELINE", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+    if pipeline_enabled and prompt_file is None:
+        run_codex_discovery_pipeline(
+            repo_root=repo_root,
+            model=model,
+            sandbox=sandbox,
+            skip_git_check=skip_git_check,
+            strict=strict,
+            timeout_seconds=timeout_seconds,
+            artifacts=None,
+        )
         return
 
     prompt_path = prompt_file if prompt_file else repo_root / "prompts" / "repo-discovery.prompt.md"
@@ -362,3 +388,100 @@ def run_codex_discovery(
     except Exception:  # pragma: no cover - best effort logging
         pass
     log.info("codex_discovery_complete", extra={"repo_root": str(repo_root), "model": model})
+
+
+def _resolve_prompt(repo_root: Path, prompt_name: str) -> Optional[Path]:
+    """
+    Resolve a prompt file, preferring repo-local prompts/, falling back to starter prompts/.
+    """
+    repo_prompt = repo_root / "prompts" / prompt_name
+    if repo_prompt.is_file():
+        return repo_prompt
+    fallback_prompt = Path(__file__).resolve().parents[1] / "prompts" / prompt_name
+    if fallback_prompt.is_file():
+        return fallback_prompt
+    return None
+
+
+def run_codex_discovery_pipeline(
+    *,
+    repo_root: Path,
+    model: str,
+    sandbox: str = "workspace-write",
+    skip_git_check: bool = True,
+    strict: bool = False,
+    timeout_seconds: Optional[int] = None,
+    artifacts: Optional[list[str]] = None,
+) -> None:
+    """
+    Multi-pass discovery pipeline:
+    1) Inventory -> DISCOVERY.md + DISCOVERY_SUMMARY.json
+    2) Architecture -> ARCHITECTURE.md
+    3) API reference -> API_REFERENCE.md
+    4) CI notes/scripts -> CI_NOTES.md + scripts/ci/*
+
+    If artifacts is None, runs all stages. Otherwise expects a list of stage keys:
+    inventory, architecture, api_reference, ci_notes.
+    """
+    stage_map: dict[str, str] = {
+        "inventory": "discovery-inventory.prompt.md",
+        "architecture": "discovery-architecture.prompt.md",
+        "api_reference": "discovery-api-reference.prompt.md",
+        "ci_notes": "discovery-ci-notes.prompt.md",
+    }
+    selected = list(stage_map.keys()) if artifacts is None else artifacts
+
+    for stage in selected:
+        prompt_name = stage_map.get(stage)
+        if not prompt_name:
+            log.warning("discovery_unknown_stage", extra={"stage": stage})
+            continue
+        prompt_path = _resolve_prompt(repo_root, prompt_name)
+        if not prompt_path:
+            msg = f"discovery prompt missing: {prompt_name}"
+            if strict:
+                raise FileNotFoundError(msg)
+            log.warning("discovery_prompt_missing", extra={"prompt_name": prompt_name, "repo_root": str(repo_root)})
+            continue
+
+        log.info(
+            "run_codex_discovery_stage",
+            extra={"stage": stage, "prompt_path": str(prompt_path), "repo_root": str(repo_root), "model": model},
+        )
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        cmd = [
+            "codex",
+            "exec",
+            "-m",
+            model,
+            "--cd",
+            str(repo_root),
+            "--sandbox",
+            sandbox,
+        ]
+        if skip_git_check:
+            cmd.append("--skip-git-repo-check")
+        cmd.append("-")
+
+        run_kwargs = {
+            "cwd": repo_root,
+            "capture_output": True,
+            "text": True,
+            "check": True,
+            "input_text": prompt_text,
+        }
+        if timeout_seconds is not None:
+            run_kwargs["timeout"] = timeout_seconds
+        proc = codex.run_process(cmd, **run_kwargs)
+        try:
+            log_path = repo_root / "codex-discovery.log"
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(f"\n\n===== discovery stage: {stage} ({prompt_name}) =====\n")
+                if getattr(proc, "stdout", None):
+                    f.write(proc.stdout)
+                if getattr(proc, "stderr", None):
+                    f.write("\n[stderr]\n")
+                    f.write(proc.stderr)
+        except Exception:  # pragma: no cover
+            pass
+        log.info("codex_discovery_stage_complete", extra={"stage": stage, "repo_root": str(repo_root), "model": model})

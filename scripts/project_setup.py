@@ -114,7 +114,7 @@ def main() -> None:
 
         if not args.skip_discovery:
             discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
-            run_codex_discovery(repo_root, discovery_model)
+            run_codex_discovery(repo_root, discovery_model, use_pipeline=True)
     except FileNotFoundError as exc:
         log.error("project_setup_dependency_missing", extra={"error": str(exc)})
         sys.exit(EXIT_DEP_MISSING)
