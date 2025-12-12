@@ -13,6 +13,10 @@ from typing import Iterable
 
 REQUIRED_FILES = [
     Path("prompts/repo-discovery.prompt.md"),
+    Path("prompts/discovery-inventory.prompt.md"),
+    Path("prompts/discovery-architecture.prompt.md"),
+    Path("prompts/discovery-api-reference.prompt.md"),
+    Path("prompts/discovery-ci-notes.prompt.md"),
     Path("docs/solution-design.md"),
     Path("docs/implementation-plan.md"),
     Path("docs/tasksgodzilla.md"),

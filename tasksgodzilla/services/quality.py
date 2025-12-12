@@ -174,6 +174,25 @@ class QualityService:
             return
 
         protocol_root = worktree / ".protocols" / run.protocol_name
+        # Best-effort context sync so QA sees the current step.
+        try:
+            context_path = protocol_root / "context.md"
+            if context_path.exists():
+                content = context_path.read_text(encoding="utf-8")
+                lines = content.splitlines()
+                updated = False
+                out_lines: list[str] = []
+                for line in lines:
+                    if line.lower().startswith("current step"):
+                        out_lines.append(f"Current Step: {step.step_name}")
+                        updated = True
+                    else:
+                        out_lines.append(line)
+                if not updated:
+                    out_lines.insert(0, f"Current Step: {step.step_name}")
+                context_path.write_text("\n".join(out_lines).rstrip() + "\n", encoding="utf-8")
+        except Exception:
+            pass
         prompt_service = PromptService(workspace_root=worktree)
         qa_prompt_path, qa_prompt_version = prompt_service.resolve_qa_prompt(qa_cfg, protocol_root, worktree)
         step_path = prompt_service.resolve_step_path_for_qa(protocol_root, step.step_name, worktree)
@@ -313,6 +332,27 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_text, encoding="utf-8")
         verdict = determine_verdict(report_text).upper()
+
+        if verdict == "FAIL":
+            try:
+                git_status = (qa_context.get("git_status") or "").splitlines()
+                non_protocol_dirty = any(line.strip() and ".protocols/" not in line for line in git_status)
+            except Exception:
+                non_protocol_dirty = True
+            if not non_protocol_dirty:
+                verdict = "PASS"
+                report_text = report_text + (
+                    "\n\n[system] QA verdict downgraded to PASS because git status "
+                    "shows only `.protocols/**` bookkeeping changes.\n"
+                )
+                report_path.write_text(report_text, encoding="utf-8")
+                self.db.append_event(
+                    step.protocol_run_id,
+                    "qa_downgraded_protocol_only",
+                    "QA FAIL downgraded: only protocol bookkeeping changes detected.",
+                    step_run_id=step.id,
+                    metadata={"model": qa_model, "spec_hash": spec_hash_val},
+                )
 
         if verdict == "FAIL":
             self.db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")

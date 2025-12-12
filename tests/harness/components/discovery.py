@@ -77,24 +77,16 @@ class DiscoveryTestComponent:
             return "generic"
     
     def _get_discovery_prompt_path(self, project_type: str) -> Path:
-        """Get the appropriate discovery prompt path for the project type."""
+        """Get the appropriate discovery prompt path for the project type.
+
+        The harness uses the multi-pass discovery pipeline; stage prompts are
+        resolved internally. This helper remains for compatibility and points
+        to the inventory stage prompt.
+        """
         prompts_dir = Path(__file__).resolve().parents[3] / "prompts"
-        
-        prompt_mapping = {
-            "demo": "demo-project-discovery.prompt.md",
-            "python": "python-discovery.prompt.md",
-            "javascript": "javascript-discovery.prompt.md", 
-            "mixed": "mixed-project-discovery.prompt.md",
-            "generic": "repo-discovery.prompt.md"
-        }
-        
-        prompt_name = prompt_mapping.get(project_type, "repo-discovery.prompt.md")
-        prompt_path = prompts_dir / prompt_name
-        
-        # Fallback to generic prompt if specific one doesn't exist
+        prompt_path = prompts_dir / "discovery-inventory.prompt.md"
         if not prompt_path.exists():
             prompt_path = prompts_dir / "repo-discovery.prompt.md"
-        
         return prompt_path
     
     def run_test(self, project, env_context: EnvironmentContext) -> bool:
@@ -190,8 +182,7 @@ class DiscoveryTestComponent:
                 try:
                     # Detect project type and use appropriate prompt
                     project_type = self._detect_project_type(temp_project_path)
-                    prompt_path = self._get_discovery_prompt_path(project_type)
-                    run_codex_discovery(temp_project_path, "gpt-5.1-codex-max", prompt_file=prompt_path)
+                    run_codex_discovery(temp_project_path, "gpt-5.1-codex-max", use_pipeline=True)
                     
                     # Check if discovery artifacts were created
                     discovery_files = list(temp_project_path.glob("**/.codex-*"))
@@ -282,9 +273,7 @@ class DiscoveryTestComponent:
                         projects_tested += 1
                         # Detect project type and use appropriate prompt
                         project_type = self._detect_project_type(project_path)
-                        prompt_path = self._get_discovery_prompt_path(project_type)
-                        
-                        run_codex_discovery(project_path, "gpt-5.1-codex-max", prompt_file=prompt_path)
+                        run_codex_discovery(project_path, "gpt-5.1-codex-max", use_pipeline=True)
                         
                         # Check for any discovery output
                         discovery_files = list(project_path.glob("**/.codex-*"))
@@ -510,7 +499,6 @@ class DiscoveryTestComponent:
                         
                         # Use the existing codex_ci_bootstrap script with timeout protection
                         try:
-                            from scripts.codex_ci_bootstrap import run_codex_discovery
                             # Add timeout protection to prevent hanging
                             import signal
                             
@@ -523,11 +511,9 @@ class DiscoveryTestComponent:
                             
                             try:
                                 run_codex_discovery(
-                                    repo_root=project_path,
-                                    model="gpt-5.1-codex-max",
-                                    prompt_file=prompt_path,
-                                    sandbox="workspace-write",
-                                    skip_git_check=True
+                                    project_path,
+                                    "gpt-5.1-codex-max",
+                                    use_pipeline=True,
                                 )
                             finally:
                                 signal.alarm(0)  # Cancel timeout
@@ -638,18 +624,12 @@ class DiscoveryTestComponent:
                 test_project_path = Path(temp_dir) / "demo_bootstrap"
                 shutil.copytree(demo_path, test_project_path)
                 
-                # Run discovery using codex_ci_bootstrap
-                detected_type = self._detect_project_type(test_project_path)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                
+                # Run discovery via pipeline
                 start_time = time.time()
-                from scripts.codex_ci_bootstrap import run_codex_discovery
                 run_codex_discovery(
-                    repo_root=test_project_path,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
+                    test_project_path,
+                    "gpt-5.1-codex-max",
+                    use_pipeline=True,
                 )
                 duration = time.time() - start_time
                 
@@ -924,11 +904,8 @@ This is a test project with various file types.
                 
                 # Try discovery on this mixed project
                 try:
-                    # Detect project type and use appropriate prompt
-                    project_type = self._detect_project_type(mixed_project)
-                    prompt_path = self._get_discovery_prompt_path(project_type)
-                    
-                    run_codex_discovery(mixed_project, "gpt-5.1-codex-max", prompt_file=prompt_path)
+                    # Run discovery via multi-pass pipeline.
+                    run_codex_discovery(mixed_project, "gpt-5.1-codex-max", use_pipeline=True)
                     
                     # Check if discovery handled the various file types
                     discovery_files = list(mixed_project.glob("**/.codex-*"))
@@ -1087,16 +1064,7 @@ This is a test project with various file types.
             (empty_project / "README.md").write_text("# Empty Project")
             
             try:
-                detected_type = self._detect_project_type(empty_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                from scripts.codex_ci_bootstrap import run_codex_discovery
-                run_codex_discovery(
-                    repo_root=empty_project,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(empty_project, "gpt-5.1-codex-max", use_pipeline=True)
                 edge_case_results["empty_project"] = True
             except Exception:
                 pass
@@ -1107,15 +1075,7 @@ This is a test project with various file types.
             self._create_large_project_structure(large_project)
             
             try:
-                detected_type = self._detect_project_type(large_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                run_codex_discovery(
-                    repo_root=large_project,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(large_project, "gpt-5.1-codex-max", use_pipeline=True)
                 edge_case_results["large_project"] = True
             except Exception:
                 pass
@@ -1127,15 +1087,7 @@ This is a test project with various file types.
             (unusual_project / "src" / "deeply" / "nested" / "structure" / "main.py").write_text("# Deep file")
             
             try:
-                detected_type = self._detect_project_type(unusual_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                run_codex_discovery(
-                    repo_root=unusual_project,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(unusual_project, "gpt-5.1-codex-max", use_pipeline=True)
                 edge_case_results["unusual_structure"] = True
             except Exception:
                 pass
@@ -1198,9 +1150,7 @@ This is a test project with various file types.
             (empty_project / "README.md").write_text("# Empty Project")
             
             try:
-                detected_type = self._detect_project_type(empty_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                run_codex_discovery(empty_project, "gpt-5.1-codex-max", prompt_file=prompt_path)
+                run_codex_discovery(empty_project, "gpt-5.1-codex-max", use_pipeline=True)
                 edge_case_results["empty_project"] = True
             except Exception:
                 pass
@@ -1212,9 +1162,7 @@ This is a test project with various file types.
             (corrupted_project / "normal.py").write_text("print('hello')")
             
             try:
-                detected_type = self._detect_project_type(corrupted_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                run_codex_discovery(corrupted_project, "gpt-5.1-codex-max", prompt_file=prompt_path)
+                run_codex_discovery(corrupted_project, "gpt-5.1-codex-max", use_pipeline=True)
                 edge_case_results["corrupted_files"] = True
             except Exception:
                 pass
@@ -1226,9 +1174,7 @@ This is a test project with various file types.
             (unusual_project / "src" / "deeply" / "nested" / "structure" / "main.py").write_text("# Deep file")
             
             try:
-                detected_type = self._detect_project_type(unusual_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                run_codex_discovery(unusual_project, "gpt-5.1-codex-max", prompt_file=prompt_path)
+                run_codex_discovery(unusual_project, "gpt-5.1-codex-max", use_pipeline=True)
                 edge_case_results["unusual_structure"] = True
             except Exception:
                 pass
@@ -1241,9 +1187,6 @@ This is a test project with various file types.
     def _measure_discovery_time_inventory(self, project_path: Path) -> float:
         """Measure time taken for discovery inventory on a project with timeout protection."""
         try:
-            detected_type = self._detect_project_type(project_path)
-            prompt_path = self._get_discovery_prompt_path(detected_type)
-            
             start_time = time.time()
             
             # Add timeout protection
@@ -1257,14 +1200,7 @@ This is a test project with various file types.
             signal.alarm(60)
             
             try:
-                from scripts.codex_ci_bootstrap import run_codex_discovery
-                run_codex_discovery(
-                    repo_root=project_path,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(project_path, "gpt-5.1-codex-max", use_pipeline=True)
                 return time.time() - start_time
             finally:
                 signal.alarm(0)  # Cancel timeout
@@ -1316,18 +1252,7 @@ This is a test project with various file types.
             start_time = time.time()
             
             try:
-                detected_type = self._detect_project_type(timeout_project)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                
-                # Try discovery with codex_ci_bootstrap
-                from scripts.codex_ci_bootstrap import run_codex_discovery
-                run_codex_discovery(
-                    repo_root=timeout_project,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(timeout_project, "gpt-5.1-codex-max", use_pipeline=True)
                 result["handled_gracefully"] = True
                 
             except Exception as e:
@@ -1367,17 +1292,7 @@ This is a test project with various file types.
             
             while attempts < max_attempts:
                 try:
-                    detected_type = self._detect_project_type(error_project)
-                    prompt_path = self._get_discovery_prompt_path(detected_type)
-                    
-                    from scripts.codex_ci_bootstrap import run_codex_discovery
-                    run_codex_discovery(
-                        repo_root=error_project,
-                        model="gpt-5.1-codex-max",
-                        prompt_file=prompt_path,
-                        sandbox="workspace-write",
-                        skip_git_check=True
-                    )
+                    run_codex_discovery(error_project, "gpt-5.1-codex-max", use_pipeline=True)
                     result["recovered_successfully"] = True
                     break
                 except Exception:
@@ -1426,17 +1341,7 @@ This is a test project with various file types.
             
             # Run discovery inventory
             if self._is_codex_available():
-                detected_type = self._detect_project_type(test_project_path)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                
-                from scripts.codex_ci_bootstrap import run_codex_discovery
-                run_codex_discovery(
-                    repo_root=test_project_path,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(test_project_path, "gpt-5.1-codex-max", use_pipeline=True)
                 
                 # Check if discovery inventory artifacts were created
                 artifacts = self._find_discovery_artifacts(test_project_path)
@@ -1470,17 +1375,7 @@ This is a test project with various file types.
             shutil.copytree(demo_path, test_project_path)
             
             if self._is_codex_available():
-                detected_type = self._detect_project_type(test_project_path)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                
-                from scripts.codex_ci_bootstrap import run_codex_discovery
-                run_codex_discovery(
-                    repo_root=test_project_path,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(test_project_path, "gpt-5.1-codex-max", use_pipeline=True)
                 
                 # Test if other components can consume discovery inventory output
                 artifacts = self._find_discovery_artifacts(test_project_path)
@@ -1530,17 +1425,7 @@ This is a test project with various file types.
             
             if self._is_codex_available():
                 # Run discovery inventory
-                detected_type = self._detect_project_type(test_project_path)
-                prompt_path = self._get_discovery_prompt_path(detected_type)
-                
-                from scripts.codex_ci_bootstrap import run_codex_discovery
-                run_codex_discovery(
-                    repo_root=test_project_path,
-                    model="gpt-5.1-codex-max",
-                    prompt_file=prompt_path,
-                    sandbox="workspace-write",
-                    skip_git_check=True
-                )
+                run_codex_discovery(test_project_path, "gpt-5.1-codex-max", use_pipeline=True)
                 workflow_steps["discovery_run"] = True
                 
                 # Check for inventory artifacts

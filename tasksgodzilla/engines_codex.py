@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +76,22 @@ class CodexEngine:
                     continue
 
         # Bound Codex calls so hung invocations fail fast and surface upstream.
-        proc = run_process(cmd, cwd=cwd, capture_output=True, text=True, input_text=prompt_text, check=True, timeout=180)
+        # Allow override via request.extra["timeout_seconds"] or TASKSGODZILLA_CODEX_TIMEOUT_SECONDS.
+        timeout_seconds = extra.get("timeout_seconds")
+        if not isinstance(timeout_seconds, int):
+            try:
+                timeout_seconds = int(os.environ.get("TASKSGODZILLA_CODEX_TIMEOUT_SECONDS", "180"))
+            except Exception:
+                timeout_seconds = 180
+        proc = run_process(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            input_text=prompt_text,
+            check=True,
+            timeout=timeout_seconds,
+        )
         return EngineResult(
             success=True,
             stdout=proc.stdout or "",

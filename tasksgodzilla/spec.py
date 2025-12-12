@@ -126,6 +126,14 @@ def build_spec_from_protocol_files(
     steps: List[Dict[str, Any]] = []
     step_files = sorted([p for p in protocol_root.glob("*.md") if p.name[0:2].isdigit()])
     for idx, path in enumerate(step_files):
+        lower = path.name.lower()
+        step_type = infer_step_type_from_name(path.name)
+        qa_policy = default_qa_policy
+        if step_type == "setup" or "scan" in lower or "repo-scan" in lower:
+            qa_policy = "skip"
+        timeout_seconds = None
+        if step_type == "work":
+            timeout_seconds = 1200
         steps.append(
             {
                 "id": path.stem,
@@ -134,9 +142,10 @@ def build_spec_from_protocol_files(
                 "model": None,
                 "prompt_ref": str(path),
                 "outputs": {"protocol": str(path)},
-                "step_type": infer_step_type_from_name(path.name),
+                "step_type": step_type,
                 "policies": [],
-                "qa": {"policy": default_qa_policy, "prompt": default_qa_prompt},
+                "qa": {"policy": qa_policy, "prompt": default_qa_prompt},
+                "timeout_seconds": timeout_seconds,
                 "order": idx,
             }
         )

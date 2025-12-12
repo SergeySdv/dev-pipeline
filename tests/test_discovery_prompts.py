@@ -74,42 +74,48 @@ class TestDiscoveryPrompts(unittest.TestCase):
         """Test getting Python discovery prompt path."""
         prompt_path = self.discovery_component._get_discovery_prompt_path("python")
         self.assertTrue(prompt_path.exists())
-        self.assertEqual(prompt_path.name, "python-discovery.prompt.md")
+        self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     def test_get_discovery_prompt_path_javascript(self):
         """Test getting JavaScript discovery prompt path."""
         prompt_path = self.discovery_component._get_discovery_prompt_path("javascript")
         self.assertTrue(prompt_path.exists())
-        self.assertEqual(prompt_path.name, "javascript-discovery.prompt.md")
+        self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     def test_get_discovery_prompt_path_mixed(self):
         """Test getting mixed project discovery prompt path."""
         prompt_path = self.discovery_component._get_discovery_prompt_path("mixed")
         self.assertTrue(prompt_path.exists())
-        self.assertEqual(prompt_path.name, "mixed-project-discovery.prompt.md")
+        self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     def test_get_discovery_prompt_path_demo(self):
         """Test getting demo project discovery prompt path."""
         prompt_path = self.discovery_component._get_discovery_prompt_path("demo")
         self.assertTrue(prompt_path.exists())
-        self.assertEqual(prompt_path.name, "demo-project-discovery.prompt.md")
+        self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     def test_get_discovery_prompt_path_fallback(self):
         """Test fallback to generic prompt for unknown project types."""
         prompt_path = self.discovery_component._get_discovery_prompt_path("unknown")
         self.assertTrue(prompt_path.exists())
-        self.assertEqual(prompt_path.name, "repo-discovery.prompt.md")
+        self.assertIn(prompt_path.name, {"discovery-inventory.prompt.md", "repo-discovery.prompt.md"})
     
     def test_all_prompt_files_exist(self):
         """Test that all expected prompt files exist."""
         prompts_dir = Path(__file__).resolve().parents[1] / "prompts"
         
         expected_prompts = [
+            # Legacy and project-type discovery prompts
             "repo-discovery.prompt.md",
-            "python-discovery.prompt.md", 
+            "python-discovery.prompt.md",
             "javascript-discovery.prompt.md",
             "mixed-project-discovery.prompt.md",
-            "demo-project-discovery.prompt.md"
+            "demo-project-discovery.prompt.md",
+            # New multi-pass prompts
+            "discovery-inventory.prompt.md",
+            "discovery-architecture.prompt.md",
+            "discovery-api-reference.prompt.md",
+            "discovery-ci-notes.prompt.md",
         ]
         
         for prompt_name in expected_prompts:

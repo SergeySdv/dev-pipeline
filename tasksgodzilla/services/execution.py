@@ -250,7 +250,7 @@ class ExecutionService:
                 or (project.default_models.get("exec") if project.default_models else None)
                 or getattr(config, "exec_model", None)
                 or registry.get(engine_id).metadata.default_model
-                or "codex-5.1-max-xhigh"
+                or "gpt-5.1-codex-max"
             )
             resolution.prompt_path = prompt_path
             resolution.prompt_text = prompt_text
@@ -283,7 +283,7 @@ class ExecutionService:
                 or step.model
                 or (project.default_models.get("exec") if project.default_models else None)
                 or config.exec_model
-                or "codex-5.1-max-xhigh"
+                or "gpt-5.1-codex-max"
             )
             resolution.prompt_path = step_path
             resolution.prompt_text = exec_prompt
@@ -331,12 +331,20 @@ class ExecutionService:
                 "agent_id": resolution.agent_id,
             },
         )
+        timeout_seconds = None
+        try:
+            raw_timeout = (step_spec or {}).get("timeout_seconds") or (step_spec or {}).get("exec_timeout_seconds")
+            if raw_timeout is not None:
+                timeout_seconds = int(raw_timeout)
+        except Exception:
+            timeout_seconds = None
         try:
             exec_result = execute_step_unified(
                 resolution,
                 project_id=project.id,
                 protocol_run_id=run.id,
                 step_run_id=step.id,
+                extra={"timeout_seconds": timeout_seconds} if timeout_seconds else None,
             )
         except CodexCommandError as exc:
             self.db.update_step_status(step.id, StepStatus.FAILED, summary=f"Execution error: {exc}")
@@ -485,4 +493,3 @@ class ExecutionService:
             protocol_run_id=protocol_run_id or (run.id if run else None),
             step_run_id=step.id if step else None,
         )
-

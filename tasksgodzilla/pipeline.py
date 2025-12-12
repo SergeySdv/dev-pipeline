@@ -473,7 +473,7 @@ def run_pipeline(args) -> None:
 
     # Optionally auto-run a specific step
     if args.run_step:
-        exec_model = args.exec_model or config.exec_model or os.environ.get("PROTOCOL_EXEC_MODEL", "codex-5.1-max-xhigh")
+        exec_model = args.exec_model or config.exec_model or os.environ.get("PROTOCOL_EXEC_MODEL", "gpt-5.1-codex-max")
         step_path = protocol_root / args.run_step
         if not step_path.is_file():
             log.warning("auto_run_step_missing", extra={**context, "step_file": str(step_path)})

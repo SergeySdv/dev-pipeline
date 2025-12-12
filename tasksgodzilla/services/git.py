@@ -74,7 +74,9 @@ class GitService:
 
     def get_worktree_path(self, repo_root: Path, protocol_name: str) -> tuple[Path, str]:
         branch_name = self.get_branch_name(protocol_name)
-        worktrees_root = repo_root.parent / "worktrees"
+        # Keep worktrees scoped to a single repo to avoid collisions between
+        # different projects under the same org/parent directory.
+        worktrees_root = repo_root / "worktrees"
         return worktrees_root / branch_name, branch_name
 
     def ensure_repo_or_block(
@@ -160,19 +162,33 @@ class GitService:
                     "base_branch": base_branch,
                 },
             )
-            run_process(
-                [
-                    "git",
-                    "worktree",
-                    "add",
-                    "--checkout",
-                    "-b",
-                    branch_name,
-                    str(worktree),
-                    f"origin/{base_branch}",
-                ],
-                cwd=repo_root,
-            )
+            try:
+                run_process(
+                    [
+                        "git",
+                        "worktree",
+                        "add",
+                        "--checkout",
+                        "-b",
+                        branch_name,
+                        str(worktree),
+                        f"origin/{base_branch}",
+                    ],
+                    cwd=repo_root,
+                )
+            except Exception:
+                # Branch may already exist from a previous run; reuse it.
+                run_process(
+                    [
+                        "git",
+                        "worktree",
+                        "add",
+                        "--checkout",
+                        str(worktree),
+                        branch_name,
+                    ],
+                    cwd=repo_root,
+                )
         return worktree
 
     def push_and_open_pr(

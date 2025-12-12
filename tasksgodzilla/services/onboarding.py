@@ -401,7 +401,7 @@ def _build_clarifications(project, repo_path: Path):
     recommended_ci = project.ci_provider or "github"
     recommended_models = project.default_models or {
         "planning": "gpt-5.1-high",
-        "exec": "codex-5.1-max-xhigh",
+        "exec": "gpt-5.1-codex-max",
     }
     prefer_ssh = prefer_github_ssh()
     git_user = os.environ.get("TASKSGODZILLA_GIT_USER") or ""

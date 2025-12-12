@@ -80,7 +80,13 @@ class PromptService:
         if prompt_ref:
             prompt_path = resolve_spec_path(str(prompt_ref), protocol_root, workspace=workspace_root)
         else:
-            prompt_path = (workspace_root / "prompts" / "quality-validator.prompt.md").resolve()
+            # Prefer the orchestrator's bundled QA prompt so updates take effect
+            # even when the workspace has a stale copy.
+            bundled = Path(__file__).resolve().parents[2] / "prompts" / "quality-validator.prompt.md"
+            if bundled.is_file():
+                prompt_path = bundled.resolve()
+            else:
+                prompt_path = (workspace_root / "prompts" / "quality-validator.prompt.md").resolve()
         
         version = prompt_version(prompt_path)
         
@@ -172,4 +178,3 @@ class PromptService:
             return alt
         
         return resolve_spec_path(step_name, protocol_root, workspace=workspace_root)
-
