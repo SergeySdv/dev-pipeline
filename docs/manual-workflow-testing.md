@@ -151,7 +151,7 @@ python ../../../scripts/protocol_pipeline.py \
 **Expected output:**
 ```
 Protocol 0001-add-logging created
-Worktree: ../worktrees/0001-add-logging
+Worktree: worktrees/0001-add-logging
 Plan: .protocols/0001-add-logging/plan.md
 Steps:
   - 01-implement-logger.md
@@ -163,12 +163,13 @@ Steps:
 
 ```bash
 # Navigate to the worktree
-cd ../worktrees/0001-add-logging
+cd worktrees/0001-add-logging
 
 # Execute with Codex
-codex --model codex-5.1-max-xhigh \
+codex exec -m gpt-5.1-codex-max \
+  --cd worktrees/0001-add-logging \
   --sandbox workspace-write \
-  --ask-for-approval on-request \
+  --skip-git-repo-check \
   "Follow .protocols/0001-add-logging/plan.md and implement step 01-implement-logger.md"
 ```
 
@@ -176,9 +177,9 @@ codex --model codex-5.1-max-xhigh \
 
 ```bash
 python scripts/quality_orchestrator.py \
-  --protocol-root ../worktrees/0001-add-logging/.protocols/0001-add-logging \
+  --protocol-root worktrees/0001-add-logging/.protocols/0001-add-logging \
   --step-file 01-implement-logger.md \
-  --model codex-5.1-max
+  --model gpt-5.1-codex-max
 ```
 
 **Expected output:**

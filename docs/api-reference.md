@@ -27,6 +27,10 @@ HTTP API for managing projects, protocol runs, steps, events, queues, and CI/web
 - `GET /projects` → list of projects.
 - `GET /projects/{id}` → project (401 if project token required and missing).
 - `GET /projects/{id}/onboarding` → onboarding summary (status, workspace, stages, recent events) for `setup-{id}`.
+- `POST /projects/{id}/onboarding/actions/start`
+  - Body: `{ "inline": bool }` (optional; default false)
+  - Behavior: mirrors project-creation onboarding; when `inline=true`, runs the setup job in-process (no worker required). When `inline=false`, enqueues `project_setup_job`.
+  - Side effects: emits `setup_enqueued` and then `setup_*` progress events.
 - `GET /projects/{id}/branches`
   - Response: `{ "branches": [str] }`
   - Behavior: resolves repo via stored `local_path` or `git_url` (defaulting to `projects/<project_id>/<repo_name>`); clones when allowed; records an event.
@@ -36,6 +40,7 @@ HTTP API for managing projects, protocol runs, steps, events, queues, and CI/web
 
 Event visibility
 - Onboarding emits `setup_discovery_*` events (started/skipped/completed/warning) around Codex repo discovery so console/TUI/CLI can show discovery progress per project.
+  - Discovery uses the multi-pass pipeline (inventory → architecture → API reference → CI notes) via `prompts/discovery-*.prompt.md`.
 
 ## CodeMachine import
 - `POST /projects/{id}/codemachine/import`
@@ -128,6 +133,24 @@ curl -X POST http://localhost:8011/projects \
   -H "Content-Type: application/json" \
   -d '{"name":"demo","git_url":"/path/to/repo","base_branch":"main"}'
 ```
+
+Run onboarding inline for an existing project:
+```bash
+curl -X POST http://localhost:8011/projects/1/onboarding/actions/start \
+  -H "Authorization: Bearer $TASKSGODZILLA_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"inline": true}'
+```
+
+## CLIs
+
+- `python scripts/discovery_pipeline.py`
+  - Purpose: re-run all or selected discovery artifacts on an existing repo without full onboarding.
+  - Key args: `--repo-root <path>`, `--artifacts inventory,architecture,api_reference,ci_notes`, `--model <model>`, `--sandbox workspace-write`, `--timeout-seconds <int>`.
+  - Example:
+    ```bash
+    python scripts/discovery_pipeline.py --repo-root . --artifacts inventory,ci_notes
+    ```
 
 Start planning a protocol:
 ```bash

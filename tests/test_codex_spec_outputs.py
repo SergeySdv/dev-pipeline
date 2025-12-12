@@ -288,7 +288,7 @@ def test_quality_uses_spec_prompt_and_engine(monkeypatch, tmp_path) -> None:
         captured["qa_model"] = kwargs.get("qa_model")
         return FakeQAResult()
 
-    monkeypatch.setattr(codex_worker, "run_qa_unified", fake_run_qa_unified)
+    monkeypatch.setattr("tasksgodzilla.workers.unified_runner.run_qa_unified", fake_run_qa_unified)
 
     codex_worker.handle_quality(step.id, db)
 

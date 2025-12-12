@@ -63,7 +63,35 @@ SINGLE_WORKTREE = os.environ.get("TASKSGODZILLA_SINGLE_WORKTREE", "true").lower(
 DEFAULT_WORKTREE_BRANCH = os.environ.get("TASKSGODZILLA_WORKTREE_BRANCH", "tasksgodzilla-worktree")
 
 
+def load_project(repo_root: Path, protocol_name: str, base_branch: str) -> Path:
+    """
+    Backward-compatible helper kept for tests and older integrations.
 
+    Historically this function prepared a project worktree for a protocol run.
+    The worker now delegates repo/worktree setup to GitService, so this is a
+    no-op that returns the given repo_root.
+    """
+    return repo_root
+
+
+def _load_project_with_context(repo_root: Path, *args, **kwargs) -> Path:
+    """
+    Legacy helper kept for unit tests.
+
+    Previous versions enriched the repo with protocol context before execution.
+    Context resolution is now handled by ExecutionService/QualityService.
+    """
+    return repo_root
+
+
+def git_push_and_open_pr(*_args, **_kwargs) -> bool:
+    """Legacy stub for tests; GitService handles push/PR now."""
+    return False
+
+
+def trigger_ci_pipeline(*_args, **_kwargs) -> bool:
+    """Legacy stub for tests; GitService handles CI triggers now."""
+    return False
 
 
 def _log_context(

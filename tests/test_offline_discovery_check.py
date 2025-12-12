@@ -8,6 +8,10 @@ def test_offline_check_passes_when_files_present(tmp_path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     for rel in [
         "prompts/repo-discovery.prompt.md",
+        "prompts/discovery-inventory.prompt.md",
+        "prompts/discovery-architecture.prompt.md",
+        "prompts/discovery-api-reference.prompt.md",
+        "prompts/discovery-ci-notes.prompt.md",
         "docs/solution-design.md",
         "docs/implementation-plan.md",
         "docs/tasksgodzilla.md",

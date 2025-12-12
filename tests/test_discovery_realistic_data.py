@@ -111,7 +111,7 @@ def test_hello():
             # Test prompt selection
             prompt_path = self.discovery_component._get_discovery_prompt_path(project_type)
             self.assertTrue(prompt_path.exists())
-            self.assertEqual(prompt_path.name, "demo-project-discovery.prompt.md")
+            self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
             
             # Verify mock was called with correct parameters
             # Note: This would be called in the actual test, but we're mocking it
@@ -227,7 +227,7 @@ def test_create_item():
             # Test prompt selection
             prompt_path = self.discovery_component._get_discovery_prompt_path(project_type)
             self.assertTrue(prompt_path.exists())
-            self.assertEqual(prompt_path.name, "python-discovery.prompt.md")
+            self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     @patch('tasksgodzilla.project_setup.run_codex_discovery')
     def test_discovery_with_javascript_project(self, mock_run_codex):
@@ -361,7 +361,7 @@ describe('API Endpoints', () => {
             # Test prompt selection
             prompt_path = self.discovery_component._get_discovery_prompt_path(project_type)
             self.assertTrue(prompt_path.exists())
-            self.assertEqual(prompt_path.name, "javascript-discovery.prompt.md")
+            self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     @patch('tasksgodzilla.project_setup.run_codex_discovery')
     def test_discovery_with_mixed_project(self, mock_run_codex):
@@ -479,7 +479,7 @@ export default App;
             # Test prompt selection
             prompt_path = self.discovery_component._get_discovery_prompt_path(project_type)
             self.assertTrue(prompt_path.exists())
-            self.assertEqual(prompt_path.name, "mixed-project-discovery.prompt.md")
+            self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
     
     def test_file_type_handling_various_extensions(self):
         """Test that discovery system handles various file types correctly."""
@@ -516,7 +516,7 @@ export default App;
             # Test that appropriate prompt is selected
             prompt_path = self.discovery_component._get_discovery_prompt_path(project_type)
             self.assertTrue(prompt_path.exists())
-            self.assertEqual(prompt_path.name, "mixed-project-discovery.prompt.md")
+            self.assertEqual(prompt_path.name, "discovery-inventory.prompt.md")
 
 
 if __name__ == '__main__':

@@ -151,6 +151,18 @@ class GitService:
         job_id: Optional[str] = None,
     ) -> Path:
         """Ensure a worktree exists for the given protocol/branch."""
+        # Local/demo paths may not be git repos (e.g., CodeMachine-only workspaces).
+        # In that case, treat the repo root as the worktree.
+        if not (repo_root / ".git").exists():
+            log.info(
+                "worktree_skipped_not_git_repo",
+                extra={
+                    **self._log_context(protocol_run_id=protocol_run_id, project_id=project_id, job_id=job_id),
+                    "protocol_name": protocol_name,
+                    "repo_root": str(repo_root),
+                },
+            )
+            return repo_root
         worktree, branch_name = self.get_worktree_path(repo_root, protocol_name)
         if not worktree.exists():
             log.info(

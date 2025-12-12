@@ -17,7 +17,7 @@ This document captures the current state of the system, the risks that block ful
 - Limited observability and cost tracking. No central metrics for Codex usage, protocol/step success rates, durations, or QA patterns; hard to do SRE/governance.
 - CI is wired but not orchestrated. `scripts/ci/*.sh` are stubs; there is no feedback loop where CI outcomes change orchestration decisions.
 - No first-class console or onboarding UI. Onboarding relies on scripts/docs; there is no console to register projects, select models, or see live protocol runs.
-- Coupled to local filesystem layout. Assumes `../worktrees/` and `.protocols/` on disk, which complicates multi-tenant or multi-runner deployments.
+- Coupled to local filesystem layout. Assumes per-repo `worktrees/` and `.protocols/` on disk, which complicates multi-tenant or multi-runner deployments.
 
 ## 2. Improved target architecture (global orchestrator + console)
 

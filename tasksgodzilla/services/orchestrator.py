@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from tasksgodzilla.logging import get_logger
@@ -129,6 +131,7 @@ class OrchestratorService:
         Returns the updated StepRun and Job. Raises LookupError when no suitable
         step exists, and ValueError when the step state changes concurrently.
         """
+        self._fail_stuck_running_steps(protocol_run_id)
         steps = self.db.list_step_runs(protocol_run_id)
         target = next(
             (s for s in steps if s.status in (StepStatus.PENDING, StepStatus.BLOCKED, StepStatus.FAILED)),
@@ -151,6 +154,7 @@ class OrchestratorService:
         Returns the updated StepRun and Job. Raises LookupError when no suitable
         step exists, and ValueError when the step state changes concurrently.
         """
+        self._fail_stuck_running_steps(protocol_run_id)
         steps = self.db.list_step_runs(protocol_run_id)
         target = next(
             (s for s in reversed(steps) if s.status in (StepStatus.FAILED, StepStatus.BLOCKED)),
@@ -171,6 +175,53 @@ class OrchestratorService:
             extra={"protocol_run_id": protocol_run_id, "step_run_id": step.id, "job_id": job.job_id, "retries": step.retries},
         )
         return step, job
+
+    def _fail_stuck_running_steps(self, protocol_run_id: int) -> None:
+        """
+        Watchdog: if a step is RUNNING but hasn't updated recently, mark it FAILED
+        so the next enqueue/retry can proceed.
+
+        Triggered opportunistically on enqueue/retry calls to avoid racing active jobs.
+        Threshold defaults to 1 hour and is configurable via TASKSGODZILLA_STEP_STUCK_SECONDS.
+        """
+        try:
+            threshold_s = int(os.environ.get("TASKSGODZILLA_STEP_STUCK_SECONDS", "3600"))
+        except Exception:
+            threshold_s = 3600
+        if threshold_s <= 0:
+            return
+
+        now = datetime.now(timezone.utc)
+        for step in self.db.list_step_runs(protocol_run_id):
+            if step.status != StepStatus.RUNNING:
+                continue
+            try:
+                updated_at = datetime.fromisoformat(step.updated_at.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            age_s = (now - updated_at).total_seconds()
+            if age_s < threshold_s:
+                continue
+            try:
+                self.db.update_step_status(
+                    step.id,
+                    StepStatus.FAILED,
+                    summary=f"Watchdog: step stuck RUNNING for {int(age_s)}s",
+                    expected_status=StepStatus.RUNNING,
+                )
+                self.db.append_event(
+                    protocol_run_id,
+                    "step_stuck_watchdog",
+                    f"Marked {step.step_name} failed after {int(age_s)}s without updates.",
+                    step_run_id=step.id,
+                    metadata={"age_seconds": int(age_s), "threshold_seconds": threshold_s},
+                )
+                log.warning(
+                    "step_stuck_watchdog_fired",
+                    extra={"protocol_run_id": protocol_run_id, "step_run_id": step.id, "age_seconds": int(age_s)},
+                )
+            except Exception:
+                continue
 
     def plan_protocol(self, protocol_run_id: int, job_id: Optional[str] = None) -> None:
         """Plan a protocol run by delegating to the Codex worker."""
@@ -317,12 +368,17 @@ class OrchestratorService:
         if not target_step_id:
             return trigger_decision
             
-        # Trigger the target step
+        # Trigger the target step. Prefer inline depth computed by the policy runtime.
+        depth = inline_depth
+        try:
+            depth = int(trigger_decision.get("inline_depth") or inline_depth)
+        except Exception:
+            depth = inline_depth
         self.trigger_step(
             target_step_id,
             step.protocol_run_id,
             source=reason,
-            inline_depth=inline_depth
+            inline_depth=depth,
         )
         
         return trigger_decision
@@ -496,4 +552,3 @@ class OrchestratorService:
             except Exception:
                 pass
             return None
-

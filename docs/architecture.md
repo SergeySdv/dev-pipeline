@@ -137,7 +137,7 @@ graph TB
 ```mermaid
 flowchart LR
   Repo["projects/<project_id>/<repo> (default workspace)"] --> Plan["plan_protocol_job\ncreates branch + worktree"]
-  Plan --> WT["projects/<project_id>/worktrees/<protocol_name>"]
+  Plan --> WT["projects/<project_id>/<repo_name>/worktrees/<protocol_name>"]
   WT --> Branch["git checkout -b <protocol_name> origin/<base_branch>"]
   WT --> Prot[".protocols/<protocol_name>/plan + steps"]
 ```
@@ -220,7 +220,7 @@ flowchart LR
 ## Git, CI, and webhooks
 - Project repos resolve via stored `local_path` when present; otherwise onboarding clones under `TASKSGODZILLA_PROJECTS_ROOT` using the per-project layout `projects/<project_id>/<repo_name>`, records the resolved path, configures `origin` (prefers GitHub SSH when enabled), and can set git identity from env.
 - Remote branch controls: `GET /projects/{id}/branches` lists origin branches and `POST /projects/{id}/branches/{branch}/delete` (with `confirm=true`) deletes them, recording events for audit.
-- Worktrees: created under `../worktrees/<protocol_name>` from `origin/<base_branch>`; branch name matches protocol.
+- Worktrees: created under `<repo_root>/worktrees/<protocol_name>` from `origin/<base_branch>`; branch name matches protocol. When `TASKSGODZILLA_SINGLE_WORKTREE=true` (default), multiple protocols share a single branch/worktree `worktrees/tasksgodzilla-worktree` and isolate state via `.protocols/<protocol_name>/`.
 - Push/PR: best-effort push + `gh`/`glab` draft creation after planning/exec and in `open_pr_job`.
 - CI flows: `.github/workflows/ci.yml` and `.gitlab-ci.yml` call `scripts/ci/*.sh` hooks; failures are mirrored via webhooks or `scripts/ci/report.sh`.
 - Webhook mapping: branch name (or explicit `protocol_run_id` param) maps CI events to runs; success can auto-enqueue QA, merge events complete the protocol.
@@ -244,7 +244,7 @@ flowchart LR
 
 ## Core building blocks
 - **Protocol assets and schema**  
-  - Protocols live under `.protocols/NNNN-[task]/` inside each worktree; numbered via `next_protocol_number()` scanning existing `.protocols/` and `../worktrees/`.  
+  - Protocols live under `.protocols/NNNN-[task]/` inside each worktree; numbered via `next_protocol_number()` scanning existing `.protocols/` and `worktrees/`.  
   - `schemas/protocol-planning.schema.json` enforces the planning agent’s JSON (plan/context/log + step files).  
   - `schemas/protocol-spec.schema.json` + `tasksgodzilla/spec.py` define/validate the unified ProtocolSpec/StepSpec stored on runs; spec audit/backfill is available via `spec_worker`.
 - **Protocol pipeline (`scripts/protocol_pipeline.py`)**  
@@ -254,13 +254,13 @@ flowchart LR
   - Optional flags: `--pr-platform github|gitlab` to auto-commit/push and open Draft PR/MR (requires `gh`/`glab`); `--run-step` to auto-execute a step via Codex using `execute_step_prompt`.  
   - Model defaults come from env (`PROTOCOL_PLANNING_MODEL`, `PROTOCOL_DECOMPOSE_MODEL`, `PROTOCOL_EXEC_MODEL`) with fallbacks (`gpt-5.1-high`, etc.). Temporary artifacts live in `.protocols/<name>/.tmp/`.
 - **QA orchestrator (`scripts/quality_orchestrator.py`)**  
-  - Builds a QA prompt from `plan.md`, `context.md`, `log.md`, the current step file, git status, and last commit, then calls Codex with `prompts/quality-validator.prompt.md`.  
+  - Builds a QA prompt from `plan.md`, `context.md`, `log.md`, the current step file, git status, and last commit, then calls Codex with `prompts/quality-validator.prompt.md`. Bookkeeping drift or dirty git limited to `.protocols/**` is treated as non-blocking; the service auto-downgrades such FAILs to PASS.
   - Writes `quality-report.md`; exits non-zero on Codex failure or `VERDICT: FAIL` to gate CI/pipelines. Steps marked `qa.policy=light` run the QA pass inline during execution and short-circuit the extra queue hop.
 - **Project setup (`scripts/project_setup.py`)**  
   - Ensures a repo exists (optionally `git init -b <base>`), warns if `origin` or base branch is missing, and materializes starter assets from `BASE_FILES`. Copies from this starter repo when available; otherwise writes placeholders.  
   - Marks CI scripts executable and can optionally run Codex discovery via `--run-discovery`/`PROTOCOL_DISCOVERY_MODEL`.
 - **Codex CI bootstrap (`scripts/codex_ci_bootstrap.py`)**  
-  - Thin wrapper around Codex CLI using `prompts/repo-discovery.prompt.md` to auto-fill `scripts/ci/*` for the detected stack (default model `gpt-5.1-codex-max`).
+  - Multi-pass Codex discovery pipeline (inventory → architecture → API reference → CI notes) using `prompts/discovery-*.prompt.md`. Writes `tasksgodzilla/DISCOVERY.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `CI_NOTES.md`, and `DISCOVERY_SUMMARY.json`, and may update `scripts/ci/*`.
 - **CI surfaces**  
   - GitHub Actions job `checks` and GitLab stages `bootstrap → lint → typecheck → test → build` each call the matching `scripts/ci/*.sh` if executable; otherwise emit “skip” messages. The scripts are placeholders today and must be filled per stack.
 - **Prompts library**  
@@ -287,7 +287,7 @@ flowchart LR
    - Onboarding records the resolved repo path (stored on the Project) and can auto-configure `origin`/git identity; it emits `setup_clarifications` with recommended CI/model/branch policies and can block when `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true`.
    - Optional: import an existing CodeMachine workspace via `POST /projects/{id}/codemachine/import` to materialize steps and template metadata before planning/exec flows.
 3. **Open a new protocol stream**  
-   - From repo root, run `python3 scripts/protocol_pipeline.py ...`. It creates `../worktrees/NNNN-[task]/`, generates `.protocols/NNNN-[task]/` with plan + step files, optionally commits/pushes + Draft PR/MR, and can auto-run a step. Work happens in the new worktree; plan/step files are the execution contract.
+   - From repo root, run `python3 scripts/protocol_pipeline.py ...`. It creates `worktrees/<protocol_name>/` (or reuses `worktrees/tasksgodzilla-worktree` in shared mode), generates `.protocols/<protocol_name>/` with plan + step files, optionally commits/pushes + Draft PR/MR, and can auto-run a step. Work happens in the worktree; plan/step files are the execution contract.
 4. **Execute steps manually (outside auto-run)**  
    - Work from the protocol’s worktree. For each step: follow the step file, run stack checks (`lint/typecheck/test/build`), update `log.md` and `context.md`, commit with `type(scope): subject [protocol-NNNN/XX]`, push, and report per the contract in `prompts/protocol-new.prompt.md`.
 5. **QA gate a step**  
@@ -302,9 +302,9 @@ flowchart LR
    - `docs/terraformmanager-workflow-plan.md` documents a full validation flow for the TerraformManager app (clone, configure env vars, run services, exercise CLI/API/UI, optional container smoke tests).
 
 ## State, conventions, and dependencies
-- **Worktrees/branches:** Each protocol lives in its own Git worktree under `../worktrees/NNNN-[task]/` with a same-named branch from `origin/<base>`. `.protocols/` sits inside the worktree; numbering scans both `.protocols/` and `../worktrees/`.
+- **Worktrees/branches:** When `TASKSGODZILLA_SINGLE_WORKTREE=false`, each protocol lives in its own worktree under `<repo_root>/worktrees/<protocol_name>/` with a same-named branch from `origin/<base>`. Default mode uses a shared worktree `worktrees/tasksgodzilla-worktree` and isolates protocols under `.protocols/<protocol_name>/`. Protocol numbering scans `.protocols/` and `worktrees/`.
 - **Commit format:** `feat(protocol): add plan for ... [protocol-NNNN/00]` for initial plan; subsequent commits use `type(scope): subject [protocol-NNNN/XX]` as defined in `protocol-new.prompt.md`.
-- **Models/env vars:** Planning/decompose/exec/QA models configurable via `PROTOCOL_PLANNING_MODEL`, `PROTOCOL_DECOMPOSE_MODEL`, `PROTOCOL_EXEC_MODEL`, `PROTOCOL_QA_MODEL`, `PROTOCOL_DISCOVERY_MODEL`; defaults favor `gpt-5.1-high`/`codex-5.1-max` families. Token budgets enforced via `TASKSGODZILLA_MAX_TOKENS_*` with `strict|warn|off` modes.
+- **Models/env vars:** Planning/decompose/exec/QA models configurable via `PROTOCOL_PLANNING_MODEL`, `PROTOCOL_DECOMPOSE_MODEL`, `PROTOCOL_EXEC_MODEL`, `PROTOCOL_QA_MODEL`, `PROTOCOL_DISCOVERY_MODEL`; defaults favor `gpt-5.1-high` for planning and `gpt-5.1-codex-max` for exec/QA/discovery. Codex CLI timeout is controlled by `TASKSGODZILLA_CODEX_TIMEOUT_SECONDS` (work steps default to 1200s via spec). Stuck-step watchdog uses `TASKSGODZILLA_STEP_STUCK_SECONDS`. Token budgets enforced via `TASKSGODZILLA_MAX_TOKENS_*` with `strict|warn|off` modes.
 - **Queue/runtime:** Redis/RQ is the canonical backend; `TASKSGODZILLA_INLINE_RQ_WORKER=true` triggers a background RQ worker thread from the API to process jobs inline during dev/tests. Trigger policies are bounded by `MAX_INLINE_TRIGGER_DEPTH` to avoid unbounded recursion.
 - **External tooling:** Codex CLI (mandatory for orchestrators), optional `gh`/`glab` for PR/MR automation. The dataset helper requires `reportlab`. Redis/RQ is required for the orchestrator queue.
 - **Git hygiene:** Scripts avoid destructive commands; `project_setup` warns if `origin` missing or base branch absent. `.gitignore` excludes local assets (`projects/`, dataset files, generated reports).

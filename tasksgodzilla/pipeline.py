@@ -72,7 +72,7 @@ def detect_repo_root() -> Path:
 
 def next_protocol_number(repo_root: Path) -> str:
     numbers: List[int] = []
-    worktrees_root = repo_root.parent / "worktrees"
+    worktrees_root = repo_root / "worktrees"
     if worktrees_root.is_dir():
         for entry in worktrees_root.iterdir():
             m = re.match(r"^(\d{4})-", entry.name)
@@ -89,7 +89,7 @@ def next_protocol_number(repo_root: Path) -> str:
 
 
 def create_worktree(repo_root: Path, protocol_name: str, base_branch: str) -> Path:
-    worktrees_root = repo_root.parent / "worktrees"
+    worktrees_root = repo_root / "worktrees"
     worktrees_root.mkdir(parents=True, exist_ok=True)
     worktree_path = worktrees_root / protocol_name
     run(

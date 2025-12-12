@@ -122,7 +122,7 @@ class TestDocumentationExamples:
             'CODEX_CLI_PATH': '/usr/local/bin/codex'
         }
         
-        with patch.dict(os.environ, test_env):
+        with patch.dict(os.environ, test_env, clear=True):
             env_config = EnvironmentConfig.from_environment()
             assert env_config.database_url == '/tmp/tasksgodzilla-test.sqlite'
             assert env_config.redis_url == 'redis://localhost:6379/15'
@@ -458,7 +458,7 @@ class TestCIIntegrationExamples:
             'GITHUB_REF_NAME': 'main'
         }
         
-        with patch.dict(os.environ, github_env):
+        with patch.dict(os.environ, github_env, clear=True):
             env_config = EnvironmentConfig.from_environment()
             assert env_config.database_url == '/tmp/tasksgodzilla-ci.sqlite'
             assert env_config.redis_url == 'redis://localhost:6379/15'
@@ -474,7 +474,7 @@ class TestCIIntegrationExamples:
             'CI_PIPELINE_SOURCE': 'merge_request_event'
         }
         
-        with patch.dict(os.environ, gitlab_env):
+        with patch.dict(os.environ, gitlab_env, clear=True):
             env_config = EnvironmentConfig.from_environment()
             assert env_config.database_url == 'postgresql://postgres:postgres@postgres:5432/tasksgodzilla_test'
             assert env_config.redis_url == 'redis://redis:6379/15'

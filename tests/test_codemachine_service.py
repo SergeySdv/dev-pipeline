@@ -31,5 +31,4 @@ def test_import_workspace_delegates_to_worker(service, mock_db, monkeypatch):
         100,
         "/tmp/workspace",
         mock_db,
-        job_id="job-123"
     )

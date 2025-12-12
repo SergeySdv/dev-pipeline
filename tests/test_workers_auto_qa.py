@@ -62,7 +62,12 @@ def test_handle_quality_records_prompt_version(monkeypatch, tmp_path) -> None:
     qa_events = [e for e in events if e.event_type == "qa_passed"]
     assert qa_events, "expected qa_passed event"
     metadata = qa_events[0].metadata or {}
-    assert metadata.get("prompt_versions", {}).get("qa") == prompt_version(qa_prompt)
+    from tasksgodzilla.services.prompts import PromptService
+
+    protocol_root = repo_root / ".protocols" / run.protocol_name
+    protocol_root.mkdir(parents=True, exist_ok=True)
+    resolved_prompt, _ = PromptService(workspace_root=repo_root).resolve_qa_prompt({}, protocol_root, repo_root)
+    assert metadata.get("prompt_versions", {}).get("qa") == prompt_version(resolved_prompt)
 
 
 def test_handle_quality_blocks_when_repo_missing(monkeypatch, tmp_path) -> None:

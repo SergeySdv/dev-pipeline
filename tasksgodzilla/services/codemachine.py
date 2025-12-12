@@ -73,5 +73,4 @@ class CodeMachineService:
             protocol_run_id,
             workspace_path,
             self.db,
-            job_id=job_id
         )

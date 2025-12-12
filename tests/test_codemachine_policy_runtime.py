@@ -217,8 +217,7 @@ def test_handle_quality_applies_loop_policy(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(codex_worker.shutil, "which", lambda _: "codex")
     monkeypatch.setattr(codex_worker, "load_project", lambda repo_root, protocol_name, base_branch: repo_root)
     monkeypatch.setattr(
-        codex_worker,
-        "run_qa_unified",
+        "tasksgodzilla.workers.unified_runner.run_qa_unified",
         lambda *_args, **_kwargs: type("FakeQAResult", (), {"result": DummyProc("VERDICT: FAIL")})(),
     )
     monkeypatch.setattr(codex_worker, "run_process", lambda *args, **kwargs: DummyProc(""))
@@ -281,8 +280,7 @@ def test_handle_quality_triggers_followup(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(codex_worker.shutil, "which", lambda _: None)
     monkeypatch.setattr(codex_worker, "load_project", lambda repo_root, protocol_name, base_branch: repo_root)
     monkeypatch.setattr(
-        codex_worker,
-        "run_qa_unified",
+        "tasksgodzilla.workers.unified_runner.run_qa_unified",
         lambda *_args, **_kwargs: type("FakeQAResult", (), {"result": DummyProc("VERDICT: PASS")})(),
     )
     monkeypatch.setattr("tasksgodzilla.qa.build_prompt", lambda *_args, **_kwargs: "prompt")
@@ -372,7 +370,7 @@ def test_inline_trigger_depth_guard(monkeypatch, tmp_path) -> None:
     step0 = db.create_step_run(run.id, 0, "00-main.md", "setup", StepStatus.PENDING, model="codex-5.1", policy=[trigger_policy])
 
     monkeypatch.setattr(codex_worker.shutil, "which", lambda _: None)
-    monkeypatch.setattr(codex_worker, "MAX_INLINE_TRIGGER_DEPTH", 1)
+    monkeypatch.setattr("tasksgodzilla.services.orchestrator.MAX_INLINE_TRIGGER_DEPTH", 1)
 
     codex_worker.handle_execute_step(step0.id, db)
 

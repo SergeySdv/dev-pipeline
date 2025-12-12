@@ -45,6 +45,9 @@ const state = {
 const MODEL_PRICING = {
   "gpt-5.1-high": 0.003,
   "gpt-5.1": 0.002,
+  "gpt-5.1-codex-max": 0.02,
+  "gpt-5.1-codex-mini": 0.01,
+  // Legacy aliases kept for older runs.
   "codex-5.1-max-xhigh": 0.02,
   "codex-5.1-max": 0.01,
 };

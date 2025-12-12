@@ -118,6 +118,34 @@ def test_enqueue_next_step_raises_when_no_pending(tmp_path):
         assert "No pending or failed steps" in str(e)
 
 
+def test_enqueue_next_step_watchdog_fails_stuck_running(tmp_path):
+    db = Database(tmp_path / "test.db")
+    db.init_schema()
+    project = db.create_project("test-project", "https://github.com/test/repo", "main", "github", {})
+    run = db.create_protocol_run(project.id, "test-protocol", ProtocolStatus.PLANNED, "main", None, None, None)
+
+    stuck = db.create_step_run(run.id, 1, "step-1", "work", StepStatus.RUNNING, model=None)
+    # Force updated_at far in the past so watchdog triggers.
+    with db._connect() as conn:
+        conn.execute(
+            "UPDATE step_runs SET updated_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00+00:00", stuck.id),
+        )
+        conn.commit()
+
+    mock_queue = Mock()
+    mock_queue.enqueue.return_value = Job(job_id="job-789", job_type="execute_step_job", payload={})
+
+    service = OrchestratorService(db=db)
+    step, _job = service.enqueue_next_step(run.id, queue=mock_queue)
+
+    # Watchdog should have fired and emitted an event.
+    events = db.list_events(run.id)
+    assert any(ev.event_type == "step_stuck_watchdog" for ev in events)
+    # The stuck step becomes runnable and is selected.
+    assert step.step_name == "step-1"
+
+
 def test_retry_latest_step_requeues_failed(tmp_path):
     """Test that retry_latest_step retries the most recent failed step."""
     db = Database(tmp_path / "test.db")

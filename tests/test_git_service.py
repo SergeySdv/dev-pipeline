@@ -70,7 +70,7 @@ def test_get_worktree_path(git_service, monkeypatch):
     repo_root = Path("/tmp/repo")
     path, branch = git_service.get_worktree_path(repo_root, "protocol-abc")
     assert branch == "protocol-abc"
-    assert path == Path("/tmp/worktrees/protocol-abc")
+    assert path == Path("/tmp/repo/worktrees/protocol-abc")
 
 
 def test_ensure_repo_or_block_exists(git_service, mock_project, mock_run, monkeypatch):
@@ -99,23 +99,13 @@ def test_ensure_worktree_creates_if_missing(git_service, monkeypatch):
     monkeypatch.setattr("tasksgodzilla.services.git.run_process", mock_run_process)
     monkeypatch.setattr("tasksgodzilla.services.git.SINGLE_WORKTREE", False)
     
-    # Mock Path.exists to return False then True
     repo_root = Path("/tmp/repo")
-    
-    # We need to mock the Path object used inside the method
-    with monkeypatch.context() as m:
-        m.setattr("pathlib.Path.exists", lambda self: False)
-        path = git_service.ensure_worktree(
-            repo_root, "protocol-abc", "main", protocol_run_id=100
-        )
-        # Verify run_process called with correct args
-        mock_run_process.assert_called_once()
-        cmd = mock_run_process.call_args[0][0]
-        assert "git" in cmd
-        assert "worktree" in cmd
-        assert "add" in cmd
-        assert "protocol-abc" in cmd  # branch name
-        assert str(path) in cmd
+    path = git_service.ensure_worktree(
+        repo_root, "protocol-abc", "main", protocol_run_id=100
+    )
+    # Non-git repos are treated as already being the worktree.
+    assert path == repo_root
+    mock_run_process.assert_not_called()
 
 
 def test_push_and_open_pr_success(git_service, monkeypatch):

@@ -32,8 +32,8 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
 4. Execute steps with Codex:
 
    ```bash
-   codex --model codex-5.1-max-xhigh --cd ../worktrees/NNNN-<task> \
-     --sandbox workspace-write --ask-for-approval on-request \
+   codex exec -m gpt-5.1-codex-max --cd worktrees/NNNN-<task> \
+     --sandbox workspace-write --skip-git-repo-check \
      "Follow .protocols/NNNN-<task>/plan.md and the current step file to implement the next step."
    ```
 
@@ -43,9 +43,9 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
 
    ```bash
    python3 scripts/quality_orchestrator.py \
-     --protocol-root ../worktrees/NNNN-<task>/.protocols/NNNN-<task> \
+     --protocol-root worktrees/NNNN-<task>/.protocols/NNNN-<task> \
      --step-file 01-some-step.md \
-     --model codex-5.1-max
+     --model gpt-5.1-codex-max
    ```
 
    Quality validation uses **QualityService** to evaluate step outputs and determine pass/fail verdicts.
@@ -77,7 +77,8 @@ Redis is required for orchestration; set `TASKSGODZILLA_REDIS_URL` (e.g., `redis
 ## Git onboarding & branch controls
 
 - Projects accept an optional `local_path` and persist it. Onboarding uses that path when it already exists; otherwise it clones into `TASKSGODZILLA_PROJECTS_ROOT` (default `projects/<project_id>/<repo_name>`) and records the resolved path so every project has an isolated workspace. Opt out of cloning with `TASKSGODZILLA_AUTO_CLONE=false`.
-- After resolving the workspace, onboarding auto-runs Codex repository discovery (`prompts/repo-discovery.prompt.md`, model from `PROTOCOL_DISCOVERY_MODEL` or default `gpt-5.1-codex-max`) and logs events for visibility across console/TUI/CLI.
+- After resolving the workspace, onboarding runs the multi-pass Codex discovery pipeline by default (inventory → architecture → API reference → CI notes). Prompts: `prompts/discovery-*.prompt.md`; model from `PROTOCOL_DISCOVERY_MODEL` or default `gpt-5.1-codex-max`. Discovery writes `tasksgodzilla/*.md` plus `codex-discovery.log` in the repo and emits `setup_discovery_*` events.
+- If no worker is running, you can trigger setup inline from the console (**Run inline now**) or via `POST /projects/{id}/onboarding/actions/start` with `{"inline": true}`.
 - Onboarding auto-configures `origin` (rewrites to GitHub SSH when `TASKSGODZILLA_GH_SSH=true`) and can set git identity from `TASKSGODZILLA_GIT_USER` / `TASKSGODZILLA_GIT_EMAIL`.
 - Clarifications are emitted as a `setup_clarifications` event with recommended CI/models/branch policies; set `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true` to block until acknowledged in the console/TUI.
 - Remote branch management API: `GET /projects/{id}/branches` lists origin branches and `POST /projects/{id}/branches/{branch}/delete` with `{"confirm": true}` deletes a remote branch and records an event.
@@ -89,7 +90,7 @@ projects/
     <repo_name>/            # primary working copy (honors local_path when provided)
       .protocols/<protocol>/...
     worktrees/
-      <protocol_name>/      # branch+worktree created during plan/exec
+      <protocol_name>/      # per-protocol worktree (or shared `tasksgodzilla-worktree` when SINGLE_WORKTREE=true)
         .protocols/<protocol_name>/...
 ```
 
@@ -155,9 +156,9 @@ python -m tasksgodzilla.cli.tui           # panel-based dashboard with keybindin
 - `scripts/protocol_pipeline.py` — interactive orchestrator for TasksGodzilla_Ilyas_Edition_1.0 protocols using Codex CLI.
 - `schemas/protocol-planning.schema.json` — JSON Schema for the planning agent’s output.
 - `scripts/project_setup.py` — prepares a repo with starter docs/prompts/CI/schema/pipeline if they’re missing.
-- `prompts/repo-discovery.prompt.md` — Codex prompt to auto-discover stack and fill CI scripts.
+- `prompts/discovery-*.prompt.md` — multi-pass Codex discovery prompts (inventory, architecture, API reference, CI notes).
 - `scripts/spec_audit.py` — audit/backfill ProtocolSpec for existing runs (`--project-id/--protocol-id/--backfill`).
-- `scripts/codex_ci_bootstrap.py` — helper to run Codex (codex-5.1-max by default) with the discovery prompt to fill CI scripts.
+- `scripts/codex_ci_bootstrap.py` — legacy single-pass discovery helper (default model `gpt-5.1-codex-max`) that runs `prompts/repo-discovery.prompt.md` and writes `codex-discovery.log`.
 - `scripts/quality_orchestrator.py` — Codex QA validator that checks a protocol step and writes a report.
 - `Makefile` — helper targets: `deps` (install orchestrator deps in `.venv`), `migrate` (alembic upgrade), `orchestrator-setup` (deps + migrate).
 - `tasksgodzilla/services/` — **Services layer** (primary integration point): Orchestrator, Execution, Quality, Onboarding, Spec, Prompt, Decomposition, Git, Budget, CodeMachine services, plus platform services (Queue, Storage, Telemetry, Engines).
@@ -256,7 +257,7 @@ Services have clear responsibilities and dependencies. The API and workers are t
 
 ```mermaid
 flowchart LR
-  A["Register project (/projects)"] --> B["project_setup_job\nresolve workspace projects/<id>/<repo>, discovery,\nassets, clarifications"]
+  A["Register project (/projects)"] --> B["project_setup_job\nresolve workspace projects/<id>/<repo>,\nmulti-pass discovery (prompts/discovery-*),\nassets, clarifications\n(optional inline start)"]
   A --> B2["optional: codemachine_import_job\nemits ProtocolSpec + StepSpecs"]
   B --> C["plan_protocol_job\nplan + decompose → ProtocolSpec + StepRuns"]
   C --> D["execute_step_job\nspec-driven prompt/output resolver\nengine registry dispatch"]
@@ -340,7 +341,9 @@ Environment overrides:
 
 - `PROTOCOL_PLANNING_MODEL` (default `gpt-5.1-high`)
 - `PROTOCOL_DECOMPOSE_MODEL` (default `gpt-5.1-high`)
-- `PROTOCOL_EXEC_MODEL` (default `codex-5.1-max-xhigh`)
+- `PROTOCOL_EXEC_MODEL` (default `gpt-5.1-codex-max`)
+- `TASKSGODZILLA_CODEX_TIMEOUT_SECONDS` (default 180) to raise Codex CLI timeouts; work steps default to 1200s via spec.
+- `TASKSGODZILLA_STEP_STUCK_SECONDS` (default 3600) watchdog to fail stuck RUNNING steps on next enqueue/retry.
 
 ### Auto-running a specific step
 
@@ -389,12 +392,12 @@ The script will:
 - Ensure directories/files exist (docs, prompts, CI configs, schema, pipeline); it copies from this starter when available or writes placeholders otherwise.
 - Make CI scripts executable.
 - Optional: `--clone-url <git-url>` to clone a repo before prep (use `--clone-dir` to set the folder name).
-- Optional: `--run-discovery` to call Codex (default `codex-5.1-max`) with `prompts/repo-discovery.prompt.md` to auto-fill CI scripts based on detected stack.
+- Optional: `--run-discovery` / discovery pipeline is enabled by default for onboarding and `project_setup.py`; you can re-run specific artifacts with `python scripts/discovery_pipeline.py --artifacts inventory,ci_notes`.
 
 You can also run Codex CI bootstrap directly later:
 
 ```bash
-python3 scripts/codex_ci_bootstrap.py --model codex-5.1-max
+  python3 scripts/codex_ci_bootstrap.py --model gpt-5.1-codex-max
 ```
 
 ## QA orchestrator (Codex CLI)
@@ -403,14 +406,14 @@ Validate a protocol step with Codex and stop on failure:
 
 ```bash
 python3 scripts/quality_orchestrator.py \
-  --protocol-root ../worktrees/NNNN-[Task-short-name]/.protocols/NNNN-[Task-short-name] \
+  --protocol-root worktrees/NNNN-[Task-short-name]/.protocols/NNNN-[Task-short-name] \
   --step-file 01-some-step.md \
-  --model codex-5.1-max
+  --model gpt-5.1-codex-max
 ```
 
 Behavior:
 
 - Collects plan/context/log, the step file, git status, latest commit message.
-- Calls Codex with `prompts/quality-validator.prompt.md`.
+- Calls Codex with `prompts/quality-validator.prompt.md` (bundled prompt preferred). QA FAILs caused only by `.protocols/**` bookkeeping are auto-downgraded to PASS.
 - Writes `quality-report.md` in the protocol folder.
 - Exits 1 if the verdict is FAIL, halting any pipeline that wraps it.

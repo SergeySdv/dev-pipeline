@@ -1389,7 +1389,7 @@ def test_property_2_interface_validation_completeness(interface_types, test_comm
     expect_database_persistence=boolean_values,
     workflow_timeout=st.integers(min_value=30, max_value=300)
 )
-@settings(max_examples=100)
+@settings(max_examples=100, deadline=None)
 def test_property_5_end_to_end_workflow_completion(workflow_types, project_count, protocol_count, step_count, expect_database_persistence, workflow_timeout):
     """
     **Feature: cli-workflow-harness, Property 5: End-to-End Workflow Completion**

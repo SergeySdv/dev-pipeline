@@ -117,12 +117,50 @@ class QualityService:
         orchestrator = OrchestratorService(self.db)
         spec_service = SpecService(self.db)
 
+        # Resolve QA policy early so "skip" doesn't require a git repo/worktree.
+        step_spec = get_step_spec(run.template_config, step.step_name) or {}
+        if not step_spec:
+            step_spec = {"id": step.step_name, "name": step.step_name, "prompt_ref": step.step_name}
+        template_cfg = run.template_config or {}
+        protocol_spec = template_cfg.get(PROTOCOL_SPEC_KEY) if isinstance(template_cfg, dict) else None
+        spec_hash_val = protocol_spec_hash(protocol_spec) if protocol_spec else None
+        qa_cfg = (step_spec.get("qa") if step_spec else {}) or {}
+        qa_policy = qa_cfg.get("policy")
+
+        if qa_policy == "skip":
+            self.db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped (policy)")
+            self.db.append_event(
+                step.protocol_run_id,
+                "qa_skipped_policy",
+                "QA skipped by policy.",
+                step_run_id=step.id,
+                metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
+            )
+            try:
+                _workspace_hint, protocol_hint = spec_service.resolve_protocol_paths(run, project)
+                spec_service.append_protocol_log(protocol_hint, f"{step.step_name} QA skipped by policy.")
+            except Exception:
+                pass
+            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
+            return
+
         repo_root = git_service.ensure_repo_or_block(
             project, run, job_id=job_id, block_on_missing=False
         )
         if not repo_root or not repo_root.exists():
             repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
             if not repo_root:
+                try:
+                    self.db.update_step_status(step.id, StepStatus.BLOCKED, summary="Repo missing; QA blocked")
+                    self.db.append_event(
+                        step.protocol_run_id,
+                        "qa_blocked_repo",
+                        "QA blocked because repo is missing locally.",
+                        step_run_id=step.id,
+                        metadata={"git_url": project.git_url},
+                    )
+                except Exception:
+                    pass
                 return
 
         worktree = git_service.ensure_worktree(
@@ -151,28 +189,6 @@ class QualityService:
             },
         )
         
-        step_spec = get_step_spec(run.template_config, step.step_name) or {}
-        if not step_spec:
-            step_spec = {"id": step.step_name, "name": step.step_name, "prompt_ref": step.step_name}
-        template_cfg = run.template_config or {}
-        protocol_spec = template_cfg.get(PROTOCOL_SPEC_KEY) if isinstance(template_cfg, dict) else None
-        spec_hash_val = protocol_spec_hash(protocol_spec) if protocol_spec else None
-        qa_cfg = (step_spec.get("qa") if step_spec else {}) or {}
-        qa_policy = qa_cfg.get("policy")
-        
-        if qa_policy == "skip":
-            self.db.update_step_status(step.id, StepStatus.COMPLETED, summary="QA skipped (policy)")
-            self.db.append_event(
-                step.protocol_run_id,
-                "qa_skipped_policy",
-                "QA skipped by policy.",
-                step_run_id=step.id,
-                metadata={"policy": qa_policy, "spec_hash": spec_hash_val},
-            )
-            spec_service.append_protocol_log(protocol_hint, f"{step.step_name} QA skipped by policy.")
-            orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
-            return
-
         protocol_root = worktree / ".protocols" / run.protocol_name
         # Best-effort context sync so QA sees the current step.
         try:

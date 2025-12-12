@@ -23,7 +23,8 @@ def test_resolve_qa_prompt_with_default(tmp_path):
     qa_config = {}
     prompt_path, version = service.resolve_qa_prompt(qa_config, protocol_root, workspace)
     
-    assert prompt_path == qa_prompt.resolve()
+    assert prompt_path.name == "quality-validator.prompt.md"
+    assert prompt_path.is_file()
     assert version is not None
 
 

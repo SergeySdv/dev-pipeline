@@ -93,7 +93,7 @@ projects/                  # TASKSGODZILLA_PROJECTS_ROOT (default)
       .git/
       .protocols/<protocol>/...
     worktrees/             # protocol worktrees created by plan/exec flows
-      <protocol_name>/
+      <protocol_name>/     # or shared `tasksgodzilla-worktree` when SINGLE_WORKTREE=true
         .protocols/<protocol_name>/...
 ```
 `local_path` overrides this when provided; otherwise the orchestrator clones/resolves into `projects/<project_id>/<repo_name>`.
@@ -103,7 +103,7 @@ projects/                  # TASKSGODZILLA_PROJECTS_ROOT (default)
 - StepRun: `pending → running → needs_qa → (completed | failed | cancelled | blocked)`.
 - Auto QA: `TASKSGODZILLA_AUTO_QA_AFTER_EXEC` triggers QA after execution; `TASKSGODZILLA_AUTO_QA_ON_CI` triggers QA on successful CI webhooks.
 - Token budgets: `TASKSGODZILLA_MAX_TOKENS_PER_STEP` / `TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL` with `TASKSGODZILLA_TOKEN_BUDGET_MODE=strict|warn|off`.
-- Onboarding: uses stored `local_path` when present, otherwise clones under `TASKSGODZILLA_PROJECTS_ROOT` with the per-project layout `projects/<project_id>/<repo_name>`. Automatically runs Codex discovery (with `repo-discovery.prompt.md`), then ensures starter assets, configures `origin` (prefers GitHub SSH when `TASKSGODZILLA_GH_SSH=true`), optionally sets git identity from `TASKSGODZILLA_GIT_USER` / `TASKSGODZILLA_GIT_EMAIL`, and emits `setup_clarifications` (blocking when `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true`).
+- Onboarding: uses stored `local_path` when present, otherwise clones under `TASKSGODZILLA_PROJECTS_ROOT` with the per-project layout `projects/<project_id>/<repo_name>`. Runs the multi-pass Codex discovery pipeline (`prompts/discovery-*.prompt.md`) by default, then ensures starter assets, configures `origin` (prefers GitHub SSH when `TASKSGODZILLA_GH_SSH=true`), optionally sets git identity from `TASKSGODZILLA_GIT_USER` / `TASKSGODZILLA_GIT_EMAIL`, and emits `setup_clarifications` (blocking when `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true`). Setup can be enqueued or run inline via `/projects/{id}/onboarding/actions/start` with `{\"inline\": true}`.
 - Queue: Redis/RQ with retries/backoff (defaults: 3 attempts, capped backoff); jobs append Events and carry IDs for tracing.
 - Policies: StepSpec policies (often from CodeMachine modules) attach loop/trigger behavior to steps; loops reset step statuses with bounded iteration counts, and triggers can enqueue or inline-run other steps (depth-limited to prevent recursion).
 
