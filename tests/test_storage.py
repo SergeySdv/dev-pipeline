@@ -67,6 +67,21 @@ def test_storage_round_trip_creates_records() -> None:
         assert recent[0].protocol_name == "0001-demo"
         assert recent[0].project_name == "demo"
 
+        db.create_codex_run(run_id="run-artifacts", job_type="bootstrap", status=CodexRunStatus.RUNNING)
+        artifact_path = Path(tmpdir) / "artifact.txt"
+        artifact_path.write_text("hello", encoding="utf-8")
+        artifact = db.upsert_run_artifact(
+            "run-artifacts",
+            "demo",
+            kind="test",
+            path=str(artifact_path),
+        )
+        assert artifact.id > 0
+        items = db.list_run_artifacts("run-artifacts")
+        assert any(a.name == "demo" for a in items)
+        got = db.get_run_artifact(artifact.id)
+        assert got.run_id == "run-artifacts"
+
 
 def test_codex_run_registry_round_trip() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:

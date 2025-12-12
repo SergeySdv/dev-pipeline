@@ -3,6 +3,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Optional
+import os
+import socket
 
 from tasksgodzilla.config import load_config
 from tasksgodzilla.domain import ProtocolStatus, StepStatus
@@ -17,6 +19,16 @@ from tasksgodzilla.services import ExecutionService, OnboardingService, Orchestr
 
 
 log = get_logger("tasksgodzilla.worker")
+
+_RUN_KIND_BY_JOB_TYPE: dict[str, str] = {
+    "plan_protocol_job": "plan",
+    "execute_step_job": "exec",
+    "run_quality_job": "qa",
+    "project_setup_job": "setup",
+    "open_pr_job": "open_pr",
+    "codemachine_import_job": "codemachine_import",
+    "spec_audit_job": "spec_audit",
+}
 
 
 def process_job(job: Job, db: BaseDatabase) -> None:
@@ -89,14 +101,64 @@ def _run_job_with_handling(
 ) -> Job:
     start = time.time()
     registry = RunRegistry(db)
-    run = registry.start_run(job.job_type, run_id=job.job_id or None, params=job.payload)
+    protocol_run_id = job.payload.get("protocol_run_id")
+    step_run_id = job.payload.get("step_run_id")
+    project_id: Optional[int] = None
+    resolved_protocol_id: Optional[int] = None
+    resolved_step_id: Optional[int] = None
+    try:
+        if step_run_id is not None:
+            resolved_step_id = int(step_run_id)
+            step = db.get_step_run(resolved_step_id)
+            resolved_protocol_id = step.protocol_run_id
+            run_row = db.get_protocol_run(step.protocol_run_id)
+            project_id = run_row.project_id
+        elif protocol_run_id is not None:
+            resolved_protocol_id = int(protocol_run_id)
+            run_row = db.get_protocol_run(resolved_protocol_id)
+            project_id = run_row.project_id
+        elif job.payload.get("project_id") is not None:
+            project_id = int(job.payload["project_id"])
+    except Exception:
+        # Best-effort only; don't block job execution on observability.
+        project_id = None
+
+    worker_id = f"{socket.gethostname()}:{os.getpid()}"
+    run_kind = _RUN_KIND_BY_JOB_TYPE.get(job.job_type, job.job_type)
+    attempt = job.attempts + 1
+    run = registry.start_run(
+        job.job_type,
+        run_id=job.job_id or None,
+        run_kind=run_kind,
+        project_id=project_id,
+        protocol_run_id=resolved_protocol_id,
+        step_run_id=resolved_step_id,
+        queue=job.queue,
+        attempt=attempt,
+        worker_id=worker_id,
+        params=job.payload,
+    )
     log_path = Path(run.log_path) if run.log_path else None  # type: ignore[arg-type]
     file_handler: Optional[logging.Handler] = None
     if log_path:
         file_handler = logging.FileHandler(log_path)
         file_handler.setLevel(logging.INFO)
-        file_handler.addFilter(RequestIdFilter({"run_id": run.run_id}))
-        formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s run=%(run_id)s")
+        file_handler.addFilter(
+            RequestIdFilter(
+                {
+                    "run_id": run.run_id,
+                    "job_id": job.job_id,
+                    "project_id": project_id,
+                    "protocol_run_id": resolved_protocol_id,
+                    "step_run_id": resolved_step_id,
+                    "attempt": attempt,
+                }
+            )
+        )
+        formatter = logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s "
+            "run=%(run_id)s attempt=%(attempt)s job=%(job_id)s project=%(project_id)s protocol=%(protocol_run_id)s step=%(step_run_id)s"
+        )
         file_handler.setFormatter(formatter)
         logging.getLogger().addHandler(file_handler)
     try:
@@ -105,7 +167,7 @@ def _run_job_with_handling(
         job.ended_at = time.time()
         metrics.inc_job(job.job_type, "completed")
         metrics.observe_job_duration(job.job_type, "completed", job.ended_at - start)
-        registry.mark_succeeded(job.job_id, result={"status": "completed"})
+        registry.mark_succeeded(job.job_id)
         return job
     except Exception as exc:  # pragma: no cover - best effort
         job.attempts += 1
@@ -185,6 +247,30 @@ def rq_job_handler(job_type: str, payload: dict) -> None:
     db = create_database(db_path=config.db_path, db_url=config.db_url)
     db.init_schema()
     job = Job(job_id=str(payload.get("job_id", "")), job_type=job_type, payload=payload)
+    # Best-effort attempt tracking for RQ retries.
+    # We maintain our own monotonic counter in RQ job meta so attempt numbers are
+    # consistent across RQ versions and worker types (Worker/SimpleWorker).
+    try:
+        from rq import get_current_job  # type: ignore
+
+        rq_job = get_current_job()
+        if rq_job:
+            try:
+                job.queue = str(getattr(rq_job, "origin", None) or job.queue)
+            except Exception:
+                pass
+            try:
+                meta = getattr(rq_job, "meta", None) or {}
+                attempt = int(meta.get("tgz_attempt", 0)) + 1
+                meta["tgz_attempt"] = attempt
+                rq_job.meta = meta
+                rq_job.save_meta()
+                # Our Job uses attempts as "previous failures", so set to attempt-1.
+                job.attempts = max(0, attempt - 1)
+            except Exception:
+                pass
+    except Exception:
+        pass
     _run_job_with_handling(job, db, queue=None, requeue_on_retry=False, rethrow=True)
 
 

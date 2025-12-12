@@ -227,6 +227,7 @@ graph TD
   Console --> API["Orchestrator API (FastAPI)"]
   API --> Services["Services Layer\n(Orchestrator, Execution, Quality,\nGit, Budget, Spec, Prompt, etc.)"]
   Services --> DB[(DB: Postgres/SQLite)]
+  Services --> Runs[(Runs: codex_runs + run_artifacts)]
   Services --> Queue["Queue (Redis/RQ; inline worker optional for dev)"]
   Services --> Spec["ProtocolSpec/StepSpec\nstored on ProtocolRun.template_config"]
   Queue --> Workers["Workers (thin job adapters)\ndelegate to services"]
@@ -242,6 +243,7 @@ graph TD
   Webhooks --> API
   Spec --> Runner
   Git --> Prot
+  Runs --> Logs["runs/<run_id>/logs.txt"]
 ```
 
 ### Services Layer
@@ -253,6 +255,17 @@ The services layer (`tasksgodzilla/services/`) is the primary integration point 
 
 Services have clear responsibilities and dependencies. The API and workers are thin adapters that deserialize requests/payloads and delegate to services. This architecture ensures a single source of truth for each concern and makes the codebase maintainable and testable.
 
+## Runs, logs, and artifacts
+
+Every job attempt (plan/exec/qa/setup/open_pr/spec_audit) is recorded as a **run** in `codex_runs` with linkage to `project_id`, `protocol_run_id`, `step_run_id`, plus `run_kind`, `attempt`, and `worker_id`.
+
+- Run logs: `GET /codex/runs/{run_id}/logs` (files under `runs/<run_id>/logs.txt` by default).
+- Run artifacts: `GET /codex/runs/{run_id}/artifacts` lists registered output/report files; `.../content` fetches small artifacts as text.
+- Filtering:
+  - `GET /protocols/{protocol_run_id}/runs`
+  - `GET /steps/{step_run_id}/runs`
+  - `GET /codex/runs?protocol_run_id=...&step_run_id=...&run_kind=exec`
+
 ## Workflow overview (Mermaid)
 
 ```mermaid
@@ -261,6 +274,7 @@ flowchart LR
   A --> B2["optional: codemachine_import_job\nemits ProtocolSpec + StepSpecs"]
   B --> C["plan_protocol_job\nplan + decompose → ProtocolSpec + StepRuns"]
   C --> D["execute_step_job\nspec-driven prompt/output resolver\nengine registry dispatch"]
+  D --> D2["record run + artifacts\n(codex_runs + run_artifacts)"]
   D --> E{"Spec QA policy"}
   E -->|full/light| F["run_quality_job"]
   E -->|skip| G["mark per policy\n(needs_qa or completed)"]

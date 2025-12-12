@@ -460,11 +460,23 @@ def codex_runs_console(
     for run in runs:
         status = run.status.lower()
         run_id_safe = html.escape(run.run_id)
+        kind_cell = html.escape(run.run_kind or run.job_type)
+        project_cell = html.escape(str(run.project_id)) if run.project_id is not None else "-"
+        protocol_cell = html.escape(str(run.protocol_run_id)) if run.protocol_run_id is not None else "-"
+        step_cell = html.escape(str(run.step_run_id)) if run.step_run_id is not None else "-"
+        attempt_cell = html.escape(str(run.attempt)) if run.attempt is not None else "-"
+        worker_cell = html.escape(str(run.worker_id)) if run.worker_id else "-"
         log_cell = f'<a href="/codex/runs/{run_id_safe}/logs">logs</a>' if run.log_path else "-"
         rows.append(
             "<tr>"
             f"<td>{run_id_safe}</td>"
             f"<td>{html.escape(run.job_type)}</td>"
+            f"<td>{kind_cell}</td>"
+            f"<td>{project_cell}</td>"
+            f"<td>{protocol_cell}</td>"
+            f"<td>{step_cell}</td>"
+            f"<td>{attempt_cell}</td>"
+            f"<td>{worker_cell}</td>"
             f"<td><span class='pill status-{html.escape(status)}'>{html.escape(run.status)}</span></td>"
             f"<td>{html.escape(run.prompt_version or '-')}</td>"
             f"<td>{html.escape(run.created_at or '')}</td>"
@@ -473,7 +485,7 @@ def codex_runs_console(
             f"<td>{log_cell}</td>"
             "</tr>"
         )
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='8'>No runs yet</td></tr>"
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='14'>No runs yet</td></tr>"
     content = f"""
     <!doctype html>
     <html>
@@ -503,6 +515,12 @@ def codex_runs_console(
                 <tr>
                     <th>Run ID</th>
                     <th>Job Type</th>
+                    <th>Kind</th>
+                    <th>Project</th>
+                    <th>Protocol</th>
+                    <th>Step</th>
+                    <th>Attempt</th>
+                    <th>Worker</th>
                     <th>Status</th>
                     <th>Prompt Version</th>
                     <th>Created</th>
@@ -540,10 +558,60 @@ def metrics_endpoint():
 def list_codex_runs(
     job_type: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    project_id: Optional[int] = Query(default=None),
+    protocol_run_id: Optional[int] = Query(default=None),
+    step_run_id: Optional[int] = Query(default=None),
+    run_kind: Optional[str] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     db: BaseDatabase = Depends(get_db),
 ):
-    runs = db.list_codex_runs(job_type=job_type, status=status, limit=limit)
+    runs = db.list_codex_runs(
+        job_type=job_type,
+        status=status,
+        project_id=project_id,
+        protocol_run_id=protocol_run_id,
+        step_run_id=step_run_id,
+        run_kind=run_kind,
+        limit=limit,
+    )
+    return [asdict(run) for run in runs]
+
+
+@app.get(
+    "/protocols/{protocol_run_id}/runs",
+    response_model=list[schemas.CodexRunOut],
+    dependencies=[Depends(require_auth)],
+)
+def list_codex_runs_for_protocol(
+    protocol_run_id: int,
+    limit: int = Query(default=100, ge=1, le=500),
+    run_kind: Optional[str] = Query(default=None),
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> list[dict]:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    runs = db.list_codex_runs(protocol_run_id=protocol_run_id, run_kind=run_kind, limit=limit)
+    return [asdict(run) for run in runs]
+
+
+@app.get(
+    "/steps/{step_run_id}/runs",
+    response_model=list[schemas.CodexRunOut],
+    dependencies=[Depends(require_auth)],
+)
+def list_codex_runs_for_step(
+    step_run_id: int,
+    limit: int = Query(default=100, ge=1, le=500),
+    run_kind: Optional[str] = Query(default=None),
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> list[dict]:
+    if request:
+        project_id = get_step_project(step_run_id, db)
+        require_project_access(project_id, request, db)
+    runs = db.list_codex_runs(step_run_id=step_run_id, run_kind=run_kind, limit=limit)
     return [asdict(run) for run in runs]
 
 
@@ -557,6 +625,13 @@ def start_codex_run(
         job_type=payload.job_type,
         run_id=payload.run_id,
         params=payload.params,
+        run_kind=payload.run_kind,
+        project_id=payload.project_id,
+        protocol_run_id=payload.protocol_run_id,
+        step_run_id=payload.step_run_id,
+        queue=payload.queue,
+        attempt=payload.attempt,
+        worker_id=payload.worker_id,
         prompt_version=payload.prompt_version,
         log_path=log_path,
         cost_tokens=payload.cost_tokens,
@@ -589,6 +664,59 @@ def get_codex_run_logs(run_id: str, db: BaseDatabase = Depends(get_db)) -> Plain
         content = log_path.read_text(encoding="utf-8")
     except Exception as exc:  # pragma: no cover - filesystem edge
         raise HTTPException(status_code=500, detail=f"Unable to read log file: {exc}") from exc
+    return PlainTextResponse(content=content or "")
+
+
+@app.get(
+    "/codex/runs/{run_id}/artifacts",
+    response_model=list[schemas.RunArtifactOut],
+    dependencies=[Depends(require_auth)],
+)
+def list_run_artifacts(
+    run_id: str,
+    kind: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: BaseDatabase = Depends(get_db),
+) -> list[dict]:
+    # Existence check for clearer errors.
+    try:
+        db.get_codex_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+    items = db.list_run_artifacts(run_id, kind=kind, limit=limit)
+    return [asdict(item) for item in items]
+
+
+@app.get(
+    "/codex/runs/{run_id}/artifacts/{artifact_id}/content",
+    response_class=PlainTextResponse,
+    dependencies=[Depends(require_auth)],
+)
+def get_run_artifact_content(
+    run_id: str,
+    artifact_id: int,
+    db: BaseDatabase = Depends(get_db),
+) -> PlainTextResponse:
+    try:
+        artifact = db.get_run_artifact(artifact_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if artifact.run_id != run_id:
+        raise HTTPException(status_code=404, detail="Artifact not found for run")
+    path = Path(artifact.path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    try:
+        if path.stat().st_size > 1_000_000:
+            raise HTTPException(status_code=413, detail="Artifact too large to display")
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Unable to stat artifact: {exc}") from exc
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"Unable to read artifact: {exc}") from exc
     return PlainTextResponse(content=content or "")
 
 

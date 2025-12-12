@@ -359,3 +359,93 @@ def test_codex_runs_api_round_trip(
             assert logs.status_code == 200
             console_html = client.get("/console/runs")
             assert console_html.status_code == 200
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_runs_api_filter_by_protocol_and_step(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "runs-filter.sqlite"
+        runs_dir = Path(tmpdir) / "runs"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("CODEX_RUNS_DIR", str(runs_dir))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            project = client.post(
+                "/projects",
+                json={"name": "demo", "git_url": "/tmp/demo.git", "base_branch": "main"},
+            ).json()
+            protocol = client.post(
+                f"/projects/{project['id']}/protocols",
+                json={"protocol_name": "0001-demo", "status": "pending", "base_branch": "main"},
+            ).json()
+            step = client.post(
+                f"/protocols/{protocol['id']}/steps",
+                json={"step_index": 0, "step_name": "00-setup", "step_type": "setup", "status": "pending"},
+            ).json()
+
+            resp = client.post(
+                "/codex/runs/start",
+                json={
+                    "job_type": "execute_step_job",
+                    "run_kind": "exec",
+                    "project_id": project["id"],
+                    "protocol_run_id": protocol["id"],
+                    "step_run_id": step["id"],
+                    "attempt": 1,
+                    "params": {"protocol_run_id": protocol["id"], "step_run_id": step["id"]},
+                },
+            )
+            assert resp.status_code == 200
+            run_id = resp.json()["run_id"]
+
+            proto_runs = client.get(f"/protocols/{protocol['id']}/runs")
+            assert proto_runs.status_code == 200
+            assert any(r["run_id"] == run_id for r in proto_runs.json())
+
+            step_runs = client.get(f"/steps/{step['id']}/runs")
+            assert step_runs.status_code == 200
+            assert any(r["run_id"] == run_id for r in step_runs.json())
+
+            filtered = client.get(f"/codex/runs?protocol_run_id={protocol['id']}&step_run_id={step['id']}")
+            assert filtered.status_code == 200
+            assert any(r["run_id"] == run_id for r in filtered.json())
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_run_artifacts_api_round_trip(
+    redis_inline_worker_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tasksgodzilla.storage import Database
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "runs-artifacts.sqlite"
+        runs_dir = Path(tmpdir) / "runs"
+        monkeypatch.setenv("TASKSGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("CODEX_RUNS_DIR", str(runs_dir))
+        monkeypatch.delenv("TASKSGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            resp = client.post("/codex/runs/start", json={"job_type": "bootstrap", "params": {"foo": "bar"}})
+            assert resp.status_code == 200
+            run = resp.json()
+            run_id = run["run_id"]
+
+            artifact_path = Path(tmpdir) / "artifact.md"
+            artifact_path.write_text("# Hello\n", encoding="utf-8")
+            db = Database(db_path)
+            db.init_schema()
+            created = db.upsert_run_artifact(run_id, "quality-report", kind="qa_report", path=str(artifact_path))
+            assert created.run_id == run_id
+
+            listed = client.get(f"/codex/runs/{run_id}/artifacts")
+            assert listed.status_code == 200
+            artifacts = listed.json()
+            assert any(a["name"] == "quality-report" for a in artifacts)
+            artifact_id = next(a["id"] for a in artifacts if a["name"] == "quality-report")
+
+            content = client.get(f"/codex/runs/{run_id}/artifacts/{artifact_id}/content")
+            assert content.status_code == 200
+            assert "Hello" in content.text

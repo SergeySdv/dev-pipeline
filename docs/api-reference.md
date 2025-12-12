@@ -106,6 +106,40 @@ All step actions use services for business logic:
 - `GET /queues/jobs?status=queued|started|failed|finished` → jobs snapshot with payload/metadata.
   - Jobs include `job_id`, `job_type`, `payload`, `status`, timestamps, and error/meta where present.
 
+## Runs, logs, and artifacts
+
+The orchestrator records each job attempt as a **run** in `codex_runs` (despite the name, it covers all job types). Runs are the primary “execution record” and are linkable to protocols/steps:
+- Core linkage fields: `project_id`, `protocol_run_id`, `step_run_id`, `run_kind`, `attempt`, `worker_id`.
+- Logs: each run has a log file at `runs/<run_id>/logs.txt` (or a configured override).
+- Structured results: execution/QA services enrich `codex_runs.result` with fields like `exec`, `qa`, and `qa_inline` (engine/model/prompt versions/outputs/verdict).
+- Artifacts: files created during exec/QA are registered in `run_artifacts` and exposed via the API below.
+
+### Run listing
+- `GET /codex/runs`
+  - Query params:
+    - `job_type=<str>` (optional)
+    - `status=<str>` (optional)
+    - `project_id=<int>` (optional)
+    - `protocol_run_id=<int>` (optional)
+    - `step_run_id=<int>` (optional)
+    - `run_kind=<str>` (optional; e.g. `plan|exec|qa|setup|open_pr|spec_audit`)
+    - `limit=<int>` (default 100)
+- `GET /protocols/{protocol_run_id}/runs`
+  - Query params: `run_kind=<str>` (optional), `limit=<int>`
+- `GET /steps/{step_run_id}/runs`
+  - Query params: `run_kind=<str>` (optional), `limit=<int>`
+- `GET /codex/runs/{run_id}` → single run record.
+
+### Logs
+- `GET /codex/runs/{run_id}/logs` → plain text log output for that run.
+
+### Artifacts
+- `GET /codex/runs/{run_id}/artifacts`
+  - Query params: `kind=<str>` (optional), `limit=<int>`
+  - Returns metadata (name/kind/path/sha256/bytes/created_at).
+- `GET /codex/runs/{run_id}/artifacts/{artifact_id}/content`
+  - Returns the artifact file as plain text (currently capped at 1MB to avoid heavy responses).
+
 ## Webhooks & CI callbacks
 - `POST /webhooks/github?protocol_run_id=<optional>`
   - Headers: `X-GitHub-Event`, optional `X-Hub-Signature-256` when `TASKSGODZILLA_WEBHOOK_TOKEN` set.

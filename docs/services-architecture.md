@@ -59,6 +59,8 @@ This document captures the proposed service-oriented architecture for Tasksgodzi
 - Logging helpers: `tasksgodzilla/logging.py`
 - Metrics (tokens, etc.): `tasksgodzilla/metrics.py`, used via `_budget_and_tokens` in `codex_worker`
 - Events persisted via DB: `tasksgodzilla/storage.py` (`append_event`, `list_events`, etc.)
+- Run execution records: `tasksgodzilla/run_registry.py` writes per-job attempts to `codex_runs` (linked by `project_id`, `protocol_run_id`, `step_run_id`, `run_kind`, `attempt`) and captures per-run log output under `runs/<run_id>/logs.txt`.
+- Run artifacts registry: `tasksgodzilla/storage.py` (`run_artifacts`) + `tasksgodzilla/services/platform/artifacts.py` to register output/report files (e.g. `.protocols/**`, `quality-report.md`) for API/UI access.
 
 ### Decomposer Services
 - Decomposition heuristics and prompts: `tasksgodzilla/pipeline.py` (`is_simple_step`, `decompose_step_prompt`)
@@ -438,4 +440,3 @@ During Phase 3, the following patterns were used to extract business logic from 
 - All business logic now in services with clear boundaries
 - Workers are thin adapters: deserialize → call service → return
 - 100% test coverage maintained throughout extraction
-

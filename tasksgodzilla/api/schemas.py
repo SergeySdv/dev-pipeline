@@ -98,6 +98,13 @@ class EventOut(BaseModel):
 
 class CodexRunCreate(BaseModel):
     job_type: str
+    run_kind: Optional[str] = None
+    project_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    queue: Optional[str] = None
+    attempt: Optional[int] = None
+    worker_id: Optional[str] = None
     prompt_version: Optional[str] = None
     params: Optional[dict] = None
     run_id: Optional[str] = None
@@ -112,6 +119,13 @@ class CodexRunOut(BaseModel):
     status: str
     created_at: str
     updated_at: str
+    run_kind: Optional[str] = None
+    project_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    queue: Optional[str] = None
+    attempt: Optional[int] = None
+    worker_id: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     prompt_version: Optional[str] = None
@@ -121,6 +135,17 @@ class CodexRunOut(BaseModel):
     log_path: Optional[str] = None
     cost_tokens: Optional[int] = None
     cost_cents: Optional[int] = None
+
+
+class RunArtifactOut(BaseModel):
+    id: int
+    run_id: str
+    name: str
+    kind: str
+    path: str
+    sha256: Optional[str] = None
+    bytes: Optional[int] = None
+    created_at: str
 
 
 class ActionResponse(BaseModel):

@@ -49,6 +49,13 @@ class RunRegistry:
         job_type: str,
         *,
         run_id: Optional[str] = None,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
         params: Optional[dict] = None,
         prompt_version: Optional[str] = None,
         log_path: Optional[Path] = None,
@@ -66,6 +73,13 @@ class RunRegistry:
             run = self.db.update_codex_run(
                 run_id,
                 status=CodexRunStatus.RUNNING,
+                run_kind=run_kind if run_kind is not None else existing.run_kind,
+                project_id=project_id if project_id is not None else existing.project_id,
+                protocol_run_id=protocol_run_id if protocol_run_id is not None else existing.protocol_run_id,
+                step_run_id=step_run_id if step_run_id is not None else existing.step_run_id,
+                queue=queue if queue is not None else existing.queue,
+                attempt=attempt if attempt is not None else existing.attempt,
+                worker_id=worker_id if worker_id is not None else existing.worker_id,
                 params=params if params is not None else existing.params,
                 prompt_version=prompt_version if prompt_version is not None else existing.prompt_version,
                 log_path=str(log_file),
@@ -76,6 +90,13 @@ class RunRegistry:
                 run_id=run_id,
                 job_type=job_type,
                 status=CodexRunStatus.RUNNING,
+                run_kind=run_kind,
+                project_id=project_id,
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+                queue=queue,
+                attempt=attempt,
+                worker_id=worker_id,
                 prompt_version=prompt_version,
                 params=params,
                 log_path=str(log_file),
@@ -97,10 +118,19 @@ class RunRegistry:
         cost_tokens: Optional[int] = None,
         cost_cents: Optional[int] = None,
     ) -> CodexRun:
+        existing: Optional[CodexRun] = None
+        try:
+            existing = self.db.get_codex_run(run_id)
+        except Exception:
+            existing = None
+        merged_result: Optional[dict] = result
+        if isinstance(existing.result, dict) and isinstance(result, dict):
+            merged_result = dict(existing.result)
+            merged_result.update(result)
         run = self.db.update_codex_run(
             run_id,
             status=CodexRunStatus.SUCCEEDED,
-            result=result,
+            result=merged_result,
             cost_tokens=cost_tokens,
             cost_cents=cost_cents,
             finished_at=_now_iso(),
@@ -112,11 +142,20 @@ class RunRegistry:
         return run
 
     def mark_failed(self, run_id: str, *, error: str, result: Optional[dict] = None) -> CodexRun:
+        existing: Optional[CodexRun] = None
+        try:
+            existing = self.db.get_codex_run(run_id)
+        except Exception:
+            existing = None
+        merged_result: Optional[dict] = result
+        if isinstance(existing.result, dict) and isinstance(result, dict):
+            merged_result = dict(existing.result)
+            merged_result.update(result)
         run = self.db.update_codex_run(
             run_id,
             status=CodexRunStatus.FAILED,
             error=error,
-            result=result,
+            result=merged_result,
             finished_at=_now_iso(),
         )
         self.log.warning(
@@ -141,5 +180,23 @@ class RunRegistry:
     def get(self, run_id: str) -> CodexRun:
         return self.db.get_codex_run(run_id)
 
-    def list(self, *, job_type: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[CodexRun]:
-        return self.db.list_codex_runs(job_type=job_type, status=status, limit=limit)
+    def list(
+        self,
+        *,
+        job_type: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        run_kind: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[CodexRun]:
+        return self.db.list_codex_runs(
+            job_type=job_type,
+            status=status,
+            project_id=project_id,
+            protocol_run_id=protocol_run_id,
+            step_run_id=step_run_id,
+            run_kind=run_kind,
+            limit=limit,
+        )

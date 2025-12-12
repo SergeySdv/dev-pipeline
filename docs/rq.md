@@ -16,6 +16,8 @@ Observability
 - API endpoints:
   - `GET /queues` shows per-queue counts (queued/started/finished/failed) and identifies the backend (Redis/RQ).
   - `GET /queues/jobs` lists jobs with payload, timestamps (enqueued/started/ended when available), and result/exception info for `queued/started/finished/failed`.
+  - Jobs include `meta.tgz_attempt` which is incremented on each RQ retry and persisted via `rq_job.save_meta()`.
+    - The worker maps this to `codex_runs.attempt` so run history shows consistent attempt numbers.
 - RQ CLI:
   ```bash
   rq info --url "$TASKSGODZILLA_REDIS_URL"

@@ -35,11 +35,13 @@ Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to start a background RQ worker thread
 - `tasksgodzilla/git_utils.py`: repo resolution helpers (honor stored `projects.local_path` or clone under `TASKSGODZILLA_PROJECTS_ROOT` using `projects/<project_id>/<repo_name>`) plus remote branch list/delete.
 - `tasksgodzilla/jobs.py`: Redis/RQ-backed queue abstraction.
 - `tasksgodzilla/worker_runtime.py`: job processors and background worker helper (auto-starts when `TASKSGODZILLA_INLINE_RQ_WORKER=true`); `scripts/rq_worker.py` runs dedicated workers.
+- `tasksgodzilla/run_registry.py`: per-job attempt tracking (`codex_runs`) and per-run log file location under `runs/<run_id>/logs.txt`.
 - `tasksgodzilla/codemachine/*`: loader + runtime adapter for `.codemachine` workspaces, including loop/trigger policy helpers and prompt resolution with placeholders/specifications.
 - `tasksgodzilla/spec.py` + `tasksgodzilla/spec_tools.py`: unified ProtocolSpec/StepSpec schema helpers, prompt/output resolver + engine registry hooks, and spec audit/backfill.
 - `tasksgodzilla/logging.py`: structured logging helpers with request IDs.
 - `scripts/api_server.py`: uvicorn runner for the API.
 - `scripts/ci_trigger.py` and `scripts/ci/report.sh`: optional helpers to trigger CI and to post webhook-style results back into the orchestrator.
+- `tasksgodzilla/services/platform/artifacts.py`: registers exec/QA outputs into `run_artifacts` for API/UI access.
 
 ## Services Layer
 
@@ -117,6 +119,8 @@ projects/                  # TASKSGODZILLA_PROJECTS_ROOT (default)
 - Branches: `GET /projects/{id}/branches` to list origin branches; `POST /projects/{id}/branches/{branch}/delete` (body `{"confirm": true}`) to remove remote branches.
 - Events: `GET /protocols/{id}/events`, `GET /events?project_id=...`.
 - Queue inspection: `GET /queues`, `GET /queues/jobs?status=queued|started|failed|finished`.
+- Runs/observability: `GET /codex/runs` (filterable), `GET /protocols/{id}/runs`, `GET /steps/{id}/runs`, `GET /codex/runs/{run_id}/logs`.
+- Run artifacts: `GET /codex/runs/{run_id}/artifacts`, `GET /codex/runs/{run_id}/artifacts/{artifact_id}/content`.
 - Webhooks: `POST /webhooks/github`, `POST /webhooks/gitlab` (optional `TASKSGODZILLA_WEBHOOK_TOKEN` HMAC). Map branches/IDs to runs, record events, auto-enqueue QA on CI success when configured.
 
 ## Auth & observability
@@ -124,3 +128,4 @@ projects/                  # TASKSGODZILLA_PROJECTS_ROOT (default)
 - Console fields persist tokens locally and reuse them for API calls.
 - Events carry request IDs; logs can be JSON via `TASKSGODZILLA_LOG_JSON=true`.
 - Metrics exported via `/metrics`; queue state via `/queues*`; console shows recent events and protocol/step timelines.
+- Each job attempt is recorded as a run (`codex_runs`) with linkage fields (`project_id`, `protocol_run_id`, `step_run_id`, `run_kind`, `attempt`, `worker_id`), a run log file under `runs/<run_id>/logs.txt`, and registered output artifacts (`run_artifacts`).

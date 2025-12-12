@@ -28,6 +28,7 @@ from tasksgodzilla.spec import (
 )
 from tasksgodzilla.storage import BaseDatabase
 from tasksgodzilla.workers.unified_runner import execute_step_unified
+from tasksgodzilla.services.platform.artifacts import register_run_artifact
 
 log = get_logger(__name__)
 
@@ -422,6 +423,36 @@ class ExecutionService:
                     )
                     self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
 
+        if job_id:
+            try:
+                existing = self.db.get_codex_run(job_id)
+                merged = dict(existing.result or {})
+                merged["exec"] = {
+                    "engine_id": engine_id,
+                    "model": exec_model,
+                    "prompt_path": str(resolution.prompt_path),
+                    "prompt_versions": {"exec": resolution.prompt_version},
+                    "workdir": str(resolution.workdir),
+                    "outputs": exec_result.metadata.get("outputs") if exec_result else None,
+                    "engine_call": {
+                        "success": bool(exec_result.result.success) if exec_result and exec_result.result else None,
+                        "stderr_len": len(exec_result.result.stderr or "") if exec_result and exec_result.result else None,
+                        "metadata": exec_result.result.metadata if exec_result and exec_result.result else None,
+                    },
+                }
+                self.db.update_codex_run(job_id, result=merged)
+            except Exception:
+                pass
+
+            try:
+                for name, path in (exec_result.outputs_written or {}).items():
+                    if not path:
+                        continue
+                    kind = "protocol_output" if name == "protocol" else "aux_output"
+                    register_run_artifact(self.db, run_id=job_id, name=name, kind=kind, path=path)
+            except Exception:
+                pass
+
         outputs_meta = exec_result.metadata.get("outputs") if exec_result else {}
         base_meta = {
             "protocol_run_id": run.id,
@@ -478,6 +509,7 @@ class ExecutionService:
                 engine_id=engine_id,
                 exec_tokens=exec_tokens,
                 base_meta=base_meta,
+                job_id=job_id,
             )
             return
 

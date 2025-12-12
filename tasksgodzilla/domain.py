@@ -101,12 +101,31 @@ class CodexRun:
     status: str
     created_at: str
     updated_at: str
-    started_at: Optional[str]
-    finished_at: Optional[str]
-    prompt_version: Optional[str]
-    params: Optional[dict]
-    result: Optional[dict]
-    error: Optional[str]
-    log_path: Optional[str]
-    cost_tokens: Optional[int]
-    cost_cents: Optional[int]
+    run_kind: Optional[str] = None
+    project_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    queue: Optional[str] = None
+    attempt: Optional[int] = None
+    worker_id: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    prompt_version: Optional[str] = None
+    params: Optional[dict] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
+    log_path: Optional[str] = None
+    cost_tokens: Optional[int] = None
+    cost_cents: Optional[int] = None
+
+
+@dataclass
+class RunArtifact:
+    id: int
+    run_id: str
+    name: str
+    kind: str
+    path: str
+    sha256: Optional[str]
+    bytes: Optional[int]
+    created_at: str

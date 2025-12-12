@@ -40,6 +40,8 @@ Both GitHub Actions and GitLab CI call the same shell hooks under `scripts/ci/`.
 5) Build: optional packaging or artifact build; fail fast on errors.
 6) Skip behavior: scripts are optional; missing/executable check is already handled in workflows.
 7) Artifacts: if your stack supports reports (e.g., JUnit XML), add upload steps in workflow as needed.
+   - Orchestrator run logs live under `runs/<run_id>/logs.txt` by default (configurable via `CODEX_RUNS_DIR`).
+   - Consider archiving `runs/**` (and any `ci-reports/**`) on CI failures to simplify debugging agent runs.
 
 ## Caching
 Add cache steps per stack as needed (npm, pip, pnpm, cargo, go build cache, Maven/Gradle). Keep cache keys stable across both CI systems for consistency.

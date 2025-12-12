@@ -13,6 +13,7 @@ from tasksgodzilla.metrics import metrics
 from tasksgodzilla.engines import registry
 from tasksgodzilla.workers.unified_runner import run_qa_unified
 from tasksgodzilla.engine_resolver import StepResolution
+from tasksgodzilla.services.platform.artifacts import register_run_artifact
 
 if TYPE_CHECKING:
     from tasksgodzilla.workers.codex_worker import handle_quality
@@ -370,6 +371,38 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
                     metadata={"model": qa_model, "spec_hash": spec_hash_val},
                 )
 
+        if job_id:
+            try:
+                existing = self.db.get_codex_run(job_id)
+                merged = dict(existing.result or {})
+                merged["qa"] = {
+                    "engine_id": qa_engine_id,
+                    "model": qa_model,
+                    "prompt_versions": {"qa": qa_prompt_version},
+                    "prompt_path": str(qa_prompt_path),
+                    "report_path": str(report_path),
+                    "verdict": verdict,
+                    "estimated_tokens": {"qa": qa_tokens},
+                    "engine_call": {
+                        "success": bool(qa_result.result.success) if qa_result and qa_result.result else None,
+                        "stderr_len": len(qa_result.result.stderr or "") if qa_result and qa_result.result else None,
+                        "metadata": qa_result.result.metadata if qa_result and qa_result.result else None,
+                    },
+                }
+                self.db.update_codex_run(job_id, result=merged)
+            except Exception:
+                pass
+            try:
+                register_run_artifact(
+                    self.db,
+                    run_id=job_id,
+                    name="quality-report",
+                    kind="qa_report",
+                    path=str(report_path),
+                )
+            except Exception:
+                pass
+
         if verdict == "FAIL":
             self.db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")
             self.db.append_event(
@@ -472,6 +505,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
         engine_id: str,
         exec_tokens: int,
         base_meta: Dict[str, Any],
+        job_id: Optional[str] = None,
     ) -> None:
         """
         Run inline (light) QA for a step after execution.
@@ -583,6 +617,38 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_text, encoding="utf-8")
         verdict = determine_verdict(report_text).upper()
+
+        if job_id:
+            try:
+                existing = self.db.get_codex_run(job_id)
+                merged = dict(existing.result or {})
+                merged["qa_inline"] = {
+                    "qa_engine_id": qa_engine_id,
+                    "qa_model": qa_model,
+                    "prompt_versions": {"qa": qa_prompt_version},
+                    "prompt_path": str(qa_prompt_path),
+                    "report_path": str(report_path),
+                    "verdict": verdict,
+                    "estimated_tokens": {"exec": exec_tokens, "qa": qa_tokens},
+                    "engine_call": {
+                        "success": bool(qa_result.result.success) if qa_result and qa_result.result else None,
+                        "stderr_len": len(qa_result.result.stderr or "") if qa_result and qa_result.result else None,
+                        "metadata": qa_result.result.metadata if qa_result and qa_result.result else None,
+                    },
+                }
+                self.db.update_codex_run(job_id, result=merged)
+            except Exception:
+                pass
+            try:
+                register_run_artifact(
+                    self.db,
+                    run_id=job_id,
+                    name="quality-report-inline",
+                    kind="qa_report",
+                    path=str(report_path),
+                )
+            except Exception:
+                pass
         
         qa_meta = {
             **base_meta,

@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - Postgres optional
     dict_row = None  # type: ignore
     ConnectionPool = None  # type: ignore
 
-from .domain import CodexRun, Event, Project, ProtocolRun, StepRun
+from .domain import CodexRun, Event, Project, ProtocolRun, RunArtifact, StepRun
 
 SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS codex_runs (
     run_id TEXT PRIMARY KEY,
     job_type TEXT NOT NULL,
     status TEXT NOT NULL,
+    run_kind TEXT,
+    project_id INTEGER,
+    protocol_run_id INTEGER,
+    step_run_id INTEGER,
+    queue TEXT,
+    attempt INTEGER,
+    worker_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME,
@@ -90,6 +97,19 @@ CREATE TABLE IF NOT EXISTS codex_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_codex_runs_job_status ON codex_runs(job_type, status, created_at);
+
+CREATE TABLE IF NOT EXISTS run_artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    path TEXT NOT NULL,
+    sha256 TEXT,
+    bytes INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id, created_at);
 """
 
 SCHEMA_POSTGRES = """
@@ -152,6 +172,13 @@ CREATE TABLE IF NOT EXISTS codex_runs (
     run_id TEXT PRIMARY KEY,
     job_type TEXT NOT NULL,
     status TEXT NOT NULL,
+    run_kind TEXT,
+    project_id INTEGER,
+    protocol_run_id INTEGER,
+    step_run_id INTEGER,
+    queue TEXT,
+    attempt INTEGER,
+    worker_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP,
@@ -166,6 +193,19 @@ CREATE TABLE IF NOT EXISTS codex_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_codex_runs_job_status ON codex_runs(job_type, status, created_at);
+
+CREATE TABLE IF NOT EXISTS run_artifacts (
+    id SERIAL PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    path TEXT NOT NULL,
+    sha256 TEXT,
+    bytes INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id, created_at);
 """
 
 _UNSET = object()
@@ -193,10 +233,74 @@ class BaseDatabase(Protocol):
     def append_event(self, protocol_run_id: int, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None, step_run_id: Optional[int] = None, request_id: Optional[str] = None, job_id: Optional[str] = None) -> Event: ...
     def list_events(self, protocol_run_id: int) -> List[Event]: ...
     def list_recent_events(self, limit: int = 50, project_id: Optional[int] = None) -> List[Event]: ...
-    def create_codex_run(self, run_id: str, job_type: str, status: str, prompt_version: Optional[str] = None, params: Optional[dict] = None, log_path: Optional[str] = None, started_at: Optional[str] = None, cost_tokens: Optional[int] = None, cost_cents: Optional[int] = None) -> CodexRun: ...
-    def update_codex_run(self, run_id: str, *, status: Optional[str] = None, prompt_version: Any = _UNSET, params: Any = _UNSET, result: Any = _UNSET, error: Any = _UNSET, log_path: Any = _UNSET, cost_tokens: Any = _UNSET, cost_cents: Any = _UNSET, started_at: Any = _UNSET, finished_at: Any = _UNSET) -> CodexRun: ...
+    def create_codex_run(
+        self,
+        run_id: str,
+        job_type: str,
+        status: str,
+        *,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        params: Optional[dict] = None,
+        log_path: Optional[str] = None,
+        started_at: Optional[str] = None,
+        cost_tokens: Optional[int] = None,
+        cost_cents: Optional[int] = None,
+    ) -> CodexRun: ...
+    def update_codex_run(
+        self,
+        run_id: str,
+        *,
+        status: Optional[str] = None,
+        run_kind: Any = _UNSET,
+        project_id: Any = _UNSET,
+        protocol_run_id: Any = _UNSET,
+        step_run_id: Any = _UNSET,
+        queue: Any = _UNSET,
+        attempt: Any = _UNSET,
+        worker_id: Any = _UNSET,
+        prompt_version: Any = _UNSET,
+        params: Any = _UNSET,
+        result: Any = _UNSET,
+        error: Any = _UNSET,
+        log_path: Any = _UNSET,
+        cost_tokens: Any = _UNSET,
+        cost_cents: Any = _UNSET,
+        started_at: Any = _UNSET,
+        finished_at: Any = _UNSET,
+    ) -> CodexRun: ...
     def get_codex_run(self, run_id: str) -> CodexRun: ...
-    def list_codex_runs(self, job_type: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[CodexRun]: ...
+    def list_codex_runs(
+        self,
+        job_type: Optional[str] = None,
+        status: Optional[str] = None,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        run_kind: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[CodexRun]: ...
+
+    def upsert_run_artifact(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        kind: str,
+        path: str,
+        sha256: Optional[str] = None,
+        bytes: Optional[int] = None,
+    ) -> RunArtifact: ...
+
+    def list_run_artifacts(self, run_id: str, *, kind: Optional[str] = None, limit: int = 100) -> List[RunArtifact]: ...
+    def get_run_artifact(self, artifact_id: int) -> RunArtifact: ...
 
 
 class Database:
@@ -221,6 +325,27 @@ class Database:
             cols = [r[1] for r in cur.fetchall()]
             if "local_path" not in cols:
                 conn.execute("ALTER TABLE projects ADD COLUMN local_path TEXT")
+            # Backward-compatible migration: add codex_runs linkage columns if missing.
+            cur = conn.execute("PRAGMA table_info(codex_runs)")
+            codex_cols = {r[1] for r in cur.fetchall()}
+            migrations: list[tuple[str, str]] = [
+                ("run_kind", "TEXT"),
+                ("project_id", "INTEGER"),
+                ("protocol_run_id", "INTEGER"),
+                ("step_run_id", "INTEGER"),
+                ("queue", "TEXT"),
+                ("attempt", "INTEGER"),
+                ("worker_id", "TEXT"),
+            ]
+            for col_name, col_type in migrations:
+                if col_name not in codex_cols:
+                    conn.execute(f"ALTER TABLE codex_runs ADD COLUMN {col_name} {col_type}")
+
+            # Create secondary indexes after migrations so existing DBs don't error.
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_runs_project ON codex_runs(project_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_runs_protocol ON codex_runs(protocol_run_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_runs_step ON codex_runs(step_run_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id, created_at)")
             conn.commit()
 
     def _fetchone(self, query: str, params: Iterable[Any]) -> Optional[sqlite3.Row]:
@@ -568,6 +693,14 @@ class Database:
         run_id: str,
         job_type: str,
         status: str,
+        *,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
         prompt_version: Optional[str] = None,
         params: Optional[dict] = None,
         log_path: Optional[str] = None,
@@ -578,13 +711,37 @@ class Database:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO codex_runs (run_id, job_type, status, prompt_version, params, log_path, started_at, cost_tokens, cost_cents)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO codex_runs (
+                    run_id,
+                    job_type,
+                    status,
+                    run_kind,
+                    project_id,
+                    protocol_run_id,
+                    step_run_id,
+                    queue,
+                    attempt,
+                    worker_id,
+                    prompt_version,
+                    params,
+                    log_path,
+                    started_at,
+                    cost_tokens,
+                    cost_cents
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     job_type,
                     status,
+                    run_kind,
+                    project_id,
+                    protocol_run_id,
+                    step_run_id,
+                    queue,
+                    attempt,
+                    worker_id,
                     prompt_version,
                     json.dumps(params) if params is not None else None,
                     log_path,
@@ -601,6 +758,13 @@ class Database:
         run_id: str,
         *,
         status: Optional[str] = None,
+        run_kind: Any = _UNSET,
+        project_id: Any = _UNSET,
+        protocol_run_id: Any = _UNSET,
+        step_run_id: Any = _UNSET,
+        queue: Any = _UNSET,
+        attempt: Any = _UNSET,
+        worker_id: Any = _UNSET,
         prompt_version: Any = _UNSET,
         params: Any = _UNSET,
         result: Any = _UNSET,
@@ -616,6 +780,27 @@ class Database:
         if status is not None:
             updates.append("status = ?")
             values.append(status)
+        if run_kind is not _UNSET:
+            updates.append("run_kind = ?")
+            values.append(run_kind)
+        if project_id is not _UNSET:
+            updates.append("project_id = ?")
+            values.append(project_id)
+        if protocol_run_id is not _UNSET:
+            updates.append("protocol_run_id = ?")
+            values.append(protocol_run_id)
+        if step_run_id is not _UNSET:
+            updates.append("step_run_id = ?")
+            values.append(step_run_id)
+        if queue is not _UNSET:
+            updates.append("queue = ?")
+            values.append(queue)
+        if attempt is not _UNSET:
+            updates.append("attempt = ?")
+            values.append(attempt)
+        if worker_id is not _UNSET:
+            updates.append("worker_id = ?")
+            values.append(worker_id)
         if prompt_version is not _UNSET:
             updates.append("prompt_version = ?")
             values.append(prompt_version)
@@ -661,6 +846,11 @@ class Database:
         self,
         job_type: Optional[str] = None,
         status: Optional[str] = None,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        run_kind: Optional[str] = None,
         limit: int = 100,
     ) -> List[CodexRun]:
         limit = max(1, min(int(limit), 500))
@@ -673,12 +863,74 @@ class Database:
         if status:
             where.append("status = ?")
             params.append(status)
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = ?")
+            params.append(step_run_id)
+        if run_kind:
+            where.append("run_kind = ?")
+            params.append(run_kind)
         if where:
             base += " WHERE " + " AND ".join(where)
         base += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
         rows = self._fetchall(base, tuple(params))
         return [self._row_to_codex_run(row) for row in rows]
+
+    def upsert_run_artifact(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        kind: str,
+        path: str,
+        sha256: Optional[str] = None,
+        bytes: Optional[int] = None,
+    ) -> RunArtifact:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO run_artifacts (run_id, name, kind, path, sha256, bytes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, name) DO UPDATE SET
+                    kind=excluded.kind,
+                    path=excluded.path,
+                    sha256=excluded.sha256,
+                    bytes=excluded.bytes
+                """,
+                (run_id, name, kind, path, sha256, bytes),
+            )
+            artifact_id = cur.lastrowid
+            conn.commit()
+        # For conflict updates, lastrowid may be 0; fetch by (run_id, name).
+        row = self._fetchone(
+            "SELECT * FROM run_artifacts WHERE run_id = ? AND name = ? ORDER BY created_at DESC LIMIT 1",
+            (run_id, name),
+        )
+        return self._row_to_run_artifact(row)  # type: ignore[arg-type]
+
+    def list_run_artifacts(self, run_id: str, *, kind: Optional[str] = None, limit: int = 100) -> List[RunArtifact]:
+        limit = max(1, min(int(limit), 500))
+        base = "SELECT * FROM run_artifacts WHERE run_id = ?"
+        params: list[Any] = [run_id]
+        if kind:
+            base += " AND kind = ?"
+            params.append(kind)
+        base += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._fetchall(base, tuple(params))
+        return [self._row_to_run_artifact(row) for row in rows]
+
+    def get_run_artifact(self, artifact_id: int) -> RunArtifact:
+        row = self._fetchone("SELECT * FROM run_artifacts WHERE id = ?", (artifact_id,))
+        if row is None:
+            raise KeyError(f"RunArtifact {artifact_id} not found")
+        return self._row_to_run_artifact(row)
 
     @staticmethod
     def _parse_json(value: Any) -> Optional[dict]:
@@ -767,6 +1019,13 @@ class Database:
             status=row["status"],
             created_at=Database._coerce_ts(row["created_at"]),
             updated_at=Database._coerce_ts(row["updated_at"]),
+            run_kind=row["run_kind"] if "run_kind" in keys else None,
+            project_id=row["project_id"] if "project_id" in keys else None,
+            protocol_run_id=row["protocol_run_id"] if "protocol_run_id" in keys else None,
+            step_run_id=row["step_run_id"] if "step_run_id" in keys else None,
+            queue=row["queue"] if "queue" in keys else None,
+            attempt=row["attempt"] if "attempt" in keys else None,
+            worker_id=row["worker_id"] if "worker_id" in keys else None,
             started_at=Database._coerce_ts(row["started_at"]) if "started_at" in keys and row["started_at"] is not None else None,
             finished_at=Database._coerce_ts(row["finished_at"]) if "finished_at" in keys and row["finished_at"] is not None else None,
             prompt_version=row["prompt_version"] if "prompt_version" in keys else None,
@@ -778,6 +1037,19 @@ class Database:
             cost_cents=row["cost_cents"] if "cost_cents" in keys else None,
         )
 
+    @staticmethod
+    def _row_to_run_artifact(row: Any) -> RunArtifact:
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        return RunArtifact(
+            id=row["id"],
+            run_id=row["run_id"],
+            name=row["name"],
+            kind=row["kind"],
+            path=row["path"],
+            sha256=row["sha256"] if "sha256" in keys else None,
+            bytes=row["bytes"] if "bytes" in keys else None,
+            created_at=Database._coerce_ts(row["created_at"]),
+        )
     @staticmethod
     def _row_to_event(row: Any) -> Event:
         protocol_name = None
@@ -851,6 +1123,35 @@ class PostgresDatabase:
                     )
                     if not cur.fetchone():
                         cur.execute("ALTER TABLE projects ADD COLUMN local_path TEXT")
+                except Exception:
+                    pass
+                try:
+                    migrations: list[tuple[str, str]] = [
+                        ("run_kind", "TEXT"),
+                        ("project_id", "INTEGER"),
+                        ("protocol_run_id", "INTEGER"),
+                        ("step_run_id", "INTEGER"),
+                        ("queue", "TEXT"),
+                        ("attempt", "INTEGER"),
+                        ("worker_id", "TEXT"),
+                    ]
+                    for col_name, col_type in migrations:
+                        cur.execute(
+                            "SELECT column_name FROM information_schema.columns WHERE table_name='codex_runs' AND column_name=%s",
+                            (col_name,),
+                        )
+                        if not cur.fetchone():
+                            cur.execute(f"ALTER TABLE codex_runs ADD COLUMN {col_name} {col_type}")
+
+                    cur.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_codex_runs_project ON codex_runs(project_id, created_at)"
+                    )
+                    cur.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_codex_runs_protocol ON codex_runs(protocol_run_id, created_at)"
+                    )
+                    cur.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_codex_runs_step ON codex_runs(step_run_id, created_at)"
+                    )
                 except Exception:
                     pass
             conn.commit()
@@ -1196,6 +1497,14 @@ class PostgresDatabase:
         run_id: str,
         job_type: str,
         status: str,
+        *,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
         prompt_version: Optional[str] = None,
         params: Optional[dict] = None,
         log_path: Optional[str] = None,
@@ -1207,14 +1516,38 @@ class PostgresDatabase:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO codex_runs (run_id, job_type, status, prompt_version, params, log_path, started_at, cost_tokens, cost_cents)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO codex_runs (
+                        run_id,
+                        job_type,
+                        status,
+                        run_kind,
+                        project_id,
+                        protocol_run_id,
+                        step_run_id,
+                        queue,
+                        attempt,
+                        worker_id,
+                        prompt_version,
+                        params,
+                        log_path,
+                        started_at,
+                        cost_tokens,
+                        cost_cents
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING run_id
                     """,
                     (
                         run_id,
                         job_type,
                         status,
+                        run_kind,
+                        project_id,
+                        protocol_run_id,
+                        step_run_id,
+                        queue,
+                        attempt,
+                        worker_id,
                         prompt_version,
                         json.dumps(params) if params is not None else None,
                         log_path,
@@ -1231,6 +1564,13 @@ class PostgresDatabase:
         run_id: str,
         *,
         status: Optional[str] = None,
+        run_kind: Any = _UNSET,
+        project_id: Any = _UNSET,
+        protocol_run_id: Any = _UNSET,
+        step_run_id: Any = _UNSET,
+        queue: Any = _UNSET,
+        attempt: Any = _UNSET,
+        worker_id: Any = _UNSET,
         prompt_version: Any = _UNSET,
         params: Any = _UNSET,
         result: Any = _UNSET,
@@ -1246,6 +1586,27 @@ class PostgresDatabase:
         if status is not None:
             updates.append("status = %s")
             values.append(status)
+        if run_kind is not _UNSET:
+            updates.append("run_kind = %s")
+            values.append(run_kind)
+        if project_id is not _UNSET:
+            updates.append("project_id = %s")
+            values.append(project_id)
+        if protocol_run_id is not _UNSET:
+            updates.append("protocol_run_id = %s")
+            values.append(protocol_run_id)
+        if step_run_id is not _UNSET:
+            updates.append("step_run_id = %s")
+            values.append(step_run_id)
+        if queue is not _UNSET:
+            updates.append("queue = %s")
+            values.append(queue)
+        if attempt is not _UNSET:
+            updates.append("attempt = %s")
+            values.append(attempt)
+        if worker_id is not _UNSET:
+            updates.append("worker_id = %s")
+            values.append(worker_id)
         if prompt_version is not _UNSET:
             updates.append("prompt_version = %s")
             values.append(prompt_version)
@@ -1293,6 +1654,11 @@ class PostgresDatabase:
         self,
         job_type: Optional[str] = None,
         status: Optional[str] = None,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        run_kind: Optional[str] = None,
         limit: int = 100,
     ) -> List[CodexRun]:
         limit = max(1, min(int(limit), 500))
@@ -1305,12 +1671,71 @@ class PostgresDatabase:
         if status:
             where.append("status = %s")
             params.append(status)
+        if project_id is not None:
+            where.append("project_id = %s")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            params.append(step_run_id)
+        if run_kind:
+            where.append("run_kind = %s")
+            params.append(run_kind)
         if where:
             base += " WHERE " + " AND ".join(where)
         base += " ORDER BY created_at DESC LIMIT %s"
         params.append(limit)
         rows = self._fetchall(base, tuple(params))
         return [Database._row_to_codex_run(row) for row in rows]  # type: ignore[arg-type]
+
+    def upsert_run_artifact(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        kind: str,
+        path: str,
+        sha256: Optional[str] = None,
+        bytes: Optional[int] = None,
+    ) -> RunArtifact:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO run_artifacts (run_id, name, kind, path, sha256, bytes)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, name) DO UPDATE SET
+                        kind = EXCLUDED.kind,
+                        path = EXCLUDED.path,
+                        sha256 = EXCLUDED.sha256,
+                        bytes = EXCLUDED.bytes
+                    RETURNING id
+                    """,
+                    (run_id, name, kind, path, sha256, bytes),
+                )
+                artifact_id = cur.fetchone()["id"]
+            conn.commit()
+        return self.get_run_artifact(int(artifact_id))
+
+    def list_run_artifacts(self, run_id: str, *, kind: Optional[str] = None, limit: int = 100) -> List[RunArtifact]:
+        limit = max(1, min(int(limit), 500))
+        base = "SELECT * FROM run_artifacts WHERE run_id = %s"
+        params: list[Any] = [run_id]
+        if kind:
+            base += " AND kind = %s"
+            params.append(kind)
+        base += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+        rows = self._fetchall(base, tuple(params))
+        return [Database._row_to_run_artifact(row) for row in rows]  # type: ignore[arg-type]
+
+    def get_run_artifact(self, artifact_id: int) -> RunArtifact:
+        row = self._fetchone("SELECT * FROM run_artifacts WHERE id = %s", (artifact_id,))
+        if row is None:
+            raise KeyError(f"RunArtifact {artifact_id} not found")
+        return Database._row_to_run_artifact(row)  # type: ignore[arg-type]
 
 
 def create_database(db_path: Path, db_url: Optional[str] = None, pool_size: int = 5) -> BaseDatabase:

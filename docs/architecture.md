@@ -240,6 +240,8 @@ flowchart LR
 - Metrics: `/metrics` exposes Prometheus counters/histograms for requests, jobs, tokens, webhooks.
 - Logging: structured logs via `tasksgodzilla.logging` with request/job/project/protocol/step IDs; JSON toggle via env. API runs uvicorn with `log_config=None` so the central formatter/filter stays active; workers/QA/CI helpers pass job IDs through.
 - Events: persisted timeline per protocol/step; surfaced in console and `/events` API.
+- Runs: every job attempt is recorded in `codex_runs` (linked by `project_id`, `protocol_run_id`, `step_run_id`, `run_kind`, `attempt`, `worker_id`) with a per-run log file under `runs/<run_id>/logs.txt`. Runs are queryable via `/codex/runs`, `/protocols/{id}/runs`, and `/steps/{id}/runs`.
+- Run artifacts: output/report files are registered in `run_artifacts` and available via `/codex/runs/{run_id}/artifacts` (with optional `/content` for small text artifacts).
 - Protocol logs: workers append timestamped notes to `.protocols/.../log.md` after execution and QA when the file exists.
 
 ## Core building blocks

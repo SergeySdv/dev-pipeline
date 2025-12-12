@@ -18,6 +18,7 @@ const state = {
   protocols: [],
   audits: [],
   steps: [],
+  runs: [],
   events: [],
   operations: [],
   eventFilter: "all",
@@ -26,6 +27,8 @@ const state = {
   operationsSpecFilter: "",
   projectSort: "name",
   protocolSort: "updated",
+  runStepFilter: null,
+  runKindFilter: "all",
   projectTokens: JSON.parse(
     localStorage.getItem(STORAGE_KEYS.projectTokens)
       || localStorage.getItem(LEGACY_STORAGE_KEYS.projectTokens)
@@ -308,6 +311,18 @@ async function loadProtocols() {
   }
 }
 
+async function loadRuns() {
+  if (!state.selectedProtocol) return;
+  try {
+    const runs = await apiFetch(`/protocols/${state.selectedProtocol}/runs?limit=200`);
+    state.runs = runs || [];
+    renderProtocolDetail();
+  } catch (err) {
+    // Runs are optional; don't break the whole console.
+    state.runs = [];
+  }
+}
+
 function renderProtocols() {
   const list = document.getElementById("protocolList");
   list.innerHTML = "";
@@ -377,9 +392,13 @@ function renderProtocols() {
       `;
       row.onclick = () => {
         state.selectedProtocol = run.id;
+        state.runs = [];
+        state.runStepFilter = null;
+        state.runKindFilter = "all";
         renderProtocols();
         loadSteps();
         loadEvents();
+        loadRuns();
         startPolling();
       };
       if (state.selectedProtocol === run.id) {
@@ -435,6 +454,7 @@ function renderProtocolDetail() {
       </div>
     </div>
     ${renderCiHints(run)}
+    ${renderRunsPane()}
     <div class="split">
       <div class="pane">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -471,8 +491,11 @@ function renderProtocolDetail() {
   document.getElementById("refreshActive").onclick = () => {
     loadSteps();
     loadEvents();
+    loadRuns();
   };
   bindEventFilters();
+  bindRunsFilters();
+  bindStepRunButtons();
 
   document.querySelectorAll("button[data-copy-spec]").forEach((btn) => {
     btn.onclick = async (e) => {
@@ -516,6 +539,135 @@ function renderProtocolDetail() {
   retryBtn.disabled = terminal || run.status === "paused";
   qaBtn.disabled = terminal || run.status === "paused" || !latestStep;
   approveBtn.disabled = terminal || run.status === "paused" || !latestStep;
+}
+
+function renderRunsPane() {
+  const runCount = (state.runs || []).length;
+  const filtered = filteredRuns();
+  const label = state.runStepFilter ? `step ${state.runStepFilter}` : "all";
+  const kinds = Array.from(new Set((state.runs || []).map((r) => String(r.run_kind || r.job_type || "")))).filter(Boolean);
+  const hasKind = (k) => kinds.includes(k);
+  return `
+    <div class="pane">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div>
+          <h3>Runs</h3>
+          <div class="muted small">${filtered.length} shown · ${runCount} total · ${label}</div>
+        </div>
+        <div class="button-group">
+          <button id="runsFilterAll" class="${state.runKindFilter === "all" ? "primary" : ""}">All</button>
+          <button id="runsFilterExec" class="${state.runKindFilter === "exec" ? "primary" : ""}">Exec</button>
+          <button id="runsFilterQa" class="${state.runKindFilter === "qa" ? "primary" : ""}">QA</button>
+          <button id="runsFilterPlan" class="${state.runKindFilter === "plan" ? "primary" : ""}">Plan</button>
+          ${hasKind("setup") ? `<button id="runsFilterSetup" class="${state.runKindFilter === "setup" ? "primary" : ""}">Setup</button>` : ""}
+          ${hasKind("open_pr") ? `<button id="runsFilterOpenPr" class="${state.runKindFilter === "open_pr" ? "primary" : ""}">PR</button>` : ""}
+          ${hasKind("spec_audit") ? `<button id="runsFilterAudit" class="${state.runKindFilter === "spec_audit" ? "primary" : ""}">Audit</button>` : ""}
+          <button id="runsClearStep" class="${state.runStepFilter ? "primary" : ""}">Clear step</button>
+          <button id="refreshRuns" type="button">Refresh</button>
+        </div>
+      </div>
+      ${renderRunsTable(filtered)}
+    </div>
+  `;
+}
+
+function filteredRuns() {
+  const all = state.runs || [];
+  return all.filter((r) => {
+    if (state.runStepFilter && String(r.step_run_id) !== String(state.runStepFilter)) return false;
+    if (state.runKindFilter && state.runKindFilter !== "all" && String(r.run_kind) !== String(state.runKindFilter)) return false;
+    return true;
+  });
+}
+
+function renderRunsTable(runs) {
+  if (!runs.length) {
+    return `<p class="muted small">No runs to display yet.</p>`;
+  }
+  const rows = runs
+    .map((r) => {
+      const logUrl = r.log_path ? apiPath(`/codex/runs/${encodeURIComponent(r.run_id)}/logs`) : null;
+      const detailUrl = apiPath(`/codex/runs/${encodeURIComponent(r.run_id)}`);
+      const artifactsUrl = apiPath(`/codex/runs/${encodeURIComponent(r.run_id)}/artifacts`);
+      const kind = r.run_kind || r.job_type || "-";
+      const attempt = r.attempt != null ? r.attempt : "-";
+      const stepId = r.step_run_id != null ? r.step_run_id : "-";
+      const status = r.status || "-";
+      const execModel = r.result && r.result.exec ? r.result.exec.model : null;
+      const qaModel = r.result && r.result.qa ? r.result.qa.model : (r.result && r.result.qa_inline ? r.result.qa_inline.qa_model : null);
+      const model = execModel || qaModel || "-";
+      const verdict = (r.result && r.result.qa && r.result.qa.verdict) || (r.result && r.result.qa_inline && r.result.qa_inline.verdict) || "-";
+      return `
+        <tr>
+          <td class="muted"><a href="${detailUrl}" target="_blank" rel="noreferrer">${r.run_id}</a></td>
+          <td>${kind}</td>
+          <td><span class="pill ${statusClass(status)}">${status}</span></td>
+          <td class="muted">${model}</td>
+          <td class="muted">${verdict}</td>
+          <td class="muted">${attempt}</td>
+          <td class="muted">${stepId}</td>
+          <td class="muted">${formatDate(r.created_at)}</td>
+          <td class="muted">${formatDate(r.started_at)}</td>
+          <td class="muted">${formatDate(r.finished_at)}</td>
+          <td>${logUrl ? `<a href="${logUrl}" target="_blank" rel="noreferrer">logs</a>` : `<span class="muted">-</span>`}</td>
+          <td><a href="${artifactsUrl}" target="_blank" rel="noreferrer">artifacts</a></td>
+        </tr>
+      `;
+    })
+    .join("");
+  return `
+    <table class="table">
+      <thead>
+        <tr><th>Run ID</th><th>Kind</th><th>Status</th><th>Model</th><th>Verdict</th><th>Attempt</th><th>Step</th><th>Created</th><th>Started</th><th>Finished</th><th>Logs</th><th>Artifacts</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function bindRunsFilters() {
+  const refreshBtn = document.getElementById("refreshRuns");
+  if (refreshBtn) refreshBtn.onclick = () => loadRuns();
+  const clearStep = document.getElementById("runsClearStep");
+  if (clearStep) {
+    clearStep.onclick = () => {
+      state.runStepFilter = null;
+      renderProtocolDetail();
+    };
+  }
+  const setKind = (kind) => {
+    state.runKindFilter = kind;
+    renderProtocolDetail();
+  };
+  const allBtn = document.getElementById("runsFilterAll");
+  if (allBtn) allBtn.onclick = () => setKind("all");
+  const execBtn = document.getElementById("runsFilterExec");
+  if (execBtn) execBtn.onclick = () => setKind("exec");
+  const qaBtn = document.getElementById("runsFilterQa");
+  if (qaBtn) qaBtn.onclick = () => setKind("qa");
+  const planBtn = document.getElementById("runsFilterPlan");
+  if (planBtn) planBtn.onclick = () => setKind("plan");
+  const setupBtn = document.getElementById("runsFilterSetup");
+  if (setupBtn) setupBtn.onclick = () => setKind("setup");
+  const prBtn = document.getElementById("runsFilterOpenPr");
+  if (prBtn) prBtn.onclick = () => setKind("open_pr");
+  const auditBtn = document.getElementById("runsFilterAudit");
+  if (auditBtn) auditBtn.onclick = () => setKind("spec_audit");
+}
+
+function bindStepRunButtons() {
+  document.querySelectorAll("button[data-step-runs]").forEach((btn) => {
+    btn.onclick = (e) => {
+      const stepId = e.currentTarget.getAttribute("data-step-runs");
+      if (!stepId) return;
+      state.runStepFilter = stepId;
+      renderProtocolDetail();
+      // Ensure we have data; if not loaded yet, fetch it.
+      if (!state.runs || !state.runs.length) {
+        loadRuns();
+      }
+    };
+  });
 }
 
 function renderTemplateMeta(run) {
@@ -616,6 +768,7 @@ function renderStepsTable() {
           <td class="muted">${policyLabel(s.policy)}</td>
           <td class="muted">${runtimeStateLabel(s.runtime_state)}</td>
           <td class="muted">${s.summary || "-"}</td>
+          <td><button class="tiny-btn" type="button" data-step-runs="${s.id}">Runs</button></td>
         </tr>
       `
     )
@@ -623,7 +776,7 @@ function renderStepsTable() {
   return `
     <table class="table">
       <thead>
-        <tr><th>#</th><th>Name</th><th>Status</th><th>Model</th><th>Engine</th><th>Policy</th><th>State</th><th>Summary</th></tr>
+        <tr><th>#</th><th>Name</th><th>Status</th><th>Model</th><th>Engine</th><th>Policy</th><th>State</th><th>Summary</th><th>Runs</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -884,6 +1037,7 @@ function renderQueue() {
                 <span class="pill ${statusClass(job.status)}">${job.status}</span>
               </div>
               <div class="muted" style="font-size:12px;">${job.job_id}</div>
+              <div class="muted" style="font-size:12px;">attempt ${job.meta && job.meta.tgz_attempt ? job.meta.tgz_attempt : "-"}</div>
             </div>
           `
         )
@@ -1141,6 +1295,7 @@ function startPolling() {
   state.poll = setInterval(() => {
     loadSteps();
     loadEvents();
+    loadRuns();
     loadOperations();
     loadMetrics();
     loadOnboarding();
