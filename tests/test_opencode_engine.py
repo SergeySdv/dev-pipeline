@@ -36,6 +36,9 @@ def test_opencode_engine_requires_api_key(monkeypatch) -> None:
         working_dir=".",
         extra={"prompt_text": "hello"},
     )
+    # Without an API key, the engine falls back to OpenCode CLI; if it's not available,
+    # we expect a ConfigError.
+    monkeypatch.setattr("shutil.which", lambda _: None)
     with pytest.raises(ConfigError):
         engine.execute(req)
 
@@ -86,7 +89,40 @@ def test_opencode_engine_posts_openai_compatible_payload(monkeypatch) -> None:
     assert result.tokens_used == 123
     assert captured["url"].endswith("/chat/completions")
     assert captured["headers"]["Authorization"] == "Bearer k-test"
-    assert captured["json"]["model"] == "zai/glm-4.6"
+    # The engine normalizes the common alias `zai/*` to an OpenCode-known provider.
+    assert captured["json"]["model"] == "zai-coding-plan/glm-4.6"
     assert captured["json"]["messages"][0]["role"] == "user"
     assert captured["json"]["messages"][0]["content"] == "hi"
+
+
+def test_opencode_engine_cli_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("TASKSGODZILLA_OPENCODE_API_KEY", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/opencode")
+
+    class _Proc:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = "PONG\n"
+            self.stderr = ""
+
+    def fake_run(cmd, cwd=None, capture_output=None, text=None, check=None, timeout=None):
+        assert cmd[:2] == ["opencode", "run"]
+        assert "--model" in cmd
+        assert "--file" in cmd
+        return _Proc()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    engine = registry.get("opencode")
+    req = EngineRequest(
+        project_id=0,
+        protocol_run_id=0,
+        step_run_id=0,
+        model="zai/glm-4.6",
+        prompt_files=[],
+        working_dir=".",
+        extra={"prompt_text": "Reply with exactly: PONG"},
+    )
+    res = engine.execute(req)
+    assert res.stdout.strip() == "PONG"
 
