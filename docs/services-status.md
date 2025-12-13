@@ -56,7 +56,7 @@ service-oriented refactor. It complements `STATUS.md` (orchestrator track) and
 - [x] **Move orchestration logic out of `codex_worker`**
   - Migrated planning/decomposition/QA/loop/trigger logic into
     `OrchestratorService`, `SpecService`, `DecompositionService`, and `QualityService`.
-  - `codex_worker` is now a thin adapter (492 lines, under 500 line target).
+  - Target: keep `codex_worker.py` as a thin adapter (line count may vary as features land; prefer the services layer for new logic).
 
 - [x] **Service-level tests**
   - Add focused tests for each service:
@@ -101,5 +101,4 @@ service-oriented refactor. It complements `STATUS.md` (orchestrator track) and
 
 ## Services Architecture Complete ✅
 
-The services architecture refactor is now **complete**. All major business logic has been extracted to services, `codex_worker.py` is under 500 lines, and comprehensive tests exist. The services layer is now the stable, primary integration layer for TasksGodzilla.
-
+The services layer is the stable, primary integration layer for TasksGodzilla. Prefer extending services and treating workers as adapters. Documentation should reflect what is implemented today vs. what is still in progress.

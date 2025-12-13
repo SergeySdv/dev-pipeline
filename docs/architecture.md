@@ -218,6 +218,44 @@ flowchart LR
 - Codex/Repo unavailable: workers stub execution/QA, set `needs_qa` or `completed` with events and avoid crashing pipelines.
 
 ## Git, CI, and webhooks
+
+## Findings and gaps (as of alpha)
+
+The core control plane is in place (Projects/ProtocolRuns/StepRuns + queue + services), but a few end-to-end product gaps remain important for real-world usage across different teams and experience levels:
+
+### 1) Project classification needs a first-class onboarding choice
+
+The system supports policy packs and a project policy selection API, but onboarding still needs to make “project type” selection a primary decision so defaults and required structure match the user’s context.
+
+See:
+- `docs/policy-framework.md`
+- `docs/project-classifications.md`
+- Policy endpoints in `docs/api-reference.md`
+
+### 2) Clarifications are not first-class state yet
+
+Onboarding emits `setup_clarifications` as an Event and policy packs can define `clarifications`, but there is no persisted Q/A model, no “answer clarifications” API, and no consistent gating rule to block/unblock runs based on missing answers. This blocks the “some tasks require user input / inexperienced user guidance” goal.
+
+Recommended next step: introduce a Clarifications service + DB table that stores questions and user answers, and use it as a gate when the selected policy pack requires it.
+
+### 3) Policy enforcement is mostly reporting today
+
+Policy evaluation exists and can be escalated to “block” severity, but most flows treat findings as warnings and continue. For strict projects (e.g., compliance), execution and QA should block (not fail) when critical requirements are unmet.
+
+### 4) Documentation can drift from implementation
+
+Some docs describe targets (e.g., “thin worker”) rather than current reality. Prefer documenting:
+- what is implemented today,
+- what is planned next,
+- and which pieces are intentionally best-effort.
+
+## Further architecture (recommended next iteration)
+
+If you want consistent behavior across “beginner” through “enterprise” projects, a useful next slice is:
+- **Project classification → policy pack selection** in onboarding (console + CLI).
+- **Policy-driven clarifications** (persisted questions + answers, with blocking rules and clear UI).
+- **Policy-driven prompt injection** into planning/decomposition (required sections/checks included automatically).
+- **Optional strict mode gates** in execution/QA that turn missing critical requirements into `blocked` with actionable remediation (instead of “failed” or “silent warning”).
 - Project repos resolve via stored `local_path` when present; otherwise onboarding clones under `TASKSGODZILLA_PROJECTS_ROOT` using the per-project layout `projects/<project_id>/<repo_name>`, records the resolved path, configures `origin` (prefers GitHub SSH when enabled), and can set git identity from env.
 - Remote branch controls: `GET /projects/{id}/branches` lists origin branches and `POST /projects/{id}/branches/{branch}/delete` (with `confirm=true`) deletes them, recording events for audit.
 - Worktrees: created under `<repo_root>/worktrees/<protocol_name>` from `origin/<base_branch>`; branch name matches protocol. When `TASKSGODZILLA_SINGLE_WORKTREE=true` (default), multiple protocols share a single branch/worktree `worktrees/tasksgodzilla-worktree` and isolate state via `.protocols/<protocol_name>/`.

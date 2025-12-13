@@ -59,6 +59,65 @@ This plan turns the target architecture into executable work. Phases can run seq
 - 4.4 Onboarding integration: frontend calls `/projects` to register and shows job/event progress; orchestrator enqueues `project_setup_job`, records the resolved `local_path`, configures git origin/identity when enabled, emits `setup_clarifications` with recommended CI/model/branch policies, and can block on responses when configured.
 - 4.5 Status/actions: surface buttons/shortcuts for “new protocol”, “run next step”, “retry step”, “run QA”, “open PR/MR now”, “manual approve”.
 
+## Phase 4.6 – Policy packs (project classifications and governance)
+**Goal:** Let each project select a policy pack in the UI; apply policies as warnings by default, central-first with optional repo-local overrides.
+
+### 4.6.1 Policy pack storage and selection
+- Add a `policy_packs` table (key, version, pack_json, status) and seed a default pack (e.g., `default@1.0`).
+- Extend `projects` with policy selection fields (pack key/version), per-project overrides JSON, and a `repo_local_enabled` toggle.
+- Add audit fields on `protocol_runs` to record the effective policy hash and selected pack version used for the run.
+
+### 4.6.2 Effective policy resolution
+- Implement `PolicyService` to compute an effective policy:
+  1) central pack
+  2) project overrides
+  3) (optional) repo-local override file (e.g., `.tasksgodzilla/policy.yml`)
+- Validate inputs (schema, size caps) and compute `policy_effective_hash` for caching and audit.
+- Decide precedence rules explicitly and document them (repo-local last, but cannot access secrets).
+
+### 4.6.3 Findings engine (warnings-first)
+- Define a `Finding` structure (code, severity, message, scope, suggested_fix, metadata).
+- Add evaluation entrypoints:
+  - `evaluate_project(project_id)` (onboarding/defaults readiness)
+  - `evaluate_protocol(protocol_run_id)` (plan/spec validity)
+  - `evaluate_step(step_run_id)` (required sections, artifacts, gates)
+- Persist findings as Events (`event_type="policy_finding"`) and expose them in the console.
+- Default all severities to warnings (no blocking). Keep a path for future strict mode (per project).
+
+### 4.6.4 API endpoints
+- Policy packs:
+  - `GET /policy_packs` (list)
+  - `GET /policy_packs/{key}` (details + versions)
+  - `POST /policy_packs` (create/update; restrict later)
+- Project policy:
+  - `GET /projects/{id}/policy` (selection + overrides)
+  - `PUT /projects/{id}/policy` (set selection/overrides/toggles)
+  - `GET /projects/{id}/policy/effective` (merged effective policy)
+- Findings:
+  - `GET /projects/{id}/policy/findings`
+  - `GET /protocols/{id}/policy/findings`
+  - `GET /steps/{id}/policy/findings`
+
+### 4.6.5 Console/UI work
+- Project Settings view:
+  - dropdown for policy pack, description, and version selector (or “latest active”)
+  - per-project overrides editor (form-first; JSON fallback)
+  - repo-local toggle + file path hint
+  - effective policy preview + hash
+- Protocol/Step views:
+  - “Policy Findings” panel grouping warnings by scope (onboarding/planning/execution/QA)
+  - links/suggested fixes for common findings (missing step sections, missing required checks)
+
+### 4.6.6 Integrations (warnings-only)
+- Onboarding: merge policy clarifications into the existing onboarding clarifications output; emit findings for missing answers.
+- Planning: inject required sections and checks into planning prompts/templates; evaluate the resulting `plan.md` and step files.
+- Execution/QA: before running, evaluate step artifacts and emit warnings; prefer effective policy defaults for models and QA policy when step spec is absent.
+
+### 4.6.7 Rollout strategy
+- Backfill all existing projects to `default@1.0` with empty overrides.
+- Ship UI selection and findings display first (no behavior change).
+- Add opt-in strict mode later (separate phase) if needed.
+
 ## Phase 5 – CI integration and automation loops
 **Goal:** Make CI results first-class signals in orchestration.
 

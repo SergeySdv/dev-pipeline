@@ -40,6 +40,15 @@ This document captures the current state of the system, the risks that block ful
   - Web UI later (React/Next.js or server-rendered) with dashboards, step timelines, QA verdicts, and controls to run/retry/approve steps.
 - **Onboarding wizard**: Frontend flow to register projects (git URL, base branch, CI platform, model defaults) and trigger `project_setup` jobs; displays progress via Events.
 
+### 2.2.1 Policy packs (project classifications and governance)
+Projects need a consistent, user-selectable way to apply **architecture guidelines and operational policies** during onboarding and across every protocol/step. The recommended approach is a per-project **Policy Pack** selection:
+
+- Central-first: policy packs are stored in the orchestrator DB and selected per project in the console UI.
+- Optional repo-local: projects can enable an override file (e.g., `.tasksgodzilla/policy.yml`) that extends/overrides the central pack.
+- Warnings by default: policy evaluation produces Findings shown in UI and persisted as Events without blocking execution. Strict mode can be added later per project.
+
+Detailed proposal: `docs/policy-framework.md`.
+
 ### 2.3 Domain model
 - **Project**: id, name, git_url, base_branch, CI provider, persisted `local_path` (resolved clone path), enabled protocol templates, default models/configs, org/team tags.
 - **ProtocolRun**: id, project_id, protocol_name (`NNNN-[task]`), status (`pending`, `planning`, `planned`, `running`, `blocked`, `failed`, `completed`), base_branch, worktree_path, protocol_root.

@@ -147,6 +147,12 @@ python -m tasksgodzilla.cli.tui           # panel-based dashboard with keybindin
 
 - `scripts/spec_audit.py` — audit/backfill ProtocolSpec for existing runs (`--project-id/--protocol-id/--backfill`).
 
+### Policy packs (project types)
+
+- Framework and rollout notes: `docs/policy-framework.md`
+- Recommended classifications + ready-to-POST payloads: `docs/project-classifications.md`
+- API endpoints: `docs/api-reference.md` (`/policy_packs`, `/projects/{id}/policy`, findings endpoints)
+
 
 - `docs/` — overview of TasksGodzilla_Ilyas_Edition_1.0 and CI notes. New: `docs/solution-design.md` (target architecture + risks) and `docs/implementation-plan.md` (phased plan).
 - `prompts/` — ready prompts: project bootstrap, new/resume protocols, review/merge flows.

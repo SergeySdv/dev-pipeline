@@ -19,13 +19,17 @@ HTTP API for managing projects, protocol runs, steps, events, queues, and CI/web
 
 ## Projects
 - `POST /projects`
-  - Body: `{ "name": str, "git_url": str, "base_branch": "main", "ci_provider": str|null, "default_models": obj|null, "secrets": obj|null, "local_path": str|null }`
+  - Body: `{ "name": str, "git_url": str, "base_branch": "main", "ci_provider": str|null, "project_classification": str|null, "default_models": obj|null, "secrets": obj|null, "local_path": str|null }`
   - Response: Project object with `id`, timestamps.
   - **Service**: Uses `OnboardingService.register_project()` to create project and enqueue setup
   - Behavior: persists `local_path` when provided so future jobs resolve the repo without recomputing; falls back to cloning under `TASKSGODZILLA_PROJECTS_ROOT` (default `projects/<project_id>/<repo_name>`) when missing.
   - Side effects: enqueues `project_setup_job` protocol run for onboarding progress visibility and onboarding clarifications.
+  - Notes:
+    - `project_classification` is a user-friendly “project type” that selects the initial policy pack; supported values include `default`, `beginner-guided`, `startup-fast`, `team-standard`, `enterprise-compliance` (see `docs/project-classifications.md`).
 - `GET /projects` → list of projects.
 - `GET /projects/{id}` → project (401 if project token required and missing).
+- `GET /projects/{id}/clarifications` → list persisted clarification questions (filter with `?status=open|answered`).
+- `POST /projects/{id}/clarifications/{key}` → set an answer for a clarification key (body: `{ "answer": <any>, "answered_by": <str|null> }`).
 - `GET /projects/{id}/onboarding` → onboarding summary (status, workspace, stages, recent events) for `setup-{id}`.
 - `POST /projects/{id}/onboarding/actions/start`
   - Body: `{ "inline": bool }` (optional; default false)
@@ -58,6 +62,8 @@ Event visibility
   - **Service**: Uses `OrchestratorService.create_protocol_run()`
 - `GET /projects/{id}/protocols` → list protocol runs for project.
 - `GET /protocols/{id}` → protocol run.
+- `GET /protocols/{id}/clarifications` → list protocol-scope clarifications (planning/execution gates).
+- `POST /protocols/{id}/clarifications/{key}` → set an answer for a protocol clarification key.
 
 ### Protocol actions
 All return `{ "message": str, "job": obj|null }` unless noted. All actions use `OrchestratorService` methods.
