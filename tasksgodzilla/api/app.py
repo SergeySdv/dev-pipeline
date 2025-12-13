@@ -17,7 +17,7 @@ from tasksgodzilla import jobs
 from tasksgodzilla.config import load_config
 from tasksgodzilla.domain import ProtocolStatus, StepStatus
 from tasksgodzilla.codemachine import ConfigError, config_to_template_payload, load_codemachine_config
-from tasksgodzilla.logging import log_extra, setup_logging, json_logging_from_env
+from tasksgodzilla.logging import log_context, log_extra, setup_logging, json_logging_from_env
 from tasksgodzilla.metrics import metrics
 from tasksgodzilla.storage import BaseDatabase, create_database
 from tasksgodzilla.worker_runtime import RQWorkerThread, drain_once
@@ -432,22 +432,32 @@ async def add_request_id(request: Request, call_next):
     request.state.request_id = request_id  # type: ignore[attr-defined]
     metrics.inc_request()
     start = time.time()
-    response = await call_next(request)
+
+    def _parse_int(value: Optional[str]) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    protocol_run_id = _parse_int(request.headers.get("X-Protocol-Run-ID"))
+    step_run_id = _parse_int(request.headers.get("X-Step-Run-ID"))
+
+    with log_context(request_id=request_id, protocol_run_id=protocol_run_id, step_run_id=step_run_id):
+        response = await call_next(request)
+
     duration_s = (time.time() - start)
     metrics.observe_request(request.url.path, request.method, str(response.status_code), duration_s)
     response.headers["X-Request-ID"] = request_id
     logger.info(
         "request",
         extra={
-            **log_extra(
-                request_id=request_id,
-                protocol_run_id=request.headers.get("X-Protocol-Run-ID"),
-                step_run_id=request.headers.get("X-Step-Run-ID"),
-            ),
+            **log_extra(request_id=request_id, protocol_run_id=protocol_run_id, step_run_id=step_run_id),
             "path": request.url.path,
             "method": request.method,
-            "status_code": response.status_code,
-            "duration_ms": f"{duration_s * 1000:.2f}",
+            "status_code": int(response.status_code),
+            "duration_ms": duration_s * 1000.0,
             "client": request.client.host if request.client else None,
         },
     )

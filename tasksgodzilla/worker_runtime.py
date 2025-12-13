@@ -14,7 +14,7 @@ from tasksgodzilla.storage import BaseDatabase, Database, create_database
 from tasksgodzilla.run_registry import RunRegistry
 from tasksgodzilla.workers import codex_worker, codemachine_worker, spec_worker
 from tasksgodzilla.metrics import metrics
-from tasksgodzilla.logging import RequestIdFilter, get_logger, log_extra, setup_logging, json_logging_from_env
+from tasksgodzilla.logging import RequestIdFilter, get_logger, log_context, log_extra, setup_logging, json_logging_from_env
 from tasksgodzilla.services import ExecutionService, OnboardingService, OrchestratorService, QualityService
 
 
@@ -162,7 +162,19 @@ def _run_job_with_handling(
         file_handler.setFormatter(formatter)
         logging.getLogger().addHandler(file_handler)
     try:
-        process_job(job, db)
+        with log_context(
+            run_id=run.run_id,
+            job_id=job.job_id,
+            project_id=project_id,
+            protocol_run_id=resolved_protocol_id,
+            step_run_id=resolved_step_id,
+            attempt=attempt,
+            worker_id=worker_id,
+            queue=job.queue,
+            job_type=job.job_type,
+            run_kind=run_kind,
+        ):
+            process_job(job, db)
         job.status = "finished"
         job.ended_at = time.time()
         metrics.inc_job(job.job_type, "completed")
