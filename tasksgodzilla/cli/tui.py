@@ -286,6 +286,96 @@ class BranchDeleteScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "confirm")
 
 
+class ConfirmActionScreen(ModalScreen[bool]):
+    """Generic confirmation dialog for destructive actions."""
+
+    def __init__(self, title: str, message: str, confirm_label: str = "Confirm", danger: bool = True) -> None:
+        super().__init__()
+        self.title_text = title
+        self.message_text = message
+        self.confirm_label = confirm_label
+        self.danger = danger
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title_text, classes="title")
+        yield Static(self.message_text)
+        yield Button(self.confirm_label, id="confirm", variant="error" if self.danger else "primary")
+        yield Button("Cancel", id="cancel", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm")
+
+
+class ClarificationsScreen(ModalScreen[Optional[Dict[str, Any]]]):
+    """Modal to view and answer clarifications."""
+
+    def __init__(self, clarifications: List[Dict[str, Any]], scope: str = "project") -> None:
+        super().__init__()
+        self.clarifications = clarifications
+        self.scope = scope
+        self.selected_idx = 0
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"Clarifications ({self.scope})", classes="title")
+        if not self.clarifications:
+            yield Static("No open clarifications.")
+            yield Button("Close", id="close", variant="default")
+            return
+        with VerticalScroll(id="clarifications_list"):
+            for idx, clar in enumerate(self.clarifications):
+                blocking = "BLOCKING" if clar.get("blocking") else "optional"
+                status = clar.get("status", "open")
+                yield Static(
+                    f"[{idx + 1}] {clar['key']} ({blocking}, {status})\n"
+                    f"   Q: {clar['question']}\n"
+                    f"   Options: {', '.join(str(o) for o in (clar.get('options') or ['free text']))}\n"
+                    f"   Current: {clar.get('answer') or '-'}",
+                    id=f"clar_{idx}",
+                )
+        yield Static("Select clarification to answer:", classes="title")
+        yield Input(placeholder="Clarification number (1, 2, ...)", id="clar_num")
+        yield Input(placeholder="Your answer", id="answer_input")
+        yield Button("Submit Answer", id="submit", variant="primary")
+        yield Button("Close", id="close", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.dismiss(None)
+            return
+        if event.button.id == "submit":
+            try:
+                num = int(self.query_one("#clar_num", Input).value.strip()) - 1
+                if num < 0 or num >= len(self.clarifications):
+                    self.app.bell()
+                    return
+                answer = self.query_one("#answer_input", Input).value.strip()
+                if not answer:
+                    self.app.bell()
+                    return
+                clar = self.clarifications[num]
+                self.dismiss({"key": clar["key"], "answer": answer, "scope": self.scope})
+            except ValueError:
+                self.app.bell()
+
+
+class LogViewerScreen(ModalScreen[None]):
+    """Modal to view execution logs."""
+
+    def __init__(self, title: str, content: str) -> None:
+        super().__init__()
+        self.title_text = title
+        self.content = content
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title_text, classes="title")
+        with VerticalScroll(id="log_content"):
+            yield Static(self.content or "No logs available.")
+        yield Button("Close", id="close", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
+
+
 class TuiDashboard(App):
     CSS = """
     Screen { layout: vertical; }
@@ -313,6 +403,20 @@ class TuiDashboard(App):
     #dash-main { height: 1fr; }
     #dash-left, #dash-middle, #dash-right { padding: 1; }
     #dash-right Vertical { margin-bottom: 1; }
+
+    #global_loader {
+        dock: top;
+        height: 1;
+        background: $primary;
+        color: $text;
+        text-align: center;
+    }
+
+    #global_loader.hidden { display: none; }
+
+    .success { color: $success; }
+    .error { color: $error; }
+    .warning { color: $warning; }
     """
 
     BINDINGS = [
@@ -336,10 +440,13 @@ class TuiDashboard(App):
         Binding("c", "configure_tokens", "Config API/token", show=True),
         Binding("f", "cycle_filter", "Step filter", show=True),
         Binding("i", "import_codemachine", "Import CodeMachine", show=True),
+        Binding("k", "view_clarifications", "Clarifications", show=True),
+        Binding("l", "view_logs", "View logs", show=True),
     ]
     HELP_TEXT = (
         "1-6 switch pages • r refresh • f filter steps • enter step actions • "
-        "n run next • t retry • y run QA • a approve • o open PR • i import CodeMachine • c config • q quit"
+        "n run next • t retry • y run QA • a approve • o open PR • i import CodeMachine • "
+        "k clarifications • l logs • c config • q quit"
     )
 
     status_message = reactive("Ready")
@@ -369,9 +476,14 @@ class TuiDashboard(App):
         self.job_status_filter: Optional[str] = None
         self.selected_branch: Optional[str] = None
         self.modal_open = False
+        self.project_clarifications: List[Dict[str, Any]] = []
+        self.protocol_clarifications: List[Dict[str, Any]] = []
+        self.ci_summary: Optional[Dict[str, Any]] = None
+        self.step_runs: List[Dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        yield Static("Loading...", id="global_loader", classes="hidden")
         yield Static("TASKSGODZILLA • ORCHESTRATOR TUI", classes="banner")
         with Vertical(id="layout"):
             yield Static("", id="context_bar")
@@ -409,11 +521,15 @@ class TuiDashboard(App):
                         with Vertical(id="protocol-detail", classes="panel"):
                             yield Static("Protocol", classes="title")
                             yield Static("", id="protocol_meta")
+                            yield Static("CI/CD", classes="title")
+                            yield Static("CI: n/a", id="ci_summary_text")
                             yield Static("Spec", classes="title")
                             yield Static("", id="protocol_spec")
                         with Vertical(id="step-detail", classes="panel"):
                             yield Static("Step details", classes="title")
                             yield Static("", id="step_meta")
+                            with Horizontal(classes="row"):
+                                yield Button("View Logs", id="view_step_logs", variant="default")
                             yield Static("Policy", classes="title")
                             yield Static("", id="step_policy")
                             yield Static("Runtime", classes="title")
@@ -421,6 +537,9 @@ class TuiDashboard(App):
                         with Vertical(id="onboarding-detail", classes="panel"):
                             yield Static("Onboarding", classes="title")
                             yield Static("", id="onboarding_meta")
+                            yield Static("Clarifications: none pending", id="clarifications_summary")
+                            with Horizontal(classes="row"):
+                                yield Button("Answer", id="answer_clarifications", variant="primary")
                 with TabPane("Projects", id="projects-page"):
                     with Horizontal(id="projects-layout"):
                         with Vertical(classes="panel", id="projects-full-panel"):
@@ -567,7 +686,7 @@ class TuiDashboard(App):
         if bid == "run_next":
             await self.action_run_next()
         elif bid == "retry_latest":
-            await self.action_retry_latest()
+            await self._retry_with_confirm()
         elif bid in ("run_qa", "run_qa_step"):
             await self.action_run_qa()
         elif bid in ("approve", "approve_step"):
@@ -595,7 +714,7 @@ class TuiDashboard(App):
         elif bid == "resume_protocol":
             await self._protocol_action("resume", "Protocol resumed.")
         elif bid == "cancel_protocol":
-            await self._protocol_action("cancel", "Protocol cancelled.")
+            await self._cancel_protocol_with_confirm()
         elif bid == "audit_spec":
             await self._run_spec_audit()
         elif bid == "run_step":
@@ -612,6 +731,10 @@ class TuiDashboard(App):
             self.auto_refresh = not self.auto_refresh
             self.status_message = f"Auto-refresh {'on' if self.auto_refresh else 'off'}."
             self._render_settings()
+        elif bid == "answer_clarifications":
+            await self._open_clarifications_modal()
+        elif bid == "view_step_logs":
+            await self._view_step_logs()
 
     async def refresh_all(self) -> None:
         if self.refreshing or self.modal_open:
@@ -627,6 +750,9 @@ class TuiDashboard(App):
             await self._load_branches()
             await self._load_global_events()
             await self._load_queue()
+            await self._load_clarifications()
+            await self._load_ci_summary()
+            await self._load_step_runs()
             self._render_settings()
         finally:
             self.refreshing = False
@@ -741,6 +867,8 @@ class TuiDashboard(App):
                 view.append(DataListItem(label, step["id"], subtitle=f"retries={step.get('retries', 0)}"))
             if self.step_id:
                 self._highlight(view, self.step_id)
+        filter_label = self.step_filter or "all"
+        self._update_text(f"Filter: {filter_label}", "step_filter_label")
         self._render_step_details()
 
     async def _load_events(self) -> None:
@@ -761,6 +889,8 @@ class TuiDashboard(App):
             for ev in reversed(self.events[-100:]):
                 text = f"{ev['event_type']}: {ev['message']}"
                 view.append(DataListItem(text, ev["id"]))
+            if view.children:
+                view.index = 0
 
     async def _load_global_events(self) -> None:
         params: Dict[str, Any] = {"limit": 50}
@@ -779,6 +909,8 @@ class TuiDashboard(App):
             for ev in self.global_events:
                 text = f"{ev['event_type']}: {ev['message']}"
                 view.append(DataListItem(text, ev["id"]))
+            if view.children:
+                view.index = 0
 
     async def _load_protocol_spec(self) -> None:
         if not self.protocol_id:
@@ -843,6 +975,74 @@ class TuiDashboard(App):
         self.queue_jobs = jobs or []
         self._render_queue()
 
+    async def _load_clarifications(self) -> None:
+        self.project_clarifications = []
+        self.protocol_clarifications = []
+        if self.project_id:
+            try:
+                items = await asyncio.to_thread(
+                    self.client.get, f"/projects/{self.project_id}/clarifications", params={"status": "open"}
+                )
+                self.project_clarifications = items or []
+            except Exception as exc:
+                log.error("load_project_clarifications_failed", extra={"error": str(exc)})
+        if self.protocol_id:
+            try:
+                items = await asyncio.to_thread(
+                    self.client.get, f"/protocols/{self.protocol_id}/clarifications", params={"status": "open"}
+                )
+                self.protocol_clarifications = items or []
+            except Exception as exc:
+                log.error("load_protocol_clarifications_failed", extra={"error": str(exc)})
+        self._render_clarifications_summary()
+
+    async def _load_ci_summary(self) -> None:
+        self.ci_summary = None
+        if not self.protocol_id:
+            return
+        try:
+            summary = await asyncio.to_thread(self.client.get, f"/protocols/{self.protocol_id}/ci/summary")
+            self.ci_summary = summary
+        except Exception as exc:
+            log.error("load_ci_summary_failed", extra={"error": str(exc), "protocol_id": self.protocol_id})
+        self._render_ci_summary()
+
+    async def _load_step_runs(self) -> None:
+        self.step_runs = []
+        if not self.step_id:
+            return
+        try:
+            runs = await asyncio.to_thread(self.client.get, f"/steps/{self.step_id}/runs")
+            self.step_runs = runs or []
+        except Exception as exc:
+            log.error("load_step_runs_failed", extra={"error": str(exc), "step_id": self.step_id})
+
+    def _render_clarifications_summary(self) -> None:
+        total_project = len(self.project_clarifications)
+        total_protocol = len(self.protocol_clarifications)
+        blocking_project = sum(1 for c in self.project_clarifications if c.get("blocking"))
+        blocking_protocol = sum(1 for c in self.protocol_clarifications if c.get("blocking"))
+        if total_project or total_protocol:
+            text = f"Clarifications: {total_project} project ({blocking_project} blocking), {total_protocol} protocol ({blocking_protocol} blocking)"
+        else:
+            text = "Clarifications: none pending"
+        self._update_text(text, "clarifications_summary")
+
+    def _render_ci_summary(self) -> None:
+        if not self.ci_summary:
+            self._update_text("CI: n/a", "ci_summary_text")
+            return
+        pr_num = self.ci_summary.get("pr_number")
+        pr_url = self.ci_summary.get("pr_url")
+        status = self.ci_summary.get("status") or "-"
+        conclusion = self.ci_summary.get("conclusion") or "-"
+        check_name = self.ci_summary.get("check_name") or "-"
+        pr_text = f"PR #{pr_num}" if pr_num else "no PR"
+        if pr_url:
+            pr_text = f"{pr_text} ({pr_url})"
+        text = f"CI: {pr_text} | status={status} conclusion={conclusion} check={check_name}"
+        self._update_text(text, "ci_summary_text")
+
     def _render_project_detail(self) -> None:
         proj = next((p for p in self.projects if p["id"] == self.project_id), None)
         if not proj:
@@ -895,13 +1095,27 @@ class TuiDashboard(App):
         engine = step.get("engine_id") or "default"
         model = step.get("model") or "n/a"
         summary = step.get("summary") or ""
+        runtime = step.get("runtime_state") or {}
+        tokens_used = runtime.get("tokens_used") or step.get("tokens_used") or 0
+        token_limit = runtime.get("token_limit") or step.get("token_limit") or 0
+        qa_verdict = runtime.get("qa_verdict") or step.get("qa_verdict") or "-"
+        qa_summary = runtime.get("qa_summary") or step.get("qa_summary") or ""
         meta_lines = [
             f"{step['step_index']}: {step['step_name']} [{step['status']}]",
             f"Engine: {engine} | Model: {model} | Type: {step.get('step_type', '')}",
             f"Retries: {step.get('retries', 0)}",
         ]
+        if tokens_used or token_limit:
+            budget_pct = f" ({100 * tokens_used // token_limit}%)" if token_limit else ""
+            meta_lines.append(f"Tokens: {tokens_used:,} / {token_limit:,}{budget_pct}")
+        if qa_verdict != "-":
+            meta_lines.append(f"QA Verdict: {qa_verdict}")
+        if qa_summary:
+            meta_lines.append(f"QA: {qa_summary[:100]}{'...' if len(qa_summary) > 100 else ''}")
         if summary:
             meta_lines.append(f"Summary: {summary}")
+        runs_info = f"Runs: {len(self.step_runs)}" if self.step_runs else "Runs: 0 (press 'l' to load)"
+        meta_lines.append(runs_info)
         meta_text = "\n".join(meta_lines)
         self._update_text(meta_text, "step_meta", "step_meta_full")
         self._update_text(self._format_json_block(step.get("policy"), empty="No policy attached."), "step_policy", "step_policy_full")
@@ -996,10 +1210,7 @@ class TuiDashboard(App):
         await self._post_action(f"/protocols/{self.protocol_id}/actions/run_next_step", "Next step enqueued.")
 
     async def action_retry_latest(self) -> None:
-        if not self.protocol_id:
-            self.status_message = "Select a protocol."
-            return
-        await self._post_action(f"/protocols/{self.protocol_id}/actions/retry_latest", "Retry enqueued.")
+        await self._retry_with_confirm()
 
     async def action_run_qa(self) -> None:
         step = next((s for s in self.steps if s["id"] == self.step_id), None) or (self.steps[-1] if self.steps else None)
@@ -1023,6 +1234,12 @@ class TuiDashboard(App):
         await self._post_action(f"/protocols/{self.protocol_id}/actions/open_pr", "Open PR job enqueued.")
         await self._load_protocols()
 
+    async def action_view_clarifications(self) -> None:
+        await self._open_clarifications_modal()
+
+    async def action_view_logs(self) -> None:
+        await self._view_step_logs()
+
     async def action_step_menu(self) -> None:
         if not self.protocol_id:
             self.status_message = "Select a protocol."
@@ -1033,7 +1250,7 @@ class TuiDashboard(App):
         if choice == "run_next":
             await self.action_run_next()
         elif choice == "retry_latest":
-            await self.action_retry_latest()
+            await self._retry_with_confirm()
         elif choice == "run_qa":
             await self.action_run_qa()
         elif choice == "approve":
@@ -1068,18 +1285,28 @@ class TuiDashboard(App):
             self.modal_open = False
 
     async def _post_action(self, path: str, success_message: str) -> None:
+        global_loader = next(iter(self.query("#global_loader")), None)
+        if global_loader:
+            global_loader.remove_class("hidden")
+            global_loader.update("Processing...")
         try:
             await asyncio.to_thread(self.client.post, path)
             self.status_message = success_message
+            self.notify(success_message, severity="information", timeout=3)
             log.info("action_success", extra={"path": path, "protocol_id": self.protocol_id})
             await self._load_steps()
             await self._load_events()
         except APIClientError as exc:
             self.status_message = str(exc)
+            self.notify(f"Error: {exc}", severity="error", timeout=5)
             log.error("action_failed", extra={"path": path, "error": str(exc), "protocol_id": self.protocol_id})
         except Exception as exc:  # pragma: no cover - defensive
             self.status_message = f"Error: {exc}"
+            self.notify(f"Error: {exc}", severity="error", timeout=5)
             log.error("action_failed", extra={"path": path, "error": str(exc), "protocol_id": self.protocol_id})
+        finally:
+            if global_loader:
+                global_loader.add_class("hidden")
 
     async def _create_project(self) -> None:
         payload = await self._show_modal(ProjectCreateScreen())
@@ -1087,12 +1314,15 @@ class TuiDashboard(App):
             return
         try:
             project = await asyncio.to_thread(self.client.post, "/projects", payload)
-            self.status_message = f"Created project {project['id']}."
+            msg = f"Created project {project['id']}."
+            self.status_message = msg
+            self.notify(msg, severity="information", timeout=3)
             self.project_id = project["id"]
             await self._load_projects()
             await self._load_onboarding()
         except Exception as exc:
             self.status_message = f"Create project failed: {exc}"
+            self.notify(f"Create project failed: {exc}", severity="error", timeout=5)
 
     async def _create_protocol(self) -> None:
         if not self.project_id:
@@ -1109,15 +1339,20 @@ class TuiDashboard(App):
         }
         try:
             run = await asyncio.to_thread(self.client.post, f"/projects/{self.project_id}/protocols", create_payload)
-            self.status_message = f"Created protocol {run['id']}."
+            msg = f"Created protocol {run['id']}."
+            self.status_message = msg
+            self.notify(msg, severity="information", timeout=3)
             self.protocol_id = run["id"]
             if payload.get("start_now"):
                 await asyncio.to_thread(self.client.post, f"/protocols/{run['id']}/actions/start")
-                self.status_message = f"Protocol {run['id']} queued for planning."
+                msg = f"Protocol {run['id']} queued for planning."
+                self.status_message = msg
+                self.notify(msg, severity="information", timeout=3)
             await self._load_protocols()
             await self._load_steps()
         except Exception as exc:
             self.status_message = f"Create protocol failed: {exc}"
+            self.notify(f"Create protocol failed: {exc}", severity="error", timeout=5)
 
     async def _protocol_action(self, action: str, success: str) -> None:
         if not self.protocol_id:
@@ -1126,6 +1361,40 @@ class TuiDashboard(App):
         path = f"/protocols/{self.protocol_id}/actions/{action}"
         await self._post_action(path, success)
         await self._load_protocols()
+
+    async def _cancel_protocol_with_confirm(self) -> None:
+        if not self.protocol_id:
+            self.status_message = "Select a protocol."
+            return
+        run = next((r for r in self.protocols if r["id"] == self.protocol_id), None)
+        name = run["protocol_name"] if run else f"#{self.protocol_id}"
+        confirm = await self._show_modal(
+            ConfirmActionScreen(
+                title="Cancel Protocol?",
+                message=f"This will cancel protocol '{name}' and stop all pending steps.\nThis action cannot be undone.",
+                confirm_label="Cancel Protocol",
+                danger=True,
+            )
+        )
+        if confirm:
+            await self._protocol_action("cancel", "Protocol cancelled.")
+
+    async def _retry_with_confirm(self) -> None:
+        if not self.protocol_id:
+            self.status_message = "Select a protocol."
+            return
+        latest_step = self.steps[-1] if self.steps else None
+        step_name = latest_step["step_name"] if latest_step else "latest step"
+        confirm = await self._show_modal(
+            ConfirmActionScreen(
+                title="Retry Latest Step?",
+                message=f"This will retry '{step_name}'.\nAny existing work for this step may be overwritten.",
+                confirm_label="Retry",
+                danger=False,
+            )
+        )
+        if confirm:
+            await self._post_action(f"/protocols/{self.protocol_id}/actions/retry_latest", "Retry enqueued.")
 
     async def _run_selected_step(self) -> None:
         if not self.step_id:
@@ -1140,8 +1409,10 @@ class TuiDashboard(App):
         try:
             await asyncio.to_thread(self.client.post, "/specs/audit", payload)
             self.status_message = "Spec audit enqueued."
+            self.notify("Spec audit enqueued.", severity="information", timeout=3)
         except Exception as exc:
             self.status_message = f"Spec audit failed: {exc}"
+            self.notify(f"Spec audit failed: {exc}", severity="error", timeout=5)
 
     async def _delete_branch(self) -> None:
         if not self.selected_branch:
@@ -1157,10 +1428,14 @@ class TuiDashboard(App):
                 f"/projects/{self.project_id}/branches/{branch_path}/delete",
                 {"confirm": True},
             )
-            self.status_message = f"Deleted branch {self.selected_branch}."
+            msg = f"Deleted branch {self.selected_branch}."
+            self.status_message = msg
+            self.notify(msg, severity="information", timeout=3)
+            self.selected_branch = None
             await self._load_branches(force=True)
         except Exception as exc:
             self.status_message = f"Delete failed: {exc}"
+            self.notify(f"Delete failed: {exc}", severity="error", timeout=5)
 
     async def _cycle_job_filter(self) -> None:
         order = [None, "queued", "started", "failed", "finished"]
@@ -1186,15 +1461,21 @@ class TuiDashboard(App):
         workspace_path = Path(payload["workspace_path"]).expanduser()
         if not workspace_path.exists():
             self.status_message = f"Workspace not found: {workspace_path}"
+            self.notify(f"Workspace not found: {workspace_path}", severity="error", timeout=5)
             return
         payload["workspace_path"] = str(workspace_path)
         payload["base_branch"] = payload.get("base_branch") or defaults.get("base_branch") or "main"
+        global_loader = next(iter(self.query("#global_loader")), None)
+        if global_loader:
+            global_loader.remove_class("hidden")
+            global_loader.update("Importing workspace...")
         try:
             resp = await asyncio.to_thread(
                 self.client.post, f"/projects/{self.project_id}/codemachine/import", payload
             )
             message = resp.get("message", "Imported.")
             self.status_message = message
+            self.notify(message, severity="information", timeout=3)
             protocol = resp.get("protocol_run", {})
             self.protocol_id = protocol.get("id", self.protocol_id)
             await self._load_protocols()
@@ -1202,6 +1483,74 @@ class TuiDashboard(App):
             await self._load_events()
         except Exception as exc:
             self.status_message = f"Import failed: {exc}"
+            self.notify(f"Import failed: {exc}", severity="error", timeout=5)
+        finally:
+            if global_loader:
+                global_loader.add_class("hidden")
+
+    async def _open_clarifications_modal(self) -> None:
+        all_clarifications = self.project_clarifications + self.protocol_clarifications
+        if not all_clarifications:
+            self.status_message = "No open clarifications."
+            self.notify("No open clarifications.", severity="information", timeout=2)
+            return
+        result = await self._show_modal(ClarificationsScreen(all_clarifications, scope="combined"))
+        if not result:
+            return
+        key = result["key"]
+        answer = result["answer"]
+        clar = next((c for c in all_clarifications if c["key"] == key), None)
+        if not clar:
+            return
+        endpoint = ""
+        if clar.get("protocol_run_id"):
+            endpoint = f"/protocols/{clar['protocol_run_id']}/clarifications/{key}"
+        elif clar.get("project_id"):
+            endpoint = f"/projects/{clar['project_id']}/clarifications/{key}"
+        if not endpoint:
+            self.status_message = "Cannot determine clarification endpoint."
+            return
+        try:
+            await asyncio.to_thread(self.client.post, endpoint, {"answer": answer})
+            self.status_message = f"Answered clarification '{key}'."
+            self.notify(f"Answered clarification '{key}'.", severity="information", timeout=3)
+            await self._load_clarifications()
+            await self._load_onboarding()
+        except Exception as exc:
+            self.status_message = f"Failed to answer: {exc}"
+            self.notify(f"Failed to answer: {exc}", severity="error", timeout=5)
+
+    async def _view_step_logs(self) -> None:
+        if not self.step_runs:
+            if self.step_id:
+                await self._load_step_runs()
+        if not self.step_runs:
+            self.status_message = "No execution runs for this step."
+            self.notify("No execution runs for this step.", severity="warning", timeout=3)
+            return
+        latest_run = self.step_runs[0] if self.step_runs else None
+        if not latest_run:
+            return
+        run_id = latest_run.get("run_id")
+        if not run_id:
+            self.status_message = "No run ID available."
+            return
+        global_loader = next(iter(self.query("#global_loader")), None)
+        if global_loader:
+            global_loader.remove_class("hidden")
+            global_loader.update("Loading logs...")
+        try:
+            logs = await asyncio.to_thread(self.client.get, f"/codex/runs/{run_id}/logs")
+            log_content = logs if isinstance(logs, str) else str(logs)
+            step = next((s for s in self.steps if s["id"] == self.step_id), None)
+            step_name = step["step_name"] if step else f"Step #{self.step_id}"
+            await self._show_modal(LogViewerScreen(f"Logs: {step_name} (run {run_id})", log_content))
+        except Exception as exc:
+            self.status_message = f"Failed to load logs: {exc}"
+            self.notify(f"Failed to load logs: {exc}", severity="error", timeout=5)
+        finally:
+            if global_loader:
+                global_loader.add_class("hidden")
 
     def watch_status_message(self, value: str) -> None:
         status_bar = self.query_one("#status_bar", Static)
@@ -1211,6 +1560,13 @@ class TuiDashboard(App):
         loader = next(iter(self.query("#loader")), None)
         if loader:
             loader.display = value
+        global_loader = next(iter(self.query("#global_loader")), None)
+        if global_loader:
+            if value:
+                global_loader.remove_class("hidden")
+                global_loader.update("Refreshing...")
+            else:
+                global_loader.add_class("hidden")
 
     def _render_settings(self) -> None:
         text = (
