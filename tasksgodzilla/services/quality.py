@@ -14,6 +14,7 @@ from tasksgodzilla.engines import registry
 from tasksgodzilla.workers.unified_runner import run_qa_unified
 from tasksgodzilla.engine_resolver import StepResolution
 from tasksgodzilla.services.platform.artifacts import register_run_artifact
+from tasksgodzilla.services.clarifications import ClarificationsService
 
 if TYPE_CHECKING:
     from tasksgodzilla.workers.codex_worker import handle_quality
@@ -117,6 +118,7 @@ class QualityService:
         budget_service = BudgetService()
         orchestrator = OrchestratorService(self.db)
         spec_service = SpecService(self.db)
+        clarifications_service = ClarificationsService(self.db)
 
         # Resolve QA policy early so "skip" doesn't require a git repo/worktree.
         step_spec = get_step_spec(run.template_config, step.step_name) or {}
@@ -144,6 +146,48 @@ class QualityService:
                 pass
             orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
             return
+
+        # Gate QA on blocking clarifications (project/protocol/step).
+        try:
+            from tasksgodzilla.services.policy import PolicyService
+
+            policy_service = PolicyService(self.db)
+            effective = policy_service.resolve_effective_policy(project.id)
+            try:
+                clarifications_service.ensure_from_policy(
+                    project_id=project.id,
+                    policy=effective.policy if isinstance(effective.policy, dict) else {},
+                    applies_to="qa",
+                    protocol_run_id=run.id,
+                    step_run_id=step.id,
+                )
+            except Exception:
+                pass
+            blocking_project = clarifications_service.list_blocking_open(project_id=project.id, applies_to="onboarding")
+            blocking_protocol = clarifications_service.list_blocking_open(protocol_run_id=run.id, applies_to="planning")
+            blocking_step = clarifications_service.list_blocking_open(step_run_id=step.id, applies_to="qa")
+            if blocking_project or blocking_protocol or blocking_step:
+                self.db.update_step_status(step.id, StepStatus.BLOCKED, summary="QA blocked pending required clarifications")
+                self.db.append_event(
+                    run.id,
+                    "qa_blocked_clarifications",
+                    f"QA blocked for {step.step_name} pending required clarifications.",
+                    step_run_id=step.id,
+                    metadata={
+                        "project_id": project.id,
+                        "protocol_run_id": run.id,
+                        "step_run_id": step.id,
+                        "blocking": {
+                            "project": [c.__dict__ for c in blocking_project][:25],
+                            "protocol": [c.__dict__ for c in blocking_protocol][:25],
+                            "step": [c.__dict__ for c in blocking_step][:25],
+                        },
+                        "truncated": (len(blocking_project) > 25) or (len(blocking_protocol) > 25) or (len(blocking_step) > 25),
+                    },
+                )
+                return
+        except Exception:
+            pass
 
         repo_root = git_service.ensure_repo_or_block(
             project, run, job_id=job_id, block_on_missing=False

@@ -59,6 +59,15 @@
             </select>
           </label>
         </div>
+        <label>Project type (policy pack)
+          <select name="project_classification">
+            <option value="">default</option>
+            <option value="beginner-guided">beginner-guided</option>
+            <option value="startup-fast">startup-fast</option>
+            <option value="team-standard">team-standard</option>
+            <option value="enterprise-compliance">enterprise-compliance</option>
+          </select>
+        </label>
         <label>Default models (JSON)
           <textarea name="default_models" placeholder='{"planning": "gpt-5.1-high"}'></textarea>
         </label>
@@ -84,6 +93,115 @@
           </div>
         </div>
         <div id="onboardingContent" class="muted small">Select a project to view onboarding progress.</div>
+      </div>
+
+      <div class="pane" id="policyPanel">
+        <div class="panel-header">
+          <h3>Policy</h3>
+          <div class="panel-actions">
+            <button id="refreshPolicy" type="button">Refresh</button>
+            <button id="savePolicy" type="button" class="tiny-btn">Save</button>
+            <button id="previewPolicy" type="button" class="tiny-btn">Preview effective</button>
+            <button id="useBeginnerPolicy" type="button" class="tiny-btn">Use beginner-guided</button>
+            <button id="enableRepoLocalPolicy" type="button" class="tiny-btn">Enable repo-local</button>
+            <button id="suggestPolicyOverrides" type="button" class="tiny-btn">Suggest overrides</button>
+          </div>
+        </div>
+        <div id="policyContent" class="muted small">Select a project to configure policy packs.</div>
+        <div id="policyForm" class="form" style="display:none;">
+          <div class="grid-2">
+            <label>Policy pack
+              <select id="policyPackKey"></select>
+            </label>
+            <label>Version
+              <select id="policyPackVersionMode">
+                <option value="latest">latest (recommended)</option>
+                <option value="pin">pin</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid-2">
+            <label>Pinned version
+              <select id="policyPackVersionSelect"></select>
+            </label>
+            <label>Custom version
+              <input id="policyPackVersion" placeholder="1.0 (optional)" />
+            </label>
+          </div>
+          <div id="policyPackInfo" class="muted small"></div>
+          <label>
+            <input id="policyRepoLocalEnabled" type="checkbox" />
+            Enable repo-local override (`.tasksgodzilla/policy.json|yml`)
+          </label>
+          <label>Enforcement mode
+            <select id="policyEnforcementMode">
+              <option value="warn">warn (default)</option>
+              <option value="block">block</option>
+            </select>
+          </label>
+          <div style="display:flex; justify-content:flex-end; gap:6px;">
+            <button id="setPolicyWarn" type="button" class="tiny-btn">Set warn</button>
+            <button id="savePolicyWarnNow" type="button" class="tiny-btn">Save warn now</button>
+          </div>
+          <div id="policyBlockCodes" class="muted small"></div>
+          <label>Overrides (JSON, merged over pack)
+            <textarea id="policyOverrides" placeholder='{"defaults":{"models":{"exec":"codex-5.1-max"}}}'></textarea>
+          </label>
+          <div id="policyRequiredChecks" class="muted small"></div>
+          <div class="muted small" id="policyHash"></div>
+          <details>
+            <summary>Effective policy preview</summary>
+            <pre id="policyPreview" class="code-block"></pre>
+          </details>
+          <details>
+            <summary>Policy findings (warnings)</summary>
+            <div id="policyFindings" class="muted small"></div>
+          </details>
+          <details>
+            <summary>Clarifications (blocking questions)</summary>
+            <div id="policyClarifications" class="muted small"></div>
+          </details>
+          <details id="policyPackAdminDetails">
+            <summary>Policy pack admin (create/edit)</summary>
+            <div class="muted small" style="margin-top:8px;">
+              Creates/updates packs via <code>POST /policy_packs</code>. Validation errors are shown after save.
+            </div>
+            <div class="grid-2" style="margin-top:10px;">
+              <label>Existing packs
+                <select id="adminPolicyPackSelect"></select>
+              </label>
+              <label>Actions
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <button id="adminPolicyPackLoad" type="button" class="tiny-btn">Load</button>
+                  <button id="adminPolicyPackClone" type="button" class="tiny-btn">Clone as…</button>
+                  <button id="adminPolicyPackNew" type="button" class="tiny-btn">New</button>
+                </div>
+              </label>
+            </div>
+            <div class="grid-2">
+              <label>Key <input id="adminPolicyPackKey" placeholder="default" /></label>
+              <label>Version <input id="adminPolicyPackVersion" placeholder="1.0" /></label>
+            </div>
+            <div class="grid-2">
+              <label>Name <input id="adminPolicyPackName" placeholder="My Policy Pack" /></label>
+              <label>Status
+                <select id="adminPolicyPackStatus">
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                  <option value="deprecated">deprecated</option>
+                </select>
+              </label>
+            </div>
+            <label>Description <input id="adminPolicyPackDescription" placeholder="Optional description" /></label>
+            <label>Pack JSON
+              <textarea id="adminPolicyPackJson" placeholder='{"meta":{"key":"custom","version":"1.0","name":"Custom"},"defaults":{},"requirements":{},"clarifications":[],"enforcement":{"mode":"warn","block_codes":[]}}'></textarea>
+            </label>
+            <div style="display:flex; justify-content:flex-end; gap:6px;">
+              <button id="adminPolicyPackSave" type="button" class="tiny-btn">Save pack</button>
+            </div>
+            <div id="adminPolicyPackResult" class="muted small"></div>
+          </details>
+        </div>
       </div>
 
       <form id="protocolForm" class="form">

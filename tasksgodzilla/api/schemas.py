@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,7 @@ class ProjectCreate(BaseModel):
     local_path: Optional[str] = None
     base_branch: str = "main"
     ci_provider: Optional[str] = None
+    project_classification: Optional[str] = None
     default_models: Optional[dict] = None
     secrets: Optional[dict] = None
 
@@ -21,6 +22,12 @@ class ProjectOut(ProjectCreate):
     id: int
     created_at: str
     updated_at: str
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_overrides: Optional[dict] = None
+    policy_repo_local_enabled: Optional[bool] = None
+    policy_effective_hash: Optional[str] = None
+    policy_enforcement_mode: Optional[str] = None
 
 
 class BranchListResponse(BaseModel):
@@ -50,6 +57,9 @@ class ProtocolRunOut(ProtocolRunCreate):
     spec_hash: Optional[str] = None
     spec_validation_status: Optional[str] = None
     spec_validated_at: Optional[str] = None
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_effective_hash: Optional[str] = None
 
 
 class ProtocolSpecOut(BaseModel):
@@ -197,3 +207,83 @@ class SpecAuditRequest(BaseModel):
     protocol_id: Optional[int] = None
     backfill: bool = False
     interval_seconds: Optional[int] = None  # override per-request if needed
+
+
+class PolicyPackCreate(BaseModel):
+    key: str
+    version: str
+    name: str
+    description: Optional[str] = None
+    status: str = "active"
+    pack: dict
+
+
+class PolicyPackOut(PolicyPackCreate):
+    id: int
+    created_at: str
+    updated_at: str
+
+
+class ClarificationOut(BaseModel):
+    id: int
+    scope: str
+    project_id: int
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    key: str
+    question: str
+    recommended: Optional[dict] = None
+    options: Optional[list] = None
+    applies_to: Optional[str] = None
+    blocking: bool = False
+    answer: Optional[dict] = None
+    status: str
+    created_at: str
+    updated_at: str
+    answered_at: Optional[str] = None
+    answered_by: Optional[str] = None
+
+
+class ClarificationAnswerRequest(BaseModel):
+    answer: Optional[Any] = None
+    answered_by: Optional[str] = None
+
+
+class ProjectPolicyUpdate(BaseModel):
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    clear_policy_pack_version: bool = False
+    policy_overrides: Optional[Any] = None
+    policy_repo_local_enabled: Optional[bool] = None
+    policy_enforcement_mode: Optional[str] = None
+
+
+class ProjectPolicyOut(ProjectPolicyUpdate):
+    project_id: int
+    policy_effective_hash: Optional[str] = None
+
+
+class EffectivePolicyOut(BaseModel):
+    project_id: int
+    policy_pack_key: str
+    policy_pack_version: str
+    policy_effective_hash: str
+    policy: dict
+    sources: dict
+
+
+class PolicyFindingOut(BaseModel):
+    code: str
+    severity: str
+    scope: str
+    message: str
+    suggested_fix: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class ProtocolPolicySnapshotOut(BaseModel):
+    protocol_run_id: int
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_effective_hash: Optional[str] = None
+    policy_effective_json: Optional[dict] = None

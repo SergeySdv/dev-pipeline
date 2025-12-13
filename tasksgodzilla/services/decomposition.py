@@ -61,6 +61,7 @@ class DecompositionService:
         *,
         model: Optional[str] = None,
         skip_simple: Optional[bool] = None,
+        policy_guidelines: Optional[str] = None,
     ) -> Dict[str, List[str]]:
         """Decompose all eligible step files under the given protocol root."""
         config = load_config()
@@ -100,6 +101,7 @@ class DecompositionService:
                 plan_md=plan_md,
                 step_filename=step_file.name,
                 step_content=step_content,
+                policy_guidelines=policy_guidelines,
             )
             enforce_token_budget(
                 decompose_text,

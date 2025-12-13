@@ -121,6 +121,79 @@ def load_templates(repo_root: Path) -> str:
     return text
 
 
+def load_repo_local_policy(repo_root: Path) -> Optional[Dict]:
+    """Load repo-local policy from .tasksgodzilla/policy.json|yml|yaml if present."""
+    candidates = [
+        repo_root / ".tasksgodzilla" / "policy.json",
+        repo_root / ".tasksgodzilla" / "policy.yml",
+        repo_root / ".tasksgodzilla" / "policy.yaml",
+    ]
+    path = next((p for p in candidates if p.exists() and p.is_file()), None)
+    if not path:
+        return None
+    try:
+        content = path.read_text(encoding="utf-8")
+        if path.suffix == ".json":
+            return json.loads(content)
+        try:
+            import yaml
+            return yaml.safe_load(content)
+        except ImportError:
+            log.debug("yaml_unavailable", extra={"path": str(path)})
+            return None
+    except Exception as exc:
+        log.warning("repo_local_policy_load_failed", extra={"path": str(path), "error": str(exc)})
+        return None
+
+
+def build_policy_guidelines(policy: Optional[Dict]) -> Optional[str]:
+    """Build policy guidelines string from a policy dict for prompt injection."""
+    if not policy or not isinstance(policy, dict):
+        return None
+    try:
+        req = policy.get("requirements") or {}
+        defaults = policy.get("defaults") or {}
+        meta = policy.get("meta") or {}
+        required_step_sections = []
+        step_sections = req.get("step_sections")
+        if isinstance(step_sections, list):
+            required_step_sections = [str(x) for x in step_sections if isinstance(x, (str, int, float))]
+        protocol_files = req.get("protocol_files")
+        required_checks = []
+        ci = defaults.get("ci") if isinstance(defaults, dict) else None
+        if isinstance(ci, dict) and isinstance(ci.get("required_checks"), list):
+            required_checks = [str(x) for x in ci.get("required_checks") if isinstance(x, (str, int, float))]
+        step_template = None
+        if required_step_sections:
+            template_lines = []
+            for sec in required_step_sections:
+                template_lines.append(f"## {sec}")
+                if sec.strip().lower() == "verification" and required_checks:
+                    for check in required_checks:
+                        template_lines.append(f"- Run `{check}`")
+                else:
+                    template_lines.append("- TBD")
+                template_lines.append("")
+            step_template = "\n".join(template_lines).strip()
+        verification_snippet = None
+        if required_checks:
+            verification_snippet = "\n".join([f"- Run `{c}`" for c in required_checks])
+        pack_key = meta.get("key", "local")
+        pack_version = meta.get("version", "unknown")
+        lines = [
+            f"policy_pack: {pack_key}@{pack_version}",
+            f"required_protocol_files: {protocol_files or []}",
+            f"required_step_sections: {required_step_sections or []}",
+            f"required_checks: {required_checks or []}",
+            f"step_file_template:\n{step_template}" if step_template else "step_file_template: (none)",
+            f"verification_snippet:\n{verification_snippet}" if verification_snippet else "verification_snippet: (none)",
+            "note: warnings-only mode; prefer compliance.",
+        ]
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+
 def planning_prompt(
     protocol_name: str,
     protocol_number: str,
@@ -129,6 +202,7 @@ def planning_prompt(
     repo_root: Path,
     worktree_root: Path,
     templates_section: str,
+    policy_guidelines: str | None = None,
 ) -> str:
     return f"""You are a senior planning agent working with TasksGodzilla_Ilyas_Edition_1.0-style protocols.
 
@@ -151,6 +225,9 @@ Guidelines:
 - Make steps and sub-steps executable and self-contained.
 - Use English; keep paths relative to PROJECT_ROOT.
 - Include at least Step 0 (setup) and several numbered steps; end with a finalize step.
+- If project policy guidelines specify required protocol files or step sections, include them in the outputs (warnings-only mode, but prefer compliance).
+
+{f"Project policy guidelines (warnings by default):\\n{policy_guidelines}\\n" if policy_guidelines else ""}
 
 You must fill:
 - plan_md: full content for plan.md
@@ -171,6 +248,7 @@ def decompose_step_prompt(
     plan_md: str,
     step_filename: str,
     step_content: str,
+    policy_guidelines: str | None = None,
 ) -> str:
     return f"""You are a senior engineering planner.
 
@@ -187,6 +265,9 @@ Rules:
 - Output only the full updated Markdown content for {step_filename}.
 - Do not wrap the result in code fences.
 - Keep the plan contract stable; do not contradict plan.md.
+- If project policy guidelines specify required step sections, ensure they exist as headings in {step_filename}.
+
+{f"Project policy guidelines (warnings by default):\\n{policy_guidelines}\\n" if policy_guidelines else ""}
 
 plan.md:
 ----------------
@@ -382,6 +463,11 @@ def run_pipeline(args) -> None:
     context["protocol_root"] = str(protocol_root)
     templates_section = load_templates(repo_root)
 
+    repo_local_policy = load_repo_local_policy(repo_root)
+    policy_guidelines = build_policy_guidelines(repo_local_policy)
+    if policy_guidelines:
+        log.info("policy_guidelines_loaded", extra={**context, "source": "repo_local"})
+
     planning_schema = repo_root / "schemas" / "protocol-planning.schema.json"
     if not planning_schema.is_file():
         log.error("planning_schema_not_found", extra={"planning_schema": str(planning_schema), **context})
@@ -400,6 +486,7 @@ def run_pipeline(args) -> None:
         repo_root=repo_root,
         worktree_root=worktree_root,
         templates_section=templates_section,
+        policy_guidelines=policy_guidelines,
     )
 
     enforce_token_budget(planning_text, budget_limit, "planning", mode=config.token_budget_mode)
@@ -442,6 +529,7 @@ def run_pipeline(args) -> None:
             plan_md=plan_md,
             step_filename=step_file.name,
             step_content=step_content,
+            policy_guidelines=policy_guidelines,
         )
 
         enforce_token_budget(decompose_text, budget_limit, f"decompose:{step_file.name}", mode=config.token_budget_mode)

@@ -20,6 +20,8 @@ from tasksgodzilla.project_setup import (
 from tasksgodzilla.storage import BaseDatabase
 from tasksgodzilla.domain import ProtocolStatus
 from tasksgodzilla.git_utils import resolve_project_repo_path
+from tasksgodzilla.services.policy import PolicyService
+from tasksgodzilla.services.clarifications import ClarificationsService
 
 log = get_logger(__name__)
 
@@ -93,6 +95,7 @@ class OnboardingService:
         base_branch: str,
         *,
         ci_provider: Optional[str] = None,
+        project_classification: Optional[str] = None,
         default_models: Optional[dict] = None,
         secrets: Optional[dict] = None,
     ):
@@ -102,6 +105,7 @@ class OnboardingService:
             git_url=git_url,
             base_branch=base_branch,
             ci_provider=ci_provider,
+            project_classification=project_classification,
             default_models=default_models,
             secrets=secrets,
         )
@@ -286,13 +290,60 @@ class OnboardingService:
 
             # Clarifications with optional blocking.
             questions = _build_clarifications(project, repo_path)
+            # Merge policy-pack clarifications (project classification) so onboarding can
+            # adapt to different project types without hard-coding everything here.
+            try:
+                policy_service = PolicyService(self.db)
+                effective = policy_service.resolve_effective_policy(project.id, repo_root=repo_path)
+                policy_questions = effective.policy.get("clarifications") if isinstance(effective.policy, dict) else None
+                questions = _merge_clarifications(questions, policy_questions)
+                # Persist onboarding clarifications (project scope) for UI/API answers.
+                ClarificationsService(self.db).ensure_from_policy(
+                    project_id=project.id,
+                    policy=effective.policy if isinstance(effective.policy, dict) else {},
+                    applies_to="onboarding",
+                )
+            except Exception:
+                pass
             blocking = require_onboarding_clarifications()
+            # If the project is in strict mode and has blocking onboarding clarifications, block.
+            try:
+                enforcement = (project.policy_enforcement_mode or "warn").lower()
+                if enforcement == "block":
+                    if ClarificationsService(self.db).has_blocking_open(project_id=project.id):
+                        blocking = True
+            except Exception:
+                pass
             self.db.append_event(
                 protocol_run_id,
                 "setup_clarifications",
                 "Review onboarding clarifications and confirm settings.",
                 metadata={"questions": questions, "blocking": blocking},
             )
+
+            # Warnings-only policy findings (best-effort).
+            try:
+                policy_service = PolicyService(self.db)
+                findings = policy_service.evaluate_project(project.id)
+                if findings:
+                    self.db.append_event(
+                        protocol_run_id,
+                        "policy_findings",
+                        f"Policy findings detected ({len(findings)}).",
+                        metadata={"scope": "project", "findings": [f.asdict() for f in findings[:25]], "truncated": len(findings) > 25},
+                    )
+                if policy_service.has_blocking_findings(findings):
+                    self.db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
+                    self.db.append_event(
+                        protocol_run_id,
+                        "policy_blocked",
+                        "Onboarding blocked by policy enforcement mode.",
+                        metadata={"blocking_findings": [f.asdict() for f in findings if f.severity == "block"][:25]},
+                    )
+                    return
+            except Exception:
+                pass
+
             if blocking:
                 self.db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
                 self.db.append_event(
@@ -392,6 +443,31 @@ def require_onboarding_clarifications() -> bool:
         "yes",
         "on",
     )
+
+
+def _merge_clarifications(base_questions: list[dict], extra: object) -> list[dict]:
+    """
+    Merge additional clarification questions into the onboarding set.
+    De-dupes by `key` while preserving base ordering.
+    """
+    out: list[dict] = [q for q in (base_questions or []) if isinstance(q, dict)]
+    seen = {str(q.get("key")) for q in out if q.get("key")}
+    if not extra or not isinstance(extra, list):
+        return out
+    for q in extra:
+        if not isinstance(q, dict):
+            continue
+        key = q.get("key")
+        if not key:
+            continue
+        key_s = str(key)
+        if key_s in seen:
+            continue
+        out.append(q)
+        seen.add(key_s)
+        if len(out) >= 200:
+            break
+    return out
 
 
 def _build_clarifications(project, repo_path: Path):

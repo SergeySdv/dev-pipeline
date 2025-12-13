@@ -15,6 +15,8 @@ from .orchestrator import OrchestratorService
 from .codemachine import CodeMachineService
 from .git import GitService
 from .budget import BudgetService
+from .policy import PolicyService
+from .clarifications import ClarificationsService
 
 __all__ = [
     "ExecutionService",
@@ -25,4 +27,6 @@ __all__ = [
     "CodeMachineService",
     "GitService",
     "BudgetService",
+    "PolicyService",
+    "ClarificationsService",
 ]

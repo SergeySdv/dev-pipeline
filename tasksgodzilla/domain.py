@@ -36,6 +36,13 @@ class Project:
     default_models: Optional[dict]
     created_at: str
     updated_at: str
+    project_classification: Optional[str] = None
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_overrides: Optional[dict] = None
+    policy_repo_local_enabled: Optional[bool] = None
+    policy_effective_hash: Optional[str] = None
+    policy_enforcement_mode: Optional[str] = None
 
 
 @dataclass
@@ -52,6 +59,10 @@ class ProtocolRun:
     template_source: Optional[dict]
     created_at: str
     updated_at: str
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_effective_hash: Optional[str] = None
+    policy_effective_json: Optional[dict] = None
 
 
 @dataclass
@@ -129,3 +140,37 @@ class RunArtifact:
     sha256: Optional[str]
     bytes: Optional[int]
     created_at: str
+
+
+@dataclass
+class PolicyPack:
+    id: int
+    key: str
+    version: str
+    name: str
+    description: Optional[str]
+    status: str
+    pack: dict
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class Clarification:
+    id: int
+    scope: str
+    project_id: int
+    protocol_run_id: Optional[int]
+    step_run_id: Optional[int]
+    key: str
+    question: str
+    recommended: Optional[dict]
+    options: Optional[list]
+    applies_to: Optional[str]
+    blocking: bool
+    answer: Optional[dict]
+    status: str
+    created_at: str
+    updated_at: str
+    answered_at: Optional[str] = None
+    answered_by: Optional[str] = None

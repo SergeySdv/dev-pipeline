@@ -14,7 +14,257 @@ except ImportError:  # pragma: no cover - Postgres optional
     dict_row = None  # type: ignore
     ConnectionPool = None  # type: ignore
 
-from .domain import CodexRun, Event, Project, ProtocolRun, RunArtifact, StepRun
+from .domain import Clarification, CodexRun, Event, PolicyPack, Project, ProtocolRun, RunArtifact, StepRun
+
+
+DEFAULT_POLICY_PACK_KEY = "default"
+DEFAULT_POLICY_PACK_VERSION = "1.0"
+DEFAULT_POLICY_PACK: dict[str, Any] = {
+    "meta": {
+        "key": DEFAULT_POLICY_PACK_KEY,
+        "name": "Default",
+        "version": DEFAULT_POLICY_PACK_VERSION,
+        "description": "Baseline policy pack (warnings by default).",
+    },
+    "defaults": {},
+    "requirements": {},
+    "clarifications": [],
+    "enforcement": {
+        "mode": "warn",
+        # When a project sets policy_enforcement_mode=block, these finding codes become blocking.
+        # Keep this list conservative; packs can override as needed.
+        "block_codes": [
+            "policy.ci.required_check_missing",
+            "policy.ci.required_check_not_executable",
+            "policy.protocol.missing_file",
+            "policy.step.missing_section",
+            "policy.step.file_missing",
+        ],
+    },
+}
+
+BEGINNER_GUIDED_POLICY_PACK_KEY = "beginner-guided"
+BEGINNER_GUIDED_POLICY_PACK_VERSION = "1.0"
+BEGINNER_GUIDED_POLICY_PACK: dict[str, Any] = {
+    "meta": {
+        "key": BEGINNER_GUIDED_POLICY_PACK_KEY,
+        "name": "Beginner Guided",
+        "version": BEGINNER_GUIDED_POLICY_PACK_VERSION,
+        "description": "More structure and safety for inexperienced users (warnings by default).",
+    },
+    "defaults": {
+        "qa": {"policy": "light"},
+        "ci": {
+            "required_checks": [
+                "scripts/ci/test.sh",
+                "scripts/ci/lint.sh",
+                "scripts/ci/typecheck.sh",
+                "scripts/ci/build.sh",
+            ]
+        },
+    },
+    "requirements": {
+        "step_sections": ["Sub-tasks", "Verification", "Rollback", "Definition of Done"],
+        "protocol_files": ["plan.md", "context.md", "log.md"],
+    },
+    "clarifications": [],
+    "enforcement": {
+        "mode": "warn",
+        "block_codes": [
+            "policy.ci.required_check_missing",
+            "policy.ci.required_check_not_executable",
+            "policy.protocol.missing_file",
+            "policy.step.missing_section",
+            "policy.step.file_missing",
+        ],
+    },
+}
+
+STARTUP_FAST_POLICY_PACK_KEY = "startup-fast"
+STARTUP_FAST_POLICY_PACK_VERSION = "1.0"
+STARTUP_FAST_POLICY_PACK: dict[str, Any] = {
+    "meta": {
+        "key": STARTUP_FAST_POLICY_PACK_KEY,
+        "name": "Startup Fast",
+        "version": STARTUP_FAST_POLICY_PACK_VERSION,
+        "description": "Minimal process overhead; focus on iteration speed (warnings by default).",
+    },
+    "defaults": {
+        "qa": {"policy": "full"},
+    },
+    "requirements": {},
+    "clarifications": [],
+    "enforcement": {
+        "mode": "warn",
+        # Startup-fast keeps strict-mode scope narrow by default.
+        "block_codes": [
+            "policy.ci.required_check_missing",
+            "policy.ci.required_check_not_executable",
+        ],
+    },
+}
+
+TEAM_STANDARD_POLICY_PACK_KEY = "team-standard"
+TEAM_STANDARD_POLICY_PACK_VERSION = "1.0"
+TEAM_STANDARD_POLICY_PACK: dict[str, Any] = {
+    "meta": {
+        "key": TEAM_STANDARD_POLICY_PACK_KEY,
+        "name": "Team Standard",
+        "version": TEAM_STANDARD_POLICY_PACK_VERSION,
+        "description": "Balanced defaults for most professional teams (warnings by default).",
+    },
+    "defaults": {
+        "models": {
+            "planning": "gpt-5.1-high",
+            "decompose": "gpt-5.1-high",
+            "exec": "gpt-5.1-codex-max",
+            "qa": "gpt-5.1-codex-max",
+        },
+        "qa": {"policy": "full", "auto_after_exec": False, "auto_on_ci": True},
+        "ci": {
+            "required_checks": [
+                "scripts/ci/test.sh",
+                "scripts/ci/lint.sh",
+                "scripts/ci/typecheck.sh",
+                "scripts/ci/build.sh",
+            ]
+        },
+        "git": {"draft_pr_default": True, "branch_pattern": "<number>-<task>"},
+    },
+    "requirements": {
+        "step_sections": [
+            "Context",
+            "Scope",
+            "Sub-tasks",
+            "Verification",
+            "Rollback",
+            "Observability",
+            "Definition of Done",
+        ],
+        "protocol_files": ["plan.md", "context.md", "log.md"],
+    },
+    "clarifications": [
+        {
+            "key": "review_policy",
+            "question": "How many approvals are required before merge?",
+            "options": ["1-approval", "2-approvals"],
+            "recommended": "1-approval",
+            "blocking": False,
+            "applies_to": "execution",
+        }
+    ],
+    "enforcement": {
+        "mode": "warn",
+        "block_codes": [
+            "policy.ci.required_check_missing",
+            "policy.ci.required_check_not_executable",
+            "policy.protocol.missing_file",
+            "policy.step.missing_section",
+            "policy.step.file_missing",
+        ],
+    },
+}
+
+ENTERPRISE_COMPLIANCE_POLICY_PACK_KEY = "enterprise-compliance"
+ENTERPRISE_COMPLIANCE_POLICY_PACK_VERSION = "1.0"
+ENTERPRISE_COMPLIANCE_POLICY_PACK: dict[str, Any] = {
+    "meta": {
+        "key": ENTERPRISE_COMPLIANCE_POLICY_PACK_KEY,
+        "name": "Enterprise Compliance",
+        "version": ENTERPRISE_COMPLIANCE_POLICY_PACK_VERSION,
+        "description": "Regulated/audited workflows; designed for policy_enforcement_mode=block.",
+    },
+    "defaults": {
+        "models": {
+            "planning": "gpt-5.1-high",
+            "decompose": "gpt-5.1-high",
+            "exec": "gpt-5.1-codex-max",
+            "qa": "gpt-5.1-codex-max",
+        },
+        "qa": {"policy": "full", "auto_after_exec": False, "auto_on_ci": True},
+        "ci": {
+            "required_checks": [
+                "scripts/ci/test.sh",
+                "scripts/ci/lint.sh",
+                "scripts/ci/typecheck.sh",
+                "scripts/ci/build.sh",
+                "scripts/ci/security.sh",
+            ]
+        },
+        "git": {"draft_pr_default": False, "branch_pattern": "<number>-<task>"},
+    },
+    "requirements": {
+        "step_sections": [
+            "Context",
+            "Risk Assessment",
+            "Security Considerations",
+            "Sub-tasks",
+            "Verification",
+            "Rollback",
+            "Audit Notes",
+            "Definition of Done",
+        ],
+        "protocol_files": ["plan.md", "context.md", "log.md"],
+    },
+    "clarifications": [
+        {
+            "key": "data_classification",
+            "question": "What data classification applies to this project?",
+            "options": ["public", "internal", "confidential", "regulated"],
+            "recommended": "internal",
+            "blocking": True,
+            "applies_to": "onboarding",
+        }
+    ],
+    "enforcement": {
+        "mode": "warn",
+        "block_codes": [
+            "policy.ci.required_check_missing",
+            "policy.ci.required_check_not_executable",
+            "policy.protocol.missing_file",
+            "policy.step.missing_section",
+            "policy.step.file_missing",
+        ],
+    },
+}
+
+_KNOWN_PROJECT_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
+    "default": (DEFAULT_POLICY_PACK_KEY, DEFAULT_POLICY_PACK_VERSION),
+    "beginner-guided": (BEGINNER_GUIDED_POLICY_PACK_KEY, BEGINNER_GUIDED_POLICY_PACK_VERSION),
+    "startup-fast": (STARTUP_FAST_POLICY_PACK_KEY, STARTUP_FAST_POLICY_PACK_VERSION),
+    "team-standard": (TEAM_STANDARD_POLICY_PACK_KEY, TEAM_STANDARD_POLICY_PACK_VERSION),
+    "enterprise-compliance": (ENTERPRISE_COMPLIANCE_POLICY_PACK_KEY, ENTERPRISE_COMPLIANCE_POLICY_PACK_VERSION),
+}
+
+
+def _normalize_project_classification(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized = value.strip().lower().replace("_", "-")
+    return normalized if normalized in _KNOWN_PROJECT_CLASSIFICATIONS else None
+
+
+def _resolve_policy_selection(
+    *,
+    project_classification: Optional[str],
+    policy_pack_key: Optional[str],
+    policy_pack_version: Optional[str],
+) -> tuple[Optional[str], str, str]:
+    """
+    Resolve the effective policy pack selection for a new project.
+    Returns (normalized_classification, effective_pack_key, effective_pack_version).
+    """
+    if policy_pack_key:
+        return (
+            _normalize_project_classification(project_classification),
+            policy_pack_key,
+            policy_pack_version or DEFAULT_POLICY_PACK_VERSION,
+        )
+    normalized = _normalize_project_classification(project_classification)
+    if normalized:
+        key, version = _KNOWN_PROJECT_CLASSIFICATIONS[normalized]
+        return normalized, key, policy_pack_version or version
+    return None, DEFAULT_POLICY_PACK_KEY, policy_pack_version or DEFAULT_POLICY_PACK_VERSION
 
 SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -24,10 +274,30 @@ CREATE TABLE IF NOT EXISTS projects (
     base_branch TEXT NOT NULL,
     local_path TEXT,
     ci_provider TEXT,
+    project_classification TEXT,
     secrets TEXT,
     default_models TEXT,
+    policy_pack_key TEXT,
+    policy_pack_version TEXT,
+    policy_overrides TEXT,
+    policy_repo_local_enabled INTEGER,
+    policy_effective_hash TEXT,
+    policy_enforcement_mode TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS policy_packs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    pack TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(key, version)
 );
 
 CREATE TABLE IF NOT EXISTS protocol_runs (
@@ -41,6 +311,10 @@ CREATE TABLE IF NOT EXISTS protocol_runs (
     description TEXT,
     template_config TEXT,
     template_source TEXT,
+    policy_pack_key TEXT,
+    policy_pack_version TEXT,
+    policy_effective_hash TEXT,
+    policy_effective_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -110,6 +384,30 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
     UNIQUE(run_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS clarifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    step_run_id INTEGER REFERENCES step_runs(id),
+    key TEXT NOT NULL,
+    question TEXT NOT NULL,
+    recommended TEXT,
+    options TEXT,
+    applies_to TEXT,
+    blocking INTEGER DEFAULT 0,
+    answer TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    answered_at DATETIME,
+    answered_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(scope, key)
+);
+CREATE INDEX IF NOT EXISTS idx_clarifications_project ON clarifications(project_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_clarifications_protocol ON clarifications(protocol_run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_clarifications_step ON clarifications(step_run_id, status, created_at);
 """
 
 SCHEMA_POSTGRES = """
@@ -120,10 +418,30 @@ CREATE TABLE IF NOT EXISTS projects (
     local_path TEXT,
     base_branch TEXT NOT NULL,
     ci_provider TEXT,
+    project_classification TEXT,
     secrets JSONB,
     default_models JSONB,
+    policy_pack_key TEXT,
+    policy_pack_version TEXT,
+    policy_overrides JSONB,
+    policy_repo_local_enabled BOOLEAN,
+    policy_effective_hash TEXT,
+    policy_enforcement_mode TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS policy_packs (
+    id SERIAL PRIMARY KEY,
+    key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    pack JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(key, version)
 );
 
 CREATE TABLE IF NOT EXISTS protocol_runs (
@@ -137,6 +455,10 @@ CREATE TABLE IF NOT EXISTS protocol_runs (
     description TEXT,
     template_config JSONB,
     template_source JSONB,
+    policy_pack_key TEXT,
+    policy_pack_version TEXT,
+    policy_effective_hash TEXT,
+    policy_effective_json JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -206,6 +528,30 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
     UNIQUE(run_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS clarifications (
+    id SERIAL PRIMARY KEY,
+    scope TEXT NOT NULL,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    step_run_id INTEGER REFERENCES step_runs(id),
+    key TEXT NOT NULL,
+    question TEXT NOT NULL,
+    recommended JSONB,
+    options JSONB,
+    applies_to TEXT,
+    blocking BOOLEAN DEFAULT false,
+    answer JSONB,
+    status TEXT NOT NULL DEFAULT 'open',
+    answered_at TIMESTAMP,
+    answered_by TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(scope, key)
+);
+CREATE INDEX IF NOT EXISTS idx_clarifications_project ON clarifications(project_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_clarifications_protocol ON clarifications(protocol_run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_clarifications_step ON clarifications(step_run_id, status, created_at);
 """
 
 _UNSET = object()
@@ -213,13 +559,45 @@ _UNSET = object()
 
 class BaseDatabase(Protocol):
     def init_schema(self) -> None: ...
-    def create_project(self, name: str, git_url: str, base_branch: str, ci_provider: Optional[str], default_models: Optional[dict], secrets: Optional[dict] = None, local_path: Optional[str] = None) -> Project: ...
+    def create_project(
+        self,
+        name: str,
+        git_url: str,
+        base_branch: str,
+        ci_provider: Optional[str],
+        default_models: Optional[dict],
+        secrets: Optional[dict] = None,
+        local_path: Optional[str] = None,
+        project_classification: Optional[str] = None,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+    ) -> Project: ...
     def update_project_local_path(self, project_id: int, local_path: str) -> Project: ...
+    def update_project_policy(
+        self,
+        project_id: int,
+        *,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+        policy_overrides: Optional[dict] = None,
+        policy_repo_local_enabled: Optional[bool] = None,
+        policy_effective_hash: Optional[str] = None,
+        policy_enforcement_mode: Optional[str] = None,
+    ) -> Project: ...
     def get_project(self, project_id: int) -> Project: ...
     def list_projects(self) -> List[Project]: ...
     def create_protocol_run(self, project_id: int, protocol_name: str, status: str, base_branch: str, worktree_path: Optional[str], protocol_root: Optional[str], description: Optional[str], template_config: Optional[dict] = None, template_source: Optional[dict] = None) -> ProtocolRun: ...
     def update_protocol_paths(self, run_id: int, worktree_path: Optional[str], protocol_root: Optional[str]) -> ProtocolRun: ...
     def update_protocol_template(self, run_id: int, template_config: Optional[dict], template_source: Optional[dict]) -> ProtocolRun: ...
+    def update_protocol_policy_audit(
+        self,
+        run_id: int,
+        *,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+        policy_effective_hash: Optional[str] = None,
+        policy_effective_json: Optional[dict] = None,
+    ) -> ProtocolRun: ...
     def get_protocol_run(self, run_id: int) -> ProtocolRun: ...
     def find_protocol_run_by_name(self, protocol_name: str) -> Optional[ProtocolRun]: ...
     def find_protocol_run_by_branch(self, branch: str) -> Optional[ProtocolRun]: ...
@@ -302,6 +680,57 @@ class BaseDatabase(Protocol):
     def list_run_artifacts(self, run_id: str, *, kind: Optional[str] = None, limit: int = 100) -> List[RunArtifact]: ...
     def get_run_artifact(self, artifact_id: int) -> RunArtifact: ...
 
+    def upsert_policy_pack(
+        self,
+        *,
+        key: str,
+        version: str,
+        name: str,
+        description: Optional[str],
+        status: str,
+        pack: dict,
+    ) -> PolicyPack: ...
+
+    def list_policy_packs(self, *, key: Optional[str] = None, status: Optional[str] = None) -> List[PolicyPack]: ...
+
+    def get_policy_pack(self, *, key: str, version: Optional[str] = None) -> PolicyPack: ...
+
+    def upsert_clarification(
+        self,
+        *,
+        scope: str,
+        project_id: int,
+        key: str,
+        question: str,
+        recommended: Optional[dict] = None,
+        options: Optional[list] = None,
+        applies_to: Optional[str] = None,
+        blocking: bool = False,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+    ) -> Clarification: ...
+
+    def list_clarifications(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        status: Optional[str] = None,
+        applies_to: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Clarification]: ...
+
+    def answer_clarification(
+        self,
+        *,
+        scope: str,
+        key: str,
+        answer: Optional[dict],
+        answered_by: Optional[str] = None,
+        status: str = "answered",
+    ) -> Clarification: ...
+
 
 class Database:
     """
@@ -325,6 +754,33 @@ class Database:
             cols = [r[1] for r in cur.fetchall()]
             if "local_path" not in cols:
                 conn.execute("ALTER TABLE projects ADD COLUMN local_path TEXT")
+            # Backward-compatible migration: policy columns on projects
+            project_migrations: list[tuple[str, str]] = [
+                ("project_classification", "TEXT"),
+                ("policy_pack_key", "TEXT"),
+                ("policy_pack_version", "TEXT"),
+                ("policy_overrides", "TEXT"),
+                ("policy_repo_local_enabled", "INTEGER"),
+                ("policy_effective_hash", "TEXT"),
+                ("policy_enforcement_mode", "TEXT"),
+            ]
+            for col_name, col_type in project_migrations:
+                if col_name not in cols:
+                    conn.execute(f"ALTER TABLE projects ADD COLUMN {col_name} {col_type}")
+
+            # Backward-compatible migration: policy audit columns on protocol_runs
+            cur = conn.execute("PRAGMA table_info(protocol_runs)")
+            proto_cols = {r[1] for r in cur.fetchall()}
+            protocol_migrations: list[tuple[str, str]] = [
+                ("policy_pack_key", "TEXT"),
+                ("policy_pack_version", "TEXT"),
+                ("policy_effective_hash", "TEXT"),
+                ("policy_effective_json", "TEXT"),
+            ]
+            for col_name, col_type in protocol_migrations:
+                if col_name not in proto_cols:
+                    conn.execute(f"ALTER TABLE protocol_runs ADD COLUMN {col_name} {col_type}")
+
             # Backward-compatible migration: add codex_runs linkage columns if missing.
             cur = conn.execute("PRAGMA table_info(codex_runs)")
             codex_cols = {r[1] for r in cur.fetchall()}
@@ -346,6 +802,24 @@ class Database:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_runs_protocol ON codex_runs(protocol_run_id, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_runs_step ON codex_runs(step_run_id, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id, created_at)")
+
+            # Seed a baseline policy pack.
+            self._ensure_default_policy_pack_sqlite(conn)
+
+            # Backfill existing projects to a default policy selection (rollout safety).
+            try:
+                conn.execute(
+                    """
+                    UPDATE projects
+                    SET policy_pack_key = COALESCE(policy_pack_key, ?),
+                        policy_pack_version = COALESCE(policy_pack_version, ?),
+                        policy_repo_local_enabled = COALESCE(policy_repo_local_enabled, 0),
+                        policy_enforcement_mode = COALESCE(policy_enforcement_mode, 'warn')
+                    """,
+                    (DEFAULT_POLICY_PACK_KEY, DEFAULT_POLICY_PACK_VERSION),
+                )
+            except Exception:
+                pass
             conn.commit()
 
     def _fetchone(self, query: str, params: Iterable[Any]) -> Optional[sqlite3.Row]:
@@ -369,16 +843,54 @@ class Database:
         default_models: Optional[dict],
         secrets: Optional[dict] = None,
         local_path: Optional[str] = None,
+        project_classification: Optional[str] = None,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
     ) -> Project:
+        normalized_classification, effective_pack_key, effective_pack_version = _resolve_policy_selection(
+            project_classification=project_classification,
+            policy_pack_key=policy_pack_key,
+            policy_pack_version=policy_pack_version,
+        )
         default_models_json = json.dumps(default_models) if default_models else None
         secrets_json = json.dumps(secrets) if secrets else None
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO projects (name, git_url, base_branch, ci_provider, default_models, secrets, local_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO projects (
+                    name,
+                    git_url,
+                    base_branch,
+                    ci_provider,
+                    project_classification,
+                    default_models,
+                    secrets,
+                    local_path,
+                    policy_pack_key,
+                    policy_pack_version,
+                    policy_overrides,
+                    policy_repo_local_enabled,
+                    policy_effective_hash,
+                    policy_enforcement_mode
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, git_url, base_branch, ci_provider, default_models_json, secrets_json, local_path),
+                (
+                    name,
+                    git_url,
+                    base_branch,
+                    ci_provider,
+                    normalized_classification,
+                    default_models_json,
+                    secrets_json,
+                    local_path,
+                    effective_pack_key,
+                    effective_pack_version,
+                    None,
+                    0,
+                    None,
+                    "warn",
+                ),
             )
             project_id = cur.lastrowid
             conn.commit()
@@ -399,9 +911,172 @@ class Database:
             conn.commit()
         return self.get_project(project_id)
 
+    def update_project_policy(
+        self,
+        project_id: int,
+        *,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+        clear_policy_pack_version: bool = False,
+        policy_overrides: Optional[dict] = None,
+        policy_repo_local_enabled: Optional[bool] = None,
+        policy_effective_hash: Optional[str] = None,
+        policy_enforcement_mode: Optional[str] = None,
+    ) -> Project:
+        updates: list[str] = []
+        params: list[Any] = []
+        if policy_pack_key is not None:
+            updates.append("policy_pack_key = ?")
+            params.append(policy_pack_key)
+        if clear_policy_pack_version:
+            updates.append("policy_pack_version = ?")
+            params.append(None)
+        elif policy_pack_version is not None:
+            updates.append("policy_pack_version = ?")
+            params.append(policy_pack_version)
+        if policy_overrides is not None:
+            updates.append("policy_overrides = ?")
+            params.append(json.dumps(policy_overrides))
+        if policy_repo_local_enabled is not None:
+            updates.append("policy_repo_local_enabled = ?")
+            params.append(1 if policy_repo_local_enabled else 0)
+        if policy_effective_hash is not None:
+            updates.append("policy_effective_hash = ?")
+            params.append(policy_effective_hash)
+        if policy_enforcement_mode is not None:
+            updates.append("policy_enforcement_mode = ?")
+            params.append(policy_enforcement_mode)
+        if not updates:
+            return self.get_project(project_id)
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(project_id)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE projects SET {', '.join(updates)} WHERE id = ?", tuple(params))
+            conn.commit()
+        return self.get_project(project_id)
+
     def list_projects(self) -> List[Project]:
         rows = self._fetchall("SELECT * FROM projects ORDER BY created_at DESC")
         return [self._row_to_project(row) for row in rows]
+
+    def upsert_clarification(
+        self,
+        *,
+        scope: str,
+        project_id: int,
+        key: str,
+        question: str,
+        recommended: Optional[dict] = None,
+        options: Optional[list] = None,
+        applies_to: Optional[str] = None,
+        blocking: bool = False,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+    ) -> Clarification:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO clarifications (
+                    scope, project_id, protocol_run_id, step_run_id,
+                    key, question, recommended, options, applies_to, blocking,
+                    status, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', CURRENT_TIMESTAMP)
+                ON CONFLICT(scope, key) DO UPDATE SET
+                    project_id=excluded.project_id,
+                    protocol_run_id=excluded.protocol_run_id,
+                    step_run_id=excluded.step_run_id,
+                    question=excluded.question,
+                    recommended=excluded.recommended,
+                    options=excluded.options,
+                    applies_to=excluded.applies_to,
+                    blocking=excluded.blocking,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    scope,
+                    project_id,
+                    protocol_run_id,
+                    step_run_id,
+                    key,
+                    question,
+                    json.dumps(recommended) if recommended is not None else None,
+                    json.dumps(options) if options is not None else None,
+                    applies_to,
+                    1 if blocking else 0,
+                ),
+            )
+            conn.commit()
+        row = self._fetchone("SELECT * FROM clarifications WHERE scope = ? AND key = ? LIMIT 1", (scope, key))
+        if row is None:
+            raise KeyError("Clarification not found after upsert")
+        return self._row_to_clarification(row)
+
+    def list_clarifications(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        status: Optional[str] = None,
+        applies_to: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Clarification]:
+        limit = max(1, min(int(limit), 500))
+        query = "SELECT * FROM clarifications"
+        where: list[str] = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = ?")
+            params.append(step_run_id)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if applies_to:
+            where.append("applies_to = ?")
+            params.append(applies_to)
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        query += " ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        rows = self._fetchall(query, tuple(params))
+        return [self._row_to_clarification(r) for r in rows]
+
+    def answer_clarification(
+        self,
+        *,
+        scope: str,
+        key: str,
+        answer: Optional[dict],
+        answered_by: Optional[str] = None,
+        status: str = "answered",
+    ) -> Clarification:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE clarifications
+                SET answer = ?,
+                    status = ?,
+                    answered_at = CURRENT_TIMESTAMP,
+                    answered_by = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE scope = ? AND key = ?
+                """,
+                (json.dumps(answer) if answer is not None else None, status, answered_by, scope, key),
+            )
+            if cur.rowcount == 0:
+                raise KeyError(f"Clarification {scope}:{key} not found")
+            conn.commit()
+        row = self._fetchone("SELECT * FROM clarifications WHERE scope = ? AND key = ? LIMIT 1", (scope, key))
+        if row is None:
+            raise KeyError("Clarification not found after answer")
+        return self._row_to_clarification(row)
 
     def create_protocol_run(
         self,
@@ -472,6 +1147,38 @@ class Database:
                     run_id,
                 ),
             )
+            conn.commit()
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_policy_audit(
+        self,
+        run_id: int,
+        *,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+        policy_effective_hash: Optional[str] = None,
+        policy_effective_json: Optional[dict] = None,
+    ) -> ProtocolRun:
+        updates: list[str] = []
+        params: list[Any] = []
+        if policy_pack_key is not None:
+            updates.append("policy_pack_key = ?")
+            params.append(policy_pack_key)
+        if policy_pack_version is not None:
+            updates.append("policy_pack_version = ?")
+            params.append(policy_pack_version)
+        if policy_effective_hash is not None:
+            updates.append("policy_effective_hash = ?")
+            params.append(policy_effective_hash)
+        if policy_effective_json is not None:
+            updates.append("policy_effective_json = ?")
+            params.append(json.dumps(policy_effective_json))
+        if not updates:
+            return self.get_protocol_run(run_id)
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(run_id)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = ?", tuple(params))
             conn.commit()
         return self.get_protocol_run(run_id)
 
@@ -956,6 +1663,14 @@ class Database:
     def _row_to_project(row: Any) -> Project:
         default_models = Database._parse_json(row["default_models"])
         secrets = Database._parse_json(row["secrets"])
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        policy_overrides = Database._parse_json(row["policy_overrides"]) if "policy_overrides" in keys else None
+        policy_repo_local_enabled: Optional[bool] = None
+        if "policy_repo_local_enabled" in keys and row["policy_repo_local_enabled"] is not None:
+            try:
+                policy_repo_local_enabled = bool(int(row["policy_repo_local_enabled"]))
+            except Exception:
+                policy_repo_local_enabled = bool(row["policy_repo_local_enabled"])
         return Project(
             id=row["id"],
             name=row["name"],
@@ -965,14 +1680,23 @@ class Database:
             ci_provider=row["ci_provider"],
             secrets=secrets,
             default_models=default_models,
+            project_classification=row["project_classification"] if "project_classification" in keys else None,
+            policy_pack_key=row["policy_pack_key"] if "policy_pack_key" in keys else None,
+            policy_pack_version=row["policy_pack_version"] if "policy_pack_version" in keys else None,
+            policy_overrides=policy_overrides,
+            policy_repo_local_enabled=policy_repo_local_enabled,
+            policy_effective_hash=row["policy_effective_hash"] if "policy_effective_hash" in keys else None,
+            policy_enforcement_mode=row["policy_enforcement_mode"] if "policy_enforcement_mode" in keys else None,
             created_at=Database._coerce_ts(row["created_at"]),
             updated_at=Database._coerce_ts(row["updated_at"]),
         )
 
     @staticmethod
     def _row_to_protocol(row: Any) -> ProtocolRun:
-        template_config = Database._parse_json(row["template_config"]) if "template_config" in set(row.keys()) else None  # type: ignore[arg-type]
-        template_source = Database._parse_json(row["template_source"]) if "template_source" in set(row.keys()) else None  # type: ignore[arg-type]
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        template_config = Database._parse_json(row["template_config"]) if "template_config" in keys else None  # type: ignore[arg-type]
+        template_source = Database._parse_json(row["template_source"]) if "template_source" in keys else None  # type: ignore[arg-type]
+        policy_effective_json = Database._parse_json(row["policy_effective_json"]) if "policy_effective_json" in keys else None  # type: ignore[arg-type]
         return ProtocolRun(
             id=row["id"],
             project_id=row["project_id"],
@@ -984,9 +1708,165 @@ class Database:
             description=row["description"],
             template_config=template_config,
             template_source=template_source,
+            policy_pack_key=row["policy_pack_key"] if "policy_pack_key" in keys else None,
+            policy_pack_version=row["policy_pack_version"] if "policy_pack_version" in keys else None,
+            policy_effective_hash=row["policy_effective_hash"] if "policy_effective_hash" in keys else None,
+            policy_effective_json=policy_effective_json,
             created_at=Database._coerce_ts(row["created_at"]),
             updated_at=Database._coerce_ts(row["updated_at"]),
         )
+
+    @staticmethod
+    def _row_to_policy_pack(row: Any) -> PolicyPack:
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        pack_val = Database._parse_json(row["pack"]) if "pack" in keys else None
+        return PolicyPack(
+            id=row["id"],
+            key=row["key"],
+            version=row["version"],
+            name=row["name"],
+            description=row["description"] if "description" in keys else None,
+            status=row["status"] if "status" in keys else "active",
+            pack=pack_val or {},
+            created_at=Database._coerce_ts(row["created_at"]),
+            updated_at=Database._coerce_ts(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _row_to_clarification(row: Any) -> Clarification:
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+        recommended = Database._parse_json(row["recommended"]) if "recommended" in keys else None
+        options = Database._parse_json(row["options"]) if "options" in keys else None
+        answer = Database._parse_json(row["answer"]) if "answer" in keys else None
+        blocking_val = row["blocking"] if "blocking" in keys else 0
+        try:
+            blocking = bool(int(blocking_val))
+        except Exception:
+            blocking = bool(blocking_val)
+        answered_at = None
+        if "answered_at" in keys:
+            try:
+                raw = row["answered_at"]
+            except Exception:
+                raw = None
+            if raw is not None:
+                answered_at = Database._coerce_ts(raw)
+        return Clarification(
+            id=row["id"],
+            scope=row["scope"],
+            project_id=row["project_id"],
+            protocol_run_id=row["protocol_run_id"] if "protocol_run_id" in keys else None,
+            step_run_id=row["step_run_id"] if "step_run_id" in keys else None,
+            key=row["key"],
+            question=row["question"],
+            recommended=recommended if isinstance(recommended, dict) else None,
+            options=options if isinstance(options, list) else None,
+            applies_to=row["applies_to"] if "applies_to" in keys else None,
+            blocking=blocking,
+            answer=answer if isinstance(answer, dict) else None,
+            status=row["status"] if "status" in keys else "open",
+            created_at=Database._coerce_ts(row["created_at"]),
+            updated_at=Database._coerce_ts(row["updated_at"]),
+            answered_at=answered_at,
+            answered_by=row["answered_by"] if "answered_by" in keys else None,
+        )
+
+    def upsert_policy_pack(
+        self,
+        *,
+        key: str,
+        version: str,
+        name: str,
+        description: Optional[str],
+        status: str,
+        pack: dict,
+    ) -> PolicyPack:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO policy_packs (key, version, name, description, status, pack)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key, version) DO UPDATE SET
+                    name=excluded.name,
+                    description=excluded.description,
+                    status=excluded.status,
+                    pack=excluded.pack,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (key, version, name, description, status, json.dumps(pack)),
+            )
+            conn.commit()
+        row = self._fetchone(
+            "SELECT * FROM policy_packs WHERE key = ? AND version = ? LIMIT 1",
+            (key, version),
+        )
+        if row is None:
+            raise KeyError(f"PolicyPack {key}@{version} not found after upsert")
+        return self._row_to_policy_pack(row)
+
+    def list_policy_packs(self, *, key: Optional[str] = None, status: Optional[str] = None) -> List[PolicyPack]:
+        query = "SELECT * FROM policy_packs"
+        params: list[Any] = []
+        where: list[str] = []
+        if key:
+            where.append("key = ?")
+            params.append(key)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        query += " ORDER BY key ASC, created_at DESC"
+        rows = self._fetchall(query, tuple(params))
+        return [self._row_to_policy_pack(r) for r in rows]
+
+    def get_policy_pack(self, *, key: str, version: Optional[str] = None) -> PolicyPack:
+        if version:
+            row = self._fetchone("SELECT * FROM policy_packs WHERE key = ? AND version = ? LIMIT 1", (key, version))
+            if row is None:
+                raise KeyError(f"PolicyPack {key}@{version} not found")
+            return self._row_to_policy_pack(row)
+        row = self._fetchone(
+            "SELECT * FROM policy_packs WHERE key = ? AND status = 'active' ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
+            (key,),
+        )
+        if row is None:
+            row = self._fetchone(
+                "SELECT * FROM policy_packs WHERE key = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
+                (key,),
+            )
+        if row is None:
+            raise KeyError(f"PolicyPack {key} not found")
+        return self._row_to_policy_pack(row)
+
+    def _ensure_default_policy_pack_sqlite(self, conn: sqlite3.Connection) -> None:
+        seed = [
+            (DEFAULT_POLICY_PACK_KEY, DEFAULT_POLICY_PACK_VERSION, DEFAULT_POLICY_PACK),
+            (BEGINNER_GUIDED_POLICY_PACK_KEY, BEGINNER_GUIDED_POLICY_PACK_VERSION, BEGINNER_GUIDED_POLICY_PACK),
+            (STARTUP_FAST_POLICY_PACK_KEY, STARTUP_FAST_POLICY_PACK_VERSION, STARTUP_FAST_POLICY_PACK),
+            (TEAM_STANDARD_POLICY_PACK_KEY, TEAM_STANDARD_POLICY_PACK_VERSION, TEAM_STANDARD_POLICY_PACK),
+            (ENTERPRISE_COMPLIANCE_POLICY_PACK_KEY, ENTERPRISE_COMPLIANCE_POLICY_PACK_VERSION, ENTERPRISE_COMPLIANCE_POLICY_PACK),
+        ]
+        for key, version, pack in seed:
+            conn.execute(
+                """
+                INSERT INTO policy_packs (key, version, name, description, status, pack)
+                VALUES (?, ?, ?, ?, 'active', ?)
+                ON CONFLICT(key, version) DO UPDATE SET
+                    name=excluded.name,
+                    description=excluded.description,
+                    status=excluded.status,
+                    pack=excluded.pack,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    key,
+                    version,
+                    pack["meta"]["name"],
+                    pack["meta"].get("description"),
+                    json.dumps(pack),
+                ),
+            )
 
     @staticmethod
     def _row_to_step(row: Any) -> StepRun:
@@ -1126,6 +2006,25 @@ class PostgresDatabase:
                 except Exception:
                     pass
                 try:
+                    project_migrations: list[tuple[str, str]] = [
+                        ("project_classification", "TEXT"),
+                        ("policy_pack_key", "TEXT"),
+                        ("policy_pack_version", "TEXT"),
+                        ("policy_overrides", "JSONB"),
+                        ("policy_repo_local_enabled", "BOOLEAN"),
+                        ("policy_effective_hash", "TEXT"),
+                        ("policy_enforcement_mode", "TEXT"),
+                    ]
+                    for col_name, col_type in project_migrations:
+                        cur.execute(
+                            "SELECT column_name FROM information_schema.columns WHERE table_name='projects' AND column_name=%s",
+                            (col_name,),
+                        )
+                        if not cur.fetchone():
+                            cur.execute(f"ALTER TABLE projects ADD COLUMN {col_name} {col_type}")
+                except Exception:
+                    pass
+                try:
                     migrations: list[tuple[str, str]] = [
                         ("run_kind", "TEXT"),
                         ("project_id", "INTEGER"),
@@ -1154,7 +2053,84 @@ class PostgresDatabase:
                     )
                 except Exception:
                     pass
+                try:
+                    protocol_migrations: list[tuple[str, str]] = [
+                        ("policy_pack_key", "TEXT"),
+                        ("policy_pack_version", "TEXT"),
+                        ("policy_effective_hash", "TEXT"),
+                        ("policy_effective_json", "JSONB"),
+                    ]
+                    for col_name, col_type in protocol_migrations:
+                        cur.execute(
+                            "SELECT column_name FROM information_schema.columns WHERE table_name='protocol_runs' AND column_name=%s",
+                            (col_name,),
+                        )
+                        if not cur.fetchone():
+                            cur.execute(f"ALTER TABLE protocol_runs ADD COLUMN {col_name} {col_type}")
+                except Exception:
+                    pass
             conn.commit()
+        # Seed should run outside the cursor scope to keep it simple.
+        try:
+            self.upsert_policy_pack(
+                key=DEFAULT_POLICY_PACK_KEY,
+                version=DEFAULT_POLICY_PACK_VERSION,
+                name=str(DEFAULT_POLICY_PACK["meta"]["name"]),
+                description=str(DEFAULT_POLICY_PACK["meta"].get("description") or ""),
+                status="active",
+                pack=DEFAULT_POLICY_PACK,
+            )
+            self.upsert_policy_pack(
+                key=BEGINNER_GUIDED_POLICY_PACK_KEY,
+                version=BEGINNER_GUIDED_POLICY_PACK_VERSION,
+                name=str(BEGINNER_GUIDED_POLICY_PACK["meta"]["name"]),
+                description=str(BEGINNER_GUIDED_POLICY_PACK["meta"].get("description") or ""),
+                status="active",
+                pack=BEGINNER_GUIDED_POLICY_PACK,
+            )
+            self.upsert_policy_pack(
+                key=STARTUP_FAST_POLICY_PACK_KEY,
+                version=STARTUP_FAST_POLICY_PACK_VERSION,
+                name=str(STARTUP_FAST_POLICY_PACK["meta"]["name"]),
+                description=str(STARTUP_FAST_POLICY_PACK["meta"].get("description") or ""),
+                status="active",
+                pack=STARTUP_FAST_POLICY_PACK,
+            )
+            self.upsert_policy_pack(
+                key=TEAM_STANDARD_POLICY_PACK_KEY,
+                version=TEAM_STANDARD_POLICY_PACK_VERSION,
+                name=str(TEAM_STANDARD_POLICY_PACK["meta"]["name"]),
+                description=str(TEAM_STANDARD_POLICY_PACK["meta"].get("description") or ""),
+                status="active",
+                pack=TEAM_STANDARD_POLICY_PACK,
+            )
+            self.upsert_policy_pack(
+                key=ENTERPRISE_COMPLIANCE_POLICY_PACK_KEY,
+                version=ENTERPRISE_COMPLIANCE_POLICY_PACK_VERSION,
+                name=str(ENTERPRISE_COMPLIANCE_POLICY_PACK["meta"]["name"]),
+                description=str(ENTERPRISE_COMPLIANCE_POLICY_PACK["meta"].get("description") or ""),
+                status="active",
+                pack=ENTERPRISE_COMPLIANCE_POLICY_PACK,
+            )
+        except Exception:
+            pass
+        # Backfill existing projects to a default policy selection (rollout safety).
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE projects
+                        SET policy_pack_key = COALESCE(policy_pack_key, %s),
+                            policy_pack_version = COALESCE(policy_pack_version, %s),
+                            policy_repo_local_enabled = COALESCE(policy_repo_local_enabled, false),
+                            policy_enforcement_mode = COALESCE(policy_enforcement_mode, 'warn')
+                        """,
+                        (DEFAULT_POLICY_PACK_KEY, DEFAULT_POLICY_PACK_VERSION),
+                    )
+                conn.commit()
+        except Exception:
+            pass
 
     def _fetchone(self, query: str, params: Iterable[Any]) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1179,22 +2155,232 @@ class PostgresDatabase:
         default_models: Optional[dict],
         secrets: Optional[dict] = None,
         local_path: Optional[str] = None,
+        project_classification: Optional[str] = None,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
     ) -> Project:
+        normalized_classification, effective_pack_key, effective_pack_version = _resolve_policy_selection(
+            project_classification=project_classification,
+            policy_pack_key=policy_pack_key,
+            policy_pack_version=policy_pack_version,
+        )
         with self._connect() as conn:
             with conn.cursor() as cur:
                 default_models_json = json.dumps(default_models) if default_models is not None else None
                 secrets_json = json.dumps(secrets) if secrets is not None else None
                 cur.execute(
                     """
-                    INSERT INTO projects (name, git_url, base_branch, ci_provider, default_models, secrets, local_path)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO projects (
+                        name,
+                        git_url,
+                        base_branch,
+                        ci_provider,
+                        project_classification,
+                        default_models,
+                        secrets,
+                        local_path,
+                        policy_pack_key,
+                        policy_pack_version,
+                        policy_overrides,
+                        policy_repo_local_enabled,
+                        policy_effective_hash,
+                        policy_enforcement_mode
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (name, git_url, base_branch, ci_provider, default_models_json, secrets_json, local_path),
+                    (
+                        name,
+                        git_url,
+                        base_branch,
+                        ci_provider,
+                        normalized_classification,
+                        default_models_json,
+                        secrets_json,
+                        local_path,
+                        effective_pack_key,
+                        effective_pack_version,
+                        None,
+                        False,
+                        None,
+                        "warn",
+                    ),
                 )
                 project_id = cur.fetchone()["id"]
             conn.commit()
         return self.get_project(project_id)
+
+    def update_project_policy(
+        self,
+        project_id: int,
+        *,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+        clear_policy_pack_version: bool = False,
+        policy_overrides: Optional[dict] = None,
+        policy_repo_local_enabled: Optional[bool] = None,
+        policy_effective_hash: Optional[str] = None,
+        policy_enforcement_mode: Optional[str] = None,
+    ) -> Project:
+        updates: list[str] = []
+        values: list[Any] = []
+        if policy_pack_key is not None:
+            updates.append("policy_pack_key = %s")
+            values.append(policy_pack_key)
+        if clear_policy_pack_version:
+            updates.append("policy_pack_version = %s")
+            values.append(None)
+        elif policy_pack_version is not None:
+            updates.append("policy_pack_version = %s")
+            values.append(policy_pack_version)
+        if policy_overrides is not None:
+            updates.append("policy_overrides = %s")
+            values.append(json.dumps(policy_overrides))
+        if policy_repo_local_enabled is not None:
+            updates.append("policy_repo_local_enabled = %s")
+            values.append(bool(policy_repo_local_enabled))
+        if policy_effective_hash is not None:
+            updates.append("policy_effective_hash = %s")
+            values.append(policy_effective_hash)
+        if policy_enforcement_mode is not None:
+            updates.append("policy_enforcement_mode = %s")
+            values.append(policy_enforcement_mode)
+        if not updates:
+            return self.get_project(project_id)
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(project_id)
+        set_clause = ", ".join(updates)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE projects SET {set_clause} WHERE id = %s", tuple(values))
+            conn.commit()
+        return self.get_project(project_id)
+
+    def upsert_clarification(
+        self,
+        *,
+        scope: str,
+        project_id: int,
+        key: str,
+        question: str,
+        recommended: Optional[dict] = None,
+        options: Optional[list] = None,
+        applies_to: Optional[str] = None,
+        blocking: bool = False,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+    ) -> Clarification:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO clarifications (
+                        scope, project_id, protocol_run_id, step_run_id,
+                        key, question, recommended, options, applies_to, blocking, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')
+                    ON CONFLICT(scope, key) DO UPDATE SET
+                        project_id=excluded.project_id,
+                        protocol_run_id=excluded.protocol_run_id,
+                        step_run_id=excluded.step_run_id,
+                        question=excluded.question,
+                        recommended=excluded.recommended,
+                        options=excluded.options,
+                        applies_to=excluded.applies_to,
+                        blocking=excluded.blocking,
+                        updated_at=CURRENT_TIMESTAMP
+                    RETURNING *
+                    """,
+                    (
+                        scope,
+                        project_id,
+                        protocol_run_id,
+                        step_run_id,
+                        key,
+                        question,
+                        json.dumps(recommended) if recommended is not None else None,
+                        json.dumps(options) if options is not None else None,
+                        applies_to,
+                        bool(blocking),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        if not row:
+            raise KeyError("Clarification not found after upsert")
+        return self._row_to_clarification(row)
+
+    def list_clarifications(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        status: Optional[str] = None,
+        applies_to: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Clarification]:
+        limit = max(1, min(int(limit), 500))
+        query = "SELECT * FROM clarifications"
+        where: list[str] = []
+        values: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = %s")
+            values.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            values.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            values.append(step_run_id)
+        if status:
+            where.append("status = %s")
+            values.append(status)
+        if applies_to:
+            where.append("applies_to = %s")
+            values.append(applies_to)
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        query += " ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT %s"
+        values.append(limit)
+        rows = self._fetchall(query, tuple(values))
+        return [self._row_to_clarification(r) for r in rows]
+
+    def answer_clarification(
+        self,
+        *,
+        scope: str,
+        key: str,
+        answer: Optional[dict],
+        answered_by: Optional[str] = None,
+        status: str = "answered",
+    ) -> Clarification:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE clarifications
+                    SET answer = %s,
+                        status = %s,
+                        answered_at = CURRENT_TIMESTAMP,
+                        answered_by = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE scope = %s AND key = %s
+                    RETURNING *
+                    """,
+                    (
+                        json.dumps(answer) if answer is not None else None,
+                        status,
+                        answered_by,
+                        scope,
+                        key,
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        if not row:
+            raise KeyError(f"Clarification {scope}:{key} not found")
+        return self._row_to_clarification(row)
 
     def update_project_local_path(self, project_id: int, local_path: str) -> Project:
         with self._connect() as conn:
@@ -1215,6 +2401,108 @@ class PostgresDatabase:
     def list_projects(self) -> List[Project]:
         rows = self._fetchall("SELECT * FROM projects ORDER BY created_at DESC")
         return [Database._row_to_project(row) for row in rows]  # type: ignore[arg-type]
+
+    def update_protocol_policy_audit(
+        self,
+        run_id: int,
+        *,
+        policy_pack_key: Optional[str] = None,
+        policy_pack_version: Optional[str] = None,
+        policy_effective_hash: Optional[str] = None,
+        policy_effective_json: Optional[dict] = None,
+    ) -> ProtocolRun:
+        updates: list[str] = []
+        values: list[Any] = []
+        if policy_pack_key is not None:
+            updates.append("policy_pack_key = %s")
+            values.append(policy_pack_key)
+        if policy_pack_version is not None:
+            updates.append("policy_pack_version = %s")
+            values.append(policy_pack_version)
+        if policy_effective_hash is not None:
+            updates.append("policy_effective_hash = %s")
+            values.append(policy_effective_hash)
+        if policy_effective_json is not None:
+            updates.append("policy_effective_json = %s")
+            values.append(json.dumps(policy_effective_json))
+        if not updates:
+            return self.get_protocol_run(run_id)
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(run_id)
+        set_clause = ", ".join(updates)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE protocol_runs SET {set_clause} WHERE id = %s", tuple(values))
+            conn.commit()
+        return self.get_protocol_run(run_id)
+
+    def upsert_policy_pack(
+        self,
+        *,
+        key: str,
+        version: str,
+        name: str,
+        description: Optional[str],
+        status: str,
+        pack: dict,
+    ) -> PolicyPack:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO policy_packs (key, version, name, description, status, pack)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(key, version) DO UPDATE SET
+                        name=EXCLUDED.name,
+                        description=EXCLUDED.description,
+                        status=EXCLUDED.status,
+                        pack=EXCLUDED.pack,
+                        updated_at=CURRENT_TIMESTAMP
+                    RETURNING id
+                    """,
+                    (key, version, name, description, status, json.dumps(pack)),
+                )
+                pack_id = cur.fetchone()["id"]
+            conn.commit()
+        row = self._fetchone("SELECT * FROM policy_packs WHERE id = %s", (pack_id,))
+        if row is None:
+            raise KeyError(f"PolicyPack {key}@{version} not found after upsert")
+        return Database._row_to_policy_pack(row)  # type: ignore[arg-type]
+
+    def list_policy_packs(self, *, key: Optional[str] = None, status: Optional[str] = None) -> List[PolicyPack]:
+        query = "SELECT * FROM policy_packs"
+        params: list[Any] = []
+        where: list[str] = []
+        if key:
+            where.append("key = %s")
+            params.append(key)
+        if status:
+            where.append("status = %s")
+            params.append(status)
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        query += " ORDER BY key ASC, created_at DESC"
+        rows = self._fetchall(query, tuple(params))
+        return [Database._row_to_policy_pack(r) for r in rows]  # type: ignore[arg-type]
+
+    def get_policy_pack(self, *, key: str, version: Optional[str] = None) -> PolicyPack:
+        if version:
+            row = self._fetchone("SELECT * FROM policy_packs WHERE key = %s AND version = %s LIMIT 1", (key, version))
+            if row is None:
+                raise KeyError(f"PolicyPack {key}@{version} not found")
+            return Database._row_to_policy_pack(row)  # type: ignore[arg-type]
+        row = self._fetchone(
+            "SELECT * FROM policy_packs WHERE key = %s AND status = 'active' ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
+            (key,),
+        )
+        if row is None:
+            row = self._fetchone(
+                "SELECT * FROM policy_packs WHERE key = %s ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1",
+                (key,),
+            )
+        if row is None:
+            raise KeyError(f"PolicyPack {key} not found")
+        return Database._row_to_policy_pack(row)  # type: ignore[arg-type]
 
     def create_protocol_run(
         self,

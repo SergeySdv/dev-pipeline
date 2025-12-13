@@ -24,7 +24,12 @@ from tasksgodzilla.worker_runtime import RQWorkerThread, drain_once
 from tasksgodzilla.health import check_db
 from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, SPEC_META_KEY, protocol_spec_hash
 from tasksgodzilla.run_registry import RunRegistry
-from tasksgodzilla.services import OrchestratorService, OnboardingService, CodeMachineService
+from tasksgodzilla.services import OrchestratorService, OnboardingService, CodeMachineService, ClarificationsService
+from tasksgodzilla.services.policy import (
+    PolicyService,
+    validate_policy_override_definition,
+    validate_policy_pack_definition,
+)
 from hmac import compare_digest
 import hmac
 import hashlib
@@ -184,6 +189,14 @@ def get_onboarding_service(db: BaseDatabase = Depends(get_db)) -> OnboardingServ
 def get_codemachine_service(db: BaseDatabase = Depends(get_db)) -> CodeMachineService:
     """Dependency helper to construct a CodeMachineService for API routes."""
     return CodeMachineService(db=db)
+
+
+def get_policy_service(db: BaseDatabase = Depends(get_db)) -> PolicyService:
+    return PolicyService(db=db)
+
+
+def get_clarifications_service(db: BaseDatabase = Depends(get_db)) -> ClarificationsService:
+    return ClarificationsService(db=db)
 
 
 def require_auth(
@@ -733,6 +746,7 @@ def create_project(
         local_path=payload.local_path,
         base_branch=payload.base_branch,
         ci_provider=payload.ci_provider,
+        project_classification=payload.project_classification,
         default_models=payload.default_models,
         secrets=payload.secrets,
     )
@@ -772,6 +786,109 @@ def get_project(project_id: int, db: BaseDatabase = Depends(get_db), request: Re
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return schemas.ProjectOut(**project.__dict__)
+
+
+@app.get(
+    "/projects/{project_id}/clarifications",
+    response_model=list[schemas.ClarificationOut],
+    dependencies=[Depends(require_auth)],
+)
+def list_project_clarifications(
+    project_id: int,
+    status: Optional[str] = None,
+    limit: int = 200,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> list[schemas.ClarificationOut]:
+    if request:
+        require_project_access(project_id, request, db)
+    items = db.list_clarifications(project_id=project_id, status=status, limit=limit)
+    return [schemas.ClarificationOut(**c.__dict__) for c in items]
+
+
+@app.post(
+    "/projects/{project_id}/clarifications/{key}",
+    response_model=schemas.ClarificationOut,
+    dependencies=[Depends(require_auth)],
+)
+def answer_project_clarification(
+    project_id: int,
+    key: str,
+    payload: schemas.ClarificationAnswerRequest,
+    clarifications: ClarificationsService = Depends(get_clarifications_service),
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ClarificationOut:
+    if request:
+        require_project_access(project_id, request, db)
+    try:
+        answer_obj = (
+            payload.answer
+            if isinstance(payload.answer, dict)
+            else ({"value": payload.answer} if payload.answer is not None else None)
+        )
+        updated = clarifications.set_clarification_answer(
+            project_id=project_id,
+            key=key,
+            answer=answer_obj,
+            answered_by=payload.answered_by,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return schemas.ClarificationOut(**updated.__dict__)
+
+
+@app.get(
+    "/protocols/{protocol_run_id}/clarifications",
+    response_model=list[schemas.ClarificationOut],
+    dependencies=[Depends(require_auth)],
+)
+def list_protocol_clarifications(
+    protocol_run_id: int,
+    status: Optional[str] = None,
+    limit: int = 200,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> list[schemas.ClarificationOut]:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    items = db.list_clarifications(protocol_run_id=protocol_run_id, status=status, limit=limit)
+    return [schemas.ClarificationOut(**c.__dict__) for c in items]
+
+
+@app.post(
+    "/protocols/{protocol_run_id}/clarifications/{key}",
+    response_model=schemas.ClarificationOut,
+    dependencies=[Depends(require_auth)],
+)
+def answer_protocol_clarification(
+    protocol_run_id: int,
+    key: str,
+    payload: schemas.ClarificationAnswerRequest,
+    clarifications: ClarificationsService = Depends(get_clarifications_service),
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ClarificationOut:
+    run = db.get_protocol_run(protocol_run_id)
+    if request:
+        require_project_access(run.project_id, request, db)
+    try:
+        answer_obj = (
+            payload.answer
+            if isinstance(payload.answer, dict)
+            else ({"value": payload.answer} if payload.answer is not None else None)
+        )
+        updated = clarifications.set_clarification_answer(
+            project_id=run.project_id,
+            protocol_run_id=protocol_run_id,
+            key=key,
+            answer=answer_obj,
+            answered_by=payload.answered_by,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return schemas.ClarificationOut(**updated.__dict__)
 
 
 @app.get("/projects/{project_id}/branches", response_model=schemas.BranchListResponse, dependencies=[Depends(require_auth)])
@@ -840,6 +957,7 @@ def create_protocol_run(
     payload: schemas.ProtocolRunCreate,
     db: BaseDatabase = Depends(get_db),
     orchestrator: OrchestratorService = Depends(get_orchestrator),
+    policy_service: PolicyService = Depends(get_policy_service),
     request: Request = None,
 ) -> schemas.ProtocolRunOut:
     if request:
@@ -859,6 +977,29 @@ def create_protocol_run(
         template_config=payload.template_config,
         template_source=payload.template_source,
     )
+    # Best-effort policy audit: record which policy was effective at creation time.
+    try:
+        effective = policy_service.resolve_effective_policy(project_id)
+        policy_service.update_protocol_policy_audit(
+            protocol_run_id=run.id,
+            pack_key=effective.pack_key,
+            pack_version=effective.pack_version,
+            effective_hash=effective.effective_hash,
+            policy=effective.policy if isinstance(effective.policy, dict) else None,
+        )
+        # Materialize protocol-level planning clarifications (if any).
+        try:
+            ClarificationsService(db).ensure_from_policy(
+                project_id=project_id,
+                policy=effective.policy if isinstance(effective.policy, dict) else {},
+                applies_to="planning",
+                protocol_run_id=run.id,
+            )
+        except Exception:
+            pass
+        run = db.get_protocol_run(run.id)
+    except Exception:
+        pass
     return _protocol_out(run, db=db)
 
 
@@ -1339,6 +1480,202 @@ def onboarding_summary(project_id: int, db: BaseDatabase = Depends(get_db), requ
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _onboarding_summary(project, db)
+
+
+@app.get("/policy_packs", response_model=list[schemas.PolicyPackOut], dependencies=[Depends(require_auth)])
+def list_policy_packs(
+    key: Optional[str] = None,
+    status: Optional[str] = None,
+    db: BaseDatabase = Depends(get_db),
+) -> list[schemas.PolicyPackOut]:
+    packs = db.list_policy_packs(key=key, status=status)
+    return [schemas.PolicyPackOut(**p.__dict__) for p in packs]
+
+
+@app.post("/policy_packs", response_model=schemas.PolicyPackOut, dependencies=[Depends(require_auth)])
+def upsert_policy_pack(
+    payload: schemas.PolicyPackCreate,
+    db: BaseDatabase = Depends(get_db),
+) -> schemas.PolicyPackOut:
+    errors = validate_policy_pack_definition(pack_key=payload.key, pack_version=payload.version, pack=payload.pack)
+    if errors:
+        raise HTTPException(status_code=400, detail={"errors": errors})
+    pack = db.upsert_policy_pack(
+        key=payload.key,
+        version=payload.version,
+        name=payload.name,
+        description=payload.description,
+        status=payload.status,
+        pack=payload.pack,
+    )
+    return schemas.PolicyPackOut(**pack.__dict__)
+
+
+@app.get("/projects/{project_id}/policy", response_model=schemas.ProjectPolicyOut, dependencies=[Depends(require_auth)])
+def get_project_policy(
+    project_id: int,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ProjectPolicyOut:
+    if request:
+        require_project_access(project_id, request, db)
+    proj = db.get_project(project_id)
+    return schemas.ProjectPolicyOut(
+        project_id=proj.id,
+        policy_pack_key=proj.policy_pack_key,
+        policy_pack_version=proj.policy_pack_version,
+        policy_overrides=proj.policy_overrides,
+        policy_repo_local_enabled=proj.policy_repo_local_enabled,
+        policy_effective_hash=proj.policy_effective_hash,
+        policy_enforcement_mode=proj.policy_enforcement_mode,
+    )
+
+
+@app.put("/projects/{project_id}/policy", response_model=schemas.ProjectPolicyOut, dependencies=[Depends(require_auth)])
+def update_project_policy(
+    project_id: int,
+    payload: schemas.ProjectPolicyUpdate,
+    db: BaseDatabase = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+    request: Request = None,
+) -> schemas.ProjectPolicyOut:
+    if request:
+        require_project_access(project_id, request, db)
+    if payload.clear_policy_pack_version and payload.policy_pack_version is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={"errors": ["clear_policy_pack_version cannot be used with policy_pack_version"]},
+        )
+    if payload.policy_overrides is not None:
+        errors = validate_policy_override_definition(payload.policy_overrides)
+        if errors:
+            raise HTTPException(status_code=400, detail={"errors": errors})
+    proj = db.update_project_policy(
+        project_id,
+        policy_pack_key=payload.policy_pack_key,
+        policy_pack_version=payload.policy_pack_version,
+        clear_policy_pack_version=bool(payload.clear_policy_pack_version),
+        policy_overrides=payload.policy_overrides,
+        policy_repo_local_enabled=payload.policy_repo_local_enabled,
+        policy_enforcement_mode=payload.policy_enforcement_mode,
+    )
+    # Compute and persist effective hash for quick visibility in UI.
+    effective = policy_service.resolve_effective_policy(project_id)
+    policy_service.update_project_policy_effective_hash(project_id, effective.effective_hash)
+    proj = db.get_project(project_id)
+    return schemas.ProjectPolicyOut(
+        project_id=proj.id,
+        policy_pack_key=proj.policy_pack_key,
+        policy_pack_version=proj.policy_pack_version,
+        policy_overrides=proj.policy_overrides,
+        policy_repo_local_enabled=proj.policy_repo_local_enabled,
+        policy_effective_hash=proj.policy_effective_hash,
+        policy_enforcement_mode=proj.policy_enforcement_mode,
+    )
+
+
+@app.get(
+    "/projects/{project_id}/policy/effective",
+    response_model=schemas.EffectivePolicyOut,
+    dependencies=[Depends(require_auth)],
+)
+def get_effective_policy(
+    project_id: int,
+    db: BaseDatabase = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+    request: Request = None,
+) -> schemas.EffectivePolicyOut:
+    if request:
+        require_project_access(project_id, request, db)
+    effective = policy_service.resolve_effective_policy(project_id)
+    policy_service.update_project_policy_effective_hash(project_id, effective.effective_hash)
+    return schemas.EffectivePolicyOut(
+        project_id=project_id,
+        policy_pack_key=effective.pack_key,
+        policy_pack_version=effective.pack_version,
+        policy_effective_hash=effective.effective_hash,
+        policy=effective.policy,
+        sources=effective.sources,
+    )
+
+
+@app.get(
+    "/projects/{project_id}/policy/findings",
+    response_model=list[schemas.PolicyFindingOut],
+    dependencies=[Depends(require_auth)],
+)
+def project_policy_findings(
+    project_id: int,
+    db: BaseDatabase = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+    request: Request = None,
+) -> list[schemas.PolicyFindingOut]:
+    if request:
+        require_project_access(project_id, request, db)
+    findings = policy_service.evaluate_project(project_id)
+    return [schemas.PolicyFindingOut(**f.asdict()) for f in findings]
+
+
+@app.get(
+    "/protocols/{protocol_run_id}/policy/findings",
+    response_model=list[schemas.PolicyFindingOut],
+    dependencies=[Depends(require_auth)],
+)
+def protocol_policy_findings(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+    request: Request = None,
+) -> list[schemas.PolicyFindingOut]:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    findings = policy_service.evaluate_protocol(protocol_run_id)
+    return [schemas.PolicyFindingOut(**f.asdict()) for f in findings]
+
+
+@app.get(
+    "/protocols/{protocol_run_id}/policy/snapshot",
+    response_model=schemas.ProtocolPolicySnapshotOut,
+    dependencies=[Depends(require_auth)],
+)
+def protocol_policy_snapshot(
+    protocol_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    request: Request = None,
+) -> schemas.ProtocolPolicySnapshotOut:
+    if request:
+        project_id = get_protocol_project(protocol_run_id, db)
+        require_project_access(project_id, request, db)
+    try:
+        run = db.get_protocol_run(protocol_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return schemas.ProtocolPolicySnapshotOut(
+        protocol_run_id=run.id,
+        policy_pack_key=run.policy_pack_key,
+        policy_pack_version=run.policy_pack_version,
+        policy_effective_hash=run.policy_effective_hash,
+        policy_effective_json=getattr(run, "policy_effective_json", None),
+    )
+
+
+@app.get(
+    "/steps/{step_run_id}/policy/findings",
+    response_model=list[schemas.PolicyFindingOut],
+    dependencies=[Depends(require_auth)],
+)
+def step_policy_findings(
+    step_run_id: int,
+    db: BaseDatabase = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+    request: Request = None,
+) -> list[schemas.PolicyFindingOut]:
+    if request:
+        project_id = get_step_project(step_run_id, db)
+        require_project_access(project_id, request, db)
+    findings = policy_service.evaluate_step(step_run_id)
+    return [schemas.PolicyFindingOut(**f.asdict()) for f in findings]
 
 
 @app.post(

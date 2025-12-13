@@ -1,8 +1,9 @@
 import tempfile
 from pathlib import Path
+import sqlite3
 
 from tasksgodzilla.domain import CodexRunStatus, ProtocolStatus, StepStatus
-from tasksgodzilla.storage import Database
+from tasksgodzilla.storage import Database, DEFAULT_POLICY_PACK_KEY, DEFAULT_POLICY_PACK_VERSION
 
 
 def test_storage_round_trip_creates_records() -> None:
@@ -122,3 +123,67 @@ def test_codex_run_registry_round_trip() -> None:
         runs = db.list_codex_runs(job_type="bootstrap")
         assert runs
         assert runs[0].run_id == run_id
+
+
+def test_project_classification_selects_policy_pack() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "orchestrator.sqlite"
+        db = Database(db_path)
+        db.init_schema()
+
+        project = db.create_project(
+            name="demo",
+            git_url="git@example.com/demo.git",
+            base_branch="main",
+            ci_provider="github",
+            default_models=None,
+            project_classification="team-standard",
+        )
+        assert project.project_classification == "team-standard"
+        assert project.policy_pack_key == "team-standard"
+        assert project.policy_pack_version == "1.0"
+
+
+def test_init_schema_backfills_default_policy_pack() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "orchestrator.sqlite"
+        db = Database(db_path)
+        db.init_schema()
+
+        # Simulate an older row (or manual edit) that has NULL policy columns.
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                """
+                INSERT INTO projects (
+                    name, git_url, base_branch, ci_provider, secrets, default_models, local_path,
+                    policy_pack_key, policy_pack_version, policy_overrides, policy_repo_local_enabled, policy_effective_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy",
+                    "git@example.com/legacy.git",
+                    "main",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Re-run init_schema to apply backfill updates.
+        db.init_schema()
+        projects = [p for p in db.list_projects() if p.name == "legacy"]
+        assert projects
+        legacy = projects[0]
+        assert legacy.policy_pack_key == DEFAULT_POLICY_PACK_KEY
+        assert legacy.policy_pack_version == DEFAULT_POLICY_PACK_VERSION

@@ -5,6 +5,7 @@ Codex worker: resolves protocol context, runs engine-backed planning/exec/QA, an
 import json
 import os
 import shutil
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -56,11 +57,50 @@ from tasksgodzilla.services.budget import BudgetService
 from tasksgodzilla.services.orchestrator import OrchestratorService
 from tasksgodzilla.services.spec import SpecService
 from tasksgodzilla.services.prompts import PromptService
+from tasksgodzilla.services.policy import PolicyService
+from tasksgodzilla.services.clarifications import ClarificationsService
 
 log = get_logger(__name__)
 # MAX_INLINE_TRIGGER_DEPTH moved to OrchestratorService
 SINGLE_WORKTREE = os.environ.get("TASKSGODZILLA_SINGLE_WORKTREE", "true").lower() in ("1", "true", "yes", "on")
 DEFAULT_WORKTREE_BRANCH = os.environ.get("TASKSGODZILLA_WORKTREE_BRANCH", "tasksgodzilla-worktree")
+
+
+def _ensure_required_step_sections(protocol_root: Path, required_sections: list[str]) -> list[str]:
+    """
+    Best-effort normalization: ensure each step markdown file contains headings for required sections.
+    Returns a list of step filenames modified.
+    """
+    if not required_sections:
+        return []
+    modified: list[str] = []
+    for step_file in step_markdown_files(protocol_root, include_setup=True):
+        try:
+            content = step_file.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        lower = content.lower()
+        missing: list[str] = []
+        for section in required_sections:
+            sec = (section or "").strip()
+            if not sec:
+                continue
+            pattern = r"(?m)^#{1,6}\\s+" + re.escape(sec.lower()) + r"\\s*$"
+            if re.search(pattern, lower):
+                continue
+            missing.append(sec)
+        if not missing:
+            continue
+        blocks = []
+        for sec in missing:
+            blocks.append(f"\\n\\n## {sec}\\n\\n- TBD\\n")
+        new_content = content.rstrip() + "".join(blocks) + "\\n"
+        try:
+            step_file.write_text(new_content, encoding="utf-8")
+            modified.append(step_file.name)
+        except Exception:
+            continue
+    return modified
 
 
 def load_project(repo_root: Path, protocol_name: str, base_branch: str) -> Path:
@@ -128,7 +168,90 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
     git_service = GitService(db)
     budget_service = BudgetService()
     spec_service = SpecService(db)
+    policy_service = PolicyService(db)
+    clarifications_service = ClarificationsService(db)
     branch_name = git_service.get_branch_name(run.protocol_name)
+    required_step_sections: list[str] = []
+    policy_guidelines: Optional[str] = None
+
+    # Resolve effective policy early so stub planning can also benefit.
+    try:
+        effective_policy = policy_service.resolve_effective_policy(project.id)
+        policy_service.update_project_policy_effective_hash(project.id, effective_policy.effective_hash)
+        policy_service.update_protocol_policy_audit(
+            run.id,
+            pack_key=effective_policy.pack_key,
+            pack_version=effective_policy.pack_version,
+            effective_hash=effective_policy.effective_hash,
+            policy=effective_policy.policy if isinstance(effective_policy.policy, dict) else None,
+        )
+        # Materialize + gate on blocking clarifications before doing any planning work.
+        try:
+            clarifications_service.ensure_from_policy(
+                project_id=project.id,
+                policy=effective_policy.policy if isinstance(effective_policy.policy, dict) else {},
+                applies_to="planning",
+                protocol_run_id=run.id,
+            )
+        except Exception:
+            pass
+        blocking_project = clarifications_service.list_blocking_open(project_id=project.id, applies_to="onboarding")
+        blocking_protocol = clarifications_service.list_blocking_open(protocol_run_id=run.id, applies_to="planning")
+        if blocking_project or blocking_protocol:
+            db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            db.append_event(
+                run.id,
+                "planning_blocked_clarifications",
+                "Planning blocked pending required clarifications.",
+                metadata={
+                    "project_id": project.id,
+                    "protocol_run_id": run.id,
+                    "blocking": {
+                        "project": [c.__dict__ for c in blocking_project][:25],
+                        "protocol": [c.__dict__ for c in blocking_protocol][:25],
+                    },
+                    "truncated": (len(blocking_project) > 25) or (len(blocking_protocol) > 25),
+                },
+            )
+            return
+        req = (effective_policy.policy.get("requirements") if isinstance(effective_policy.policy, dict) else {}) or {}
+        defaults = (effective_policy.policy.get("defaults") if isinstance(effective_policy.policy, dict) else {}) or {}
+        step_sections = req.get("step_sections") if isinstance(req, dict) else None
+        if isinstance(step_sections, list):
+            required_step_sections = [str(x) for x in step_sections if isinstance(x, (str, int, float))]
+        protocol_files = req.get("protocol_files") if isinstance(req, dict) else None
+        required_checks = []
+        if isinstance(defaults, dict):
+            ci = defaults.get("ci")
+            if isinstance(ci, dict) and isinstance(ci.get("required_checks"), list):
+                required_checks = [str(x) for x in ci.get("required_checks") if isinstance(x, (str, int, float))]
+        step_template = None
+        if required_step_sections:
+            template_lines = []
+            for sec in required_step_sections:
+                template_lines.append(f"## {sec}")
+                if sec.strip().lower() == "verification" and required_checks:
+                    for check in required_checks:
+                        template_lines.append(f"- Run `{check}`")
+                else:
+                    template_lines.append("- TBD")
+                template_lines.append("")
+            step_template = "\n".join(template_lines).strip()
+        verification_snippet = None
+        if required_checks:
+            verification_snippet = "\n".join([f"- Run `{c}`" for c in required_checks])
+        lines = [
+            f"policy_pack: {effective_policy.pack_key}@{effective_policy.pack_version}",
+            f"required_protocol_files: {protocol_files or []}",
+            f"required_step_sections: {required_step_sections or []}",
+            f"required_checks: {required_checks or []}",
+            f"step_file_template:\n{step_template}" if step_template else "step_file_template: (none)",
+            f"verification_snippet:\n{verification_snippet}" if verification_snippet else "verification_snippet: (none)",
+            "note: warnings-only mode; prefer compliance.",
+        ]
+        policy_guidelines = "\n".join(lines)
+    except Exception:
+        policy_guidelines = None
 
     def _stub_plan(reason: str, *, error: Optional[str] = None) -> None:
         workspace_root, protocol_root = spec_service.resolve_protocol_paths(run, project)
@@ -147,6 +270,16 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
             setup_file.write_text("Prepare workspace and dependencies.", encoding="utf-8")
         if not work_file.exists():
             work_file.write_text("Implement the demo task.", encoding="utf-8")
+
+        modified = _ensure_required_step_sections(protocol_root, required_step_sections)
+        if modified:
+            db.append_event(
+                protocol_run_id,
+                "policy_autofix",
+                f"Inserted missing required step sections into {len(modified)} file(s).",
+                metadata={"files": modified, "mode": "warnings"},
+                job_id=job_id,
+            )
 
         template_cfg = dict(run.template_config or {})
         spec = template_cfg.get(PROTOCOL_SPEC_KEY)
@@ -170,6 +303,20 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
             step_run_id=None,
             metadata={"spec_hash": spec_hash_val, "spec_validated": True, "fallback_reason": reason, "error": error},
         )
+        try:
+            project_findings = policy_service.evaluate_project(project.id)
+            protocol_findings = policy_service.evaluate_protocol(run.id)
+            findings = [*project_findings, *protocol_findings]
+            if findings:
+                db.append_event(
+                    protocol_run_id,
+                    "policy_findings",
+                    f"Policy findings detected ({len(findings)}).",
+                    metadata={"findings": [f.asdict() for f in findings[:25]], "truncated": len(findings) > 25},
+                    job_id=job_id,
+                )
+        except Exception:
+            pass
         log.warning(
             "planning_stubbed",
             extra={
@@ -227,6 +374,7 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         repo_root=repo_root,
         worktree_root=worktree,
         templates_section=templates,
+        policy_guidelines=policy_guidelines,
     )
     planning_tokens = budget_service.check_and_track(
         planning_text, planning_model, "planning", config.token_budget_mode, budget_limit
@@ -345,6 +493,7 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
             plan_md,
             step_file.name,
             step_content,
+            policy_guidelines=policy_guidelines,
         )
         decompose_tokens += budget_service.check_and_track(
             dec_text, decompose_model, "decompose", config.token_budget_mode, budget_limit
@@ -365,6 +514,15 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
         new_content = decompose_result.stdout
         step_file.write_text(new_content, encoding="utf-8")
         decomposed_steps.append(step_file.name)
+    modified = _ensure_required_step_sections(protocol_root, required_step_sections)
+    if modified:
+        db.append_event(
+            protocol_run_id,
+            "policy_autofix",
+            f"Inserted missing required step sections into {len(modified)} file(s).",
+            metadata={"files": modified, "mode": "warnings"},
+            job_id=job_id,
+        )
     if step_files:
         db.append_event(
             protocol_run_id,
@@ -378,6 +536,32 @@ def handle_plan_protocol(protocol_run_id: int, db: BaseDatabase, job_id: Optiona
             },
             job_id=job_id,
         )
+
+    # Emit warnings-only findings after planning/decomposition so UI can show them early.
+    try:
+        project_findings = policy_service.evaluate_project(project.id)
+        protocol_findings = policy_service.evaluate_protocol(run.id)
+        findings = [*project_findings, *protocol_findings]
+        if findings:
+            db.append_event(
+                protocol_run_id,
+                "policy_findings",
+                f"Policy findings detected ({len(findings)}).",
+                metadata={"findings": [f.asdict() for f in findings[:25]], "truncated": len(findings) > 25},
+                job_id=job_id,
+            )
+        if policy_service.has_blocking_findings(findings):
+            db.update_protocol_status(protocol_run_id, ProtocolStatus.BLOCKED)
+            db.append_event(
+                protocol_run_id,
+                "policy_blocked",
+                "Planning blocked by policy enforcement mode.",
+                metadata={"blocking_findings": [f.asdict() for f in findings if f.severity == "block"][:25]},
+                job_id=job_id,
+            )
+            return
+    except Exception:
+        pass
 
     db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
     run = db.get_protocol_run(run.id)

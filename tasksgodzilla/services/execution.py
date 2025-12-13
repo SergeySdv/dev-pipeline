@@ -29,6 +29,8 @@ from tasksgodzilla.spec import (
 from tasksgodzilla.storage import BaseDatabase
 from tasksgodzilla.workers.unified_runner import execute_step_unified
 from tasksgodzilla.services.platform.artifacts import register_run_artifact
+from tasksgodzilla.services.policy import PolicyService
+from tasksgodzilla.services.clarifications import ClarificationsService
 
 log = get_logger(__name__)
 
@@ -94,6 +96,8 @@ class ExecutionService:
         budget_service = BudgetService()
         orchestrator = OrchestratorService(self.db)
         spec_service = SpecService(self.db)
+        policy_service = PolicyService(self.db)
+        clarifications_service = ClarificationsService(self.db)
         branch_name = git_service.get_branch_name(run.protocol_name)
         auto_clone = auto_clone_enabled()
         budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
@@ -113,6 +117,80 @@ class ExecutionService:
                 "step_name": step.step_name,
             },
         )
+
+        # Gate execution on blocking clarifications (project/protocol/step).
+        try:
+            effective = policy_service.resolve_effective_policy(project.id)
+            try:
+                clarifications_service.ensure_from_policy(
+                    project_id=project.id,
+                    policy=effective.policy if isinstance(effective.policy, dict) else {},
+                    applies_to="execution",
+                    protocol_run_id=run.id,
+                    step_run_id=step.id,
+                )
+            except Exception:
+                pass
+
+            blocking_project = clarifications_service.list_blocking_open(project_id=project.id, applies_to="onboarding")
+            blocking_protocol = clarifications_service.list_blocking_open(protocol_run_id=run.id, applies_to="planning")
+            blocking_step = clarifications_service.list_blocking_open(step_run_id=step.id, applies_to="execution")
+            if blocking_project or blocking_protocol or blocking_step:
+                self.db.update_step_status(step.id, StepStatus.BLOCKED, summary="Blocked pending required clarifications")
+                self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+                self.db.append_event(
+                    run.id,
+                    "step_blocked_clarifications",
+                    f"Step {step.step_name} blocked pending required clarifications.",
+                    step_run_id=step.id,
+                    metadata={
+                        "project_id": project.id,
+                        "protocol_run_id": run.id,
+                        "step_run_id": step.id,
+                        "blocking": {
+                            "project": [c.__dict__ for c in blocking_project][:25],
+                            "protocol": [c.__dict__ for c in blocking_protocol][:25],
+                            "step": [c.__dict__ for c in blocking_step][:25],
+                        },
+                        "truncated": (len(blocking_project) > 25) or (len(blocking_protocol) > 25) or (len(blocking_step) > 25),
+                    },
+                )
+                return
+        except Exception:
+            pass
+
+        # Warnings-only policy findings (best-effort).
+        try:
+            proto_findings = policy_service.evaluate_protocol(run.id)
+            step_findings = policy_service.evaluate_step(step.id)
+            findings = [*proto_findings, *step_findings]
+            if findings:
+                self.db.append_event(
+                    run.id,
+                    "policy_findings",
+                    f"Policy findings detected ({len(findings)}).",
+                    step_run_id=step.id,
+                    metadata={
+                        "findings": [f.asdict() for f in findings[:25]],
+                        "truncated": len(findings) > 25,
+                    },
+                    job_id=job_id,
+                )
+            if policy_service.has_blocking_findings(findings):
+                self.db.update_step_status(step.id, StepStatus.BLOCKED, summary="Blocked by policy enforcement mode")
+                self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+                self.db.append_event(
+                    run.id,
+                    "policy_blocked",
+                    "Execution blocked by policy enforcement mode.",
+                    step_run_id=step.id,
+                    metadata={"blocking_findings": [f.asdict() for f in findings if f.severity == "block"][:25]},
+                    job_id=job_id,
+                )
+                return
+        except Exception:
+            pass
+
         self.db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
         codemachine = is_codemachine_run(run)
         step_path: Optional[Path] = None
