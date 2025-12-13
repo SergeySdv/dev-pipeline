@@ -224,16 +224,18 @@ class OrchestratorService:
                 continue
 
     def plan_protocol(self, protocol_run_id: int, job_id: Optional[str] = None) -> None:
-        """Plan a protocol run by delegating to the Codex worker."""
-        from tasksgodzilla.workers.codex_worker import handle_plan_protocol
+        """Plan a protocol run via PlanningService."""
+        from tasksgodzilla.services.planning import PlanningService
         log.info("orchestrator_plan_protocol", extra={"protocol_run_id": protocol_run_id, "job_id": job_id})
-        handle_plan_protocol(protocol_run_id, self.db, job_id=job_id)
+        planning_service = PlanningService(self.db)
+        planning_service.plan_protocol(protocol_run_id, job_id=job_id)
 
     def execute_step(self, step_run_id: int, job_id: Optional[str] = None) -> None:
-        """Execute a single step via the existing worker implementation."""
-        from tasksgodzilla.workers.codex_worker import handle_execute_step
+        """Execute a single step via ExecutionService."""
+        from tasksgodzilla.services.execution import ExecutionService
         log.info("orchestrator_execute_step", extra={"step_run_id": step_run_id, "job_id": job_id})
-        handle_execute_step(step_run_id, self.db, job_id=job_id)
+        execution_service = ExecutionService(self.db)
+        execution_service.execute_step(step_run_id, job_id=job_id)
 
     def run_step(self, step_run_id: int, queue: BaseQueue) -> Job:
         """Transition a step to RUNNING and enqueue execution."""
@@ -297,9 +299,94 @@ class OrchestratorService:
         return updated
 
     def open_protocol_pr(self, protocol_run_id: int, job_id: Optional[str] = None) -> None:
-        """Open PR/MR for a protocol using the existing worker implementation."""
-        from tasksgodzilla.workers.codex_worker import handle_open_pr
-        handle_open_pr(protocol_run_id, self.db, job_id=job_id)
+        """Open PR/MR for a protocol via GitService."""
+        from tasksgodzilla.services.git import GitService
+
+        run = self.db.get_protocol_run(protocol_run_id)
+        project = self.db.get_project(run.project_id)
+        git_service = GitService(self.db)
+
+        repo_root = git_service.ensure_repo_or_block(project, run, job_id=job_id)
+        if not repo_root:
+            self.db.append_event(
+                run.id,
+                "open_pr_skipped",
+                "Repo not available locally; cannot push or open PR/MR.",
+                metadata={"git_url": project.git_url},
+            )
+            return
+        try:
+            worktree = git_service.ensure_worktree(
+                repo_root,
+                run.protocol_name,
+                run.base_branch,
+                protocol_run_id=run.id,
+                project_id=project.id,
+                job_id=job_id,
+            )
+            branch_name = git_service.get_branch_name(run.protocol_name)
+            pushed = git_service.push_and_open_pr(
+                worktree,
+                run.protocol_name,
+                run.base_branch,
+                protocol_run_id=run.id,
+                project_id=project.id,
+                job_id=job_id,
+            )
+            if pushed:
+                self.db.append_event(run.id, "open_pr", "Branch pushed and PR/MR requested.", metadata={"branch": branch_name})
+                triggered = git_service.trigger_ci(
+                    repo_root,
+                    branch_name,
+                    project.ci_provider,
+                    protocol_run_id=run.id,
+                    project_id=project.id,
+                    job_id=job_id,
+                )
+                if triggered:
+                    self.db.append_event(
+                        run.id,
+                        "ci_triggered",
+                        "CI triggered after PR/MR request.",
+                        metadata={"branch": run.protocol_name},
+                    )
+                self.db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+            else:
+                if git_service.remote_branch_exists(repo_root, run.protocol_name):
+                    self.db.append_event(
+                        run.id,
+                        "open_pr_branch_exists",
+                        "Branch already exists remotely; skipping push/PR.",
+                        metadata={"branch": run.protocol_name},
+                    )
+                    self.db.update_protocol_status(run.id, ProtocolStatus.RUNNING)
+                else:
+                    self.db.append_event(
+                        run.id,
+                        "open_pr_failed",
+                        "Failed to push branch or open PR/MR.",
+                        metadata={"branch": run.protocol_name},
+                    )
+                    self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        except Exception as exc:
+            log.warning(
+                "Open PR job failed",
+                extra={
+                    "protocol_run_id": run.id,
+                    "project_id": project.id,
+                    "job_id": job_id,
+                    "protocol_name": run.protocol_name,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            self.db.append_event(
+                run.id,
+                "open_pr_failed",
+                f"Open PR/MR failed: {exc}",
+                metadata={"branch": run.protocol_name},
+            )
+            self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
 
     def enqueue_open_protocol_pr(self, protocol_run_id: int, queue: BaseQueue) -> Job:
         """Enqueue an open_pr job for the protocol."""
@@ -464,7 +551,7 @@ class OrchestratorService:
         inline_depth: int = 0
     ) -> Optional[dict]:
         """Trigger execution of a step, either via queue or inline fallback."""
-        from tasksgodzilla.workers.codex_worker import handle_execute_step
+        from tasksgodzilla.services.execution import ExecutionService
         from tasksgodzilla.spec import get_step_spec
 
         config = load_config()
@@ -537,7 +624,8 @@ class OrchestratorService:
                 step_run_id=step_run_id,
                 metadata={"target_step_id": step_run_id, "source": source, "inline_depth": inline_depth},
             )
-            handle_execute_step(step_run_id, self.db)
+            execution_service = ExecutionService(self.db)
+            execution_service.execute_step(step_run_id)
             return {"inline": True, "target_step_id": step_run_id}
         except Exception as exc:  # pragma: no cover - best effort
             self.db.append_event(
