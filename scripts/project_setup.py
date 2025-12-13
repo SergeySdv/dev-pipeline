@@ -84,12 +84,12 @@ def main() -> None:
     log.info(
         "project_setup_start",
         extra={
-        "clone_url": args.clone_url,
-        "clone_dir": args.clone_dir,
-        "base_branch": args.base_branch,
-        "skip_discovery": args.skip_discovery,
-    },
-)
+            "clone_url": args.clone_url,
+            "clone_dir": args.clone_dir,
+            "base_branch": args.base_branch,
+            "skip_discovery": args.skip_discovery,
+        },
+    )
 
     repo_root: Path
     if args.clone_url:
@@ -114,7 +114,13 @@ def main() -> None:
 
         if not args.skip_discovery:
             discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
-            run_codex_discovery(repo_root, discovery_model, use_pipeline=True)
+            try:
+                run_codex_discovery(repo_root, discovery_model, use_pipeline=True)
+            except Exception as exc:  # pragma: no cover - best effort
+                log.warning(
+                    "project_setup_discovery_failed",
+                    extra={"error": str(exc), "error_type": exc.__class__.__name__, "repo_root": str(repo_root)},
+                )
     except FileNotFoundError as exc:
         log.error("project_setup_dependency_missing", extra={"error": str(exc)})
         sys.exit(EXIT_DEP_MISSING)
