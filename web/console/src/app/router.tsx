@@ -15,6 +15,8 @@ import { OpsQueuesPage } from '@/features/ops/OpsQueuesPage';
 import { OpsEventsPage } from '@/features/ops/OpsEventsPage';
 import { PolicyPacksPage } from '@/features/policy/PacksPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { StepDetailPage } from '@/features/steps/StepDetailPage';
+import { OpsMetricsPage } from '@/features/ops/OpsMetricsPage';
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === 'true';
@@ -146,6 +148,18 @@ const PolicyPacksRoute = createRoute({
   component: PolicyPacksPage,
 });
 
+const StepDetailRoute = createRoute({
+  getParentRoute: () => AppRoute,
+  path: '/steps/$stepId',
+  component: StepDetailPage,
+});
+
+const OpsMetricsRoute = createRoute({
+  getParentRoute: () => AppRoute,
+  path: '/ops/metrics',
+  component: OpsMetricsPage,
+});
+
 const SettingsRoute = createRoute({
   getParentRoute: () => AppRoute,
   path: '/settings',
@@ -166,8 +180,10 @@ const routeTree = RootRoute.addChildren([
     ProtocolDetailRoute,
     RunsListRoute,
     RunDetailRoute,
+    StepDetailRoute,
     OpsQueuesRoute,
     OpsEventsRoute,
+    OpsMetricsRoute,
     PolicyPacksRoute,
     SettingsRoute,
   ]),
