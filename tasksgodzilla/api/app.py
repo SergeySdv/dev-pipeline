@@ -701,7 +701,11 @@ def auth_logout(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
+def root_redirect():
+    return RedirectResponse(url="/console/", status_code=301)
+
+
 @app.get("/console", response_class=HTMLResponse)
 @app.get("/console/{path:path}", response_class=HTMLResponse)
 def console(request: Request, path: str = ""):

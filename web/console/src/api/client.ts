@@ -51,3 +51,7 @@ export async function apiFetchJson<T>(path: string, init?: RequestInit): Promise
   return body as T;
 }
 
+export const apiClient = {
+  fetch: apiFetchJson,
+};
+

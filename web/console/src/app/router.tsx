@@ -4,19 +4,23 @@ import { z } from 'zod';
 import { Toaster } from 'sonner';
 
 import { AppShell } from '@/app/shell/AppShell';
+import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { ProjectsListPage } from '@/features/projects/ProjectsListPage';
 import { ProjectsNewPage } from '@/features/projects/ProjectsNewPage';
 import { ProjectDetailPage } from '@/features/projects/ProjectDetailPage';
+import { ProtocolsListPage } from '@/features/protocols/ProtocolsListPage';
 import { ProtocolsNewPage } from '@/features/protocols/ProtocolsNewPage';
 import { ProtocolDetailPage } from '@/features/protocols/ProtocolDetailPage';
+import { StepsListPage } from '@/features/steps/StepsListPage';
+import { StepDetailPage } from '@/features/steps/StepDetailPage';
 import { RunsListPage } from '@/features/runs/RunsListPage';
 import { RunDetailPage } from '@/features/runs/RunDetailPage';
 import { OpsQueuesPage } from '@/features/ops/OpsQueuesPage';
 import { OpsEventsPage } from '@/features/ops/OpsEventsPage';
+import { OpsMetricsPage } from '@/features/ops/OpsMetricsPage';
 import { PolicyPacksPage } from '@/features/policy/PacksPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
-import { StepDetailPage } from '@/features/steps/StepDetailPage';
-import { OpsMetricsPage } from '@/features/ops/OpsMetricsPage';
+import { NotFoundPage } from '@/features/errors/NotFoundPage';
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === 'true';
@@ -47,7 +51,7 @@ const AppRoute = createRoute({
   path: '/',
   beforeLoad: async ({ location }) => {
     if (location.pathname === '/') {
-      throw redirect({ to: '/projects' });
+      throw redirect({ to: '/dashboard' });
     }
     if (!DISABLE_AUTH) {
       try {
@@ -73,6 +77,12 @@ const AppRoute = createRoute({
   },
 });
 
+const DashboardRoute = createRoute({
+  getParentRoute: () => AppRoute,
+  path: '/dashboard',
+  component: DashboardPage,
+});
+
 const ProjectsRoute = createRoute({
   getParentRoute: () => AppRoute,
   path: '/projects',
@@ -94,6 +104,12 @@ const ProjectDetailRoute = createRoute({
     })
     .parse,
   component: ProjectDetailPage,
+});
+
+const ProtocolsRoute = createRoute({
+  getParentRoute: () => AppRoute,
+  path: '/protocols',
+  component: ProtocolsListPage,
 });
 
 const ProtocolDetailRoute = createRoute({
@@ -148,6 +164,12 @@ const PolicyPacksRoute = createRoute({
   component: PolicyPacksPage,
 });
 
+const StepsRoute = createRoute({
+  getParentRoute: () => AppRoute,
+  path: '/steps',
+  component: StepsListPage,
+});
+
 const StepDetailRoute = createRoute({
   getParentRoute: () => AppRoute,
   path: '/steps/$stepId',
@@ -171,21 +193,31 @@ const SettingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const NotFoundRoute = createRoute({
+  getParentRoute: () => AppRoute,
+  path: '*',
+  component: NotFoundPage,
+});
+
 const routeTree = RootRoute.addChildren([
   AppRoute.addChildren([
+    DashboardRoute,
     ProjectsRoute,
     ProjectsNewRoute,
     ProjectDetailRoute,
+    ProtocolsRoute,
     ProtocolsNewRoute,
     ProtocolDetailRoute,
+    StepsRoute,
+    StepDetailRoute,
     RunsListRoute,
     RunDetailRoute,
-    StepDetailRoute,
     OpsQueuesRoute,
     OpsEventsRoute,
     OpsMetricsRoute,
     PolicyPacksRoute,
     SettingsRoute,
+    NotFoundRoute,
   ]),
 ]);
 

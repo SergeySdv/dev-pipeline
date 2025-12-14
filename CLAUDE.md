@@ -38,9 +38,19 @@ TASKSGODZILLA_INLINE_RQ_WORKER=true \
 **With Docker Compose (full stack):**
 ```bash
 docker compose up --build
-# API at http://localhost:8011 (default token: changeme)
+# Nginx reverse proxy at http://localhost:80
+# API (internal) at port 8010, exposed via nginx
 # Postgres on 5433, Redis on 6380
+# Default token: changeme
 ```
+
+**Docker services:**
+- `nginx`: Reverse proxy on port 80, routes to API and serves console static files
+- `api`: FastAPI server (internal port 8010)
+- `worker`: RQ worker for background jobs
+- `codex-worker`: Additional RQ worker with resource limits
+- `db`: PostgreSQL 16
+- `redis`: Redis 7
 
 **With containers for dependencies only:**
 ```bash
@@ -234,6 +244,7 @@ Migrations: `alembic/` (use `make migrate` to apply)
 - `TASKSGODZILLA_ENV`: Environment name (default: `local`)
 - `TASKSGODZILLA_API_TOKEN`: Optional bearer token for API auth
 - `TASKSGODZILLA_WEBHOOK_TOKEN`: Optional shared secret for webhooks
+- `TASKSGODZILLA_DEFAULT_ENGINE_ID`: Default execution engine (default: `codex`)
 
 ### Execution Models
 - `PROTOCOL_PLANNING_MODEL`: Planning model (default: `gpt-5.1-high`)
@@ -260,6 +271,14 @@ Migrations: `alembic/` (use `make migrate` to apply)
 - `TASKSGODZILLA_GIT_USER`: Git commit author name
 - `TASKSGODZILLA_GIT_EMAIL`: Git commit author email
 - `TASKSGODZILLA_PROJECTS_ROOT`: Base directory for cloned projects (default: `projects/`)
+
+### Authentication (Optional OIDC/SSO)
+- `TASKSGODZILLA_OIDC_ISSUER`: OIDC provider issuer URL
+- `TASKSGODZILLA_OIDC_CLIENT_ID`: OIDC client ID
+- `TASKSGODZILLA_OIDC_CLIENT_SECRET`: OIDC client secret
+- `TASKSGODZILLA_OIDC_SCOPES`: OIDC scopes (default: `openid profile email`)
+- `TASKSGODZILLA_SESSION_SECRET`: Session encryption key
+- `TASKSGODZILLA_SESSION_COOKIE_SECURE`: Use secure cookies (default: `false`)
 
 ## Protocol Lifecycle
 
@@ -364,12 +383,71 @@ Import `.codemachine` workspaces via `POST /projects/{id}/codemachine/import` to
 - Apply QA policies (skip/light/full) from spec
 - Handle loop/trigger module policies
 
+## Web Console (React Frontend)
+
+The web console is a React + TypeScript application served at `/console`:
+
+**Tech Stack:**
+- React 18 with TanStack Router for routing
+- TanStack Query for data fetching and caching
+- TanStack Table for data tables
+- Radix UI for headless components
+- Tailwind CSS for styling
+- Vite for build tooling
+
+**Development:**
+```bash
+cd web/console
+npm install
+npm run dev        # dev server at http://localhost:5173
+npm run build      # production build (outputs to dist/)
+npm test          # run vitest tests
+```
+
+**Pages and Routes:**
+- `/dashboard` - Dashboard with system overview, metrics, and quick actions
+- `/projects` - Projects list page
+- `/projects/:id` - Project detail with tabs (overview, onboarding, protocols, policy, clarifications, branches)
+- `/protocols` - Protocols list page (all protocols across projects)
+- `/protocols/:id` - Protocol detail with tabs (steps, events, runs, spec, policy, clarifications)
+- `/steps` - Steps list page (all steps across protocols)
+- `/steps/:id` - Step detail with runs, logs, artifacts, QA reports
+- `/runs` - Codex runs list (logs, artifacts, filtering)
+- `/runs/:id` - Run detail page
+- `/ops/queues` - Queue statistics and job monitoring
+- `/ops/events` - Events feed and activity log
+- `/ops/metrics` - System metrics (Prometheus endpoint data)
+- `/policy-packs` - Policy packs management
+- `/settings` - Application settings
+- `*` - 404 Not Found page
+
+**Navigation:**
+- Responsive sidebar with sub-navigation for Operations (Queues, Events, Metrics)
+- Mobile hamburger menu with drawer
+- Breadcrumb navigation
+- Footer with links and version info
+
+**Key Features:**
+- Projects management (list, create, onboarding status, clarifications)
+- Protocol runs (create, monitor status, view steps)
+- Step execution (run, view logs/artifacts, QA reports)
+- Codex runs (logs, artifacts, filtering)
+- Operations (events feed, queue stats, metrics)
+- Policy packs (assign, view findings)
+- Real-time polling for updates
+- Dashboard with system overview and recent activity
+
+**Integration:**
+- API client at `web/console/src/api/client.ts` handles auth tokens
+- Settings stored in localStorage at `web/console/src/app/settings/store.ts`
+- Polling configured at `web/console/src/app/polling.ts`
+
 ## Monitoring
 
 - `/metrics`: Prometheus metrics endpoint
 - `/queues`: Queue statistics
 - `/queues/jobs`: Job payloads and status
-- `/console`: Web-based dashboard
+- `/console`: React web console (see Web Console section)
 - Events API: Activity feed and audit log
 
 ## Protocol Execution with Codex
