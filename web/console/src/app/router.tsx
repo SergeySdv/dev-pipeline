@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute, createRouter, Outlet, redirect } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter, Outlet, redirect, isRedirect } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { z } from 'zod';
 import { Toaster } from 'sonner';
@@ -21,6 +21,7 @@ import { OpsMetricsPage } from '@/features/ops/OpsMetricsPage';
 import { PolicyPacksPage } from '@/features/policy/PacksPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { NotFoundPage } from '@/features/errors/NotFoundPage';
+import { LoginPage } from '@/features/auth/LoginPage';
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === 'true';
@@ -53,17 +54,36 @@ const AppRoute = createRoute({
     if (location.pathname === '/') {
       throw redirect({ to: '/dashboard' });
     }
+    if (location.pathname === '/login') {
+      return;
+    }
     if (!DISABLE_AUTH) {
       try {
-        const resp = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
-        if (resp.status === 401) {
+        const statusResp = await fetch(`${API_BASE}/auth/status`, { credentials: 'include' });
+        const status = statusResp.ok ? ((await statusResp.json()) as { mode?: string; authenticated?: boolean }) : null;
+        const mode = status?.mode ?? 'open';
+        const authed = Boolean(status?.authenticated);
+        if (mode === 'oidc' && !authed) {
           if (typeof window !== 'undefined') {
             const next = window.location.pathname + window.location.search;
             window.location.assign(`${API_BASE}/auth/login?next=${encodeURIComponent(next)}`);
           }
           return;
         }
-      } catch {
+        if (mode === 'jwt' && !authed) {
+          // Best-effort silent refresh before sending to login.
+          try {
+            const refreshResp = await fetch(`${API_BASE}/auth/refresh`, { method: 'POST', credentials: 'include' });
+            if (refreshResp.ok) return;
+          } catch {
+            // ignore
+          }
+          const next = location.pathname + location.search;
+          throw redirect({ to: '/login', search: { next } });
+        }
+      } catch (err) {
+        // Let router redirects propagate (TanStack uses thrown redirect objects).
+        if (isRedirect(err)) throw err;
         // Best effort: allow app to render and surface errors in UI.
       }
     }
@@ -75,6 +95,13 @@ const AppRoute = createRoute({
       </AppShell>
     );
   },
+});
+
+const LoginRoute = createRoute({
+  getParentRoute: () => RootRoute,
+  path: '/login',
+  validateSearch: z.object({ next: z.string().optional() }).parse,
+  component: LoginPage,
 });
 
 const DashboardRoute = createRoute({
@@ -188,6 +215,7 @@ const SettingsRoute = createRoute({
   validateSearch: z
     .object({
       tab: z.enum(['profile', 'preferences', 'live_updates', 'integrations', 'shortcuts', 'advanced']).optional(),
+      next: z.string().optional(),
     })
     .parse,
   component: SettingsPage,
@@ -200,6 +228,7 @@ const NotFoundRoute = createRoute({
 });
 
 const routeTree = RootRoute.addChildren([
+  LoginRoute,
   AppRoute.addChildren([
     DashboardRoute,
     ProjectsRoute,

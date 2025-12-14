@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { GitBranch, Clock, AlertCircle } from 'lucide-react';
-import { apiFetchJson } from '@/api/client';
+import { ApiError, apiFetchJson } from '@/api/client';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -41,10 +41,27 @@ export function ProtocolsListPage() {
   }
 
   if (error) {
+    const isApiError = error instanceof ApiError;
+    const message = isApiError
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : 'Request failed';
     return (
       <div className="text-center py-8">
-        <p className="text-red-600 mb-4">Failed to load protocols</p>
-        <Button onClick={() => window.location.reload()}>Retry</Button>
+        <p className="text-red-600 mb-2">Failed to load protocols</p>
+        <p className="text-sm text-fg-muted mb-4">
+          {message}
+          {isApiError && error.status === 401 ? ' — please sign in.' : ''}
+        </p>
+        <div className="flex items-center justify-center gap-2">
+          <Button onClick={() => window.location.reload()}>Retry</Button>
+          <Link to="/login" search={{ next: window.location.pathname + window.location.search }}>
+            <Button variant="secondary">Sign in</Button>
+          </Link>
+        </div>
       </div>
     );
   }

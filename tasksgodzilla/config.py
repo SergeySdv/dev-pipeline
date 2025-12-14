@@ -28,6 +28,15 @@ class Config(BaseModel):
     redis_url: Optional[str] = Field(default=None)
     log_level: str = Field(default="INFO")
     webhook_token: Optional[str] = Field(default=None)
+    # JWT / local auth (optional; enables username/password login for the web console)
+    jwt_secret: Optional[str] = Field(default=None)
+    jwt_issuer: str = Field(default="tasksgodzilla")
+    jwt_access_ttl_seconds: int = Field(default=60 * 15)  # 15m
+    jwt_refresh_ttl_seconds: int = Field(default=60 * 60 * 24 * 14)  # 14d
+    jwt_refresh_rotate: bool = Field(default=True)
+    admin_username: Optional[str] = Field(default=None)
+    admin_password: Optional[str] = Field(default=None)  # dev-only fallback
+    admin_password_hash: Optional[str] = Field(default=None)  # preferred (pbkdf2_sha256$...)
     # OIDC / SSO (optional; enables cookie-based auth for the web console)
     oidc_issuer: Optional[str] = Field(default=None)
     oidc_client_id: Optional[str] = Field(default=None)
@@ -75,6 +84,10 @@ class Config(BaseModel):
     def oidc_enabled(self) -> bool:
         return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
 
+    @property
+    def jwt_enabled(self) -> bool:
+        return bool(self.jwt_secret and self.admin_username and (self.admin_password_hash or self.admin_password))
+
 
 def load_config() -> Config:
     """
@@ -87,6 +100,19 @@ def load_config() -> Config:
     redis_url = os.environ.get("TASKSGODZILLA_REDIS_URL")
     log_level = os.environ.get("TASKSGODZILLA_LOG_LEVEL", "INFO")
     webhook_token = os.environ.get("TASKSGODZILLA_WEBHOOK_TOKEN")
+    jwt_secret = os.environ.get("TASKSGODZILLA_JWT_SECRET")
+    jwt_issuer = os.environ.get("TASKSGODZILLA_JWT_ISSUER", "tasksgodzilla")
+    jwt_access_ttl_seconds = int(os.environ.get("TASKSGODZILLA_JWT_ACCESS_TTL_SECONDS", str(60 * 15)))
+    jwt_refresh_ttl_seconds = int(os.environ.get("TASKSGODZILLA_JWT_REFRESH_TTL_SECONDS", str(60 * 60 * 24 * 14)))
+    jwt_refresh_rotate = os.environ.get("TASKSGODZILLA_JWT_REFRESH_ROTATE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    admin_username = os.environ.get("TASKSGODZILLA_ADMIN_USERNAME")
+    admin_password = os.environ.get("TASKSGODZILLA_ADMIN_PASSWORD")
+    admin_password_hash = os.environ.get("TASKSGODZILLA_ADMIN_PASSWORD_HASH")
     oidc_issuer = os.environ.get("TASKSGODZILLA_OIDC_ISSUER")
     oidc_client_id = os.environ.get("TASKSGODZILLA_OIDC_CLIENT_ID")
     oidc_client_secret = os.environ.get("TASKSGODZILLA_OIDC_CLIENT_SECRET")
@@ -140,6 +166,14 @@ def load_config() -> Config:
         redis_url=redis_url,
         log_level=log_level,
         webhook_token=webhook_token,
+        jwt_secret=jwt_secret,
+        jwt_issuer=jwt_issuer,
+        jwt_access_ttl_seconds=jwt_access_ttl_seconds,
+        jwt_refresh_ttl_seconds=jwt_refresh_ttl_seconds,
+        jwt_refresh_rotate=jwt_refresh_rotate,
+        admin_username=admin_username,
+        admin_password=admin_password,
+        admin_password_hash=admin_password_hash,
         oidc_issuer=oidc_issuer,
         oidc_client_id=oidc_client_id,
         oidc_client_secret=oidc_client_secret,

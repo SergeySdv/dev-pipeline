@@ -91,19 +91,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const settings = useSettingsSnapshot();
   const visible = useDocumentVisible();
   const pollEnabled = settings.polling.enabled && (!settings.polling.disableInBackground || visible);
-  const { data: authState } = useQuery({
-    queryKey: ['auth', 'me'],
+  const { data: authStatus } = useQuery({
+    queryKey: ['auth', 'status'],
     queryFn: async () => {
-      const resp = await fetch(`${apiBase}/auth/me`, { credentials: 'include' });
-      if (resp.status === 401) return { enabled: true, user: null } as const;
-      if (!resp.ok) throw new Error(`auth/me failed: ${resp.status}`);
-      return (await resp.json()) as { enabled: boolean; user: { name?: string; email?: string } | null };
+      const resp = await fetch(`${apiBase}/auth/status`, { credentials: 'include' });
+      if (!resp.ok) return { mode: 'open', authenticated: false, user: null } as const;
+      return (await resp.json()) as { mode: string; authenticated: boolean; user: any };
     },
-    staleTime: 30_000,
+    staleTime: 10_000,
     retry: 0,
   });
-  const me = authState?.user ?? null;
-  const oidcEnabled = authState?.enabled ?? false;
+  const authMode = authStatus?.mode ?? 'open';
+  const authed = Boolean(authStatus?.authenticated);
+  const me = (authStatus?.user ?? null) as { name?: string; email?: string; username?: string } | null;
 
   const events = useQuery({
     queryKey: ['ops', 'events', 'recent', 'inbox'],
@@ -468,11 +468,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </Dialog.Content>
                 </Dialog.Portal>
               </Dialog.Root>
-              {me ? (
+              {authed && me ? (
                 <div className="rounded-md border border-border bg-bg-muted px-3 py-2 text-xs text-fg">
-                  {me.name || me.email || 'User'}
+                  {me.name || me.email || me.username || 'User'}
                 </div>
-              ) : oidcEnabled ? (
+              ) : authMode === 'oidc' ? (
                 <a
                   className="rounded-md border border-border bg-bg-muted px-3 py-2 text-xs text-fg hover:bg-bg-panel"
                   href={`${apiBase}/auth/login?next=${encodeURIComponent(
@@ -481,6 +481,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   Sign in
                 </a>
+              ) : authMode === 'jwt' ? (
+                <Link
+                  className="rounded-md border border-border bg-bg-muted px-3 py-2 text-xs text-fg hover:bg-bg-panel"
+                  to="/login"
+                  search={{ next: typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/dashboard' }}
+                >
+                  Sign in
+                </Link>
               ) : (
                 <div className="rounded-md border border-border bg-bg-muted px-3 py-2 text-xs text-fg-muted">
                   Auth: disabled

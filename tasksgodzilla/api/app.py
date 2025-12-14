@@ -30,6 +30,7 @@ from tasksgodzilla.health import check_db
 from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, SPEC_META_KEY, protocol_spec_hash
 from tasksgodzilla.run_registry import RunRegistry
 from tasksgodzilla.services import OrchestratorService, OnboardingService, CodeMachineService, ClarificationsService
+from tasksgodzilla.services.auth import AuthPrincipal, AuthService
 from tasksgodzilla.services.policy import (
     PolicyService,
     validate_policy_override_definition,
@@ -256,8 +257,21 @@ def require_auth(
             user = None
         if user:
             return
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # Backward compatible admin/service token (still allowed when set).
+    # JWT auth (username/password login)
+    if getattr(config, "jwt_enabled", False):
+        token = None
+        if credentials is not None and credentials.scheme.lower() == "bearer":
+            token = credentials.credentials
+        if not token:
+            token = request.cookies.get("tgz_access")
+        principal = AuthService(config=config).verify_access_token(token or "")
+        if principal:
+            return
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Backward compatible admin/service token.
     token = getattr(config, "api_token", None)
     if token:
         if credentials is None or credentials.scheme.lower() != "bearer" or credentials.credentials != token:
@@ -265,8 +279,6 @@ def require_auth(
         return
 
     # No token configured: allow unauthenticated API access only when OIDC is not enabled.
-    if getattr(config, "oidc_enabled", False):
-        raise HTTPException(status_code=401, detail="Unauthorized")
     return
 
 
@@ -637,6 +649,11 @@ async def auth_login(request: Request, next: Optional[str] = None):
     config = request.app.state.config  # type: ignore[attr-defined]
     oauth = getattr(request.app.state, "oauth", None)  # type: ignore[attr-defined]
     if not getattr(config, "oidc_enabled", False):
+        # Back-compat: older consoles may still point at /auth/login. If JWT is enabled,
+        # redirect to the console's login route instead of returning 404.
+        if getattr(config, "jwt_enabled", False):
+            next_url = next or "/console/"
+            return RedirectResponse(url=f"/console/login?next={quote(next_url, safe='')}")
         raise HTTPException(status_code=404, detail="OIDC not configured")
     if oauth is None:
         raise HTTPException(status_code=500, detail="OIDC client not initialized")
@@ -681,24 +698,179 @@ async def auth_callback(request: Request):
 @app.get("/auth/me")
 def auth_me(request: Request):
     config = request.app.state.config  # type: ignore[attr-defined]
-    if not getattr(config, "oidc_enabled", False):
-        return JSONResponse(content={"enabled": False, "user": None})
-    try:
-        user = getattr(request, "session", {}).get("user")
-    except Exception:
-        user = None
-    if not user:
+    if getattr(config, "oidc_enabled", False):
+        try:
+            user = getattr(request, "session", {}).get("user")
+        except Exception:
+            user = None
+        if not user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return JSONResponse(content={"enabled": True, "mode": "oidc", "user": user})
+    if getattr(config, "jwt_enabled", False):
+        principal = AuthService(config=config).verify_access_token(request.cookies.get("tgz_access") or "")
+        if not principal:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return JSONResponse(content={"enabled": True, "mode": "jwt", "user": {"username": principal.username}})
+    if getattr(config, "api_token", None):
+        # Token mode has no browser session; callers must use Authorization header.
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return JSONResponse(content={"enabled": True, "user": user})
+    return JSONResponse(content={"enabled": False, "mode": "open", "user": None})
+
+
+@app.get("/auth/status")
+def auth_status(request: Request):
+    """
+    Lightweight auth mode probe for the web console.
+    - If OIDC is enabled: console should use /auth/login + cookie session.
+    - If api_token is set (and OIDC disabled): console may use /auth/token to set a cookie session.
+    - If neither is enabled: API is open.
+    """
+    config = request.app.state.config  # type: ignore[attr-defined]
+    auth = AuthService(config=config)
+    mode = auth.mode()
+    user = None
+    authenticated = False
+    if mode == "oidc":
+        try:
+            user = getattr(request, "session", {}).get("user")
+        except Exception:
+            user = None
+        authenticated = bool(user)
+    elif mode == "jwt":
+        principal = auth.verify_access_token(request.cookies.get("tgz_access") or "")
+        authenticated = principal is not None
+        if principal:
+            user = {"username": principal.username}
+    return JSONResponse(
+        content={
+            "mode": mode,
+            "authenticated": authenticated,
+            "user": user,
+        }
+    )
+
+@app.post("/auth/login")
+def jwt_login(request: Request, username: str = Body(embed=True), password: str = Body(embed=True)):
+    config = request.app.state.config  # type: ignore[attr-defined]
+    if getattr(config, "oidc_enabled", False) or not getattr(config, "jwt_enabled", False):
+        raise HTTPException(status_code=404, detail="JWT login not available")
+    auth = AuthService(config=config)
+    if not auth.verify_admin_password(username, password):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    principal = AuthPrincipal(subject="admin", username=username)
+    access_token = auth.issue_access_token(principal)
+    refresh_jti = uuid.uuid4().hex
+    refresh_token = auth.issue_refresh_token(principal, jti=refresh_jti)
+    resp = JSONResponse(
+        content={
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": int(getattr(config, "jwt_access_ttl_seconds", 0) or 0),
+            "refresh_expires_in": int(getattr(config, "jwt_refresh_ttl_seconds", 0) or 0),
+        }
+    )
+    try:
+        request.session["jwt_refresh_jti"] = refresh_jti
+        request.session["jwt_username"] = username
+    except Exception:  # pragma: no cover - defensive
+        pass
+    resp.set_cookie(
+        key="tgz_access",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=bool(getattr(config, "session_cookie_secure", False)),
+        path="/",
+        max_age=int(getattr(config, "jwt_access_ttl_seconds", 0) or 0) or None,
+    )
+    resp.set_cookie(
+        key="tgz_refresh",
+        value=refresh_token,
+        httponly=True,
+        samesite="lax",
+        secure=bool(getattr(config, "session_cookie_secure", False)),
+        path="/auth",
+        max_age=int(getattr(config, "jwt_refresh_ttl_seconds", 0) or 0) or None,
+    )
+    return resp
+
+
+@app.post("/auth/refresh")
+def jwt_refresh(request: Request):
+    config = request.app.state.config  # type: ignore[attr-defined]
+    if getattr(config, "oidc_enabled", False) or not getattr(config, "jwt_enabled", False):
+        raise HTTPException(status_code=404, detail="JWT refresh not available")
+    refresh_cookie = request.cookies.get("tgz_refresh") or ""
+    auth = AuthService(config=config)
+    principal, jti = auth.verify_refresh_token(refresh_cookie)
+    if not principal or not jti:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Bind refresh token usage to this browser session (best-effort replay mitigation).
+    try:
+        expected_jti = getattr(request, "session", {}).get("jwt_refresh_jti")
+        expected_user = getattr(request, "session", {}).get("jwt_username")
+    except Exception:
+        expected_jti = None
+        expected_user = None
+    if expected_jti and expected_jti != jti:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if expected_user and expected_user != principal.username:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    access_token = auth.issue_access_token(principal)
+    refresh_rotate = bool(getattr(config, "jwt_refresh_rotate", True))
+    new_refresh_token = None
+    new_refresh_jti = None
+    if refresh_rotate:
+        new_refresh_jti = uuid.uuid4().hex
+        new_refresh_token = auth.issue_refresh_token(principal, jti=new_refresh_jti)
+        try:
+            request.session["jwt_refresh_jti"] = new_refresh_jti
+            request.session["jwt_username"] = principal.username
+        except Exception:  # pragma: no cover
+            pass
+
+    resp = JSONResponse(
+        content={
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": int(getattr(config, "jwt_access_ttl_seconds", 0) or 0),
+            "refresh_rotated": bool(new_refresh_token),
+        }
+    )
+    resp.set_cookie(
+        key="tgz_access",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=bool(getattr(config, "session_cookie_secure", False)),
+        path="/",
+        max_age=int(getattr(config, "jwt_access_ttl_seconds", 0) or 0) or None,
+    )
+    if new_refresh_token:
+        resp.set_cookie(
+            key="tgz_refresh",
+            value=new_refresh_token,
+            httponly=True,
+            samesite="lax",
+            secure=bool(getattr(config, "session_cookie_secure", False)),
+            path="/auth",
+            max_age=int(getattr(config, "jwt_refresh_ttl_seconds", 0) or 0) or None,
+        )
+    return resp
 
 
 @app.post("/auth/logout")
 def auth_logout(request: Request):
+    # Clear JWT cookie (if present)
+    resp = JSONResponse(content={"ok": True})
+    resp.delete_cookie(key="tgz_access", path="/")
+    resp.delete_cookie(key="tgz_refresh", path="/auth")
     try:
         request.session.clear()
     except Exception:
         pass
-    return JSONResponse(content={"ok": True})
+    return resp
 
 
 @app.get("/")

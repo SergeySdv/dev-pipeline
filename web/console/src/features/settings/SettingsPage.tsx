@@ -16,6 +16,7 @@ const tabs = [
 export function SettingsPage() {
   const search = useSearch({ from: '/settings' });
   const activeTab = search.tab ?? 'profile';
+  const next = search.next;
   const apiBaseFromEnv = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 
   const [settings, setSettings] = React.useState<AppSettings>(() => loadSettings());
@@ -27,15 +28,15 @@ export function SettingsPage() {
     queryKey: ['auth', 'me'],
     queryFn: async () => {
       const resp = await fetch(`${apiBaseFromEnv}/auth/me`, { credentials: 'include' });
-      if (resp.status === 401) return { enabled: true, user: null } as const;
+      if (resp.status === 401) return { enabled: true, mode: 'unknown', user: null } as const;
       if (!resp.ok) throw new Error(`auth/me failed: ${resp.status}`);
-      return (await resp.json()) as { enabled: boolean; user: { name?: string; email?: string } | null };
+      return (await resp.json()) as { enabled: boolean; mode?: string; user: { name?: string; email?: string; username?: string } | null };
     },
     staleTime: 30_000,
     retry: 0,
   });
 
-  const oidcEnabled = authState?.enabled ?? false;
+  const oidcEnabled = authState?.mode === 'oidc';
   const user = authState?.user ?? null;
 
   const { data: health } = useQuery({
@@ -58,7 +59,17 @@ export function SettingsPage() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Settings</h1>
-        <div className="text-xs text-fg-muted">API: {health?.status ?? '...'}</div>
+        <div className="flex items-center gap-3">
+          {next && (
+            <Link
+              to={next}
+              className="rounded-md border border-border bg-bg-muted px-3 py-1.5 text-xs hover:bg-bg-panel"
+            >
+              Back
+            </Link>
+          )}
+          <div className="text-xs text-fg-muted">API: {health?.status ?? '...'}</div>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 rounded-md border border-border bg-bg-panel p-2">
