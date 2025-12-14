@@ -37,7 +37,7 @@ class OnboardingService:
     - Clone or validate project repositories
     - Ensure starter assets (prompts, CI scripts, docs)
     - Configure git identity and remotes
-    - Run Codex discovery for automatic workflow generation
+    - Run Codex or Opencode discovery for automatic workflow generation
     - Generate onboarding clarification questions
     - Handle blocking vs non-blocking onboarding flows
     
@@ -47,7 +47,7 @@ class OnboardingService:
     3. Ensure starter assets (prompts/, docs/, scripts/ci/)
     4. Configure git identity (user.name, user.email)
     5. Configure git remote (SSH vs HTTPS)
-    6. Run Codex discovery (optional, generates docs/workflows)
+    6. Run Codex or Opencode discovery (optional, generates docs/workflows)
     7. Present clarification questions (CI provider, models, etc.)
     8. Mark setup as complete or blocked pending clarifications
     
