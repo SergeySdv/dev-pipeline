@@ -309,7 +309,7 @@ step = db.create_step_run(
     step_name='01-test-step',
     step_type='codex',
     status=StepStatus.PENDING,
-    model='gpt-5.1-high',
+    model='zai-coding-plan/glm-4.6',
     engine_id='codex',
     summary='Test step for E2E',
 )

@@ -49,7 +49,7 @@ class Config(BaseModel):
     decompose_model: Optional[str] = Field(default=None)
     exec_model: Optional[str] = Field(default=None)
     qa_model: Optional[str] = Field(default=None)
-    default_engine_id: str = Field(default="codex")
+    default_engine_id: str = Field(default="opencode")
 
     max_tokens_per_step: Optional[int] = Field(default=None)
     max_tokens_per_protocol: Optional[int] = Field(default=None)
@@ -128,7 +128,7 @@ def load_config() -> Config:
     decompose_model = os.environ.get("PROTOCOL_DECOMPOSE_MODEL")
     exec_model = os.environ.get("PROTOCOL_EXEC_MODEL")
     qa_model = os.environ.get("PROTOCOL_QA_MODEL")
-    default_engine_id = os.environ.get("TASKSGODZILLA_DEFAULT_ENGINE_ID", "codex")
+    default_engine_id = os.environ.get("TASKSGODZILLA_DEFAULT_ENGINE_ID", "opencode")
     max_tokens_per_step = os.environ.get("TASKSGODZILLA_MAX_TOKENS_PER_STEP")
     max_tokens_per_protocol = os.environ.get("TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL")
     token_budget_mode = os.environ.get("TASKSGODZILLA_TOKEN_BUDGET_MODE", "strict")

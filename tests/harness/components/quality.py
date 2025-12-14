@@ -210,7 +210,7 @@ Provide your assessment in markdown format.
                     qa_result = run_quality_check(
                         protocol_root=protocol_root,
                         step_file=step_file,
-                        model="gpt-5.1-codex-max",
+                        model="zai-coding-plan/glm-4.6",
                         prompt_file=prompt_file,
                         sandbox="read-only",
                         report_file=None,  # Use default location
@@ -567,7 +567,7 @@ NEEDS_REVIEW
                         qa_result = run_quality_check(
                             protocol_root=protocol_root,
                             step_file=invalid_step,
-                            model="gpt-5.1-codex-max",
+                            model="zai-coding-plan/glm-4.6",
                             prompt_file=None,  # No prompt file
                             sandbox="read-only",
                             report_file=None,

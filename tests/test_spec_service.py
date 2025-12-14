@@ -135,7 +135,7 @@ def test_get_step_spec_returns_entry(tmp_path):
     # Create a spec
     spec = {
         "steps": [
-            {"name": "step-1", "description": "First step", "model": "gpt-5.1-high"},
+            {"name": "step-1", "description": "First step", "model": "zai-coding-plan/glm-4.6"},
             {"name": "step-2", "description": "Second step"},
         ]
     }
@@ -147,7 +147,7 @@ def test_get_step_spec_returns_entry(tmp_path):
     step_spec = service.get_step_spec(run.id, "step-1")
     assert step_spec is not None
     assert step_spec["name"] == "step-1"
-    assert step_spec["model"] == "gpt-5.1-high"
+    assert step_spec["model"] == "zai-coding-plan/glm-4.6"
     
     # Get non-existent step
     missing = service.get_step_spec(run.id, "step-99")

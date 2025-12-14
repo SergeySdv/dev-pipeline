@@ -44,7 +44,7 @@ def run_discovery(repo_root: Path, model: Optional[str], skip: bool) -> None:
     if skip:
         log.info("Skipping Codex discovery (--skip-discovery).")
         return
-    discovery_model = model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
+    discovery_model = model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "zai-coding-plan/glm-4.6")
     try:
         run_codex_discovery(repo_root, discovery_model, use_pipeline=True)
     except FileNotFoundError as exc:
@@ -106,8 +106,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", help="Project name (default: derived from git URL/path).")
     parser.add_argument("--base-branch", default="main", help="Base branch name (default: main).")
     parser.add_argument("--ci-provider", choices=["github", "gitlab"], default=None, help="CI provider hint.")
-    parser.add_argument("--default-models", help='JSON string of default models, e.g. {"planning":"gpt-5.1-high"}.')
-    parser.add_argument("--discovery-model", help="Model for discovery (default PROTOCOL_DISCOVERY_MODEL or gpt-5.1-codex-max).")
+    parser.add_argument("--default-models", help='JSON string of default models, e.g. {"planning":"zai-coding-plan/glm-4.6"}.')
+    parser.add_argument(
+        "--discovery-model",
+        help="Model for discovery (default PROTOCOL_DISCOVERY_MODEL or zai-coding-plan/glm-4.6).",
+    )
     parser.add_argument("--skip-discovery", action="store_true", help="Skip Codex repository discovery.")
     return parser.parse_args()
 

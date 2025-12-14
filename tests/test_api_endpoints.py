@@ -41,7 +41,7 @@ def test_api_projects_protocols_steps_end_to_end(
                     "git_url": "git@example.com/demo.git",
                     "base_branch": "main",
                     "ci_provider": "github",
-                    "default_models": {"planning": "gpt-5.1-high"},
+                    "default_models": {"planning": "zai-coding-plan/glm-4.6"},
                 },
             ).json()
             project_id = proj["id"]

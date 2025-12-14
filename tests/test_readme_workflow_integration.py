@@ -53,9 +53,9 @@ class ReadmeWorkflowIntegrationTest(unittest.TestCase):
 
     def test_protocol_pipeline_creates_worktree_and_plan(self) -> None:
         env = os.environ.copy()
-        env.setdefault("PROTOCOL_PLANNING_MODEL", "gpt-5.1-codex-max")
-        env.setdefault("PROTOCOL_DECOMPOSE_MODEL", "gpt-5.1-codex-max")
-        env.setdefault("PROTOCOL_EXEC_MODEL", "gpt-5.1-codex-max")
+        env.setdefault("PROTOCOL_PLANNING_MODEL", "zai-coding-plan/glm-4.6")
+        env.setdefault("PROTOCOL_DECOMPOSE_MODEL", "zai-coding-plan/glm-4.6")
+        env.setdefault("PROTOCOL_EXEC_MODEL", "zai-coding-plan/glm-4.6")
 
         cmd = [
             sys.executable,

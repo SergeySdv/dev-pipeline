@@ -119,7 +119,7 @@ export function PolicyForm({
         <textarea
           value={formData.policy_overrides}
           onChange={(e) => setFormData(prev => ({ ...prev, policy_overrides: e.target.value }))}
-          placeholder='{"defaults": {"models": {"exec": "codex-5.1-max"}}}'
+          placeholder='{"defaults": {"models": {"exec": "zai-coding-plan/glm-4.6"}}}'
           className="w-full h-32 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-mono"
         />
       </FormField>

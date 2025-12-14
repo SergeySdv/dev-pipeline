@@ -12,9 +12,9 @@
 - Typecheck: `scripts/ci/typecheck.sh` (compileall + import smoke for config, API app, and CLIs).
 - Tests: `scripts/ci/test.sh` (`pytest -q --disable-warnings --maxfail=1` with temp SQLite and a real Redis URL). API locally: `.venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010`; worker: `.venv/bin/python scripts/rq_worker.py`.
 - Build: `scripts/ci/build.sh` (`docker build -t tasksgodzilla-ci .`; falls back to `docker-compose config -q` if Docker is absent). Full stack: `docker-compose up --build`.
-- Codex discovery helpers:
-  - Multi-pass discovery pipeline (recommended): `python scripts/discovery_pipeline.py --model gpt-5.1-codex-max --repo-root <repo> --artifacts inventory,architecture,api_reference,ci_notes`.
-  - Legacy single-pass bootstrap: `python scripts/codex_ci_bootstrap.py --model gpt-5.1-codex-max --prompt-file prompts/repo-discovery.prompt.md --repo-root <repo>` (streams output and writes `<repo>/codex-discovery.log`).
+- Discovery helpers (default model: `zai-coding-plan/glm-4.6`):
+ - Multi-pass discovery pipeline (recommended): `python scripts/discovery_pipeline.py --engine opencode --model zai-coding-plan/glm-4.6 --repo-root <repo> --artifacts inventory,architecture,api_reference,ci_notes`.
+ - Legacy single-pass bootstrap (Codex CLI): `python scripts/codex_ci_bootstrap.py --model zai-coding-plan/glm-4.6 --prompt-file prompts/repo-discovery.prompt.md --repo-root <repo>` (streams output and writes `<repo>/codex-discovery.log`).
 
 ## Coding Style & Naming Conventions
 - Python 3.12, PEP8/black-like formatting with 4-space indents; prefer explicit imports and type hints.

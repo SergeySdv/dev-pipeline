@@ -74,7 +74,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     proj_create.add_argument("--git-url", required=True, help="Git URL or local path")
     proj_create.add_argument("--base-branch", default="main")
     proj_create.add_argument("--ci-provider", default=None)
-    proj_create.add_argument("--default-models", default=None, help='JSON string, e.g. {"planning":"gpt-5.1-high"}')
+    proj_create.add_argument(
+        "--default-models",
+        default=None,
+        help='JSON string, e.g. {"planning":"zai-coding-plan/glm-4.6"}',
+    )
 
     proj_show = proj_sub.add_parser("show", help="Show a project")
     proj_show.add_argument("project_id", type=int)

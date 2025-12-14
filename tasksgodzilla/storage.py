@@ -115,10 +115,10 @@ TEAM_STANDARD_POLICY_PACK: dict[str, Any] = {
     },
     "defaults": {
         "models": {
-            "planning": "gpt-5.1-high",
-            "decompose": "gpt-5.1-high",
-            "exec": "gpt-5.1-codex-max",
-            "qa": "gpt-5.1-codex-max",
+            "planning": "zai-coding-plan/glm-4.6",
+            "decompose": "zai-coding-plan/glm-4.6",
+            "exec": "zai-coding-plan/glm-4.6",
+            "qa": "zai-coding-plan/glm-4.6",
         },
         "qa": {"policy": "full", "auto_after_exec": False, "auto_on_ci": True},
         "ci": {
@@ -176,10 +176,10 @@ ENTERPRISE_COMPLIANCE_POLICY_PACK: dict[str, Any] = {
     },
     "defaults": {
         "models": {
-            "planning": "gpt-5.1-high",
-            "decompose": "gpt-5.1-high",
-            "exec": "gpt-5.1-codex-max",
-            "qa": "gpt-5.1-codex-max",
+            "planning": "zai-coding-plan/glm-4.6",
+            "decompose": "zai-coding-plan/glm-4.6",
+            "exec": "zai-coding-plan/glm-4.6",
+            "qa": "zai-coding-plan/glm-4.6",
         },
         "qa": {"policy": "full", "auto_after_exec": False, "auto_on_ci": True},
         "ci": {

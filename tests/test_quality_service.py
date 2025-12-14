@@ -41,7 +41,7 @@ def test_evaluate_step_calls_run_quality_check(tmp_path, monkeypatch):
     
     # Mock the config
     mock_config = Mock()
-    mock_config.qa_model = "codex-5.1-max"
+    mock_config.qa_model = "zai-coding-plan/glm-4.6"
     mock_config.max_tokens_per_step = 100000
     mock_config.max_tokens_per_protocol = 500000
     mock_config.token_budget_mode = "warn"
@@ -64,7 +64,7 @@ def test_evaluate_step_calls_run_quality_check(tmp_path, monkeypatch):
         call_args = mock_qa.call_args
         assert call_args[1]["protocol_root"] == protocol_root
         assert call_args[1]["step_file"] == protocol_root / "step-1.md"
-        assert call_args[1]["model"] == "codex-5.1-max"
+        assert call_args[1]["model"] == "zai-coding-plan/glm-4.6"
         assert call_args[1]["sandbox"] == "read-only"
 
 

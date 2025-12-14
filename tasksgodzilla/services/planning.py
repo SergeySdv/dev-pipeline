@@ -216,7 +216,7 @@ class PlanningService:
             (project.default_models or {}).get("planning")
             or config.planning_model
             or registry.get(engine_id).metadata.default_model
-            or "gpt-5.1-codex-max"
+            or "zai-coding-plan/glm-4.6"
         )
         protocol_root = worktree / ".protocols" / run.protocol_name
         workspace_hint = worktree
@@ -395,7 +395,7 @@ class PlanningService:
             metadata={
                 "steps_created": created_steps,
                 "protocol_root": str(protocol_root),
-                "models": {"planning": planning_model, "decompose": config.decompose_model or "gpt-5.1-codex-max"},
+                "models": {"planning": planning_model, "decompose": config.decompose_model or "zai-coding-plan/glm-4.6"},
                 "prompt_versions": {"planning": prompt_version(planning_prompt_path)},
                 "estimated_tokens": {"planning": planning_tokens, "decompose": decompose_tokens},
                 "spec_hash": protocol_spec_hash(spec) if spec else None,
@@ -607,7 +607,7 @@ class PlanningService:
         decompose_model = (
             (project.default_models.get("decompose") if project.default_models else None)
             or config.decompose_model
-            or "gpt-5.1-codex-max"
+            or "zai-coding-plan/glm-4.6"
         )
         step_files = step_markdown_files(protocol_root)
         skip_simple = config.skip_simple_decompose
@@ -623,7 +623,8 @@ class PlanningService:
                 job_id=job_id,
             )
 
-        engine = registry.get_default()
+        engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
+        engine = registry.get(engine_id)
         for step_file in step_files:
             step_content = step_file.read_text(encoding="utf-8")
             if skip_simple and is_simple_step(step_content):

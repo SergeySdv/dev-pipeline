@@ -42,7 +42,7 @@ def test_policy_packs_seed_and_project_effective_policy(
                 json={
                     "policy_pack_key": "default",
                     "policy_pack_version": "1.0",
-                    "policy_overrides": {"defaults": {"models": {"exec": "codex-5.1-max"}}},
+                    "policy_overrides": {"defaults": {"models": {"exec": "zai-coding-plan/glm-4.6"}}},
                     "policy_repo_local_enabled": False,
                 },
             )
@@ -51,14 +51,14 @@ def test_policy_packs_seed_and_project_effective_policy(
             assert body["project_id"] == project_id
             assert body["policy_pack_key"] == "default"
             assert body["policy_pack_version"] == "1.0"
-            assert body["policy_overrides"]["defaults"]["models"]["exec"] == "codex-5.1-max"
+            assert body["policy_overrides"]["defaults"]["models"]["exec"] == "zai-coding-plan/glm-4.6"
             assert body["policy_effective_hash"]
 
             eff = client.get(f"/projects/{project_id}/policy/effective").json()
             assert eff["project_id"] == project_id
             assert eff["policy_pack_key"] == "default"
             assert eff["policy_pack_version"] == "1.0"
-            assert eff["policy"]["defaults"]["models"]["exec"] == "codex-5.1-max"
+            assert eff["policy"]["defaults"]["models"]["exec"] == "zai-coding-plan/glm-4.6"
             assert isinstance(eff["policy_effective_hash"], str) and len(eff["policy_effective_hash"]) >= 32
 
             findings = client.get(f"/projects/{project_id}/policy/findings").json()

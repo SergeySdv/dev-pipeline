@@ -61,15 +61,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--planning-model",
-        help="Model for planning step (default from PROTOCOL_PLANNING_MODEL or gpt-5.1-high).",
+        help="Model for planning step (default from PROTOCOL_PLANNING_MODEL or zai-coding-plan/glm-4.6).",
     )
     parser.add_argument(
         "--decompose-model",
-        help="Model for step decomposition (default from PROTOCOL_DECOMPOSE_MODEL or gpt-5.1).",
+        help="Model for step decomposition (default from PROTOCOL_DECOMPOSE_MODEL or zai-coding-plan/glm-4.6).",
     )
     parser.add_argument(
         "--exec-model",
-        help="Model for executing a specific step (default from PROTOCOL_EXEC_MODEL or codex-5.1-max-xhigh).",
+        help="Model for executing a specific step (default from PROTOCOL_EXEC_MODEL or zai-coding-plan/glm-4.6).",
     )
     parser.add_argument(
         "--run-step",

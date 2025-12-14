@@ -95,10 +95,11 @@ class QualityService:
         import shutil
         from tasksgodzilla.config import load_config
         from tasksgodzilla.domain import ProtocolStatus
-        from tasksgodzilla.engine_resolver import resolve_prompt_and_outputs
+        from tasksgodzilla.engine_resolver import ResolvedOutputs, StepResolution, resolve_prompt_and_outputs
         from tasksgodzilla.engines import registry
         from tasksgodzilla.errors import CodexCommandError, TasksGodzillaError
         from tasksgodzilla.logging import get_logger, log_extra
+        from tasksgodzilla.prompt_utils import prompt_version
         from tasksgodzilla.spec import PROTOCOL_SPEC_KEY, get_step_spec, protocol_spec_hash
         from tasksgodzilla.services.budget import BudgetService
         from tasksgodzilla.services.git import GitService
@@ -296,7 +297,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
             or (project.default_models.get("qa") if project.default_models else None)
             or config.qa_model
             or registry.get(qa_engine_id).metadata.default_model
-            or "codex-5.1-max"
+            or "zai-coding-plan/glm-4.6"
         )
 
         try:
@@ -329,13 +330,35 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
             _qa_stub("codex unavailable")
             return
 
-        resolution = resolve_prompt_and_outputs(
-            step_spec or {},
-            protocol_root=protocol_root,
-            workspace_root=worktree,
-            protocol_spec=protocol_spec,
-            default_engine_id=qa_engine_id,
-        )
+        # Legacy StepSpecs (and many tests) may omit prompt_ref/prompt/file. QA can still run
+        # because the PromptService builds QA context from the protocol files directly.
+        prompt_ref = (step_spec or {}).get("prompt_ref") or (step_spec or {}).get("prompt") or (step_spec or {}).get("file")
+        if not prompt_ref:
+            prompt_path = (protocol_root / step.step_name).resolve()
+            resolution = StepResolution(
+                engine_id=qa_engine_id,
+                model=qa_model,
+                prompt_path=prompt_path,
+                prompt_text="",
+                prompt_version=prompt_version(prompt_path),
+                workdir=worktree,
+                protocol_root=protocol_root,
+                workspace_root=worktree,
+                outputs=ResolvedOutputs(protocol=prompt_path, aux={}, raw={}),
+                qa=dict((step_spec or {}).get("qa") or {}),
+                policies=list((step_spec or {}).get("policies") or []),
+                spec_hash=spec_hash_val,
+                agent_id=(step_spec or {}).get("agent_id") or (step_spec or {}).get("agent"),
+                step_name=step.step_name,
+            )
+        else:
+            resolution = resolve_prompt_and_outputs(
+                step_spec or {},
+                protocol_root=protocol_root,
+                workspace_root=worktree,
+                protocol_spec=protocol_spec,
+                default_engine_id=qa_engine_id,
+            )
         qa_tokens = budget_service.check_and_track(
             qa_prompt_full, qa_model, "qa", config.token_budget_mode, budget_limit
         )
@@ -507,7 +530,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
         """Run QA for a single step file under the given protocol root."""
         config = load_config()
 
-        model = self.default_model or config.qa_model or "codex-5.1-max"
+        model = self.default_model or config.qa_model or "zai-coding-plan/glm-4.6"
 
         # Best-effort resolution of the workspace root for prompts.
         if protocol_root.parent.name == ".protocols":
@@ -619,7 +642,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
             or (project.default_models.get("qa") if project.default_models else None)
             or config.qa_model
             or registry.get(qa_engine_id).metadata.default_model
-            or "codex-5.1-max"
+            or "zai-coding-plan/glm-4.6"
         )
         
         try:

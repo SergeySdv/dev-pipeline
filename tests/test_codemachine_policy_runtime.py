@@ -205,7 +205,9 @@ def test_handle_quality_applies_loop_policy(monkeypatch, tmp_path) -> None:
         "step_back": 0,  # stays on the same step
         "skip_steps": [],
     }
-    step = db.create_step_run(run.id, 0, "00-setup.md", "setup", StepStatus.NEEDS_QA, model="codex-5.1", policy=[policy])
+    step = db.create_step_run(
+        run.id, 0, "00-setup.md", "setup", StepStatus.NEEDS_QA, model="zai-coding-plan/glm-4.6", policy=[policy]
+    )
 
     class FakeResult:
         def __init__(self) -> None:
@@ -265,7 +267,9 @@ def test_handle_quality_triggers_followup(monkeypatch, tmp_path) -> None:
         "demo protocol",
     )
     trigger_policy = {"module_id": "handoff", "behavior": "trigger", "trigger_agent_id": "qa"}
-    step0 = db.create_step_run(run.id, 0, "00-plan.md", "setup", StepStatus.NEEDS_QA, model="codex-5.1", policy=[trigger_policy])
+    step0 = db.create_step_run(
+        run.id, 0, "00-plan.md", "setup", StepStatus.NEEDS_QA, model="zai-coding-plan/glm-4.6", policy=[trigger_policy]
+    )
     step1 = db.create_step_run(run.id, 1, "01-qa.md", "work", StepStatus.FAILED, model=None)
 
     class FakeResult:
@@ -326,7 +330,9 @@ def test_handle_execute_step_triggers_inline(monkeypatch, tmp_path) -> None:
         "demo protocol",
     )
     trigger_policy = {"module_id": "handoff", "behavior": "trigger", "trigger_agent_id": "qa"}
-    step0 = db.create_step_run(run.id, 0, "00-main.md", "setup", StepStatus.PENDING, model="codex-5.1", policy=[trigger_policy])
+    step0 = db.create_step_run(
+        run.id, 0, "00-main.md", "setup", StepStatus.PENDING, model="zai-coding-plan/glm-4.6", policy=[trigger_policy]
+    )
     step1 = db.create_step_run(run.id, 1, "01-qa.md", "work", StepStatus.FAILED, model=None)
 
     monkeypatch.setattr(execution_service_module.shutil, "which", lambda _: None)
@@ -367,7 +373,9 @@ def test_inline_trigger_depth_guard(monkeypatch, tmp_path) -> None:
         "demo protocol",
     )
     trigger_policy = {"module_id": "handoff", "behavior": "trigger", "trigger_agent_id": "main"}
-    step0 = db.create_step_run(run.id, 0, "00-main.md", "setup", StepStatus.PENDING, model="codex-5.1", policy=[trigger_policy])
+    step0 = db.create_step_run(
+        run.id, 0, "00-main.md", "setup", StepStatus.PENDING, model="zai-coding-plan/glm-4.6", policy=[trigger_policy]
+    )
 
     monkeypatch.setattr(execution_service_module.shutil, "which", lambda _: None)
     monkeypatch.setattr("tasksgodzilla.services.orchestrator.MAX_INLINE_TRIGGER_DEPTH", 1)

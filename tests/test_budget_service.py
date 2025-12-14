@@ -455,7 +455,7 @@ def test_record_usage_protocol_level(service, monkeypatch):
         protocol_run_id=protocol_id,
         step_run_id=None,
         phase="planning",
-        model="gpt-5.1-codex-max",
+        model="zai-coding-plan/glm-4.6",
         prompt_tokens=500,
         completion_tokens=200
     )
@@ -467,7 +467,7 @@ def test_record_usage_protocol_level(service, monkeypatch):
     assert len(service._step_token_usage) == 0
     
     # Verify metrics recorded
-    mock_metrics.assert_called_once_with("planning", "gpt-5.1-codex-max", 700)
+    mock_metrics.assert_called_once_with("planning", "zai-coding-plan/glm-4.6", 700)
 
 
 def test_record_usage_cumulative(service, monkeypatch):
@@ -563,7 +563,7 @@ def test_record_usage_different_models(service, monkeypatch):
         protocol_run_id=protocol_id,
         step_run_id=None,
         phase="planning",
-        model="gpt-5.1-codex-max",
+        model="zai-coding-plan/glm-4.6",
         prompt_tokens=500,
         completion_tokens=200
     )
@@ -573,7 +573,7 @@ def test_record_usage_different_models(service, monkeypatch):
         protocol_run_id=protocol_id,
         step_run_id=10,
         phase="exec",
-        model="codex-5.1-max-xhigh",
+        model="zai-coding-plan/glm-4.6",
         prompt_tokens=300,
         completion_tokens=150
     )
@@ -584,8 +584,8 @@ def test_record_usage_different_models(service, monkeypatch):
     # Verify metrics called with correct models
     assert mock_metrics.call_count == 2
     calls = mock_metrics.call_args_list
-    assert calls[0] == call("planning", "gpt-5.1-codex-max", 700)
-    assert calls[1] == call("exec", "codex-5.1-max-xhigh", 450)
+    assert calls[0] == call("planning", "zai-coding-plan/glm-4.6", 700)
+    assert calls[1] == call("exec", "zai-coding-plan/glm-4.6", 450)
 
 
 def test_record_usage_zero_tokens(service, monkeypatch):

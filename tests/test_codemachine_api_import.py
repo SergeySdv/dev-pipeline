@@ -31,7 +31,7 @@ def test_codemachine_import_inline_creates_steps_and_template(
             config_dir / "main.agents.js",
             """
             export default [
-              { "id": "plan", "promptPath": "prompts/plan.md", "engineId": "codex", "model": "gpt-5.1-high", "moduleId": "iteration-checker" },
+              { "id": "plan", "promptPath": "prompts/plan.md", "engineId": "codex", "model": "zai-coding-plan/glm-4.6", "moduleId": "iteration-checker" },
               { "id": "build", "promptPath": "prompts/build.md", "engineId": "codex" }
             ];
             """,

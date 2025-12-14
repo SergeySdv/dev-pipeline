@@ -39,7 +39,7 @@ def test_onboarding_service_emits_clarifications_without_block(monkeypatch, tmp_
 
     db = Database(tmp_path / "db.sqlite")
     db.init_schema()
-    project = db.create_project("demo", str(repo), "main", "github", {"planning": "gpt-5.1-high"})
+    project = db.create_project("demo", str(repo), "main", "github", {"planning": "zai-coding-plan/glm-4.6"})
     run = db.create_protocol_run(project.id, "setup-test", ProtocolStatus.PENDING, "main", None, None, "setup")
 
     service = OnboardingService(db=db)

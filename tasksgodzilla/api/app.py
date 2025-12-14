@@ -274,7 +274,15 @@ def require_auth(
     # Backward compatible admin/service token.
     token = getattr(config, "api_token", None)
     if token:
-        if credentials is None or credentials.scheme.lower() != "bearer" or credentials.credentials != token:
+        # Allow either:
+        # - Authorization: Bearer <token> (API clients / CI)
+        # - tgz_token cookie (web console "token session" mode)
+        cookie_token = request.cookies.get("tgz_token")
+        bearer_ok = bool(
+            credentials is not None and credentials.scheme.lower() == "bearer" and credentials.credentials == token
+        )
+        cookie_ok = bool(cookie_token and cookie_token == token)
+        if not (bearer_ok or cookie_ok):
             raise HTTPException(status_code=401, detail="Unauthorized")
         return
 
@@ -727,7 +735,7 @@ def auth_status(request: Request):
     """
     config = request.app.state.config  # type: ignore[attr-defined]
     auth = AuthService(config=config)
-    mode = auth.mode()
+    mode = auth.get_mode()
     user = None
     authenticated = False
     if mode == "oidc":
@@ -741,13 +749,50 @@ def auth_status(request: Request):
         authenticated = principal is not None
         if principal:
             user = {"username": principal.username}
+    elif mode == "token":
+        token = getattr(config, "api_token", None)
+        cookie_token = request.cookies.get("tgz_token")
+        authenticated = bool(token and cookie_token and cookie_token == token)
     return JSONResponse(
         content={
             "mode": mode,
             "authenticated": authenticated,
             "user": user,
+            "oidc_enabled": bool(getattr(config, "oidc_enabled", False)),
+            "jwt_enabled": bool(getattr(config, "jwt_enabled", False)),
+            "api_token_enabled": bool(getattr(config, "api_token", None)),
+            # Back-compat fields used by older consoles/tests:
+            "token_required": mode == "token",
+            "token_authenticated": authenticated if mode == "token" else False,
         }
     )
+
+
+@app.post("/auth/token")
+def auth_token(request: Request, token: str = Body(embed=True)) -> JSONResponse:
+    """
+    Token-session login for the web console when TASKSGODZILLA_API_TOKEN is set.
+
+    This endpoint sets a cookie so browser clients can authenticate without adding
+    an Authorization header on every request.
+    """
+    config = request.app.state.config  # type: ignore[attr-defined]
+    auth = AuthService(config=config)
+    if auth.get_mode() != "token":
+        raise HTTPException(status_code=404, detail="Token login not available")
+    expected = getattr(config, "api_token", None)
+    if not expected or token != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    resp = JSONResponse(content={"ok": True})
+    resp.set_cookie(
+        key="tgz_token",
+        value=expected,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        max_age=60 * 60 * 24 * 7,
+    )
+    return resp
 
 @app.post("/auth/login")
 def jwt_login(request: Request, username: str = Body(embed=True), password: str = Body(embed=True)):
@@ -758,9 +803,9 @@ def jwt_login(request: Request, username: str = Body(embed=True), password: str 
     if not auth.verify_admin_password(username, password):
         raise HTTPException(status_code=401, detail="Unauthorized")
     principal = AuthPrincipal(subject="admin", username=username)
-    access_token = auth.issue_access_token(principal)
+    access_token = auth.create_access_token(principal)
     refresh_jti = uuid.uuid4().hex
-    refresh_token = auth.issue_refresh_token(principal, jti=refresh_jti)
+    refresh_token = auth.create_refresh_token(principal, jti=refresh_jti)
     resp = JSONResponse(
         content={
             "access_token": access_token,

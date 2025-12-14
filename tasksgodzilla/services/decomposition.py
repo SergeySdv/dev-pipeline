@@ -44,7 +44,7 @@ class DecompositionService:
         # Decompose all steps in a protocol
         result = decomposition_service.decompose_protocol(
             protocol_root=Path("/path/to/.protocols/feature-123"),
-            model="gpt-5.1-high",
+            model="zai-coding-plan/glm-4.6",
             skip_simple=True
         )
         
@@ -74,7 +74,7 @@ class DecompositionService:
         plan_md_path = protocol_root / "plan.md"
         plan_md = plan_md_path.read_text(encoding="utf-8") if plan_md_path.is_file() else ""
 
-        decompose_model = model or config.decompose_model or "gpt-5.1-high"
+        decompose_model = model or config.decompose_model or "zai-coding-plan/glm-4.6"
         budget_limit = config.max_tokens_per_step or config.max_tokens_per_protocol
         effective_skip_simple = skip_simple if skip_simple is not None else getattr(config, "skip_simple_decompose", False)
 

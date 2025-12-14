@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TasksGodzilla Hobby Edition Alpha 0.1 is an agent-driven development orchestrator that implements the TasksGodzilla_Ilyas_Edition_1.0 protocol. It provides protocol-based workflow automation using Codex CLI, with FastAPI orchestration, Redis/RQ queuing, and comprehensive services architecture.
+TasksGodzilla Hobby Edition Alpha 0.1 is an agent-driven development orchestrator that implements the TasksGodzilla_Ilyas_Edition_1.0 protocol. It provides protocol-based workflow automation (default model: `zai-coding-plan/glm-4.6`), with FastAPI orchestration, Redis/RQ queuing, and comprehensive services architecture.
 
 ## Development Commands
 
@@ -174,7 +174,7 @@ python3 scripts/protocol_pipeline.py \
 python3 scripts/quality_orchestrator.py \
   --protocol-root ../worktrees/NNNN-task/.protocols/NNNN-task \
   --step-file 01-some-step.md \
-  --model codex-5.1-max
+ --model zai-coding-plan/glm-4.6
 ```
 
 ## Architecture
@@ -244,12 +244,12 @@ Migrations: `alembic/` (use `make migrate` to apply)
 - `TASKSGODZILLA_ENV`: Environment name (default: `local`)
 - `TASKSGODZILLA_API_TOKEN`: Optional bearer token for API auth
 - `TASKSGODZILLA_WEBHOOK_TOKEN`: Optional shared secret for webhooks
-- `TASKSGODZILLA_DEFAULT_ENGINE_ID`: Default execution engine (default: `codex`)
+- `TASKSGODZILLA_DEFAULT_ENGINE_ID`: Default execution engine (default: `opencode`)
 
 ### Execution Models
-- `PROTOCOL_PLANNING_MODEL`: Planning model (default: `gpt-5.1-high`)
-- `PROTOCOL_DECOMPOSE_MODEL`: Decomposition model (default: `gpt-5.1-high`)
-- `PROTOCOL_EXEC_MODEL`: Execution model (default: `codex-5.1-max-xhigh`)
+- `PROTOCOL_PLANNING_MODEL`: Planning model (default: `zai-coding-plan/glm-4.6`)
+- `PROTOCOL_DECOMPOSE_MODEL`: Decomposition model (default: `zai-coding-plan/glm-4.6`)
+- `PROTOCOL_EXEC_MODEL`: Execution model (default: `zai-coding-plan/glm-4.6`)
 - `PROTOCOL_QA_MODEL`: Quality validation model
 
 ### Behavior Flags
@@ -454,7 +454,7 @@ npm test          # run vitest tests
 
 **Example step execution:**
 ```bash
-codex --model codex-5.1-max-xhigh \
+codex --model zai-coding-plan/glm-4.6 \
   --cd ../worktrees/NNNN-task \
   --sandbox workspace-write \
   --ask-for-approval on-request \

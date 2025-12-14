@@ -28,7 +28,7 @@ class TelemetryService:
         # Record token usage
         telemetry_service.observe_tokens(
             phase="exec",
-            model="gpt-5.1-high",
+            model="zai-coding-plan/glm-4.6",
             tokens=5000
         )
     """

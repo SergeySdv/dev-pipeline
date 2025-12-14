@@ -173,9 +173,9 @@ class CodexScriptTests(unittest.TestCase):
 
             with mock.patch.object(project_setup.shutil, "which", return_value="/usr/bin/codex"), \
                 mock.patch.object(codex, "run_process", side_effect=fake_run_process):
-                project_setup.run_codex_discovery(repo_root, "gpt-5.1-codex-max")
+                project_setup.run_codex_discovery(repo_root, "zai-coding-plan/glm-4.6")
 
-            self.assertEqual(captured["cmd"][:4], ["codex", "exec", "-m", "gpt-5.1-codex-max"])
+            self.assertEqual(captured["cmd"][:4], ["codex", "exec", "-m", "zai-coding-plan/glm-4.6"])
             self.assertEqual(captured["cwd"], repo_root)
             self.assertEqual(captured["input_text"], "hello discovery")
 

@@ -47,8 +47,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=config.qa_model or os.environ.get("PROTOCOL_QA_MODEL", "codex-5.1-max"),
-        help="Codex model to use (default: config, env PROTOCOL_QA_MODEL, or codex-5.1-max).",
+        default=config.qa_model or os.environ.get("PROTOCOL_QA_MODEL", "zai-coding-plan/glm-4.6"),
+        help="Model to use (default: config, env PROTOCOL_QA_MODEL, or zai-coding-plan/glm-4.6).",
     )
     parser.add_argument(
         "--prompt-file",

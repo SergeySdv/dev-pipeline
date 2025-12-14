@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--discovery-model",
-        help="Model for discovery (default from PROTOCOL_DISCOVERY_MODEL or gpt-5.1-codex-max).",
+        help="Model for discovery (default from PROTOCOL_DISCOVERY_MODEL or zai-coding-plan/glm-4.6).",
     )
     return parser.parse_args()
 
@@ -113,7 +113,7 @@ def main() -> None:
         ensure_assets(repo_root)
 
         if not args.skip_discovery:
-            discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
+            discovery_model = args.discovery_model or os.environ.get("PROTOCOL_DISCOVERY_MODEL", "zai-coding-plan/glm-4.6")
             try:
                 run_codex_discovery(repo_root, discovery_model, use_pipeline=True)
             except Exception as exc:  # pragma: no cover - best effort

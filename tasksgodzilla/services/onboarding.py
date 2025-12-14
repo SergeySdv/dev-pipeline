@@ -136,7 +136,7 @@ class OnboardingService:
         self.db.update_project_local_path(project.id, str(repo_root))
 
         if run_discovery_pass:
-            model = discovery_model or "gpt-5.1-codex-max"
+            model = discovery_model or "zai-coding-plan/glm-4.6"
             try:
                 run_codex_discovery(repo_root, model=model, use_pipeline=True)
             except Exception as exc:  # pragma: no cover - best effort
@@ -372,7 +372,7 @@ class OnboardingService:
         Trigger Codex discovery automatically during onboarding. Emits events so
         console/TUI/CLI can show progress regardless of success/failure/skip.
         """
-        model = os.environ.get("PROTOCOL_DISCOVERY_MODEL", "gpt-5.1-codex-max")
+        model = os.environ.get("PROTOCOL_DISCOVERY_MODEL", "zai-coding-plan/glm-4.6")
         timeout_env = os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "15")
         try:
             timeout_seconds = int(timeout_env)
@@ -476,8 +476,8 @@ def _build_clarifications(project, repo_path: Path):
     """
     recommended_ci = project.ci_provider or "github"
     recommended_models = project.default_models or {
-        "planning": "gpt-5.1-high",
-        "exec": "gpt-5.1-codex-max",
+        "planning": "zai-coding-plan/glm-4.6",
+        "exec": "zai-coding-plan/glm-4.6",
     }
     prefer_ssh = prefer_github_ssh()
     git_user = os.environ.get("TASKSGODZILLA_GIT_USER") or ""

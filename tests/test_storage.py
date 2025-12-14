@@ -17,7 +17,7 @@ def test_storage_round_trip_creates_records() -> None:
             git_url="git@example.com/demo.git",
             base_branch="main",
             ci_provider="github",
-            default_models={"planning": "gpt-5.1-high"},
+            default_models={"planning": "zai-coding-plan/glm-4.6"},
         )
         assert project.id > 0
 

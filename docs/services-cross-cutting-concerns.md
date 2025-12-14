@@ -170,7 +170,7 @@ budget_mode = config.token_budget_mode
 from tasksgodzilla.services.platform.telemetry import TelemetryService
 
 telemetry = TelemetryService()
-telemetry.observe_tokens("exec", "gpt-5.1-high", 5000)
+telemetry.observe_tokens("exec", "zai-coding-plan/glm-4.6", 5000)
 ```
 
 **Metrics Collected**:
@@ -290,7 +290,7 @@ budget_service = BudgetService()
 # Check and track
 estimated = budget_service.check_and_track(
     prompt_text="...",
-    model="gpt-5.1-high",
+    model="zai-coding-plan/glm-4.6",
     phase="exec",
     budget_mode="strict",
     max_tokens=10000
@@ -308,7 +308,7 @@ budget_service.record_usage(
     protocol_run_id=123,
     step_run_id=456,
     phase="exec",
-    model="gpt-5.1-high",
+    model="zai-coding-plan/glm-4.6",
     prompt_tokens=1000,
     completion_tokens=500
 )

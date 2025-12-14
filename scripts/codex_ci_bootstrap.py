@@ -151,7 +151,7 @@ def main() -> int:
     if args.engine == "opencode":
         model = args.model or "zai-coding-plan/glm-4.6"
     else:
-        model = args.model or "gpt-5.1-codex-max"
+        model = args.model or "zai-coding-plan/glm-4.6"
 
     if args.engine == "codex" and not shutil.which("codex"):
         print("[codex-ci-bootstrap] codex CLI not found in PATH", file=sys.stderr)

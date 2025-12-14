@@ -197,7 +197,7 @@ export function PolicyPacksPage() {
                 value={formData.pack}
                 onChange={(e) => setFormData({ ...formData, pack: e.target.value })}
                 className="w-full h-32 rounded-md border border-border bg-bg-muted px-3 py-2 text-sm font-mono"
-                placeholder='{"defaults": {"models": {"exec": "codex-5.1-max"}}}'
+                placeholder='{"defaults": {"models": {"exec": "zai-coding-plan/glm-4.6"}}}'
                 required
               />
             </div>

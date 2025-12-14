@@ -18,7 +18,7 @@ class AuthService:
     def __init__(self, *, config: Config):
         self._config = config
 
-    def mode(self) -> str:
+    def get_mode(self) -> str:
         if self._config.oidc_enabled:
             return "oidc"
         if self._config.jwt_enabled:
@@ -43,7 +43,7 @@ class AuthService:
             return False
         return secrets.compare_digest(self._config.admin_password, password)
 
-    def issue_access_token(self, principal: AuthPrincipal) -> str:
+    def create_access_token(self, principal: AuthPrincipal) -> str:
         if not self._config.jwt_secret:
             raise ValueError("JWT secret not configured")
         now = int(time.time())
@@ -60,7 +60,7 @@ class AuthService:
         }
         return encode_hs256(payload, self._config.jwt_secret)
 
-    def issue_refresh_token(self, principal: AuthPrincipal, *, jti: str) -> str:
+    def create_refresh_token(self, principal: AuthPrincipal, *, jti: str) -> str:
         if not self._config.jwt_secret:
             raise ValueError("JWT secret not configured")
         now = int(time.time())

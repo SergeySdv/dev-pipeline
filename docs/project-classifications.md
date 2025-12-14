@@ -41,10 +41,10 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
     },
     "defaults": {
       "models": {
-        "planning": "gpt-5.1-high",
-        "decompose": "gpt-5.1-high",
-        "exec": "gpt-5.1-codex-max",
-        "qa": "gpt-5.1-codex-max"
+        "planning": "zai-coding-plan/glm-4.6",
+        "decompose": "zai-coding-plan/glm-4.6",
+        "exec": "zai-coding-plan/glm-4.6",
+        "qa": "zai-coding-plan/glm-4.6"
       },
       "qa": {
         "policy": "full",
@@ -120,10 +120,10 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
     },
     "defaults": {
       "models": {
-        "planning": "gpt-5.1-high",
-        "decompose": "gpt-5.1-high",
-        "exec": "gpt-5.1-codex-max",
-        "qa": "gpt-5.1-codex-max"
+        "planning": "zai-coding-plan/glm-4.6",
+        "decompose": "zai-coding-plan/glm-4.6",
+        "exec": "zai-coding-plan/glm-4.6",
+        "qa": "zai-coding-plan/glm-4.6"
       },
       "qa": {
         "policy": "light",
@@ -236,10 +236,10 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
     },
     "defaults": {
       "models": {
-        "planning": "gpt-5.1-high",
-        "decompose": "gpt-5.1-high",
-        "exec": "gpt-5.1-codex-max",
-        "qa": "gpt-5.1-codex-max"
+        "planning": "zai-coding-plan/glm-4.6",
+        "decompose": "zai-coding-plan/glm-4.6",
+        "exec": "zai-coding-plan/glm-4.6",
+        "qa": "zai-coding-plan/glm-4.6"
       },
       "qa": {
         "policy": "full",
@@ -317,10 +317,10 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
     },
     "defaults": {
       "models": {
-        "planning": "gpt-5.1-high",
-        "decompose": "gpt-5.1-high",
-        "exec": "gpt-5.1-codex-max",
-        "qa": "gpt-5.1-codex-max"
+        "planning": "zai-coding-plan/glm-4.6",
+        "decompose": "zai-coding-plan/glm-4.6",
+        "exec": "zai-coding-plan/glm-4.6",
+        "qa": "zai-coding-plan/glm-4.6"
       },
       "qa": {
         "policy": "full",
@@ -428,10 +428,10 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
     },
     "defaults": {
       "models": {
-        "planning": "gpt-5.1-high",
-        "decompose": "gpt-5.1-high",
-        "exec": "gpt-5.1-codex-max",
-        "qa": "gpt-5.1-codex-max"
+        "planning": "zai-coding-plan/glm-4.6",
+        "decompose": "zai-coding-plan/glm-4.6",
+        "exec": "zai-coding-plan/glm-4.6",
+        "qa": "zai-coding-plan/glm-4.6"
       },
       "qa": {
         "policy": "full",

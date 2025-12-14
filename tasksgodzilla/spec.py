@@ -248,13 +248,18 @@ def get_step_spec(template_config: Optional[dict], step_name: str) -> Optional[D
     """
     if not template_config:
         return None
+    # Preferred: normalized spec stored under PROTOCOL_SPEC_KEY.
+    # Back-compat: some callers/tests pass a ProtocolSpec-like dict directly (with top-level "steps").
     spec = template_config.get(PROTOCOL_SPEC_KEY) if isinstance(template_config, dict) else None
-    if not spec:
+    if not spec and isinstance(template_config, dict) and isinstance(template_config.get("steps"), list):
+        spec = template_config
+    if not spec or not isinstance(spec, dict):
         return None
     steps = spec.get("steps") or []
     for step in steps:
-        name = str(step.get("name") or step.get("id") or "")
-        if name == step_name:
+        name = str(step.get("name") or "")
+        sid = str(step.get("id") or "")
+        if name == step_name or sid == step_name:
             return step
     return None
 

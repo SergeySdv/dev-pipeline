@@ -62,7 +62,7 @@ def run_codex_discovery(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Codex discovery to bootstrap CI.")
-    parser.add_argument("--model", default="gpt-5.1-codex-max")
+    parser.add_argument("--model", default="zai-coding-plan/glm-4.6")
     parser.add_argument("--prompt-file", default="prompts/repo-discovery.prompt.md")
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--sandbox", default="workspace-write")

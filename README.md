@@ -32,7 +32,7 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
 4. Execute steps with Codex:
 
    ```bash
-   codex exec -m gpt-5.1-codex-max --cd worktrees/NNNN-<task> \
+   codex exec -m zai-coding-plan/glm-4.6 --cd worktrees/NNNN-<task> \
      --sandbox workspace-write --skip-git-repo-check \
      "Follow .protocols/NNNN-<task>/plan.md and the current step file to implement the next step."
    ```
@@ -45,7 +45,7 @@ This repo is a lightweight starter kit for agent-driven development using the Ta
    python3 scripts/quality_orchestrator.py \
      --protocol-root worktrees/NNNN-<task>/.protocols/NNNN-<task> \
      --step-file 01-some-step.md \
-     --model gpt-5.1-codex-max
+     --model zai-coding-plan/glm-4.6
    ```
 
    Quality validation uses **QualityService** to evaluate step outputs and determine pass/fail verdicts.
@@ -77,7 +77,7 @@ Redis is required for orchestration; set `TASKSGODZILLA_REDIS_URL` (e.g., `redis
 ## Git onboarding & branch controls
 
 - Projects accept an optional `local_path` and persist it. Onboarding uses that path when it already exists; otherwise it clones into `TASKSGODZILLA_PROJECTS_ROOT` (default `projects/<project_id>/<repo_name>`) and records the resolved path so every project has an isolated workspace. Opt out of cloning with `TASKSGODZILLA_AUTO_CLONE=false`.
-- After resolving the workspace, onboarding runs the multi-pass Codex discovery pipeline by default (inventory → architecture → API reference → CI notes). Prompts: `prompts/discovery-*.prompt.md`; model from `PROTOCOL_DISCOVERY_MODEL` or default `gpt-5.1-codex-max`. Discovery writes `tasksgodzilla/*.md` plus `codex-discovery.log` in the repo and emits `setup_discovery_*` events.
+- After resolving the workspace, onboarding runs the multi-pass discovery pipeline by default (inventory → architecture → API reference → CI notes). Prompts: `prompts/discovery-*.prompt.md`; model from `PROTOCOL_DISCOVERY_MODEL` or default `zai-coding-plan/glm-4.6`. Discovery writes `tasksgodzilla/*.md` plus `codex-discovery.log` in the repo and emits `setup_discovery_*` events.
 - If no worker is running, you can trigger setup inline from the console (**Run inline now**) or via `POST /projects/{id}/onboarding/actions/start` with `{"inline": true}`.
 - Onboarding auto-configures `origin` (rewrites to GitHub SSH when `TASKSGODZILLA_GH_SSH=true`) and can set git identity from `TASKSGODZILLA_GIT_USER` / `TASKSGODZILLA_GIT_EMAIL`.
 - Clarifications are emitted as a `setup_clarifications` event with recommended CI/models/branch policies; set `TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS=true` to block until acknowledged in the console/TUI.
@@ -164,7 +164,7 @@ python -m tasksgodzilla.cli.tui           # panel-based dashboard with keybindin
 - `scripts/project_setup.py` — prepares a repo with starter docs/prompts/CI/schema/pipeline if they’re missing.
 - `prompts/discovery-*.prompt.md` — multi-pass Codex discovery prompts (inventory, architecture, API reference, CI notes).
 - `scripts/spec_audit.py` — audit/backfill ProtocolSpec for existing runs (`--project-id/--protocol-id/--backfill`).
-- `scripts/codex_ci_bootstrap.py` — legacy single-pass discovery helper (default model `gpt-5.1-codex-max`) that runs `prompts/repo-discovery.prompt.md` and writes `codex-discovery.log`.
+- `scripts/codex_ci_bootstrap.py` — legacy single-pass discovery helper (default model `zai-coding-plan/glm-4.6`) that runs `prompts/repo-discovery.prompt.md` and writes `codex-discovery.log`.
 - `scripts/quality_orchestrator.py` — Codex QA validator that checks a protocol step and writes a report.
 - `Makefile` — helper targets: `deps` (install orchestrator deps in `.venv`), `migrate` (alembic upgrade), `orchestrator-setup` (deps + migrate).
 - `tasksgodzilla/services/` — **Services layer** (primary integration point): Orchestrator, Execution, Quality, Onboarding, Spec, Prompt, Decomposition, Git, Budget, CodeMachine services, plus platform services (Queue, Storage, Telemetry, Engines).
@@ -353,15 +353,15 @@ The script will:
 
 - Ask for base branch, short task name, and description.
 - Compute the next protocol number `NNNN` and create a worktree/branch `NNNN-[Task-short-name]`.
-- Call Codex (default models `gpt-5.1-high` for planning, `gpt-5.1-high` for decomposition) to:
+- Call Codex (default model `zai-coding-plan/glm-4.6` for planning/decomposition unless overridden) to:
   - Generate `.protocols/NNNN-[Task-short-name]/plan.md`, `context.md`, `log.md`, and step files.
   - Decompose each step into smaller Sub-tasks.
 
 Environment overrides:
 
-- `PROTOCOL_PLANNING_MODEL` (default `gpt-5.1-high`)
-- `PROTOCOL_DECOMPOSE_MODEL` (default `gpt-5.1-high`)
-- `PROTOCOL_EXEC_MODEL` (default `gpt-5.1-codex-max`)
+- `PROTOCOL_PLANNING_MODEL` (default `zai-coding-plan/glm-4.6`)
+- `PROTOCOL_DECOMPOSE_MODEL` (default `zai-coding-plan/glm-4.6`)
+- `PROTOCOL_EXEC_MODEL` (default `zai-coding-plan/glm-4.6`)
 - `TASKSGODZILLA_CODEX_TIMEOUT_SECONDS` (default 180) to raise Codex CLI timeouts; work steps default to 1200s via spec.
 - `TASKSGODZILLA_STEP_STUCK_SECONDS` (default 3600) watchdog to fail stuck RUNNING steps on next enqueue/retry.
 
@@ -417,7 +417,7 @@ The script will:
 You can also run Codex CI bootstrap directly later:
 
 ```bash
-  python3 scripts/codex_ci_bootstrap.py --model gpt-5.1-codex-max
+  python3 scripts/codex_ci_bootstrap.py --model zai-coding-plan/glm-4.6
 ```
 
 ## QA orchestrator (Codex CLI)
@@ -428,7 +428,7 @@ Validate a protocol step with Codex and stop on failure:
 python3 scripts/quality_orchestrator.py \
   --protocol-root worktrees/NNNN-[Task-short-name]/.protocols/NNNN-[Task-short-name] \
   --step-file 01-some-step.md \
-  --model gpt-5.1-codex-max
+  --model zai-coding-plan/glm-4.6
 ```
 
 Behavior:

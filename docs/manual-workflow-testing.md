@@ -166,7 +166,7 @@ Steps:
 cd worktrees/0001-add-logging
 
 # Execute with Codex
-codex exec -m gpt-5.1-codex-max \
+codex exec -m zai-coding-plan/glm-4.6 \
   --cd worktrees/0001-add-logging \
   --sandbox workspace-write \
   --skip-git-repo-check \
@@ -179,7 +179,7 @@ codex exec -m gpt-5.1-codex-max \
 python scripts/quality_orchestrator.py \
   --protocol-root worktrees/0001-add-logging/.protocols/0001-add-logging \
   --step-file 01-implement-logger.md \
-  --model gpt-5.1-codex-max
+  --model zai-coding-plan/glm-4.6
 ```
 
 **Expected output:**

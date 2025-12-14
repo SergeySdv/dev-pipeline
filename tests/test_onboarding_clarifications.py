@@ -21,7 +21,7 @@ def test_onboarding_emits_clarifications_without_block(monkeypatch, tmp_path) ->
     monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
     db = Database(tmp_path / "db.sqlite")
     db.init_schema()
-    project = db.create_project("demo", str(repo), "main", "github", {"planning": "gpt-5.1-high"})
+    project = db.create_project("demo", str(repo), "main", "github", {"planning": "zai-coding-plan/glm-4.6"})
     run = db.create_protocol_run(project.id, "setup-test", ProtocolStatus.PENDING, "main", None, None, "setup")
 
     onboarding_worker.handle_project_setup(project.id, db, protocol_run_id=run.id)

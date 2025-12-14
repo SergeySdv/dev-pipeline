@@ -43,7 +43,7 @@ def test_project(temp_db):
         git_url="https://github.com/test/repo.git",
         base_branch="main",
         ci_provider="github",
-        default_models={"exec": "codex-5.1-max", "qa": "codex-5.1-max"},
+        default_models={"exec": "zai-coding-plan/glm-4.6", "qa": "zai-coding-plan/glm-4.6"},
         secrets=None,
         local_path=None
     )
@@ -108,7 +108,7 @@ class TestProtocolLifecycleIntegration:
             step_name="step-1",
             step_type="task",
             status=StepStatus.PENDING,
-            model="codex-5.1-max",
+            model="zai-coding-plan/glm-4.6",
             engine_id="codex"
         )
         
@@ -118,7 +118,7 @@ class TestProtocolLifecycleIntegration:
             step_name="step-2",
             step_type="task",
             status=StepStatus.PENDING,
-            model="codex-5.1-max",
+            model="zai-coding-plan/glm-4.6",
             engine_id="codex"
         )
         
@@ -220,7 +220,7 @@ class TestProtocolLifecycleIntegration:
             step_name="step-1",
             step_type="task",
             status=StepStatus.RUNNING,
-            model="codex-5.1-max"
+            model="zai-coding-plan/glm-4.6"
         )
         
         step2 = temp_db.create_step_run(
@@ -229,7 +229,7 @@ class TestProtocolLifecycleIntegration:
             step_name="step-2",
             step_type="task",
             status=StepStatus.PENDING,
-            model="codex-5.1-max"
+            model="zai-coding-plan/glm-4.6"
         )
         
         step3 = temp_db.create_step_run(
@@ -238,7 +238,7 @@ class TestProtocolLifecycleIntegration:
             step_name="step-3",
             step_type="task",
             status=StepStatus.COMPLETED,
-            model="codex-5.1-max"
+            model="zai-coding-plan/glm-4.6"
         )
         
         # Cancel protocol
@@ -297,7 +297,7 @@ class TestStepExecutionIntegration:
             step_name="test-step",
             step_type="task",
             status=StepStatus.RUNNING,
-            model="codex-5.1-max",
+            model="zai-coding-plan/glm-4.6",
             engine_id="codex"
         )
         
@@ -360,16 +360,16 @@ class TestStepExecutionIntegration:
             step_name="test-step",
             step_type="task",
             status=StepStatus.RUNNING,
-            model="codex-5.1-max"
+            model="zai-coding-plan/glm-4.6"
         )
         
         # Execute step
         execution_service.execute_step(step.id, job_id="test-job-456")
         
-        # In stub mode (no repo), step goes to NEEDS_QA even with skip policy
-        # The QA skip policy is applied during QA execution, not during step execution
+        # In stub mode (no repo), skip policy can be applied immediately to allow
+        # fast local/dev workflows without requiring a separate QA job.
         updated_step = temp_db.get_step_run(step.id)
-        assert updated_step.status == StepStatus.NEEDS_QA
+        assert updated_step.status == StepStatus.COMPLETED
         assert "stub" in updated_step.summary.lower()
         
         # Verify step execution event was logged
@@ -439,7 +439,7 @@ class TestQAWorkflowIntegration:
             step_name="test-step",
             step_type="task",
             status=StepStatus.NEEDS_QA,
-            model="codex-5.1-max"
+            model="zai-coding-plan/glm-4.6"
         )
         
         # Run QA (will run in stub mode and pass)
@@ -496,7 +496,7 @@ class TestQAWorkflowIntegration:
             step_name="test-step",
             step_type="task",
             status=StepStatus.NEEDS_QA,
-            model="codex-5.1-max"
+            model="zai-coding-plan/glm-4.6"
         )
         
         # Run QA

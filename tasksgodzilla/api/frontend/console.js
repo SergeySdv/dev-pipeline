@@ -60,6 +60,8 @@ const MODEL_PRICING = {
   "gpt-5.1": 0.002,
   "gpt-5.1-codex-max": 0.02,
   "gpt-5.1-codex-mini": 0.01,
+  // Default model for this repo (OpenCode): price depends on your provider.
+  "zai-coding-plan/glm-4.6": 0,
   // Legacy aliases kept for older runs.
   "codex-5.1-max-xhigh": 0.02,
   "codex-5.1-max": 0.01,
@@ -2549,9 +2551,9 @@ function buildSuggestedPolicyOverrides(packKey) {
   const base = {
     defaults: {
       models: {
-        planning: "gpt-5.1-high",
-        exec: "gpt-5.1-codex-max",
-        qa: "codex-5.1-max",
+        planning: "zai-coding-plan/glm-4.6",
+        exec: "zai-coding-plan/glm-4.6",
+        qa: "zai-coding-plan/glm-4.6",
       },
     },
   };

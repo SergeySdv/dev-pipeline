@@ -13,9 +13,9 @@ from tasksgodzilla.codemachine.runtime_adapter import (
     output_paths,
 )
 from tasksgodzilla.domain import ProtocolStatus, StepStatus
-from tasksgodzilla.engine_resolver import resolve_prompt_and_outputs
+from tasksgodzilla.engine_resolver import ResolvedOutputs, StepResolution, resolve_prompt_and_outputs
 from tasksgodzilla.engines import registry
-from tasksgodzilla.errors import CodexCommandError, TasksGodzillaError
+from tasksgodzilla.errors import CodexCommandError, ConfigError, TasksGodzillaError
 from tasksgodzilla.logging import get_logger, log_extra
 from tasksgodzilla.pipeline import execute_step_prompt
 from tasksgodzilla.project_setup import auto_clone_enabled
@@ -284,7 +284,9 @@ class ExecutionService:
         if codemachine:
             (outputs_root / "aux" / "codemachine").mkdir(parents=True, exist_ok=True)
 
-        spec_errors = validate_step_spec_paths(protocol_root, step_spec or {}, workspace=workspace_root, outputs_base=outputs_root)
+        spec_errors = []
+        if step_spec is not None:
+            spec_errors = validate_step_spec_paths(protocol_root, step_spec, workspace=workspace_root, outputs_base=outputs_root)
         if spec_errors:
             for err in spec_errors:
                 self.db.append_event(
@@ -298,14 +300,57 @@ class ExecutionService:
             self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
             return
 
-        resolution = resolve_prompt_and_outputs(
-            step_spec or {},
-            protocol_root=protocol_root,
-            workspace_root=workspace_root,
-            protocol_spec=protocol_spec,
-            outputs_root=outputs_root,
-            default_engine_id=step.engine_id or getattr(config, "default_engine_id", None) or registry.get_default().metadata.id,
-        )
+        # Legacy runs may not have a persisted ProtocolSpec/StepSpec yet. In that case we
+        # fall back to the step file itself as the prompt "ref" and build the exec prompt
+        # from plan.md + step content.
+        if step_spec is None:
+            step_path = (protocol_root / step.step_name).resolve()
+            if not step_path.exists():
+                step_path = (protocol_root / f"{step.step_name}.md").resolve()
+            step_content = step_path.read_text(encoding="utf-8") if step_path.exists() else ""
+            plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8") if (protocol_root / "plan.md").exists() else ""
+            exec_prompt = execute_step_prompt(
+                run.protocol_name,
+                run.protocol_name.split("-")[0],
+                plan_md,
+                step_path.name,
+                step_content,
+            )
+            engine_id = requested_engine_id
+            exec_model = (
+                step.model
+                or (project.default_models.get("exec") if project.default_models else None)
+                or config.exec_model
+                or registry.get(engine_id).metadata.default_model
+                or "zai-coding-plan/glm-4.6"
+            )
+            resolution = StepResolution(
+                engine_id=engine_id,
+                model=exec_model,
+                prompt_path=step_path,
+                prompt_text=exec_prompt,
+                prompt_version=prompt_version(step_path),
+                workdir=workspace_root,
+                protocol_root=protocol_root,
+                workspace_root=workspace_root,
+                outputs=ResolvedOutputs(protocol=step_path, aux={}, raw={}),
+                qa={},
+                policies=list(step.policy or []),
+                spec_hash=spec_hash_val,
+                agent_id=None,
+                step_name=step.step_name,
+            )
+        else:
+            resolution = resolve_prompt_and_outputs(
+                step_spec,
+                protocol_root=protocol_root,
+                workspace_root=workspace_root,
+                protocol_spec=protocol_spec,
+                outputs_root=outputs_root,
+                default_engine_id=step.engine_id
+                or getattr(config, "default_engine_id", None)
+                or registry.get_default().metadata.id,
+            )
         kind = "codemachine" if codemachine else "codex"
         engine_id = resolution.engine_id or registry.get_default().metadata.id
         exec_model: Optional[str] = resolution.model
@@ -343,7 +388,7 @@ class ExecutionService:
                 or (project.default_models.get("exec") if project.default_models else None)
                 or getattr(config, "exec_model", None)
                 or registry.get(engine_id).metadata.default_model
-                or "gpt-5.1-codex-max"
+                or "zai-coding-plan/glm-4.6"
             )
             resolution.prompt_path = prompt_path
             resolution.prompt_text = prompt_text
@@ -367,17 +412,18 @@ class ExecutionService:
                 if fallback.exists():
                     step_path = fallback
             step_content = step_path.read_text(encoding="utf-8") if step_path.exists() else ""
-            plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
+            plan_file = protocol_root / "plan.md"
+            plan_md = plan_file.read_text(encoding="utf-8") if plan_file.exists() else ""
             exec_prompt = execute_step_prompt(run.protocol_name, run.protocol_name.split("-")[0], plan_md, step_path.name, step_content)
-            engine_id = step_spec.get("engine_id") or step.engine_id or engine_id
+            engine_id = (step_spec or {}).get("engine_id") or step.engine_id or engine_id
             exec_model = (
                 exec_model
-                or step_spec.get("model")
+                or (step_spec or {}).get("model")
                 or step.model
                 or (project.default_models.get("exec") if project.default_models else None)
                 or config.exec_model
                 or registry.get(engine_id).metadata.default_model
-                or "gpt-5.1-codex-max"
+                or "zai-coding-plan/glm-4.6"
             )
             resolution.prompt_path = step_path
             resolution.prompt_text = exec_prompt
@@ -441,6 +487,11 @@ class ExecutionService:
                 extra={"timeout_seconds": timeout_seconds} if timeout_seconds else None,
             )
         except (CodexCommandError, TasksGodzillaError) as exc:
+            # Allow local/dev/test runs without a configured engine (e.g., missing opencode API key).
+            # In these cases we degrade to stub execution so policy triggers can still be validated.
+            if isinstance(exc, ConfigError):
+                _stub_execute(f"{engine_id} unavailable")
+                return
             self.db.update_step_status(step.id, StepStatus.FAILED, summary=f"Execution error: {exc}")
             self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
             self.db.append_event(

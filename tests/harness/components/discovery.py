@@ -182,7 +182,7 @@ class DiscoveryTestComponent:
                 try:
                     # Detect project type and use appropriate prompt
                     project_type = self._detect_project_type(temp_project_path)
-                    run_codex_discovery(temp_project_path, "gpt-5.1-codex-max", use_pipeline=True)
+                    run_codex_discovery(temp_project_path, "zai-coding-plan/glm-4.6", use_pipeline=True)
                     
                     # Check if discovery artifacts were created
                     discovery_files = list(temp_project_path.glob("**/.codex-*"))
@@ -273,7 +273,7 @@ class DiscoveryTestComponent:
                         projects_tested += 1
                         # Detect project type and use appropriate prompt
                         project_type = self._detect_project_type(project_path)
-                        run_codex_discovery(project_path, "gpt-5.1-codex-max", use_pipeline=True)
+                        run_codex_discovery(project_path, "zai-coding-plan/glm-4.6", use_pipeline=True)
                         
                         # Check for any discovery output
                         discovery_files = list(project_path.glob("**/.codex-*"))
@@ -338,7 +338,7 @@ class DiscoveryTestComponent:
                     
                     # Try to run discovery - should handle gracefully
                     try:
-                        run_codex_discovery(test_project, "gpt-5.1-codex-max")
+                        run_codex_discovery(test_project, "zai-coding-plan/glm-4.6")
                         # If it doesn't raise an exception, that's graceful handling
                         return TestResult(
                             component="discovery",
@@ -512,7 +512,7 @@ class DiscoveryTestComponent:
                             try:
                                 run_codex_discovery(
                                     project_path,
-                                    "gpt-5.1-codex-max",
+                                    "zai-coding-plan/glm-4.6",
                                     use_pipeline=True,
                                 )
                             finally:
@@ -628,7 +628,7 @@ class DiscoveryTestComponent:
                 start_time = time.time()
                 run_codex_discovery(
                     test_project_path,
-                    "gpt-5.1-codex-max",
+                    "zai-coding-plan/glm-4.6",
                     use_pipeline=True,
                 )
                 duration = time.time() - start_time
@@ -905,7 +905,7 @@ This is a test project with various file types.
                 # Try discovery on this mixed project
                 try:
                     # Run discovery via multi-pass pipeline.
-                    run_codex_discovery(mixed_project, "gpt-5.1-codex-max", use_pipeline=True)
+                    run_codex_discovery(mixed_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                     
                     # Check if discovery handled the various file types
                     discovery_files = list(mixed_project.glob("**/.codex-*"))
@@ -1064,7 +1064,7 @@ This is a test project with various file types.
             (empty_project / "README.md").write_text("# Empty Project")
             
             try:
-                run_codex_discovery(empty_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(empty_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 edge_case_results["empty_project"] = True
             except Exception:
                 pass
@@ -1075,7 +1075,7 @@ This is a test project with various file types.
             self._create_large_project_structure(large_project)
             
             try:
-                run_codex_discovery(large_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(large_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 edge_case_results["large_project"] = True
             except Exception:
                 pass
@@ -1087,7 +1087,7 @@ This is a test project with various file types.
             (unusual_project / "src" / "deeply" / "nested" / "structure" / "main.py").write_text("# Deep file")
             
             try:
-                run_codex_discovery(unusual_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(unusual_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 edge_case_results["unusual_structure"] = True
             except Exception:
                 pass
@@ -1150,7 +1150,7 @@ This is a test project with various file types.
             (empty_project / "README.md").write_text("# Empty Project")
             
             try:
-                run_codex_discovery(empty_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(empty_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 edge_case_results["empty_project"] = True
             except Exception:
                 pass
@@ -1162,7 +1162,7 @@ This is a test project with various file types.
             (corrupted_project / "normal.py").write_text("print('hello')")
             
             try:
-                run_codex_discovery(corrupted_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(corrupted_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 edge_case_results["corrupted_files"] = True
             except Exception:
                 pass
@@ -1174,7 +1174,7 @@ This is a test project with various file types.
             (unusual_project / "src" / "deeply" / "nested" / "structure" / "main.py").write_text("# Deep file")
             
             try:
-                run_codex_discovery(unusual_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(unusual_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 edge_case_results["unusual_structure"] = True
             except Exception:
                 pass
@@ -1200,7 +1200,7 @@ This is a test project with various file types.
             signal.alarm(60)
             
             try:
-                run_codex_discovery(project_path, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(project_path, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 return time.time() - start_time
             finally:
                 signal.alarm(0)  # Cancel timeout
@@ -1252,7 +1252,7 @@ This is a test project with various file types.
             start_time = time.time()
             
             try:
-                run_codex_discovery(timeout_project, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(timeout_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 result["handled_gracefully"] = True
                 
             except Exception as e:
@@ -1292,7 +1292,7 @@ This is a test project with various file types.
             
             while attempts < max_attempts:
                 try:
-                    run_codex_discovery(error_project, "gpt-5.1-codex-max", use_pipeline=True)
+                    run_codex_discovery(error_project, "zai-coding-plan/glm-4.6", use_pipeline=True)
                     result["recovered_successfully"] = True
                     break
                 except Exception:
@@ -1341,7 +1341,7 @@ This is a test project with various file types.
             
             # Run discovery inventory
             if self._is_codex_available():
-                run_codex_discovery(test_project_path, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(test_project_path, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 
                 # Check if discovery inventory artifacts were created
                 artifacts = self._find_discovery_artifacts(test_project_path)
@@ -1375,7 +1375,7 @@ This is a test project with various file types.
             shutil.copytree(demo_path, test_project_path)
             
             if self._is_codex_available():
-                run_codex_discovery(test_project_path, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(test_project_path, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 
                 # Test if other components can consume discovery inventory output
                 artifacts = self._find_discovery_artifacts(test_project_path)
@@ -1425,7 +1425,7 @@ This is a test project with various file types.
             
             if self._is_codex_available():
                 # Run discovery inventory
-                run_codex_discovery(test_project_path, "gpt-5.1-codex-max", use_pipeline=True)
+                run_codex_discovery(test_project_path, "zai-coding-plan/glm-4.6", use_pipeline=True)
                 workflow_steps["discovery_run"] = True
                 
                 # Check for inventory artifacts

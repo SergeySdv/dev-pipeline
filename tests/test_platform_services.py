@@ -83,6 +83,6 @@ def test_telemetry_service_observe_tokens():
     service = TelemetryService()
     
     with patch("tasksgodzilla.services.platform.telemetry.metrics") as mock_metrics:
-        service.observe_tokens("planning", "gpt-5.1-high", 1500)
+        service.observe_tokens("planning", "zai-coding-plan/glm-4.6", 1500)
         
-        mock_metrics.observe_tokens.assert_called_once_with("planning", "gpt-5.1-high", 1500)
+        mock_metrics.observe_tokens.assert_called_once_with("planning", "zai-coding-plan/glm-4.6", 1500)

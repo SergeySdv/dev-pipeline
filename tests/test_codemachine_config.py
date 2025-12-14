@@ -18,7 +18,7 @@ def test_load_codemachine_config_with_export_default(tmp_path) -> None:
         config_dir / "main.agents.js",
         """
         export default [
-          { "id": "plan", "name": "Planner", "promptPath": "prompts/plan.md", "engineId": "codex", "model": "gpt-5.1-high" },
+          { "id": "plan", "name": "Planner", "promptPath": "prompts/plan.md", "engineId": "codex", "model": "zai-coding-plan/glm-4.6" },
           { "id": "build", "name": "Builder", "promptPath": "prompts/build.md", "mirrorPath": "prompts/build.mirror.md" }
         ];
         """,
@@ -47,7 +47,7 @@ def test_load_codemachine_config_with_export_default(tmp_path) -> None:
     assert len(cfg.main_agents) == 2
     assert cfg.main_agents[0].id == "plan"
     assert cfg.main_agents[0].engine_id == "codex"
-    assert cfg.main_agents[0].model == "gpt-5.1-high"
+    assert cfg.main_agents[0].model == "zai-coding-plan/glm-4.6"
     assert cfg.main_agents[1].mirror_path == "prompts/build.mirror.md"
 
     assert len(cfg.sub_agents) == 1

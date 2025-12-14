@@ -477,7 +477,9 @@ def run_pipeline(args) -> None:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     planning_output = tmp_dir / "planning.json"
 
-    planning_model = args.planning_model or config.planning_model or os.environ.get("PROTOCOL_PLANNING_MODEL", "gpt-5.1-high")
+    planning_model = args.planning_model or config.planning_model or os.environ.get(
+        "PROTOCOL_PLANNING_MODEL", "zai-coding-plan/glm-4.6"
+    )
     planning_text = planning_prompt(
         protocol_name=protocol_name,
         protocol_number=protocol_number,
@@ -506,7 +508,9 @@ def run_pipeline(args) -> None:
     log.info("protocol_files_ready", extra={**context, "protocol_root": str(protocol_root)})
 
     plan_md = (protocol_root / "plan.md").read_text(encoding="utf-8")
-    decomposition_model = args.decompose_model or config.decompose_model or os.environ.get("PROTOCOL_DECOMPOSE_MODEL", "gpt-5.1-high")
+    decomposition_model = args.decompose_model or config.decompose_model or os.environ.get(
+        "PROTOCOL_DECOMPOSE_MODEL", "zai-coding-plan/glm-4.6"
+    )
     skip_simple = getattr(args, "skip_simple_decompose", False) or getattr(config, "skip_simple_decompose", False)
 
     for step_file in step_markdown_files(protocol_root):
@@ -561,7 +565,7 @@ def run_pipeline(args) -> None:
 
     # Optionally auto-run a specific step
     if args.run_step:
-        exec_model = args.exec_model or config.exec_model or os.environ.get("PROTOCOL_EXEC_MODEL", "gpt-5.1-codex-max")
+        exec_model = args.exec_model or config.exec_model or os.environ.get("PROTOCOL_EXEC_MODEL", "zai-coding-plan/glm-4.6")
         step_path = protocol_root / args.run_step
         if not step_path.is_file():
             log.warning("auto_run_step_missing", extra={**context, "step_file": str(step_path)})

@@ -25,8 +25,16 @@ log = get_logger(__name__)
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run multi-pass discovery and generate artifacts.")
     parser.add_argument("--repo-root", default=".", help="Repository root to analyze.")
-    parser.add_argument("--engine", default=None, help="Engine to use for discovery (codex|opencode). Defaults to TASKSGODZILLA_DEFAULT_ENGINE_ID or codex.")
-    parser.add_argument("--model", default=None, help="Codex model to use (default PROTOCOL_DISCOVERY_MODEL or gpt-5.1-codex-max).")
+    parser.add_argument(
+        "--engine",
+        default=None,
+        help="Engine to use for discovery (codex|opencode). Defaults to TASKSGODZILLA_DEFAULT_ENGINE_ID or opencode.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model to use (default PROTOCOL_DISCOVERY_MODEL or zai-coding-plan/glm-4.6).",
+    )
     parser.add_argument("--sandbox", default="workspace-write", help="Codex sandbox (default: workspace-write).")
     parser.add_argument(
         "--artifacts",
@@ -49,7 +57,7 @@ def main() -> int:
         log.error("repo_root_missing", extra={"repo_root": str(repo_root)})
         return EXIT_RUNTIME_ERROR
 
-    engine_id = args.engine or os.environ.get("PROTOCOL_DISCOVERY_ENGINE") or getattr(config, "default_engine_id", None) or "codex"
+    engine_id = args.engine or os.environ.get("PROTOCOL_DISCOVERY_ENGINE") or getattr(config, "default_engine_id", None) or "opencode"
     env_model = os.environ.get("PROTOCOL_DISCOVERY_MODEL")
     if args.model:
         model = args.model
@@ -61,7 +69,7 @@ def main() -> int:
 
         model = registry.get("opencode").metadata.default_model or "zai-coding-plan/glm-4.6"
     else:
-        model = "gpt-5.1-codex-max"
+        model = "zai-coding-plan/glm-4.6"
     artifacts = [a.strip() for a in args.artifacts.split(",") if a.strip()]
 
     try:
