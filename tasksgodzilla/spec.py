@@ -116,13 +116,16 @@ def infer_step_type_from_name(name: str) -> str:
 
 def build_spec_from_protocol_files(
     protocol_root: Path,
-    default_engine_id: str = "opencode",
+    default_engine_id: Optional[str] = None,
     default_qa_policy: str = "full",
     default_qa_prompt: str = "prompts/quality-validator.prompt.md",
 ) -> Dict[str, Any]:
     """
     Create a ProtocolSpec from Codex-generated step files.
     """
+    if default_engine_id is None:
+        from tasksgodzilla.config import load_config
+        default_engine_id = load_config().default_engine_id
     steps: List[Dict[str, Any]] = []
     step_files = sorted([p for p in protocol_root.glob("*.md") if p.name[0:2].isdigit()])
     for idx, path in enumerate(step_files):

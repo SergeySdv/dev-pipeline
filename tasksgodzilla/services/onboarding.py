@@ -151,20 +151,34 @@ class OnboardingService:
         return repo_root
 
     def _run_discovery_for_workspace(self, repo_root: Path, model: str) -> None:
-        """Run discovery using opencode engine (used by ensure_workspace)."""
+        """Run discovery using configured engine (used by ensure_workspace)."""
+        from tasksgodzilla.config import load_config
         from tasksgodzilla.engines import EngineRequest, registry
         from tasksgodzilla.project_setup import _resolve_prompt
-        import tasksgodzilla.engines_opencode  # noqa: F401 - ensure engine is registered
 
-        # Check opencode availability
-        has_api_key = bool(os.environ.get("TASKSGODZILLA_OPENCODE_API_KEY", "").strip())
-        has_cli = shutil.which("opencode") is not None
-        if not has_api_key and not has_cli:
-            log.warning(
-                "discovery_skipped",
-                extra={"repo_root": str(repo_root), "reason": "opencode API key not set and CLI not available"},
-            )
-            return
+        config = load_config()
+        engine_id = config.engine_defaults.get("discovery", config.default_engine_id)
+
+        # Ensure the appropriate engine module is imported
+        if engine_id == "opencode":
+            import tasksgodzilla.engines_opencode  # noqa: F401
+            has_api_key = bool(os.environ.get("TASKSGODZILLA_OPENCODE_API_KEY", "").strip())
+            has_cli = shutil.which("opencode") is not None
+            if not has_api_key and not has_cli:
+                log.warning(
+                    "discovery_skipped",
+                    extra={"repo_root": str(repo_root), "reason": "opencode API key not set and CLI not available", "engine_id": engine_id},
+                )
+                return
+        else:
+            import tasksgodzilla.engines_codex  # noqa: F401
+            has_cli = shutil.which("codex") is not None
+            if not has_cli:
+                log.warning(
+                    "discovery_skipped",
+                    extra={"repo_root": str(repo_root), "reason": "codex CLI not available", "engine_id": engine_id},
+                )
+                return
 
         stage_map = {
             "inventory": "discovery-inventory.prompt.md",
@@ -173,7 +187,7 @@ class OnboardingService:
             "ci_notes": "discovery-ci-notes.prompt.md",
         }
 
-        engine = registry.get("opencode")
+        engine = registry.get(engine_id)
         timeout_seconds = int(os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "180"))
 
         for stage, prompt_name in stage_map.items():
@@ -199,7 +213,7 @@ class OnboardingService:
             except Exception as exc:
                 log.warning(
                     "discovery_stage_failed",
-                    extra={"stage": stage, "error": str(exc), "repo_root": str(repo_root)},
+                    extra={"stage": stage, "error": str(exc), "repo_root": str(repo_root), "engine_id": engine_id},
                 )
 
 
@@ -421,12 +435,15 @@ class OnboardingService:
 
     def _run_discovery(self, repo_path: Path, protocol_run_id: int) -> None:
         """
-        Trigger discovery automatically during onboarding using the opencode engine.
+        Trigger discovery automatically during onboarding using the configured engine.
         Emits events so console/TUI/CLI can show progress regardless of success/failure/skip.
         """
+        from tasksgodzilla.config import load_config
         from tasksgodzilla.engines import EngineRequest, registry
         from tasksgodzilla.project_setup import _resolve_prompt
-        import tasksgodzilla.engines_opencode  # noqa: F401 - ensure engine is registered
+
+        config = load_config()
+        engine_id = config.engine_defaults.get("discovery", config.default_engine_id)
 
         model = os.environ.get("PROTOCOL_DISCOVERY_MODEL", "zai-coding-plan/glm-4.6")
         timeout_env = os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "180")
@@ -435,17 +452,30 @@ class OnboardingService:
         except Exception:
             timeout_seconds = 180
 
-        # Check opencode availability (API key or CLI)
-        has_api_key = bool(os.environ.get("TASKSGODZILLA_OPENCODE_API_KEY", "").strip())
-        has_cli = shutil.which("opencode") is not None
-        if not has_api_key and not has_cli:
-            self.db.append_event(
-                protocol_run_id,
-                "setup_discovery_skipped",
-                "Discovery skipped: opencode API key not set and CLI not available.",
-                metadata={"path": str(repo_path), "model": model, "engine_id": "opencode"},
-            )
-            return
+        # Check engine availability based on configured engine
+        if engine_id == "opencode":
+            import tasksgodzilla.engines_opencode  # noqa: F401
+            has_api_key = bool(os.environ.get("TASKSGODZILLA_OPENCODE_API_KEY", "").strip())
+            has_cli = shutil.which("opencode") is not None
+            if not has_api_key and not has_cli:
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_discovery_skipped",
+                    "Discovery skipped: opencode API key not set and CLI not available.",
+                    metadata={"path": str(repo_path), "model": model, "engine_id": engine_id},
+                )
+                return
+        else:
+            import tasksgodzilla.engines_codex  # noqa: F401
+            has_cli = shutil.which("codex") is not None
+            if not has_cli:
+                self.db.append_event(
+                    protocol_run_id,
+                    "setup_discovery_skipped",
+                    "Discovery skipped: codex CLI not available.",
+                    metadata={"path": str(repo_path), "model": model, "engine_id": engine_id},
+                )
+                return
 
         stage_map: dict[str, str] = {
             "inventory": "discovery-inventory.prompt.md",
@@ -457,18 +487,18 @@ class OnboardingService:
         self.db.append_event(
             protocol_run_id,
             "setup_discovery_started",
-            "Running repository discovery with opencode engine.",
+            f"Running repository discovery with {engine_id} engine.",
             metadata={
                 "path": str(repo_path),
                 "model": model,
-                "engine_id": "opencode",
+                "engine_id": engine_id,
                 "timeout_seconds": timeout_seconds,
                 "stages": list(stage_map.keys()),
             },
         )
 
-        engine = registry.get("opencode")
-        log_path = repo_path / "opencode-discovery.log"
+        engine = registry.get(engine_id)
+        log_path = repo_path / f"{engine_id}-discovery.log"
         completed_stages: list[str] = []
         failed_stages: list[str] = []
 
@@ -477,7 +507,7 @@ class OnboardingService:
             if not prompt_path:
                 log.warning(
                     "discovery_prompt_missing",
-                    extra={"stage": stage, "prompt_name": prompt_name, "repo_path": str(repo_path)},
+                    extra={"stage": stage, "prompt_name": prompt_name, "repo_path": str(repo_path), "engine_id": engine_id},
                 )
                 continue
 
@@ -504,7 +534,7 @@ class OnboardingService:
             except Exception as exc:
                 log.warning(
                     "discovery_stage_failed",
-                    extra={"stage": stage, "error": str(exc), "repo_path": str(repo_path)},
+                    extra={"stage": stage, "error": str(exc), "repo_path": str(repo_path), "engine_id": engine_id},
                 )
                 failed_stages.append(stage)
 
@@ -516,7 +546,7 @@ class OnboardingService:
                 metadata={
                     "path": str(repo_path),
                     "model": model,
-                    "engine_id": "opencode",
+                    "engine_id": engine_id,
                     "completed_stages": completed_stages,
                     "failed_stages": failed_stages,
                 },
@@ -529,7 +559,7 @@ class OnboardingService:
                 metadata={
                     "path": str(repo_path),
                     "model": model,
-                    "engine_id": "opencode",
+                    "engine_id": engine_id,
                     "failed_stages": failed_stages,
                 },
             )

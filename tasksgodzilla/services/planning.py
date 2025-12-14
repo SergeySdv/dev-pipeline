@@ -391,7 +391,7 @@ class PlanningService:
             },
         )
 
-        engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
+        engine_id = config.engine_defaults.get("planning", config.default_engine_id)
         if engine_id == "codex" and shutil.which("codex") is None:
             self._stub_plan(
                 run,
@@ -461,7 +461,7 @@ class PlanningService:
             repo_snapshot=repo_snapshot,
             policy_guidelines=policy_guidelines,
         )
-        engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
+        engine_id = config.engine_defaults.get("planning", config.default_engine_id)
         engine = registry.get(engine_id)
 
         try:
@@ -896,7 +896,7 @@ class PlanningService:
                 job_id=job_id,
             )
 
-        engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
+        engine_id = config.engine_defaults.get("planning", config.default_engine_id)
         engine = registry.get(engine_id)
         for step_file in step_files:
             step_content = step_file.read_text(encoding="utf-8")

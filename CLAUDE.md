@@ -47,8 +47,7 @@ docker compose up --build
 **Docker services:**
 - `nginx`: Reverse proxy on port 80, routes to API and serves console static files
 - `api`: FastAPI server (internal port 8010)
-- `worker`: RQ worker for background jobs
-- `codex-worker`: Additional RQ worker with resource limits
+- `worker`: RQ worker for background jobs (engine configurable via environment)
 - `db`: PostgreSQL 16
 - `redis`: Redis 7
 
@@ -244,7 +243,18 @@ Migrations: `alembic/` (use `make migrate` to apply)
 - `TASKSGODZILLA_ENV`: Environment name (default: `local`)
 - `TASKSGODZILLA_API_TOKEN`: Optional bearer token for API auth
 - `TASKSGODZILLA_WEBHOOK_TOKEN`: Optional shared secret for webhooks
-- `TASKSGODZILLA_DEFAULT_ENGINE_ID`: Default execution engine (default: `opencode`)
+
+### Engine Configuration
+- `TASKSGODZILLA_DEFAULT_ENGINE_ID`: Default execution engine for all stages (default: `opencode`)
+- `TASKSGODZILLA_DISCOVERY_ENGINE_ID`: Engine for repository discovery (falls back to default)
+- `TASKSGODZILLA_PLANNING_ENGINE_ID`: Engine for protocol planning (falls back to default)
+- `TASKSGODZILLA_EXEC_ENGINE_ID`: Engine for step execution (falls back to default)
+- `TASKSGODZILLA_QA_ENGINE_ID`: Engine for quality validation (falls back to default)
+- `TASKSGODZILLA_OPENCODE_API_KEY`: API key for OpenCode engine (if using API mode)
+
+**Available engines:**
+- `opencode`: OpenCode API/CLI (requires `TASKSGODZILLA_OPENCODE_API_KEY` or `opencode` CLI in PATH)
+- `codex`: Codex CLI (requires `codex` CLI in PATH)
 
 ### Execution Models
 - `PROTOCOL_PLANNING_MODEL`: Planning model (default: `zai-coding-plan/glm-4.6`)

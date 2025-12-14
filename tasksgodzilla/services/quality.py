@@ -411,8 +411,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
         qa_engine_id = (
             qa_cfg.get("engine_id")
             or step.engine_id
-            or getattr(config, "default_engine_id", None)
-            or registry.get_default().metadata.id
+            or config.engine_defaults.get("qa", config.default_engine_id)
         )
 
         qa_model = (
@@ -821,8 +820,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
         qa_engine_id = (
             qa_cfg.get("engine_id")
             or step.engine_id
-            or getattr(config, "default_engine_id", None)
-            or registry.get_default().metadata.id
+            or config.engine_defaults.get("qa", config.default_engine_id)
         )
 
         qa_model = (
@@ -981,7 +979,7 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
 
         fix_model = config.exec_model or "zai-coding-plan/glm-4.6"
 
-        engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
+        engine_id = config.engine_defaults.get("exec", config.default_engine_id)
         engine = registry.get(engine_id)
 
         log.info(

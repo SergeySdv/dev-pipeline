@@ -199,8 +199,7 @@ class ExecutionService:
         requested_engine_id = (
             (step_spec.get("engine_id") if isinstance(step_spec, dict) else None)
             or step.engine_id
-            or getattr(config, "default_engine_id", None)
-            or registry.get_default().metadata.id
+            or config.engine_defaults.get("exec", config.default_engine_id)
         )
 
         def _stub_execute(reason: str) -> None:
@@ -349,8 +348,7 @@ class ExecutionService:
                 protocol_spec=protocol_spec,
                 outputs_root=outputs_root,
                 default_engine_id=step.engine_id
-                or getattr(config, "default_engine_id", None)
-                or registry.get_default().metadata.id,
+                or config.engine_defaults.get("exec", config.default_engine_id),
             )
         kind = "codemachine" if codemachine else "codex"
         engine_id = resolution.engine_id or registry.get_default().metadata.id

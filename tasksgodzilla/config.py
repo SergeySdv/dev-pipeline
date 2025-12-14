@@ -19,6 +19,8 @@ class Config(BaseModel):
     - TASKSGODZILLA_WEBHOOK_TOKEN (optional shared secret)
     - PROTOCOL_*_MODEL (defaults for planning/decompose/exec/QA)
     - TASKSGODZILLA_MAX_TOKENS_PER_STEP / TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL (optional budgets)
+    - TASKSGODZILLA_DEFAULT_ENGINE_ID (default: opencode)
+    - TASKSGODZILLA_DISCOVERY_ENGINE_ID / PLANNING_ENGINE_ID / EXEC_ENGINE_ID / QA_ENGINE_ID (per-stage overrides)
     """
 
     db_url: Optional[str] = Field(default=None)
@@ -50,6 +52,11 @@ class Config(BaseModel):
     exec_model: Optional[str] = Field(default=None)
     qa_model: Optional[str] = Field(default=None)
     default_engine_id: str = Field(default="opencode")
+    # Per-stage engine overrides (fall back to default_engine_id when None)
+    discovery_engine_id: Optional[str] = Field(default=None)
+    planning_engine_id: Optional[str] = Field(default=None)
+    exec_engine_id: Optional[str] = Field(default=None)
+    qa_engine_id: Optional[str] = Field(default=None)
 
     max_tokens_per_step: Optional[int] = Field(default=None)
     max_tokens_per_protocol: Optional[int] = Field(default=None)
@@ -79,6 +86,17 @@ class Config(BaseModel):
         if self.qa_model:
             models["qa"] = self.qa_model
         return models
+
+    @property
+    def engine_defaults(self) -> Dict[str, str]:
+        """Return engine defaults per stage, falling back to default_engine_id."""
+        base = self.default_engine_id
+        return {
+            "discovery": self.discovery_engine_id or base,
+            "planning": self.planning_engine_id or base,
+            "exec": self.exec_engine_id or base,
+            "qa": self.qa_engine_id or base,
+        }
 
     @property
     def is_postgres(self) -> bool:
@@ -133,6 +151,11 @@ def load_config() -> Config:
     exec_model = os.environ.get("PROTOCOL_EXEC_MODEL")
     qa_model = os.environ.get("PROTOCOL_QA_MODEL")
     default_engine_id = os.environ.get("TASKSGODZILLA_DEFAULT_ENGINE_ID", "opencode")
+    # Per-stage engine overrides (Optional[str] - None means use default_engine_id)
+    discovery_engine_id = os.environ.get("TASKSGODZILLA_DISCOVERY_ENGINE_ID") or None
+    planning_engine_id = os.environ.get("TASKSGODZILLA_PLANNING_ENGINE_ID") or None
+    exec_engine_id = os.environ.get("TASKSGODZILLA_EXEC_ENGINE_ID") or None
+    qa_engine_id = os.environ.get("TASKSGODZILLA_QA_ENGINE_ID") or None
     max_tokens_per_step = os.environ.get("TASKSGODZILLA_MAX_TOKENS_PER_STEP")
     max_tokens_per_protocol = os.environ.get("TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL")
     token_budget_mode = os.environ.get("TASKSGODZILLA_TOKEN_BUDGET_MODE", "strict")
@@ -198,6 +221,10 @@ def load_config() -> Config:
         exec_model=exec_model,
         qa_model=qa_model,
         default_engine_id=default_engine_id,
+        discovery_engine_id=discovery_engine_id,
+        planning_engine_id=planning_engine_id,
+        exec_engine_id=exec_engine_id,
+        qa_engine_id=qa_engine_id,
         max_tokens_per_step=int(max_tokens_per_step) if max_tokens_per_step else None,
         max_tokens_per_protocol=int(max_tokens_per_protocol) if max_tokens_per_protocol else None,
         token_budget_mode=token_budget_mode,

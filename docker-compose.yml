@@ -48,27 +48,18 @@ services:
       TASKSGODZILLA_DB_URL: ${TASKSGODZILLA_DB_URL:-postgresql://tasksgodzilla:${POSTGRES_PASSWORD:-tasksgodzilla}@db:5432/tasksgodzilla}
       TASKSGODZILLA_REDIS_URL: ${TASKSGODZILLA_REDIS_URL:-redis://redis:6379/0}
       TASKSGODZILLA_LOG_LEVEL: INFO
+      # Engine configuration (defaults to opencode when not set)
+      TASKSGODZILLA_DEFAULT_ENGINE_ID: ${TASKSGODZILLA_DEFAULT_ENGINE_ID:-opencode}
+      TASKSGODZILLA_DISCOVERY_ENGINE_ID: ${TASKSGODZILLA_DISCOVERY_ENGINE_ID:-}
+      TASKSGODZILLA_PLANNING_ENGINE_ID: ${TASKSGODZILLA_PLANNING_ENGINE_ID:-}
+      TASKSGODZILLA_EXEC_ENGINE_ID: ${TASKSGODZILLA_EXEC_ENGINE_ID:-}
+      TASKSGODZILLA_QA_ENGINE_ID: ${TASKSGODZILLA_QA_ENGINE_ID:-}
+      # Pass through API keys for engines
+      TASKSGODZILLA_OPENCODE_API_KEY: ${TASKSGODZILLA_OPENCODE_API_KEY:-}
     depends_on:
       - db
       - redis
     command: ["python", "scripts/rq_worker.py"]
-
-  codex-worker:
-    build: .
-    restart: unless-stopped
-    environment:
-      TASKSGODZILLA_DB_URL: ${TASKSGODZILLA_DB_URL:-postgresql://tasksgodzilla:${POSTGRES_PASSWORD:-tasksgodzilla}@db:5432/tasksgodzilla}
-      TASKSGODZILLA_REDIS_URL: ${TASKSGODZILLA_REDIS_URL:-redis://redis:6379/0}
-      TASKSGODZILLA_LOG_LEVEL: INFO
-    depends_on:
-      - db
-      - redis
-    command: ["python", "scripts/rq_worker.py"]
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1g
 
   db:
     image: postgres:16-alpine

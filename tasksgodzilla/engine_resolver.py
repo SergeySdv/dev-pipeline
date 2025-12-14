@@ -97,7 +97,7 @@ def resolve_prompt_and_outputs(
     *,
     protocol_spec: Optional[Dict[str, Any]] = None,
     outputs_root: Optional[Path] = None,
-    default_engine_id: str = "opencode",
+    default_engine_id: Optional[str] = None,
     default_model: Optional[str] = None,
 ) -> StepResolution:
     """
@@ -107,6 +107,9 @@ def resolve_prompt_and_outputs(
     structured data for the caller to act on. Future work should replace the
     worker-specific `_resolve_*_context` helpers with this resolver.
     """
+    if default_engine_id is None:
+        from tasksgodzilla.config import load_config
+        default_engine_id = load_config().default_engine_id
     engine_id = step_spec.get("engine_id") or default_engine_id
     model = step_spec.get("model") or default_model
     prompt_ref = step_spec.get("prompt_ref") or step_spec.get("prompt") or step_spec.get("file")
