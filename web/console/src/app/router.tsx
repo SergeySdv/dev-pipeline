@@ -78,7 +78,8 @@ const AppRoute = createRoute({
           } catch {
             // ignore
           }
-          const next = location.pathname + location.search;
+          const searchStr = Object.keys(location.search).length > 0 ? '?' + new URLSearchParams(location.search as any).toString() : '';
+          const next = location.pathname + searchStr;
           throw redirect({ to: '/login', search: { next } });
         }
       } catch (err) {

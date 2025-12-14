@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from '@tanstack/react-router';
-import { Bell, ChevronRight, ChevronDown, GitBranch, Layers, LayoutGrid, ListChecks, Settings, ShieldCheck, Home, Activity, BarChart3, Menu, X } from 'lucide-react';
+import { Bell, ChevronRight, ChevronDown, GitBranch, Layers, LayoutGrid, ListChecks, Settings, ShieldCheck, Home, Activity, BarChart3, Menu, X, Search, HelpCircle, User } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Tabs from '@radix-ui/react-tabs';
@@ -32,24 +32,46 @@ type NavItem = {
   subItems?: NavItem[];
 };
 
-const navItems: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: <Home className="h-4 w-4" /> },
-  { to: '/projects', label: 'Projects', icon: <LayoutGrid className="h-4 w-4" /> },
-  { to: '/protocols', label: 'Protocols', icon: <GitBranch className="h-4 w-4" /> },
-  { to: '/steps', label: 'Steps', icon: <ListChecks className="h-4 w-4" /> },
-  { to: '/runs', label: 'Runs', icon: <Activity className="h-4 w-4" /> },
+type NavSection = {
+  title?: string;
+  items: NavItem[];
+};
+
+const navSections: NavSection[] = [
   {
-    to: '/ops',
-    label: 'Operations',
-    icon: <Layers className="h-4 w-4" />,
-    subItems: [
-      { to: '/ops/queues', label: 'Queues', icon: <Layers className="h-3 w-3" /> },
-      { to: '/ops/events', label: 'Events', icon: <Activity className="h-3 w-3" /> },
-      { to: '/ops/metrics', label: 'Metrics', icon: <BarChart3 className="h-3 w-3" /> },
+    items: [
+      { to: '/dashboard', label: 'Dashboard', icon: <Home className="h-4 w-4" /> },
+      { to: '/projects', label: 'Projects', icon: <LayoutGrid className="h-4 w-4" /> },
+      { to: '/runs', label: 'Runs', icon: <Activity className="h-4 w-4" /> },
     ],
   },
-  { to: '/policy-packs', label: 'Policy Packs', icon: <ShieldCheck className="h-4 w-4" /> },
-  { to: '/settings', label: 'Settings', icon: <Settings className="h-4 w-4" /> },
+  {
+    title: 'Platform',
+    items: [
+      { to: '/protocols', label: 'Protocols', icon: <GitBranch className="h-4 w-4" /> },
+      { to: '/steps', label: 'Steps', icon: <ListChecks className="h-4 w-4" /> },
+      { to: '/policy-packs', label: 'Policy Packs', icon: <ShieldCheck className="h-4 w-4" /> },
+    ],
+  },
+  {
+    title: 'Operations',
+    items: [
+      {
+        to: '/ops',
+        label: 'System',
+        icon: <Layers className="h-4 w-4" />,
+        subItems: [
+          { to: '/ops/queues', label: 'Queues', icon: <Layers className="h-3 w-3" /> },
+          { to: '/ops/events', label: 'Events', icon: <Activity className="h-3 w-3" /> },
+          { to: '/ops/metrics', label: 'Metrics', icon: <BarChart3 className="h-3 w-3" /> },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Configuration',
+    items: [{ to: '/settings', label: 'Settings', icon: <Settings className="h-4 w-4" /> }],
+  },
 ];
 
 function computeActive(pathname: string, itemTo: string): boolean {
@@ -134,63 +156,73 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="text-sm font-semibold tracking-wide">TasksGodzilla</div>
             <div className="text-xs text-fg-muted">console</div>
           </div>
-          <nav className="flex-1 overflow-y-auto px-2 py-2">
-            {navItems.map((item) => {
-              const active = computeActive(location.pathname, item.to);
+          <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+            {navSections.map((section, idx) => (
+              <div key={idx}>
+                {section.title && (
+                  <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-fg-muted/70">
+                    {section.title}
+                  </div>
+                )}
+                <div className="space-y-1">
+                  {section.items.map((item) => {
+                    const active = computeActive(location.pathname, item.to);
 
-              if (item.subItems) {
-                return (
-                  <div key={item.to} className="mb-1">
-                    <div
-                      className={cn(
-                        'flex items-center justify-between rounded-md px-3 py-2 text-sm text-fg-muted',
-                        active && 'bg-bg-muted text-fg',
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
+                    if (item.subItems) {
+                      return (
+                        <div key={item.to} className="mb-1">
+                          <div
+                            className={cn(
+                              'flex items-center justify-between rounded-md px-2 py-1.5 text-sm text-fg-muted hover:bg-bg-muted hover:text-fg transition-colors cursor-pointer',
+                              active && 'bg-bg-muted text-fg font-medium',
+                            )}
+                          >
+                            <div className="flex items-center gap-2">
+                              {item.icon}
+                              <span>{item.label}</span>
+                            </div>
+                            <ChevronDown className="h-3 w-3 opacity-50" />
+                          </div>
+                          {active && (
+                            <div className="ml-4 mt-1 space-y-1 border-l border-border pl-2">
+                              {item.subItems.map((subItem) => {
+                                const subActive = computeActive(location.pathname, subItem.to);
+                                return (
+                                  <Link
+                                    key={subItem.to}
+                                    to={subItem.to}
+                                    className={cn(
+                                      'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-fg-muted hover:text-fg transition-colors',
+                                      subActive && 'bg-bg-muted/50 text-sky-500 font-medium',
+                                    )}
+                                  >
+                                    <span>{subItem.label}</span>
+                                  </Link>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        className={cn(
+                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-fg-muted hover:bg-bg-muted hover:text-fg transition-colors',
+                          active && 'bg-bg-muted text-fg font-medium',
+                        )}
+                      >
                         {item.icon}
                         <span>{item.label}</span>
-                      </div>
-                      <ChevronDown className="h-3 w-3" />
-                    </div>
-                    {active && (
-                      <div className="ml-6 mt-1 space-y-1">
-                        {item.subItems.map((subItem) => {
-                          const subActive = computeActive(location.pathname, subItem.to);
-                          return (
-                            <Link
-                              key={subItem.to}
-                              to={subItem.to}
-                              className={cn(
-                                'flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-fg-muted hover:bg-bg-muted hover:text-fg',
-                                subActive && 'bg-bg-muted/50 text-fg font-medium',
-                              )}
-                            >
-                              {subItem.icon}
-                              <span>{subItem.label}</span>
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              }
-
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={cn(
-                    'mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-fg-muted hover:bg-bg-muted hover:text-fg',
-                    active && 'bg-bg-muted text-fg',
-                  )}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
           <div className="mt-auto px-4 py-4 text-xs text-fg-muted">
             <div className="flex items-center gap-2">
@@ -217,65 +249,75 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <nav className="flex-1 overflow-y-auto px-2 py-2">
-                {navItems.map((item) => {
-                  const active = computeActive(location.pathname, item.to);
+              <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+                {navSections.map((section, idx) => (
+                  <div key={idx}>
+                    {section.title && (
+                      <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-fg-muted/70">
+                        {section.title}
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      {section.items.map((item) => {
+                        const active = computeActive(location.pathname, item.to);
 
-                  if (item.subItems) {
-                    return (
-                      <div key={item.to} className="mb-1">
-                        <div
-                          className={cn(
-                            'flex items-center justify-between rounded-md px-3 py-2 text-sm text-fg-muted',
-                            active && 'bg-bg-muted text-fg',
-                          )}
-                        >
-                          <div className="flex items-center gap-2">
+                        if (item.subItems) {
+                          return (
+                            <div key={item.to} className="mb-1">
+                              <div
+                                className={cn(
+                                  'flex items-center justify-between rounded-md px-2 py-1.5 text-sm text-fg-muted hover:bg-bg-muted hover:text-fg transition-colors cursor-pointer',
+                                  active && 'bg-bg-muted text-fg font-medium',
+                                )}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {item.icon}
+                                  <span>{item.label}</span>
+                                </div>
+                                <ChevronDown className="h-3 w-3 opacity-50" />
+                              </div>
+                              {active && (
+                                <div className="ml-4 mt-1 space-y-1 border-l border-border pl-2">
+                                  {item.subItems.map((subItem) => {
+                                    const subActive = computeActive(location.pathname, subItem.to);
+                                    return (
+                                      <Link
+                                        key={subItem.to}
+                                        to={subItem.to}
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className={cn(
+                                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-fg-muted hover:text-fg transition-colors',
+                                          subActive && 'bg-bg-muted/50 text-sky-500 font-medium',
+                                        )}
+                                      >
+                                        <span>{subItem.label}</span>
+                                      </Link>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <Link
+                            key={item.to}
+                            to={item.to}
+                            onClick={() => setMobileMenuOpen(false)}
+                            className={cn(
+                              'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-fg-muted hover:bg-bg-muted hover:text-fg transition-colors',
+                              active && 'bg-bg-muted text-fg font-medium',
+                            )}
+                          >
                             {item.icon}
                             <span>{item.label}</span>
-                          </div>
-                          <ChevronDown className="h-3 w-3" />
-                        </div>
-                        {active && (
-                          <div className="ml-6 mt-1 space-y-1">
-                            {item.subItems.map((subItem) => {
-                              const subActive = computeActive(location.pathname, subItem.to);
-                              return (
-                                <Link
-                                  key={subItem.to}
-                                  to={subItem.to}
-                                  onClick={() => setMobileMenuOpen(false)}
-                                  className={cn(
-                                    'flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-fg-muted hover:bg-bg-muted hover:text-fg',
-                                    subActive && 'bg-bg-muted/50 text-fg font-medium',
-                                  )}
-                                >
-                                  {subItem.icon}
-                                  <span>{subItem.label}</span>
-                                </Link>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <Link
-                      key={item.to}
-                      to={item.to}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={cn(
-                        'mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-fg-muted hover:bg-bg-muted hover:text-fg',
-                        active && 'bg-bg-muted text-fg',
-                      )}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </Link>
-                  );
-                })}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </nav>
               <div className="mt-auto px-4 py-4 text-xs text-fg-muted border-t border-border">
                 <div className="flex items-center gap-2">
@@ -296,7 +338,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 flex items-center justify-between gap-4">
               <div className="flex flex-wrap items-center gap-1 text-sm font-medium">
                 {crumbs.map((c, idx) => (
                   <React.Fragment key={`${c.label}-${idx}`}>
@@ -311,7 +353,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </React.Fragment>
                 ))}
               </div>
-              <div className="text-xs text-fg-muted">SSO-first console · live ops</div>
+
+              <div className="flex-1 max-w-xl mx-4 relative hidden md:block">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search className="h-4 w-4 text-fg-muted" />
+                </div>
+                <input
+                  type="text"
+                  className="block w-full pl-10 pr-3 py-1.5 border border-border rounded-md leading-5 bg-bg-muted text-fg placeholder-fg-muted focus:outline-none focus:bg-bg-panel focus:ring-1 focus:ring-sky-500 focus:border-sky-500 sm:text-sm"
+                  placeholder="Search projects, runs, and docs..."
+                />
+                <div className="absolute inset-y-0 right-0 pr-2 flex items-center">
+                  <kbd className="inline-flex items-center border border-border rounded px-2 text-xs font-sans font-medium text-fg-muted">⌘K</kbd>
+                </div>
+              </div>
+
             </div>
             <div className="flex items-center gap-3">
               <Dialog.Root

@@ -24,23 +24,23 @@ interface ProjectCardProps {
 
 export function ProjectCard({ project, onSelect, className }: ProjectCardProps) {
   const hasWarnings = project.policy_enforcement_mode === 'warn';
-  
+
   return (
-    <div 
+    <div
       className={cn(
-        'border border-gray-200 rounded-lg p-4 hover:border-blue-300 hover:shadow-sm transition-all cursor-pointer',
+        'group border border-border bg-bg-panel rounded-lg p-5 transition-all duration-200 hover:border-sky-400 hover:shadow-md hover:-translate-y-0.5 cursor-pointer',
         className
       )}
       onClick={() => onSelect(project)}
     >
       <div className="flex items-start justify-between mb-3">
-        <h3 className="font-medium text-gray-900">{project.name}</h3>
+        <h3 className="font-medium text-lg text-fg group-hover:text-sky-500 transition-colors">{project.name}</h3>
         {hasWarnings && (
           <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">warn</span>
         )}
       </div>
-      
-      <div className="space-y-1 text-sm text-gray-600 mb-3">
+
+      <div className="space-y-1 text-sm text-fg-muted mb-4">
         <div className="flex items-center gap-2">
           <span>{project.git_url}</span>
           <span>•</span>
@@ -53,7 +53,7 @@ export function ProjectCard({ project, onSelect, className }: ProjectCardProps) 
           )}
         </div>
       </div>
-      
+
       <div className="flex items-center gap-3 text-xs">
         {project.onboarding_status && (
           <StatusPill status={project.onboarding_status} variant="small" />
@@ -74,7 +74,7 @@ export function ProjectCard({ project, onSelect, className }: ProjectCardProps) 
           </span>
         )}
       </div>
-      
+
       {project.last_protocol_at && (
         <div className="mt-2 text-xs text-gray-500">
           Last: {new Date(project.last_protocol_at).toLocaleString()}
