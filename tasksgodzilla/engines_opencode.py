@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -209,6 +210,16 @@ class OpenCodeEngine:
                 timeout_seconds = int(os.environ.get("TASKSGODZILLA_OPENCODE_TIMEOUT_SECONDS", "180"))
             except Exception:
                 timeout_seconds = 180
+        # OpenCode CLI can be long-running. We support "chunked" execution by running
+        # multiple `opencode run --continue` invocations until we get a final answer
+        # or hit the overall timeout budget. This avoids relying on API keys.
+        try:
+            chunk_timeout = int(os.environ.get("TASKSGODZILLA_OPENCODE_CHUNK_TIMEOUT_SECONDS", "240"))
+        except Exception:
+            chunk_timeout = 240
+        chunk_timeout = max(60, chunk_timeout)
+        total_budget = max(int(timeout_seconds), chunk_timeout)
+        max_attempts = min(50, (total_budget // chunk_timeout) + 3)
 
         workdir = Path(req.working_dir or ".").resolve()
         workdir.mkdir(parents=True, exist_ok=True)
@@ -221,31 +232,63 @@ class OpenCodeEngine:
         # Use OpenCode's stored provider credentials from the user's profile.
         # For GLM-4.6 this is typically provider "Z.AI Coding Plan" (model prefix: zai-coding-plan/*).
         # We attach the full prompt as a file to avoid command-line length limits.
-        message = "Use the attached file as the full prompt. Follow it exactly. Output only the final answer."
-        cmd = [
-            "opencode",
-            "run",
-            message,
-            "--model",
-            model,
-            "--format",
-            "default",
-            "--file",
-            str(tmp_path),
-        ]
+        initial_message = "Use the attached file as the full prompt. Follow it exactly. Output only the final answer."
+        continue_message = (
+            "Continue the prior session and finish the task. "
+            "Use the attached file as the full prompt/context. Output only the final answer."
+        )
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=str(workdir),
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout_seconds,
-            )
+            proc: subprocess.CompletedProcess[str] | None = None
+            last_cmd: list[str] | None = None
+            start = time.time()
+            for attempt in range(max_attempts):
+                if time.time() - start > total_budget:
+                    break
+                msg = initial_message if attempt == 0 else continue_message
+                cmd = [
+                    "opencode",
+                    "run",
+                    msg,
+                    "--model",
+                    model,
+                    "--format",
+                    "default",
+                    "--file",
+                    str(tmp_path),
+                ]
+                if attempt > 0:
+                    cmd.append("--continue")
+                last_cmd = cmd
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        cwd=str(workdir),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=chunk_timeout,
+                    )
+                except subprocess.TimeoutExpired:
+                    # If a chunk times out, continue the session and keep going
+                    # until we hit the overall budget.
+                    continue
+                if proc.returncode == 0 and (proc.stdout or "").strip():
+                    break
+                combined = ((proc.stdout or "") + "\n" + (proc.stderr or "")).lower()
+                retryable = ("timeout" in combined) or ("timed out" in combined) or ("exceeded maximum timeout" in combined)
+                if not retryable or attempt >= (max_attempts - 1):
+                    break
+                # brief backoff before continuing the session
+                time.sleep(1.0 + attempt * 0.5)
         except Exception as exc:
             raise OpenCodeCommandError(
                 f"OpenCode CLI failed: {exc}",
-                metadata={"engine_id": self.metadata.id, "purpose": purpose, "cmd": cmd, "cwd": str(workdir)},
+                metadata={
+                    "engine_id": self.metadata.id,
+                    "purpose": purpose,
+                    "cmd": last_cmd or [],
+                    "cwd": str(workdir),
+                },
             ) from exc
         finally:
             try:
@@ -253,13 +296,30 @@ class OpenCodeEngine:
             except Exception:
                 pass
 
-        if proc.returncode != 0:
+        if proc is None:
             raise OpenCodeCommandError(
-                f"OpenCode CLI failed (rc={proc.returncode})",
+                "OpenCode CLI failed: no output produced before timeout budget was exhausted",
                 metadata={
                     "engine_id": self.metadata.id,
                     "purpose": purpose,
-                    "cmd": cmd,
+                    "cmd": last_cmd or [],
+                    "cwd": str(workdir),
+                    "timeout_seconds": int(timeout_seconds),
+                    "chunk_timeout_seconds": chunk_timeout,
+                    "max_attempts": max_attempts,
+                },
+            )
+
+        if proc.returncode != 0:
+            stderr_snip = (proc.stderr or "").strip().splitlines()[-1] if (proc.stderr or "").strip() else ""
+            stdout_snip = (proc.stdout or "").strip().splitlines()[-1] if (proc.stdout or "").strip() else ""
+            detail = stderr_snip or stdout_snip
+            raise OpenCodeCommandError(
+                f"OpenCode CLI failed: {detail}" if detail else f"OpenCode CLI failed (rc={proc.returncode})",
+                metadata={
+                    "engine_id": self.metadata.id,
+                    "purpose": purpose,
+                    "cmd": last_cmd or [],
                     "cwd": str(workdir),
                     "stdout": (proc.stdout or "")[:2000],
                     "stderr": (proc.stderr or "")[:2000],

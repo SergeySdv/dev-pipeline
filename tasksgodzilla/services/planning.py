@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -30,6 +32,212 @@ from tasksgodzilla.spec import (
 from tasksgodzilla.storage import BaseDatabase
 
 log = get_logger(__name__)
+
+
+def _build_repo_snapshot(repo_root: Path) -> str:
+    """
+    Create a concise, deterministic snapshot of the repository layout and the
+    most relevant developer commands. This is injected into planning prompts so
+    the model can reference real paths instead of inventing them.
+    """
+    root = repo_root.resolve()
+
+    def _exists(rel: str) -> bool:
+        try:
+            return (root / rel).exists()
+        except Exception:
+            return False
+
+    def _list_files(rel: str, *, glob: str = "*", limit: int = 40) -> list[str]:
+        base = (root / rel)
+        if not base.exists():
+            return []
+        try:
+            items = sorted([p for p in base.glob(glob) if p.is_file()])
+        except Exception:
+            return []
+        out: list[str] = []
+        for p in items[:limit]:
+            try:
+                out.append(str(p.relative_to(root)))
+            except Exception:
+                out.append(str(p))
+        if len(items) > limit:
+            out.append(f"... (+{len(items) - limit} more)")
+        return out
+
+    def _list_python_files(rel: str, limit: int = 40) -> list[str]:
+        base = (root / rel)
+        if not base.exists():
+            return []
+        try:
+            files = sorted([p for p in base.rglob("*.py") if p.is_file()])
+        except Exception:
+            return []
+        out: list[str] = []
+        for p in files[:limit]:
+            try:
+                out.append(str(p.relative_to(root)))
+            except Exception:
+                out.append(str(p))
+        if len(files) > limit:
+            out.append(f"... (+{len(files) - limit} more)")
+        return out
+
+    # Parse pyproject for a few useful, stable facts.
+    pyproject = root / "pyproject.toml"
+    project_name = None
+    build_backend = None
+    pytest_testpaths: list[str] = []
+    try:
+        if pyproject.exists():
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            project_name = (data.get("project") or {}).get("name")
+            build_backend = (data.get("build-system") or {}).get("build-backend")
+            pytest_cfg = ((data.get("tool") or {}).get("pytest") or {}).get("ini_options") or {}
+            testpaths = pytest_cfg.get("testpaths")
+            if isinstance(testpaths, list):
+                pytest_testpaths = [str(x) for x in testpaths[:10]]
+    except Exception:
+        pass
+
+    lines: list[str] = []
+    lines.append(f"repo_root: {root}")
+    if project_name:
+        lines.append(f"project.name: {project_name}")
+    if build_backend:
+        lines.append(f"build_backend: {build_backend}")
+    lines.append(f"has_uv_lock: {_exists('uv.lock')}")
+    if pytest_testpaths:
+        lines.append(f"pytest.testpaths: {pytest_testpaths}")
+
+    # Layout
+    lines.append("")
+    lines.append("key_paths:")
+    for rel in ["src", "src/click", "tests", "tests/typing", "examples", ".github/workflows"]:
+        if _exists(rel):
+            lines.append(f"  - {rel}/")
+    lines.append("")
+    lines.append("source_modules (src/click/*.py):")
+    lines.extend([f"  - {p}" for p in _list_files("src/click", glob="*.py", limit=50)])
+    lines.append("")
+    lines.append("tests (tests/test_*.py):")
+    lines.extend([f"  - {p}" for p in _list_files("tests", glob="test_*.py", limit=40)])
+    lines.append("")
+    lines.append("typing_tests (tests/typing/*.py):")
+    lines.extend([f"  - {p}" for p in _list_files("tests/typing", glob="*.py", limit=40)])
+    lines.append("")
+    lines.append("examples (examples/**/*.py):")
+    lines.extend([f"  - {p}" for p in _list_python_files("examples", limit=25)])
+    lines.append("")
+    lines.append("workflows (.github/workflows/*):")
+    lines.extend([f"  - {p}" for p in _list_files(".github/workflows", glob="*.y*ml", limit=25)])
+
+    # Suggested commands (prefer uv+locked when available).
+    lines.append("")
+    lines.append("suggested_commands:")
+    if _exists("uv.lock"):
+        lines.append("  - uv run --locked pytest -q")
+        lines.append("  - uv run --locked tox run -e py3.12  # choose closest env available")
+        lines.append("  - uv run --locked tox run -e typing")
+        lines.append("  - uv run --locked tox run -e style")
+    else:
+        lines.append("  - python -m pytest -q")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _extract_repo_snapshot_paths(repo_snapshot: str) -> set[str]:
+    """
+    Extract file/path entries from the snapshot to use for grounding checks.
+    This intentionally stays simple and substring-based.
+    """
+    if not repo_snapshot:
+        return set()
+    paths: set[str] = set()
+    for raw in repo_snapshot.splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        item = line[2:].strip()
+        if not item or item.startswith("... ("):
+            continue
+        # Ignore commands in suggested_commands; those are validated separately.
+        if item.startswith("uv ") or item.startswith("python "):
+            continue
+        # Keep plausible paths only.
+        if "/" in item or item.endswith("/"):
+            paths.add(item)
+    return paths
+
+
+def _extract_repo_snapshot_commands(repo_snapshot: str) -> list[str]:
+    """
+    Extract suggested commands from the snapshot.
+    """
+    cmds: list[str] = []
+    if not repo_snapshot:
+        return cmds
+    in_cmds = False
+    for raw in repo_snapshot.splitlines():
+        line = raw.rstrip("\n")
+        if line.strip() == "suggested_commands:":
+            in_cmds = True
+            continue
+        if in_cmds:
+            s = line.strip()
+            if not s:
+                continue
+            if not s.startswith("- "):
+                # next section
+                if re.match(r"^[a-zA-Z0-9_\\-]+\\s*:", s):
+                    break
+                continue
+            cmd = s[2:].strip()
+            if cmd:
+                cmds.append(cmd)
+    return cmds
+
+
+def _planning_output_is_grounded(data: dict, repo_snapshot: str) -> bool:
+    """
+    Heuristic check: outputs should reference real paths and at least one real
+    runnable command from the snapshot. If not, we auto-retry planning.
+    """
+    try:
+        min_path_hits = int(os.environ.get("TASKSGODZILLA_PLANNING_GROUNDING_MIN_PATH_HITS", "6"))
+    except Exception:
+        min_path_hits = 6
+    min_path_hits = max(1, min_path_hits)
+
+    require_command = os.environ.get("TASKSGODZILLA_PLANNING_GROUNDING_REQUIRE_COMMAND", "1") not in ("0", "false", "False")
+
+    plan_md = (data.get("plan_md") or "")
+    context_md = (data.get("context_md") or "")
+    log_md = (data.get("log_md") or "")
+    step_files = data.get("step_files") or []
+    steps_text = ""
+    if isinstance(step_files, list):
+        for sf in step_files:
+            if isinstance(sf, dict):
+                steps_text += "\n" + (sf.get("content") or "")
+
+    combined = "\n".join([plan_md, context_md, log_md, steps_text])
+    if not combined.strip():
+        return False
+
+    snapshot_paths = _extract_repo_snapshot_paths(repo_snapshot)
+    path_hits = {p for p in snapshot_paths if p and p in combined}
+
+    if len(path_hits) < min_path_hits:
+        return False
+
+    if require_command:
+        snapshot_cmds = _extract_repo_snapshot_commands(repo_snapshot)
+        # Only require one command to appear verbatim (substring match).
+        if snapshot_cmds and not any(cmd in combined for cmd in snapshot_cmds):
+            return False
+
+    return True
 
 
 def _log_context(
@@ -241,6 +449,7 @@ class PlanningService:
             )
             return
 
+        repo_snapshot = _build_repo_snapshot(repo_root)
         planning_text = planning_prompt(
             protocol_name=run.protocol_name,
             protocol_number=run.protocol_name.split("-")[0],
@@ -249,32 +458,96 @@ class PlanningService:
             repo_root=repo_root,
             worktree_root=worktree,
             templates_section=templates,
+            repo_snapshot=repo_snapshot,
             policy_guidelines=policy_guidelines,
-        )
-        planning_tokens = budget_service.check_and_track(
-            planning_text, planning_model, "planning", config.token_budget_mode, budget_limit
         )
         engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
         engine = registry.get(engine_id)
-        planning_request = EngineRequest(
-            project_id=project.id,
-            protocol_run_id=run.id,
-            step_run_id=0,
-            model=planning_model,
-            prompt_files=[],
-            working_dir=str(worktree),
-            extra={
-                "prompt_text": planning_text,
-                "sandbox": "read-only",
-                "output_schema": str(schema_path),
-            },
-        )
+
         try:
-            planning_result = engine.plan(planning_request)
-            planning_json = (planning_result.stdout or "").strip()
-            if not planning_json:
-                raise ValueError("Empty planning result from Codex")
-            data = json.loads(planning_json)
+            planning_tokens = 0
+            data: dict | None = None
+            last_planning_result = None
+            for attempt in range(2):
+                attempt_text = planning_text
+                if attempt > 0:
+                    # Auto-retry with stricter grounding requirements.
+                    attempt_text = (
+                        planning_text
+                        + "\n\n"
+                        + "CRITICAL RETRY (previous output was insufficiently grounded):\n"
+                        + "- Your output MUST reference real repo structure and commands from the Repository Snapshot.\n"
+                        + f"- Include at least {int(os.environ.get('TASKSGODZILLA_PLANNING_GROUNDING_MIN_PATH_HITS', '6'))} exact file/directory paths from the snapshot.\n"
+                        + "- Include at least one exact command from snapshot suggested_commands.\n"
+                        + "- Prefer concrete step titles like 'Inspect src/...' or 'Run uv ...'.\n"
+                        + "\nRepository Snapshot (repeat):\n"
+                        + repo_snapshot
+                    )
+
+                planning_tokens = budget_service.check_and_track(
+                    attempt_text, planning_model, "planning", config.token_budget_mode, budget_limit
+                )
+
+                planning_request = EngineRequest(
+                    project_id=project.id,
+                    protocol_run_id=run.id,
+                    step_run_id=0,
+                    model=planning_model,
+                    prompt_files=[],
+                    working_dir=str(worktree),
+                    extra={
+                        "prompt_text": attempt_text,
+                        "sandbox": "read-only",
+                        "output_schema": str(schema_path),
+                    },
+                )
+
+                planning_result = engine.plan(planning_request)
+                last_planning_result = planning_result
+                planning_json = (planning_result.stdout or "").strip()
+                if not planning_json:
+                    raise ValueError("Empty planning result from engine")
+                candidate = json.loads(planning_json)
+
+                if _planning_output_is_grounded(candidate, repo_snapshot):
+                    data = candidate
+                    break
+
+                snapshot_paths = _extract_repo_snapshot_paths(repo_snapshot)
+                snapshot_cmds = _extract_repo_snapshot_commands(repo_snapshot)
+                combined = "\n".join(
+                    [
+                        str(candidate.get("plan_md") or ""),
+                        str(candidate.get("context_md") or ""),
+                        str(candidate.get("log_md") or ""),
+                        "\n".join(
+                            [
+                                str(sf.get("content") or "")
+                                for sf in (candidate.get("step_files") or [])
+                                if isinstance(sf, dict)
+                            ]
+                        ),
+                    ]
+                )
+                path_hits = [p for p in sorted(snapshot_paths) if p in combined][:50]
+                cmd_hits = [c for c in (snapshot_cmds or []) if c in combined][:10]
+
+                log.warning(
+                    "planning_output_not_grounded",
+                    extra={
+                        **_log_context(run=run, job_id=job_id),
+                        "attempt": attempt + 1,
+                        "min_path_hits": int(os.environ.get("TASKSGODZILLA_PLANNING_GROUNDING_MIN_PATH_HITS", "6")),
+                        "path_hits_count": len(path_hits),
+                        "cmd_hit": bool(cmd_hits),
+                        "example_path_hits": path_hits[:10],
+                        "example_cmd_hits": cmd_hits[:3],
+                        "engine_id": engine.metadata.id,
+                    },
+                )
+
+            if data is None:
+                raise ValueError("Planning output was not sufficiently grounded after retry")
         except (CodexCommandError, TasksGodzillaError) as exc:
             self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
             self.db.append_event(
@@ -323,8 +596,8 @@ class PlanningService:
                 metadata={
                     "error": str(exc),
                     "error_type": exc.__class__.__name__,
-                    "stdout": planning_result.stdout if "planning_result" in locals() else None,
-                    "stderr": planning_result.stderr if "planning_result" in locals() else None,
+                    "stdout": getattr(last_planning_result, "stdout", None),
+                    "stderr": getattr(last_planning_result, "stderr", None),
                     "engine_id": engine.metadata.id,
                 },
                 job_id=job_id,

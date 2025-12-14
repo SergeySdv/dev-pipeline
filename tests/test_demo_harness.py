@@ -22,6 +22,8 @@ def _seed_workspace(tmp_path: Path) -> Path:
 
 def test_demo_harness_covers_discovery_to_validation(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
+    monkeypatch.setenv("TASKSGODZILLA_PLANNING_GROUNDING_MIN_PATH_HITS", "0")
+    monkeypatch.setenv("TASKSGODZILLA_PLANNING_GROUNDING_REQUIRE_COMMAND", "0")
     # Treat Codex as unavailable so execution paths use the stubbed flow.
     orig_which = shutil.which
     monkeypatch.setattr(

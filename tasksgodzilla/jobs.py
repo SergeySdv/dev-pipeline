@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, asdict, field
@@ -81,7 +82,19 @@ class RedisQueue:
             intervals = [min(60, 2**i) for i in range(1, max_retries + 1)]
             retry = self._retry_cls(max=max_retries, interval=intervals)  # type: ignore[arg-type]
         # Jobs will be processed by scripts/rq_worker.py
-        enqueue_kwargs = {"job_id": job.job_id}
+        # RQ defaults to 180s job timeout, which is too low for planning/execution/QA.
+        # Set a higher default, with job-type overrides and env overrides.
+        default_timeout = int(os.environ.get("TASKSGODZILLA_RQ_JOB_TIMEOUT_SECONDS", "3600"))
+        per_type_timeouts = {
+            "project_setup_job": int(os.environ.get("TASKSGODZILLA_RQ_JOB_TIMEOUT_SETUP_SECONDS", "1800")),
+            "plan_protocol_job": int(os.environ.get("TASKSGODZILLA_RQ_JOB_TIMEOUT_PLANNING_SECONDS", "3600")),
+            "execute_step_job": int(os.environ.get("TASKSGODZILLA_RQ_JOB_TIMEOUT_EXEC_SECONDS", "7200")),
+            "run_quality_job": int(os.environ.get("TASKSGODZILLA_RQ_JOB_TIMEOUT_QA_SECONDS", "3600")),
+            "open_pr_job": int(os.environ.get("TASKSGODZILLA_RQ_JOB_TIMEOUT_OPEN_PR_SECONDS", "1800")),
+        }
+        job_timeout = per_type_timeouts.get(job_type, default_timeout)
+
+        enqueue_kwargs = {"job_id": job.job_id, "job_timeout": job_timeout}
         if retry:
             enqueue_kwargs["retry"] = retry
         job.payload["job_id"] = job.job_id

@@ -40,6 +40,79 @@ def is_simple_step(content: str, max_lines: int = 12, max_chars: int = 1200, max
     return len(bullet_lines) <= max_bullets
 
 
+def classify_step_complexity(content: str) -> str:
+    """
+    Classify step complexity as 'low', 'medium', or 'high' based on content analysis.
+
+    Complexity scoring:
+    - low: Very short, single action steps (execute directly, no decomposition)
+    - medium: Moderate complexity (1-pass decomposition)
+    - high: Complex multi-file/multi-action steps (recursive decomposition)
+
+    Factors considered:
+    - Content length
+    - Number of action items/bullets
+    - Presence of file references
+    - Keywords indicating complexity
+    """
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    bullet_lines = [ln for ln in lines if ln.startswith(("-", "*", "+")) or re.match(r"^\\d+\\.", ln)]
+
+    file_patterns = re.findall(r'[\w/.-]+\.(py|js|ts|tsx|jsx|md|json|yaml|yml|sh|sql)', content, re.IGNORECASE)
+    num_files = len(set(file_patterns))
+
+    complexity_keywords = [
+        'refactor', 'migrate', 'integrate', 'architecture', 'redesign',
+        'implement', 'create', 'build', 'setup', 'configure', 'database',
+        'api', 'endpoint', 'service', 'component', 'module', 'test suite',
+        'authentication', 'authorization', 'deployment', 'infrastructure'
+    ]
+    keyword_count = sum(1 for kw in complexity_keywords if kw.lower() in content.lower())
+
+    score = 0
+
+    if len(content) < 500:
+        score += 0
+    elif len(content) < 1500:
+        score += 1
+    elif len(content) < 3000:
+        score += 2
+    else:
+        score += 3
+
+    if len(bullet_lines) <= 3:
+        score += 0
+    elif len(bullet_lines) <= 6:
+        score += 1
+    elif len(bullet_lines) <= 12:
+        score += 2
+    else:
+        score += 3
+
+    if num_files <= 1:
+        score += 0
+    elif num_files <= 3:
+        score += 1
+    elif num_files <= 6:
+        score += 2
+    else:
+        score += 3
+
+    if keyword_count <= 1:
+        score += 0
+    elif keyword_count <= 3:
+        score += 1
+    else:
+        score += 2
+
+    if score <= 2:
+        return "low"
+    elif score <= 5:
+        return "medium"
+    else:
+        return "high"
+
+
 def step_markdown_files(protocol_root: Path, *, include_setup: bool = False) -> List[Path]:
     """
     Return numbered step files in a protocol directory, optionally including setup.
@@ -202,6 +275,7 @@ def planning_prompt(
     repo_root: Path,
     worktree_root: Path,
     templates_section: str,
+    repo_snapshot: str | None = None,
     policy_guidelines: str | None = None,
 ) -> str:
     return f"""You are a senior planning agent working with TasksGodzilla_Ilyas_Edition_1.0-style protocols.
@@ -225,9 +299,12 @@ Guidelines:
 - Make steps and sub-steps executable and self-contained.
 - Use English; keep paths relative to PROJECT_ROOT.
 - Include at least Step 0 (setup) and several numbered steps; end with a finalize step.
+- Use the Repository Snapshot (below) as the source of truth for paths, commands, and repo layout. Do NOT invent files or commands.
 - If project policy guidelines specify required protocol files or step sections, include them in the outputs (warnings-only mode, but prefer compliance).
 
 {f"Project policy guidelines (warnings by default):\\n{policy_guidelines}\\n" if policy_guidelines else ""}
+
+{f"Repository Snapshot (authoritative; use this to ground steps):\\n{repo_snapshot}\\n" if repo_snapshot else ""}
 
 You must fill:
 - plan_md: full content for plan.md

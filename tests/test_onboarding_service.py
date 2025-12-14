@@ -28,14 +28,19 @@ def test_onboarding_service_emits_clarifications_without_block(monkeypatch, tmp_
     _init_repo(repo)
     monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
 
-    # Treat Codex as unavailable so discovery path logs a skip but does not fail.
+    # Treat Codex/OpenCode CLIs as unavailable so discovery path logs a skip but does not fail.
+    # Also set TASKSGODZILLA_DEFAULT_ENGINE_ID to codex to use the original codex path (which checks for codex CLI).
     import tasksgodzilla.services.onboarding as onboarding_mod
 
+    _orig_which = shutil.which
     monkeypatch.setattr(
         onboarding_mod.shutil,
         "which",
-        lambda name: None if name == "codex" else shutil.which(name),
+        lambda name: None if name in ("codex", "opencode") else _orig_which(name),
     )
+    # Ensure no API key is set so opencode engine falls back to CLI check
+    monkeypatch.delenv("TASKSGODZILLA_OPENCODE_API_KEY", raising=False)
+
 
     db = Database(tmp_path / "db.sqlite")
     db.init_schema()
@@ -59,13 +64,18 @@ def test_onboarding_service_clarifications_can_block(monkeypatch, tmp_path) -> N
     monkeypatch.setenv("TASKSGODZILLA_AUTO_CLONE", "false")
     monkeypatch.setenv("TASKSGODZILLA_REQUIRE_ONBOARDING_CLARIFICATIONS", "true")
 
+
     import tasksgodzilla.services.onboarding as onboarding_mod
 
+    _orig_which = shutil.which
     monkeypatch.setattr(
         onboarding_mod.shutil,
         "which",
-        lambda name: None if name == "codex" else shutil.which(name),
+        lambda name: None if name in ("codex", "opencode") else _orig_which(name),
     )
+    # Ensure no API key is set so opencode engine falls back to CLI check
+    monkeypatch.delenv("TASKSGODZILLA_OPENCODE_API_KEY", raising=False)
+
 
     db = Database(tmp_path / "db2.sqlite")
     db.init_schema()

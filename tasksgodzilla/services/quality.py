@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING, Dict, Any
+from typing import Optional, TYPE_CHECKING, Dict, Any, List
 
 from tasksgodzilla.config import load_config
 from tasksgodzilla.logging import get_logger
@@ -23,13 +24,126 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
+ERROR_TYPE_SYNTAX = "syntax"
+ERROR_TYPE_LINT = "lint"
+ERROR_TYPE_FORMAT = "format"
+ERROR_TYPE_TYPE_CHECK = "typecheck"
+ERROR_TYPE_TEST = "test"
+ERROR_TYPE_OTHER = "other"
+
+AUTO_FIXABLE_ERROR_TYPES = {ERROR_TYPE_SYNTAX, ERROR_TYPE_LINT, ERROR_TYPE_FORMAT}
+
+
+@dataclass
+class AutoFixContext:
+    step_run_id: int
+    protocol_run_id: int
+    project_id: int
+    attempt: int = 0
+    max_attempts: int = 3
+    error_type: str = ERROR_TYPE_OTHER
+    error_details: str = ""
+    fixed: bool = False
+
+
+def classify_qa_error_type(report_text: str, git_status: str = "") -> str:
+    """
+    Classify QA error type based on report content.
+
+    Returns one of:
+    - syntax: Parser/syntax errors
+    - lint: Linting errors (ruff, eslint, etc.)
+    - format: Formatting issues (black, prettier, etc.)
+    - typecheck: Type checking errors (mypy, tsc, etc.)
+    - test: Test failures
+    - other: Other errors (logic, requirements, etc.)
+    """
+    report_lower = report_text.lower()
+
+    syntax_patterns = [
+        r'syntaxerror', r'syntax error', r'parse error', r'unexpected token',
+        r'invalid syntax', r'unexpected eof', r'unterminated string',
+    ]
+    for pattern in syntax_patterns:
+        if re.search(pattern, report_lower):
+            return ERROR_TYPE_SYNTAX
+
+    lint_patterns = [
+        r'ruff\s+check', r'eslint', r'pylint', r'flake8', r'(?:E|W|F)\d{3}:',
+        r'undefined name', r'unused variable', r'unused import', r'line too long',
+    ]
+    for pattern in lint_patterns:
+        if re.search(pattern, report_lower):
+            return ERROR_TYPE_LINT
+
+    format_patterns = [
+        r'black', r'prettier', r'autopep8', r'would reformat',
+        r'formatting', r'indentation', r'trailing whitespace',
+    ]
+    for pattern in format_patterns:
+        if re.search(pattern, report_lower):
+            return ERROR_TYPE_FORMAT
+
+    typecheck_patterns = [
+        r'mypy', r'pyright', r'tsc', r'type error', r'typescript error',
+        r'incompatible type', r'missing return type', r'no overload variant',
+    ]
+    for pattern in typecheck_patterns:
+        if re.search(pattern, report_lower):
+            return ERROR_TYPE_TYPE_CHECK
+
+    test_patterns = [
+        r'pytest', r'test.*fail', r'assertion.*error', r'assertionerror',
+        r'failed\s+test', r'tests?\s+failed', r'\d+\s+failed',
+    ]
+    for pattern in test_patterns:
+        if re.search(pattern, report_lower):
+            return ERROR_TYPE_TEST
+
+    return ERROR_TYPE_OTHER
+
+
+def build_auto_fix_prompt(
+    error_type: str,
+    report_text: str,
+    step_content: str,
+    git_status: str,
+) -> str:
+    """Build a prompt for the auto-fix agent to resolve syntax/lint/format errors."""
+    error_type_desc = {
+        ERROR_TYPE_SYNTAX: "syntax errors",
+        ERROR_TYPE_LINT: "linting errors",
+        ERROR_TYPE_FORMAT: "formatting issues",
+    }.get(error_type, "errors")
+
+    return f"""You are a code fixer agent. Your task is to fix {error_type_desc} identified by the QA process.
+
+## QA Report (errors to fix)
+{report_text}
+
+## Current Step Context
+{step_content}
+
+## Git Status
+{git_status}
+
+## Instructions
+1. Identify the exact files and lines with errors from the QA report
+2. Fix ONLY the {error_type_desc} mentioned - do not make other changes
+3. Keep fixes minimal and targeted
+4. Run the relevant linter/formatter after fixing to verify
+5. Commit the fix with message: "fix({error_type}): auto-fix from QA"
+
+Focus on quick, surgical fixes. Do not refactor or add features."""
+
+
 @dataclass
 class QualityService:
     """Service for quality assurance and validation of protocol steps.
-    
+
     This service handles QA execution for protocol steps, including prompt building,
     verdict determination, and status updates based on QA results.
-    
+
     Responsibilities:
     - Run QA checks for step runs
     - Build QA prompts with protocol context
@@ -39,12 +153,20 @@ class QualityService:
     - Handle inline (light) QA for fast feedback
     - Apply orchestration policies after QA
     - Record QA metrics and events
-    
+    - Auto-fix syntax/lint/format errors before blocking
+
     QA Policies:
     - skip: Skip QA entirely, mark step as completed
     - light: Run inline QA immediately after execution
     - (default): Run full QA as separate job
-    
+
+    Auto-Fix Loop:
+    When QA fails with syntax/lint/format errors:
+    1. Classify error type
+    2. If auto-fixable (syntax|lint|format), trigger fix agent
+    3. Re-run QA after fix
+    4. Only block after max_attempts failed fixes
+
     QA Context:
     QA prompts include:
     - Protocol plan (plan.md)
@@ -52,21 +174,21 @@ class QualityService:
     - Protocol log (log.md)
     - Step file content
     - Git status and last commit
-    
+
     Verdict Determination:
     - Parses QA report for explicit PASS/FAIL verdict
     - Defaults to PASS if verdict not found
     - Updates step status and triggers appropriate policies
-    
+
     Usage:
         quality_service = QualityService(db=db)
-        
+
         # Run QA for a step run
         quality_service.run_for_step_run(
             step_run_id=456,
             job_id="job-123"
         )
-        
+
         # Run inline QA after execution
         quality_service.run_inline_qa(
             step=step,
@@ -89,6 +211,7 @@ class QualityService:
 
     db: Optional[BaseDatabase] = None
     default_model: Optional[str] = None
+    _auto_fix_attempts: Dict[int, int] = field(default_factory=dict)
 
     def run_for_step_run(self, step_run_id: int, job_id: Optional[str] = None) -> None:
         """Run QA for a StepRun."""
@@ -479,6 +602,69 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
                 pass
 
         if verdict == "FAIL":
+            error_type = classify_qa_error_type(report_text, qa_context.get("git_status", ""))
+            current_attempts = self._auto_fix_attempts.get(step.id, 0)
+
+            if (
+                config.qa_auto_fix_enabled
+                and error_type in AUTO_FIXABLE_ERROR_TYPES
+                and current_attempts < config.qa_max_auto_fix_attempts
+            ):
+                self._auto_fix_attempts[step.id] = current_attempts + 1
+                self.db.append_event(
+                    step.protocol_run_id,
+                    "qa_auto_fix_attempt",
+                    f"Attempting auto-fix for {error_type} errors (attempt {current_attempts + 1}/{config.qa_max_auto_fix_attempts}).",
+                    step_run_id=step.id,
+                    metadata={
+                        "error_type": error_type,
+                        "attempt": current_attempts + 1,
+                        "max_attempts": config.qa_max_auto_fix_attempts,
+                    },
+                )
+                spec_service.append_protocol_log(
+                    protocol_root,
+                    f"{step.step_name} QA FAIL ({error_type}); auto-fix attempt {current_attempts + 1}.",
+                )
+
+                try:
+                    fix_success = self._run_auto_fix(
+                        step=step,
+                        run=run,
+                        project=project,
+                        worktree=worktree,
+                        protocol_root=protocol_root,
+                        report_text=report_text,
+                        error_type=error_type,
+                        qa_context=qa_context,
+                        config=config,
+                    )
+                    if fix_success:
+                        self.db.append_event(
+                            step.protocol_run_id,
+                            "qa_auto_fix_applied",
+                            f"Auto-fix for {error_type} applied; re-running QA.",
+                            step_run_id=step.id,
+                            metadata={"error_type": error_type, "attempt": current_attempts + 1},
+                        )
+                        self.run_for_step_run(step_run_id, job_id)
+                        return
+                except Exception as exc:
+                    log.warning(
+                        "qa_auto_fix_failed",
+                        extra={"step_run_id": step.id, "error_type": error_type, "error": str(exc)},
+                    )
+                    self.db.append_event(
+                        step.protocol_run_id,
+                        "qa_auto_fix_error",
+                        f"Auto-fix failed: {exc}",
+                        step_run_id=step.id,
+                        metadata={"error_type": error_type, "error": str(exc)},
+                    )
+
+            if step.id in self._auto_fix_attempts:
+                del self._auto_fix_attempts[step.id]
+
             self.db.update_step_status(step.id, StepStatus.FAILED, summary="QA verdict: FAIL")
             self.db.append_event(
                 step.protocol_run_id,
@@ -492,6 +678,8 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
                     "prompt_versions": {"qa": qa_prompt_version},
                     "model": qa_model,
                     "spec_hash": spec_hash_val,
+                    "error_type": error_type,
+                    "auto_fix_attempts": current_attempts,
                 },
             )
             spec_service.append_protocol_log(protocol_root, f"{step.step_name} QA FAIL ({qa_model}).")
@@ -765,3 +953,84 @@ Use the format from the quality-validator prompt. If any blocking issue, verdict
             spec_service.append_protocol_log(protocol_root, f"{step.step_name} inline QA PASS ({qa_model}).")
             orchestrator.handle_step_completion(step.id, qa_verdict="PASS")
             metrics.inc_qa_verdict("pass")
+
+    def _run_auto_fix(
+        self,
+        step: StepRun,
+        run: ProtocolRun,
+        project: Any,
+        worktree: Path,
+        protocol_root: Path,
+        report_text: str,
+        error_type: str,
+        qa_context: Dict[str, str],
+        config: Any,
+    ) -> bool:
+        """
+        Run auto-fix agent to resolve syntax/lint/format errors.
+
+        Returns True if fix was applied successfully, False otherwise.
+        """
+        from tasksgodzilla.codex import run_codex_exec
+        from tasksgodzilla.engines import EngineRequest
+
+        step_content = qa_context.get("step", "")
+        git_status = qa_context.get("git_status", "")
+
+        fix_prompt = build_auto_fix_prompt(error_type, report_text, step_content, git_status)
+
+        fix_model = config.exec_model or "zai-coding-plan/glm-4.6"
+
+        engine_id = getattr(config, "default_engine_id", None) or registry.get_default().metadata.id
+        engine = registry.get(engine_id)
+
+        log.info(
+            "qa_auto_fix_start",
+            extra={
+                "step_run_id": step.id,
+                "error_type": error_type,
+                "engine_id": engine_id,
+                "model": fix_model,
+            },
+        )
+
+        try:
+            if engine.metadata.id == "codex":
+                import shutil as sh
+                if sh.which("codex") is None:
+                    log.warning("qa_auto_fix_codex_unavailable")
+                    return False
+
+                run_codex_exec(
+                    model=fix_model,
+                    cwd=worktree,
+                    prompt_text=fix_prompt,
+                    sandbox="workspace-write",
+                )
+            else:
+                req = EngineRequest(
+                    project_id=project.id,
+                    protocol_run_id=run.id,
+                    step_run_id=step.id,
+                    model=fix_model,
+                    prompt_files=[],
+                    working_dir=str(worktree),
+                    extra={
+                        "prompt_text": fix_prompt,
+                        "sandbox": "workspace-write",
+                    },
+                )
+                engine.execute(req)
+
+            log.info(
+                "qa_auto_fix_complete",
+                extra={"step_run_id": step.id, "error_type": error_type},
+            )
+            return True
+
+        except Exception as exc:
+            log.warning(
+                "qa_auto_fix_execution_failed",
+                extra={"step_run_id": step.id, "error_type": error_type, "error": str(exc)},
+            )
+            return False

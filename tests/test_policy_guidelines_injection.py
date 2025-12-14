@@ -69,11 +69,14 @@ def test_planning_prompt_includes_policy_guidelines() -> None:
         repo_root=Path("/fake/repo"),
         worktree_root=Path("/fake/worktree"),
         templates_section="# Templates",
+        repo_snapshot="repo_root: /fake/repo\nfiles: ['pyproject.toml']",
         policy_guidelines=guidelines,
     )
     assert "policy_pack: custom@1.0" in prompt
     assert "required_step_sections: ['Verification']" in prompt
     assert "Project policy guidelines (warnings by default):" in prompt
+    assert "Repository Snapshot (authoritative; use this to ground steps):" in prompt
+    assert "files: ['pyproject.toml']" in prompt
 
 
 def test_planning_prompt_without_policy_guidelines() -> None:
@@ -85,9 +88,11 @@ def test_planning_prompt_without_policy_guidelines() -> None:
         repo_root=Path("/fake/repo"),
         worktree_root=Path("/fake/worktree"),
         templates_section="# Templates",
+        repo_snapshot="repo_root: /fake/repo",
         policy_guidelines=None,
     )
     assert "Project policy guidelines" not in prompt
+    assert "Repository Snapshot (authoritative; use this to ground steps):" in prompt
 
 
 def test_decompose_step_prompt_includes_policy_guidelines() -> None:

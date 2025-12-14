@@ -97,7 +97,7 @@ def resolve_prompt_and_outputs(
     *,
     protocol_spec: Optional[Dict[str, Any]] = None,
     outputs_root: Optional[Path] = None,
-    default_engine_id: str = "codex",
+    default_engine_id: str = "opencode",
     default_model: Optional[str] = None,
 ) -> StepResolution:
     """

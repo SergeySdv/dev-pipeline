@@ -116,7 +116,7 @@ def infer_step_type_from_name(name: str) -> str:
 
 def build_spec_from_protocol_files(
     protocol_root: Path,
-    default_engine_id: str = "codex",
+    default_engine_id: str = "opencode",
     default_qa_policy: str = "full",
     default_qa_prompt: str = "prompts/quality-validator.prompt.md",
 ) -> Dict[str, Any]:
@@ -133,7 +133,7 @@ def build_spec_from_protocol_files(
             qa_policy = "skip"
         timeout_seconds = None
         if step_type == "work":
-            timeout_seconds = 1200
+            timeout_seconds = 3600
         steps.append(
             {
                 "id": path.stem,

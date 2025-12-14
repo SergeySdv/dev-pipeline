@@ -1,11 +1,13 @@
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, TypeVar
 
 from tasksgodzilla.ci import trigger_ci
 from tasksgodzilla.codex import run_process
+from tasksgodzilla.config import load_config
 from tasksgodzilla.domain import ProtocolRun, ProtocolStatus
 from tasksgodzilla.git_utils import create_github_pr, resolve_project_repo_path
 from tasksgodzilla.logging import get_logger, log_extra
@@ -16,6 +18,113 @@ log = get_logger(__name__)
 
 SINGLE_WORKTREE = os.environ.get("TASKSGODZILLA_SINGLE_WORKTREE", "true").lower() in ("1", "true", "yes", "on")
 DEFAULT_WORKTREE_BRANCH = os.environ.get("TASKSGODZILLA_WORKTREE_BRANCH", "tasksgodzilla-worktree")
+
+T = TypeVar("T")
+
+
+class GitLockError(Exception):
+    """Raised when git index.lock cannot be acquired after retries."""
+    pass
+
+
+def is_git_lock_error(error: Exception) -> bool:
+    """Check if an exception is related to git index.lock contention."""
+    error_str = str(error).lower()
+    lock_indicators = [
+        "index.lock",
+        "unable to create",
+        "another git process seems to be running",
+        "lock file exists",
+        "could not lock",
+    ]
+    return any(indicator in error_str for indicator in lock_indicators)
+
+
+def with_git_lock_retry(
+    func: Callable[[], T],
+    max_retries: int = 5,
+    retry_delay: float = 1.0,
+    repo_root: Optional[Path] = None,
+) -> T:
+    """
+    Execute a git operation with automatic retry on index.lock contention.
+
+    Args:
+        func: The git operation to execute
+        max_retries: Maximum number of retry attempts
+        retry_delay: Initial delay between retries (exponential backoff applied)
+        repo_root: Optional repo root to check for stale lock files
+
+    Returns:
+        The result of the git operation
+
+    Raises:
+        GitLockError: If operation fails after all retries due to lock contention
+        Exception: Other exceptions are re-raised immediately
+    """
+    last_error: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except Exception as exc:
+            if not is_git_lock_error(exc):
+                raise
+
+            last_error = exc
+
+            if attempt < max_retries:
+                delay = retry_delay * (2 ** attempt)
+                log.warning(
+                    "git_lock_contention",
+                    extra={
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries,
+                        "delay_seconds": delay,
+                        "error": str(exc),
+                    },
+                )
+
+                if repo_root:
+                    _cleanup_stale_lock(repo_root)
+
+                time.sleep(delay)
+
+    raise GitLockError(
+        f"Git operation failed after {max_retries + 1} attempts due to lock contention: {last_error}"
+    )
+
+
+def _cleanup_stale_lock(repo_root: Path) -> bool:
+    """
+    Attempt to clean up a stale index.lock file.
+
+    Only removes the lock if it appears to be stale (older than 5 minutes
+    and no git process is running).
+
+    Returns True if a stale lock was removed, False otherwise.
+    """
+    lock_file = repo_root / ".git" / "index.lock"
+    if not lock_file.exists():
+        return False
+
+    try:
+        lock_age = time.time() - lock_file.stat().st_mtime
+        if lock_age < 300:
+            return False
+
+        lock_file.unlink()
+        log.info(
+            "git_stale_lock_removed",
+            extra={"lock_file": str(lock_file), "age_seconds": lock_age},
+        )
+        return True
+    except Exception as exc:
+        log.warning(
+            "git_stale_lock_cleanup_failed",
+            extra={"lock_file": str(lock_file), "error": str(exc)},
+        )
+        return False
 
 
 @dataclass
@@ -151,8 +260,7 @@ class GitService:
         job_id: Optional[str] = None,
     ) -> Path:
         """Ensure a worktree exists for the given protocol/branch."""
-        # Local/demo paths may not be git repos (e.g., CodeMachine-only workspaces).
-        # In that case, treat the repo root as the worktree.
+        config = load_config()
         if not (repo_root / ".git").exists():
             log.info(
                 "worktree_skipped_not_git_repo",
@@ -174,33 +282,56 @@ class GitService:
                     "base_branch": base_branch,
                 },
             )
-            try:
-                run_process(
-                    [
-                        "git",
-                        "worktree",
-                        "add",
-                        "--checkout",
-                        "-b",
-                        branch_name,
-                        str(worktree),
-                        f"origin/{base_branch}",
-                    ],
-                    cwd=repo_root,
-                )
-            except Exception:
-                # Branch may already exist from a previous run; reuse it.
-                run_process(
-                    [
-                        "git",
-                        "worktree",
-                        "add",
-                        "--checkout",
-                        str(worktree),
-                        branch_name,
-                    ],
-                    cwd=repo_root,
-                )
+
+            def _create_worktree() -> None:
+                try:
+                    run_process(
+                        [
+                            "git",
+                            "worktree",
+                            "add",
+                            "--checkout",
+                            "-b",
+                            branch_name,
+                            str(worktree),
+                            f"origin/{base_branch}",
+                        ],
+                        cwd=repo_root,
+                    )
+                except Exception:
+                    try:
+                        run_process(
+                            [
+                                "git",
+                                "worktree",
+                                "add",
+                                "--checkout",
+                                str(worktree),
+                                branch_name,
+                            ],
+                            cwd=repo_root,
+                        )
+                    except Exception:
+                        run_process(
+                            [
+                                "git",
+                                "worktree",
+                                "add",
+                                "--checkout",
+                                "-b",
+                                branch_name,
+                                str(worktree),
+                                "HEAD",
+                            ],
+                            cwd=repo_root,
+                        )
+
+            with_git_lock_retry(
+                _create_worktree,
+                max_retries=config.git_lock_max_retries,
+                retry_delay=config.git_lock_retry_delay,
+                repo_root=repo_root,
+            )
         return worktree
 
     def push_and_open_pr(
@@ -214,10 +345,13 @@ class GitService:
         job_id: Optional[str] = None,
     ) -> bool:
         """Commit, push, and open a PR/MR for the worktree changes."""
+        config = load_config()
         pushed = False
         branch_exists = False
         commit_attempted = False
-        try:
+
+        def _git_add_and_commit() -> bool:
+            nonlocal commit_attempted
             run_process(["git", "add", "."], cwd=worktree, capture_output=True, text=True)
             try:
                 commit_attempted = True
@@ -227,6 +361,7 @@ class GitService:
                     capture_output=True,
                     text=True,
                 )
+                return True
             except Exception as exc:
                 msg = str(exc).lower()
                 if "nothing to commit" in msg or "no changes added to commit" in msg or "clean" in msg:
@@ -238,14 +373,25 @@ class GitService:
                             "base_branch": base_branch,
                         },
                     )
-                else:
-                    raise
+                    return True
+                raise
+
+        def _git_push() -> None:
             run_process(
                 ["git", "push", "--set-upstream", "origin", protocol_name],
                 cwd=worktree,
                 capture_output=True,
                 text=True,
             )
+
+        try:
+            with_git_lock_retry(
+                _git_add_and_commit,
+                max_retries=config.git_lock_max_retries,
+                retry_delay=config.git_lock_retry_delay,
+                repo_root=worktree,
+            )
+            _git_push()
             pushed = True
         except Exception as exc:
             branch_exists = self.remote_branch_exists(worktree, protocol_name)
@@ -263,19 +409,13 @@ class GitService:
             )
             if not branch_exists:
                 try:
-                    run_process(
-                        ["git", "push", "--set-upstream", "origin", protocol_name],
-                        cwd=worktree,
-                        capture_output=True,
-                        text=True,
-                    )
+                    _git_push()
                     return True
                 except Exception:
                     return False
-        
-        # Attempt PR/MR creation if CLI is available
+
         self._create_pr_if_possible(worktree, protocol_name, base_branch)
-        
+
         return pushed or branch_exists
 
     def trigger_ci(

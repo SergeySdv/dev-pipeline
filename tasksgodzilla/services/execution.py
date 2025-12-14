@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -478,6 +479,13 @@ class ExecutionService:
                 timeout_seconds = int(raw_timeout)
         except Exception:
             timeout_seconds = None
+        # Allow env override to avoid prematurely timing out large steps.
+        try:
+            env_exec_timeout = os.environ.get("TASKSGODZILLA_EXEC_TIMEOUT_SECONDS")
+            if env_exec_timeout:
+                timeout_seconds = max(int(env_exec_timeout), int(timeout_seconds or 0)) or None
+        except Exception:
+            pass
         try:
             exec_result = execute_step_unified(
                 resolution,

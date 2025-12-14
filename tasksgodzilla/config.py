@@ -60,6 +60,10 @@ class Config(BaseModel):
     spec_audit_interval_seconds: Optional[int] = Field(default=None)
     skip_simple_decompose: bool = Field(default=False)
     inline_rq_worker: bool = Field(default=False)
+    qa_auto_fix_enabled: bool = Field(default=True)
+    qa_max_auto_fix_attempts: int = Field(default=3)
+    git_lock_max_retries: int = Field(default=5)
+    git_lock_retry_delay: float = Field(default=1.0)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -158,6 +162,15 @@ def load_config() -> Config:
         "yes",
         "on",
     )
+    qa_auto_fix_enabled = os.environ.get("TASKSGODZILLA_QA_AUTO_FIX_ENABLED", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    qa_max_auto_fix_attempts = int(os.environ.get("TASKSGODZILLA_QA_MAX_AUTO_FIX_ATTEMPTS", "3"))
+    git_lock_max_retries = int(os.environ.get("TASKSGODZILLA_GIT_LOCK_MAX_RETRIES", "5"))
+    git_lock_retry_delay = float(os.environ.get("TASKSGODZILLA_GIT_LOCK_RETRY_DELAY", "1.0"))
     return Config(
         db_url=db_url,
         db_path=db_path,
@@ -194,4 +207,8 @@ def load_config() -> Config:
         spec_audit_interval_seconds=int(spec_audit_interval_seconds) if spec_audit_interval_seconds else None,
         skip_simple_decompose=skip_simple_decompose,
         inline_rq_worker=inline_rq_worker,
+        qa_auto_fix_enabled=qa_auto_fix_enabled,
+        qa_max_auto_fix_attempts=qa_max_auto_fix_attempts,
+        git_lock_max_retries=git_lock_max_retries,
+        git_lock_retry_delay=git_lock_retry_delay,
     )

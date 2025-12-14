@@ -15,7 +15,6 @@ from tasksgodzilla.project_setup import (
     ensure_local_repo,
     local_repo_dir,
     prefer_github_ssh,
-    run_codex_discovery,
 )
 from tasksgodzilla.storage import BaseDatabase
 from tasksgodzilla.domain import ProtocolStatus
@@ -138,7 +137,7 @@ class OnboardingService:
         if run_discovery_pass:
             model = discovery_model or "zai-coding-plan/glm-4.6"
             try:
-                run_codex_discovery(repo_root, model=model, use_pipeline=True)
+                self._run_discovery_for_workspace(repo_root, model)
             except Exception as exc:  # pragma: no cover - best effort
                 log.warning(
                     "onboarding_discovery_failed",
@@ -150,6 +149,59 @@ class OnboardingService:
             extra={"project_id": project.id, "repo_root": str(repo_root)},
         )
         return repo_root
+
+    def _run_discovery_for_workspace(self, repo_root: Path, model: str) -> None:
+        """Run discovery using opencode engine (used by ensure_workspace)."""
+        from tasksgodzilla.engines import EngineRequest, registry
+        from tasksgodzilla.project_setup import _resolve_prompt
+        import tasksgodzilla.engines_opencode  # noqa: F401 - ensure engine is registered
+
+        # Check opencode availability
+        has_api_key = bool(os.environ.get("TASKSGODZILLA_OPENCODE_API_KEY", "").strip())
+        has_cli = shutil.which("opencode") is not None
+        if not has_api_key and not has_cli:
+            log.warning(
+                "discovery_skipped",
+                extra={"repo_root": str(repo_root), "reason": "opencode API key not set and CLI not available"},
+            )
+            return
+
+        stage_map = {
+            "inventory": "discovery-inventory.prompt.md",
+            "architecture": "discovery-architecture.prompt.md",
+            "api_reference": "discovery-api-reference.prompt.md",
+            "ci_notes": "discovery-ci-notes.prompt.md",
+        }
+
+        engine = registry.get("opencode")
+        timeout_seconds = int(os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "180"))
+
+        for stage, prompt_name in stage_map.items():
+            prompt_path = _resolve_prompt(repo_root, prompt_name)
+            if not prompt_path:
+                continue
+            try:
+                prompt_text = prompt_path.read_text(encoding="utf-8")
+                req = EngineRequest(
+                    project_id=0,
+                    protocol_run_id=0,
+                    step_run_id=0,
+                    model=model,
+                    prompt_files=[],
+                    working_dir=str(repo_root),
+                    extra={
+                        "prompt_text": prompt_text,
+                        "sandbox": "workspace-write",
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
+                engine.execute(req)
+            except Exception as exc:
+                log.warning(
+                    "discovery_stage_failed",
+                    extra={"stage": stage, "error": str(exc), "repo_root": str(repo_root)},
+                )
+
 
     def run_project_setup_job(self, project_id: int, protocol_run_id: Optional[int] = None) -> None:
         """Run the full project-setup flow for a project.
@@ -369,70 +421,117 @@ class OnboardingService:
 
     def _run_discovery(self, repo_path: Path, protocol_run_id: int) -> None:
         """
-        Trigger Codex discovery automatically during onboarding. Emits events so
-        console/TUI/CLI can show progress regardless of success/failure/skip.
+        Trigger discovery automatically during onboarding using the opencode engine.
+        Emits events so console/TUI/CLI can show progress regardless of success/failure/skip.
         """
+        from tasksgodzilla.engines import EngineRequest, registry
+        from tasksgodzilla.project_setup import _resolve_prompt
+        import tasksgodzilla.engines_opencode  # noqa: F401 - ensure engine is registered
+
         model = os.environ.get("PROTOCOL_DISCOVERY_MODEL", "zai-coding-plan/glm-4.6")
-        timeout_env = os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "15")
+        timeout_env = os.environ.get("TASKSGODZILLA_DISCOVERY_TIMEOUT", "180")
         try:
             timeout_seconds = int(timeout_env)
         except Exception:
-            timeout_seconds = 15
-        prompt_path = repo_path / "prompts" / "repo-discovery.prompt.md"
-        fallback_prompt = Path(__file__).resolve().parents[2] / "prompts" / "repo-discovery.prompt.md"
+            timeout_seconds = 180
 
-        if shutil.which("codex") is None:
+        # Check opencode availability (API key or CLI)
+        has_api_key = bool(os.environ.get("TASKSGODZILLA_OPENCODE_API_KEY", "").strip())
+        has_cli = shutil.which("opencode") is not None
+        if not has_api_key and not has_cli:
             self.db.append_event(
                 protocol_run_id,
                 "setup_discovery_skipped",
-                "Discovery skipped: codex CLI not available.",
-                metadata={"path": str(repo_path), "model": model},
+                "Discovery skipped: opencode API key not set and CLI not available.",
+                metadata={"path": str(repo_path), "model": model, "engine_id": "opencode"},
             )
             return
 
-        if not prompt_path.exists() and fallback_prompt.exists():
-            prompt_path = fallback_prompt
-
-        if not prompt_path.exists():
-            self.db.append_event(
-                protocol_run_id,
-                "setup_discovery_skipped",
-                "Discovery skipped: repo-discovery prompt missing.",
-                metadata={"path": str(repo_path)},
-            )
-            return
+        stage_map: dict[str, str] = {
+            "inventory": "discovery-inventory.prompt.md",
+            "architecture": "discovery-architecture.prompt.md",
+            "api_reference": "discovery-api-reference.prompt.md",
+            "ci_notes": "discovery-ci-notes.prompt.md",
+        }
 
         self.db.append_event(
             protocol_run_id,
             "setup_discovery_started",
-            "Running Codex repository discovery.",
+            "Running repository discovery with opencode engine.",
             metadata={
                 "path": str(repo_path),
                 "model": model,
-                "prompt": str(prompt_path),
+                "engine_id": "opencode",
                 "timeout_seconds": timeout_seconds,
+                "stages": list(stage_map.keys()),
             },
         )
-        try:
-            run_codex_discovery(
-                repo_path,
-                model,
-                prompt_file=prompt_path,
-                timeout_seconds=timeout_seconds,
-                use_pipeline=True,
-            )
+
+        engine = registry.get("opencode")
+        log_path = repo_path / "opencode-discovery.log"
+        completed_stages: list[str] = []
+        failed_stages: list[str] = []
+
+        for stage, prompt_name in stage_map.items():
+            prompt_path = _resolve_prompt(repo_path, prompt_name)
+            if not prompt_path:
+                log.warning(
+                    "discovery_prompt_missing",
+                    extra={"stage": stage, "prompt_name": prompt_name, "repo_path": str(repo_path)},
+                )
+                continue
+
+            try:
+                prompt_text = prompt_path.read_text(encoding="utf-8")
+                req = EngineRequest(
+                    project_id=0,
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=0,
+                    model=model,
+                    prompt_files=[],
+                    working_dir=str(repo_path),
+                    extra={
+                        "prompt_text": prompt_text,
+                        "sandbox": "workspace-write",
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
+                result = engine.execute(req)
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(f"\n\n===== discovery stage: {stage} ({prompt_name}) =====\n")
+                    f.write((result.stdout or "") + "\n")
+                completed_stages.append(stage)
+            except Exception as exc:
+                log.warning(
+                    "discovery_stage_failed",
+                    extra={"stage": stage, "error": str(exc), "repo_path": str(repo_path)},
+                )
+                failed_stages.append(stage)
+
+        if completed_stages:
             self.db.append_event(
                 protocol_run_id,
                 "setup_discovery_completed",
-                "Discovery finished.",
-                metadata={"path": str(repo_path), "model": model},
+                f"Discovery finished ({len(completed_stages)} stages).",
+                metadata={
+                    "path": str(repo_path),
+                    "model": model,
+                    "engine_id": "opencode",
+                    "completed_stages": completed_stages,
+                    "failed_stages": failed_stages,
+                },
             )
-        except Exception as exc:  # pragma: no cover - best effort
+        else:
             self.db.append_event(
                 protocol_run_id,
                 "setup_discovery_warning",
-                f"Discovery failed or was skipped: {exc}",
-                metadata={"path": str(repo_path), "model": model},
+                "Discovery completed with no successful stages.",
+                metadata={
+                    "path": str(repo_path),
+                    "model": model,
+                    "engine_id": "opencode",
+                    "failed_stages": failed_stages,
+                },
             )
 
 
