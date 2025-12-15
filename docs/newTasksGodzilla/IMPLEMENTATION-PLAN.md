@@ -6,7 +6,7 @@
 
 ## Overview
 
-This plan outlines the **migration and refactoring** of the existing `tasksgodzilla` codebase into the new `devgodzilla` architecture, followed by the implementation of missing components (Windmill integration, UI).
+This plan outlines the **migration and refactoring** of the existing `tasksgodzilla` codebase into the new `devgodzilla` architecture. It focuses on granular migration steps, specific class refactorings, and the integration of new interactions (Windmill, Constitution/Policy).
 
 **Strategy:** Refactor & Migrate
 **Estimated Effort:** 12-16 weeks
@@ -48,11 +48,16 @@ gantt
 | T1.1.4 | Define `Service` base class | New (Architecture Requirement) |
 | T1.1.5 | Migrate Error hierarchy | `errors.py` |
 
-**Files to create/modify:**
-- `devgodzilla/__init__.py`
-- `devgodzilla/config.py` - derived from `tasksgodzilla/config.py`
-- `devgodzilla/logging.py` - derived from `tasksgodzilla/logging.py`
-- `devgodzilla/services/base.py`
+**Detailed Actions:**
+- Create `devgodzilla/__init__.py`.
+- Copy `tasksgodzilla/config.py` to `devgodzilla/config.py`. Refactor `Config` class to allow loading from `DEVGODZILLA_CONFIG` env var.
+- Copy `tasksgodzilla/logging.py` to `devgodzilla/logging.py`. Ensure `structlog` configuration is reusable.
+- Create `devgodzilla/services/base.py` defining:
+    ```python
+    class Service:
+        def __init__(self, context: ServiceContext): ...
+    ```
+- Copy `tasksgodzilla/errors.py` to `devgodzilla/errors.py`.
 
 ### 1.2 Database & Storage
 
@@ -62,9 +67,10 @@ gantt
 | T1.2.2 | Setup Alembic migrations | `alembic/` |
 | T1.2.3 | Implement `DatabaseService` | `storage.py` logic |
 
-**Files to create/modify:**
-- `devgodzilla/db/models.py` - Port `Project`, `ProtocolRun` models
-- `devgodzilla/db/database.py` - Port session management
+**Detailed Actions:**
+- Extract SQLAlchmey models (`Project`, `ProtocolRun`, `StepRun`, `Clarification`, `PolicyPack`) from `tasksgodzilla/storage.py` into `devgodzilla/db/models.py`.
+- Initialize new alembic config in `devgodzilla/alembic`.
+- Create `devgodzilla/db/database.py` containing session management logic from `tasksgodzilla/storage.py` (`get_session`, `transaction`).
 
 ### 1.3 Events & Git
 
@@ -73,15 +79,14 @@ gantt
 | T1.3.1 | Implement `EventBus` | `services/events.py` (if exists) or new |
 | T1.3.2 | Migrate Git operations | `services/git.py` / `git_utils.py` |
 
-**Files to create/modify:**
-- `devgodzilla/services/events.py`
-- `devgodzilla/services/git.py` - Refactor `tasksgodzilla/git_utils.py`
+**Detailed Actions:**
+- Refactor `tasksgodzilla/git_utils.py` into `devgodzilla/services/git.py`. encapsulate functions like `clone_repo`, `ensure_worktree` into `GitService` class methods.
 
 ---
 
 ## Phase 2: Specification Engine (Weeks 3-4)
 
-> **Goal**: Refactor `PlanningService` and SpecKit integration.
+> **Goal**: Refactor `PlanningService`, `ClarifierService` and `PolicyService`.
 
 ### 2.1 Planning & SpecKit
 
@@ -91,21 +96,32 @@ gantt
 | T2.1.2 | Port SpecKit models | `services/spec.py`, `domain.py` |
 | T2.1.3 | Port `prompt_utils.py` | `prompt_utils.py`, `services/prompts.py` |
 
-**Files to create/modify:**
-- `devgodzilla/services/planning.py` - Clean up dependencies
-- `devgodzilla/models/speckit.py`
+**Detailed Actions:**
+- Move `tasksgodzilla/services/spec.py` and `domain.py` logic to `devgodzilla/models/speckit.py`. Ensure strict Pydantic typing for `FeatureSpec`, `ImplementationPlan`.
+- Refactor `PlanningService` from `tasksgodzilla/services/planning.py` to:
+    - Use `devgodzilla.models.speckit` types.
+    - Accept `ClarifierService` as dependency.
+    - Extract LLM calls to use a specific `PlanningAgent` (or keep using direct Engine usage if simpler, but abstract it).
 
-### 2.2 Clarifications & Policies
+### 2.2 Clarifications & Policies Integration
 
 | Task | Description | Source in `tasksgodzilla` |
 |------|-------------|---------------------------|
 | T2.2.1 | Refactor `ClarifierService` | `services/clarifications.py` |
 | T2.2.2 | Refactor `PolicyService` | `services/policy.py` |
-| T2.2.3 | Port constitution logic | `services/policy.py` |
+| T2.2.3 | Implement Constitution loading | `services/policy.py` |
 
-**Files to create/modify:**
-- `devgodzilla/services/clarifier.py`
-- `devgodzilla/services/policy.py`
+**Detailed Actions:**
+- **Refactor `PolicyService`**:
+    - Move `tasksgodzilla/services/policy.py` to `devgodzilla/services/policy.py`.
+    - Preserve `validate_policy_pack_definition` logic.
+    - Ensure `resolve_effective_policy(project_id)` correctly merges Central + Project + Repo-local policies.
+- **Refactor `ClarificationService`**:
+    - Move `tasksgodzilla/services/clarifications.py` to `devgodzilla/services/clarifier.py`.
+    - Ensure `ensure_from_policy` method remains compatible with `EffectivePolicy` dict structure.
+- **Integration Point**:
+    - `PlanningService` must call `PolicyService.resolve_effective_policy()` before generation.
+    - `PlanningService` calls `ClarificationsService.ensure_from_policy()` to hydrate DB with policy-derived questions.
 
 ---
 
@@ -113,7 +129,7 @@ gantt
 
 > **Goal**: Replace current `OrchestratorService` with Windmill-based orchestration.
 
-### 3.1 Windmill Integration (New)
+### 3.1 Windmill Client Integration
 
 | Task | Description | Status |
 |------|-------------|--------|
@@ -121,9 +137,11 @@ gantt
 | T3.1.2 | Implement Flow Generator | New |
 | T3.1.3 | Create `devgodzilla-worker` script for Windmill | New |
 
-**Files to create/modify:**
-- `devgodzilla/windmill/client.py`
-- `devgodzilla/windmill/flows.py`
+**Detailed Actions:**
+- Create `devgodzilla/windmill/client.py`: Wrapper for Windmill API (Job submission, Status check).
+- Create `devgodzilla/windmill/flows.py`: Logic to convert a `TaskList` (from Planning) into a Windmill `Flow` JSON definition.
+    - Map `Task` dependencies to Windmill Flow dependencies.
+- Create `scripts/worker.py`: Entrypoint for Windmill python scripts.
 
 ### 3.2 Logic Migration from Orchestrator
 
@@ -131,11 +149,13 @@ gantt
 |------|-------------|---------------------------|
 | T3.2.1 | Extract State Machine logic | `services/orchestrator.py` |
 | T3.2.2 | Extract Dependency/DAG logic | `pipeline.py` / `services/orchestrator.py` |
-| T3.2.3 | Implement new `OrchestratorService` (facade for Windmill) | `services/orchestrator.py` (complete rewrite) |
+| T3.2.3 | New `OrchestratorService` Facade | `services/orchestrator.py` |
 
-**Files to create/modify:**
-- `devgodzilla/orchestration/dag.py`
-- `devgodzilla/services/orchestrator.py` - Rewritten to use Windmill
+**Detailed Actions:**
+- **DEPRECATE**: The loop in `tasksgodzilla/services/orchestrator.py` (methods `run_protocol`, `_process_queue`) will be removed.
+- **NEW**: `DevGodzillaOrchestrator` service that:
+    - `start_protocol()`: Calls `PlanningService`, then `WindmillClient.create_flow()`, then `WindmillClient.run_flow()`.
+    - `get_status()`: Queries Windmill API for flow status.
 
 ---
 
@@ -152,10 +172,15 @@ gantt
 | T4.1.3 | Refactor `CodexEngine` | `engines_codex.py` / `engines/` |
 | T4.1.4 | Refactor `OpenCodeEngine` | `engines_opencode.py` |
 
-**Files to create/modify:**
-- `devgodzilla/engines/interface.py`
-- `devgodzilla/engines/registry.py` - Port `tasksgodzilla/engine_resolver.py`
-- `devgodzilla/engines/adapters/` - Port existing engine implementations
+**Detailed Actions:**
+- Define `EngineInterface` in `devgodzilla/engines/interface.py`:
+    ```python
+    class EngineInterface(Protocol):
+        def execute_step(self, step: Step, context: Context) -> StepResult: ...
+    ```
+- Refactor `tasksgodzilla/engines_codex.py` to implement `EngineInterface`.
+- Refactor `tasksgodzilla/engines_opencode.py` to implement `EngineInterface`.
+- Create `devgodzilla/engines/registry.py` to map strings ("codex", "opencode") to instances.
 
 ### 4.2 Execution Service
 
@@ -165,9 +190,11 @@ gantt
 | T4.2.2 | Port Sandbox logic | `worker_runtime.py` |
 | T4.2.3 | Port ArtifactWriter | `services/execution.py` |
 
-**Files to create/modify:**
-- `devgodzilla/services/execution.py`
-- `devgodzilla/execution/sandbox.py`
+**Detailed Actions:**
+- Use `ExecutionService` as the logic invoked by Windmill Workers.
+- It receives a `Step` + `Context`.
+- It calls `EngineRegistry.get_engine(step.agent).execute_step(...)`.
+- It calls `ArtifactWriter` to save logs/output.
 
 ---
 
@@ -183,15 +210,13 @@ gantt
 | T5.1.2 | Split monolithic QA logic into `Gates` | `qa.py` |
 | T5.1.3 | Port Feedback Loop logic | `services/quality.py` |
 
-**Files to create/modify:**
-- `devgodzilla/services/quality.py`
-- `devgodzilla/qa/gates/` - Extract logic from `qa.py`
-
-### 5.2 Checklist Validation
-
-| Task | Description | Source in `tasksgodzilla` |
-|------|-------------|---------------------------|
-| T5.2.1 | Port Checklist Validator | `qa.py` (if present) |
+**Detailed Actions:**
+- Analyze `tasksgodzilla/services/quality.py`.
+- Break down monolithic `assess_quality` methods into individual Gate classes in `devgodzilla/qa/gates/`:
+    - `TestGate` (runs pytest)
+    - `LintGate` (runs ruff/mypy)
+    - `ChecklistGate` (uses LLM to verify checklist)
+- `QualityService` executes a list of Gates configurated by `PolicyService` (via `required_checks` etc).
 
 ---
 
@@ -233,11 +258,33 @@ gantt
 4.  **Service Migration**: Move services one by one (Database -> Git -> Config -> Planning...).
 5.  **Orchestration Swap**: Implement Windmill integration, effectively retiring the old `orchestrator.py` loop.
 
-## Dependencies
+## Integration Architectures
 
-| New Component | Preceded By (Legacy/New) |
-|---------------|--------------------------|
-| `devgodzilla.db` | `tasksgodzilla.storage` |
-| `devgodzilla.services.planning` | `tasksgodzilla.services.planning` |
-| `devgodzilla.services.execution` | `tasksgodzilla.services.execution` |
-| `devgodzilla.orchestration` | **NEW** (replaces `tasksgodzilla.orchestrator`) |
+### Policy & Specification Integration
+```mermaid
+sequenceDiagram
+    participant P as PlanningService
+    participant Pol as PolicyService
+    participant C as ClarifierService
+    
+    P->>Pol: resolve_effective_policy(project_id)
+    Pol-->>P: EffectivePolicy(json)
+    P->>C: ensure_from_policy(policy)
+    P->>P: Generate Spec (using policy.constraints)
+```
+
+### Orchestration & Execution Integration
+```mermaid
+sequenceDiagram
+    participant O as OrchestratorService
+    participant WM as Windmill
+    participant E as ExecutionService
+    participant R as EngineRegistry
+
+    O->>WM: Create Protocol Flow
+    WM->>WM: Run Step Job
+    WM->>E: execute_step(step_id)
+    E->>R: get_engine(step.agent)
+    R-->>E: EngineInstance
+    E->>E: EngineInstance.execute()
+```
