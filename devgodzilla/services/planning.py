@@ -265,8 +265,8 @@ class PlanningService(Service):
             template_config=template_config,
         )
         
-        # Update status to ready
-        self.db.update_protocol_status(protocol_run_id, ProtocolStatus.READY)
+        # Update status to planned (ready for execution)
+        self.db.update_protocol_status(protocol_run_id, ProtocolStatus.PLANNED)
         
         self.logger.info(
             "planning_completed",
@@ -278,11 +278,9 @@ class PlanningService(Service):
             },
         )
         
-        # Emit completion event
-        event_bus.publish(ProtocolCompleted(
-            protocol_run_id=protocol_run_id,
-            success=True,
-        ))
+        # Emit completion event (planning phase completed, not full protocol)
+        # Note: ProtocolCompleted is for when the entire protocol finishes execution
+        # For planning completion, we just log success
         
         return PlanningResult(
             success=True,

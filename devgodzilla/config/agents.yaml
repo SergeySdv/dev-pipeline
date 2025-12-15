@@ -1,123 +1,62 @@
-# DevGodzilla Agent Configuration
-# 
-# This file defines available AI coding agents and their configurations.
-# Each agent has: kind, command, default_model, sandbox support, and capabilities.
-
 agents:
-  # Core agents (currently implemented)
   codex:
-    name: "OpenAI Codex"
+    name: OpenAI Codex
     kind: cli
-    command: "codex"
-    default_model: "gpt-4.1"
+    command: codex
+    default_model: gpt-4.1
     sandbox: workspace-write
-    capabilities:
-      - code_gen
-      - review
-      - refactor
+    capabilities: [code_gen, code_review]
     enabled: true
-    
+
   opencode:
-    name: "OpenCode"
+    name: OpenCode
     kind: cli
-    command: "opencode"
-    default_model: "claude-sonnet-4-20250514"
+    command: opencode
+    default_model: claude-sonnet-4-20250514
     sandbox: workspace-write
-    capabilities:
-      - code_gen
-      - review
-      - refactor
+    capabilities: [code_gen, code_review, reasoning]
     enabled: true
-    
+
   claude-code:
-    name: "Claude Code"
+    name: Claude Code
     kind: cli
-    command: "claude"
-    command_dir: ".claude/commands/"
-    default_model: "claude-sonnet-4-20250514"
-    sandbox: workspace-write
-    capabilities:
-      - code_gen
-      - review
-      - refactor
-      - long_context
+    command: claude
+    command_dir: .claude/commands/
+    default_model: claude-sonnet-4-20250514
+    capabilities: [code_gen, code_review, reasoning]
     enabled: true
 
-  # Additional agents (to be implemented)
   gemini-cli:
-    name: "Gemini CLI"
+    name: Gemini CLI
     kind: cli
-    command: "gemini"
-    command_dir: ".gemini/commands/"
-    default_model: "gemini-2.5-pro"
+    command: gemini
+    command_dir: .gemini/commands/
     format: toml
-    sandbox: workspace-write
-    capabilities:
-      - code_gen
-      - review
-      - multimodal
+    capabilities: [code_gen, reasoning]
     enabled: true
-    
-  cursor:
-    name: "Cursor Editor"
-    kind: ide
-    command: "cursor"
-    command_dir: ".cursor/commands/"
-    default_model: "gpt-4"
-    sandbox: none
-    capabilities:
-      - code_gen
-      - interactive
-    enabled: false
-    
-  copilot:
-    name: "GitHub Copilot"
-    kind: ide
-    command: "gh copilot"
-    default_model: "copilot"
-    sandbox: none
-    capabilities:
-      - code_gen
-      - autocomplete
-    enabled: false
-    
-  windsurf:
-    name: "Windsurf"
-    kind: ide
-    command: "windsurf"
-    sandbox: none
-    capabilities:
-      - code_gen
-    enabled: false
-    
-  jules:
-    name: "Jules"
+
+  gemini-pro:
+    name: Gemini Pro
     kind: api
-    endpoint: "https://api.jules.ai"
-    sandbox: cloud
-    capabilities:
-      - code_gen
-      - autonomous
-    enabled: false
-    
-  qoder:
-    name: "Qoder"
-    kind: cli
-    command: "qoder"
-    sandbox: workspace-write
-    capabilities:
-      - code_gen
+    endpoint: https://generativelanguage.googleapis.com/v1
+    default_model: gemini-pro
+    capabilities: [reasoning, coding]
     enabled: false
 
-# Default agent for each task type
+  gpt-4:
+    name: GPT-4
+    kind: api
+    endpoint: https://api.openai.com/v1
+    default_model: gpt-4
+    capabilities: [reasoning, coding]
+    enabled: false
+
 defaults:
   code_gen: opencode
-  review: claude-code
-  refactor: codex
+  planning: opencode
+  qa: opencode
   discovery: opencode
-  
-# Health check configuration
+
 health_check:
   timeout_seconds: 30
-  retry_count: 2
-  interval_minutes: 5
+  retry_count: 3

@@ -502,18 +502,17 @@ class OrchestratorService(Service):
         
         self.db.update_protocol_status(protocol_run_id, ProtocolStatus.CANCELLED)
         
-        # Emit event
+        # Emit event - cancellation is not a failure, just a completion
         event_bus = get_event_bus()
         event_bus.publish(ProtocolCompleted(
             protocol_run_id=protocol_run_id,
-            success=False,
         ))
-        
+
         self.logger.info(
             "protocol_cancelled",
             extra=self.log_extra(protocol_run_id=protocol_run_id),
         )
-        
+
         return OrchestratorResult(success=True)
 
     def check_and_complete_protocol(self, protocol_run_id: int) -> bool:
@@ -539,13 +538,19 @@ class OrchestratorService(Service):
         new_status = ProtocolStatus.FAILED if any_failed else ProtocolStatus.COMPLETED
         self.db.update_protocol_status(protocol_run_id, new_status)
         
-        # Emit event
+        # Emit appropriate event
         event_bus = get_event_bus()
-        event_bus.publish(ProtocolCompleted(
-            protocol_run_id=protocol_run_id,
-            success=not any_failed,
-        ))
-        
+        if any_failed:
+            from devgodzilla.services.events import ProtocolFailed
+            event_bus.publish(ProtocolFailed(
+                protocol_run_id=protocol_run_id,
+                error="One or more steps failed",
+            ))
+        else:
+            event_bus.publish(ProtocolCompleted(
+                protocol_run_id=protocol_run_id,
+            ))
+
         self.logger.info(
             "protocol_completed",
             extra=self.log_extra(
@@ -553,7 +558,7 @@ class OrchestratorService(Service):
                 status=new_status,
             ),
         )
-        
+
         return True
 
     # PR Operations

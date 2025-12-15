@@ -1,12 +1,62 @@
 agents:
-  - id: gemini-pro
+  codex:
+    name: OpenAI Codex
+    kind: cli
+    command: codex
+    default_model: gpt-4.1
+    sandbox: workspace-write
+    capabilities: [code_gen, code_review]
+    enabled: true
+
+  opencode:
+    name: OpenCode
+    kind: cli
+    command: opencode
+    default_model: claude-sonnet-4-20250514
+    sandbox: workspace-write
+    capabilities: [code_gen, code_review, reasoning]
+    enabled: true
+
+  claude-code:
+    name: Claude Code
+    kind: cli
+    command: claude
+    command_dir: .claude/commands/
+    default_model: claude-sonnet-4-20250514
+    capabilities: [code_gen, code_review, reasoning]
+    enabled: true
+
+  gemini-cli:
+    name: Gemini CLI
+    kind: cli
+    command: gemini
+    command_dir: .gemini/commands/
+    format: toml
+    capabilities: [code_gen, reasoning]
+    enabled: true
+
+  gemini-pro:
     name: Gemini Pro
     kind: api
-    model: gemini-pro
+    endpoint: https://generativelanguage.googleapis.com/v1
+    default_model: gemini-pro
     capabilities: [reasoning, coding]
-    
-  - id: gpt-4
+    enabled: false
+
+  gpt-4:
     name: GPT-4
     kind: api
-    model: gpt-4
+    endpoint: https://api.openai.com/v1
+    default_model: gpt-4
     capabilities: [reasoning, coding]
+    enabled: false
+
+defaults:
+  code_gen: opencode
+  planning: opencode
+  qa: opencode
+  discovery: opencode
+
+health_check:
+  timeout_seconds: 30
+  retry_count: 3
