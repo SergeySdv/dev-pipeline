@@ -99,7 +99,8 @@ CREATE TABLE projects (
     ci_provider VARCHAR(50),
     project_classification VARCHAR(50),
     default_models JSONB,
-    secrets JSONB,  -- Encrypted
+    -- Secrets managed via Windmill (no local storage)
+    -- secrets JSONB,  -- REMOVED: Use Windmill Variables & Secrets
     
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -798,6 +799,64 @@ logger.info(
     "step_execution_started",
     step_id="T001",
     agent_id="codex",
+    event="started"
+)
+
+### Distributed Tracing
+
+```python
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+class TelemetryService:
+    """OpenTelemetry integration."""
+    
+    def __init__(self, service_name: str):
+        provider = TracerProvider()
+        processor = BatchSpanProcessor(OTLPSpanExporter())
+        provider.add_span_processor(processor)
+        trace.set_tracer_provider(provider)
+        self.tracer = trace.get_tracer(service_name)
+        
+    def instrument_fastapi(self, app):
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+        
+    def instrument_sqlalchemy(self, engine):
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+        SQLAlchemyInstrumentor().instrument(engine=engine)
+```
+
+## State Reconciliation
+
+### Reconciliation Service
+
+```python
+class ReconciliationService:
+    """Ensures DevGodzilla DB is in sync with Windmill."""
+    
+    def __init__(self, db: Database, windmill: WindmillClient):
+        self.db = db
+        self.windmill = windmill
+        
+    async def reconcile_runs(self):
+        """Compare active runs and fix inconsistencies."""
+        active_steps = self.db.get_active_step_runs()
+        
+        for step in active_steps:
+            job_status = await self.windmill.get_job_status(step.windmill_job_id)
+            
+            if job_status != step.status:
+                logger.warning("state_mismatch", 
+                             step_id=step.id, 
+                             db_status=step.status, 
+                             wm_status=job_status)
+                
+                # Auto-heal: update DB to match Windmill
+                self.db.update_step_run(step.id, status=job_status)
+```
     protocol_run_id=123
 )
 ```

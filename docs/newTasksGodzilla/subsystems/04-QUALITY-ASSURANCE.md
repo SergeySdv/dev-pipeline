@@ -427,6 +427,29 @@ Provide a brief explanation.
             required=item.required,
             explanation=response
         )
+
+### "Smart Context" Strategy (RAG)
+
+To prevent context window overflow when validating large files or projects:
+
+1.  **Chunking**: Large files are split into overlapping chunks (e.g., 500 tokens).
+2.  **Indexing**: Chunks are embedded and stored in a vector index (e.g., ChromaDB).
+3.  **Retrieval**: For each checklist item, we retrieve the Top-K (e.g., K=3) chunks semantically related to the *item description*.
+4.  **Verification**: The LLM validates the item using only the retrieved chunks + Step Output.
+
+```python
+def _format_artifacts(self, artifacts: list[Artifact], query: str) -> str:
+    """Retrieve relevant chunks for the query."""
+    if self._total_tokens(artifacts) < 8000:
+        return self._format_all(artifacts)
+        
+    # Use RAG for large context
+    relevant_chunks = self.vector_store.query(
+        query_text=query,
+        n_results=3
+    )
+    return "\n".join(relevant_chunks)
+```
 ```
 
 ---

@@ -625,6 +625,33 @@ class NsjailSandbox:
         nsjail_cmd.extend(["--", *cmd])
         
         return subprocess.run(nsjail_cmd, **kwargs)
+
+### Hybrid Sandboxing Strategy
+
+To support dependency installation while maintaining security, we use a two-phase approach:
+
+1.  **Setup Phase** (`workspace-write` + Network):
+    *   Allowed to run `pip install`, `npm install`.
+    *   Network access enabled.
+    *   Artifacts: `package-lock.json`, `venv/`.
+
+2.  **Execution Phase** (`workspace-write` + Network Restricted):
+    *   Agent generates code.
+    *   No general internet access (whitelisted API calls only).
+    *   Prevents data exfiltration.
+
+```yaml
+# config/execution.yaml
+phases:
+  setup:
+    sandbox: workspace-write
+    network: true
+    timeout: 600
+  execution:
+    sandbox: network-restricted
+    network: false
+    timeout: 300
+```
 ```
 
 ---
