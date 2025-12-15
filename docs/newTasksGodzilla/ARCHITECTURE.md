@@ -158,8 +158,6 @@ graph LR
             Plan["/speckit.plan"]
             Tasks["/speckit.tasks"]
             Impl["/speckit.implement"]
-            Clarify["/speckit.clarify"]
-            Analyze["/speckit.analyze"]
         end
 
         subgraph Core["Core Components"]
@@ -173,6 +171,7 @@ graph LR
             FeatureSpec[FeatureSpec]
             ImplPlan[ImplementationPlan]
             TaskList[TaskList]
+            Clarifications[Clarifications]
         end
 
         subgraph Storage["Artifact Storage"]
@@ -188,7 +187,14 @@ graph LR
     Spec --> SpecifyEngine
     Plan --> PlanGenerator
     Tasks --> TaskBreakdown
-    Clarify --> Clarifier
+
+    SpecifyEngine -->|ambiguity| Clarifier
+    PlanGenerator -->|ambiguity| Clarifier
+    TaskBreakdown -->|ambiguity| Clarifier
+    Clarifier --> Clarifications
+    Clarifications -->|answered| SpecifyEngine
+    Clarifications -->|answered| PlanGenerator
+    Clarifications -->|answered| TaskBreakdown
 
     SpecifyEngine --> FeatureSpec
     PlanGenerator --> ImplPlan

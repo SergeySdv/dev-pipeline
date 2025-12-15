@@ -17,6 +17,7 @@ graph TB
             UserDesc[User Description]
             Context[Project Context]
             Constitution[Constitution.md]
+            UserAnswers[User Answers]
         end
 
         subgraph Core["Core Components"]
@@ -30,6 +31,7 @@ graph TB
             FeatureSpec[FeatureSpec Model]
             ImplPlan[ImplementationPlan Model]
             TaskList[TaskList Model]
+            Clarifications[Clarification Questions]
         end
 
         subgraph Storage["Artifact Storage"]
@@ -43,11 +45,18 @@ graph TB
     Context --> SpecifyEngine
     Constitution --> SpecifyEngine
 
-    SpecifyEngine --> FeatureSpec
+    SpecifyEngine -->|ambiguity detected| Clarifier
+    Clarifier --> Clarifications
+    Clarifications -->|user answers| UserAnswers
+    UserAnswers --> SpecifyEngine
+
+    SpecifyEngine -->|no ambiguity| FeatureSpec
     FeatureSpec --> PlanGenerator
-    PlanGenerator --> ImplPlan
+    PlanGenerator -->|ambiguity detected| Clarifier
+    PlanGenerator -->|no ambiguity| ImplPlan
     ImplPlan --> TaskBreakdown
-    TaskBreakdown --> TaskList
+    TaskBreakdown -->|ambiguity detected| Clarifier
+    TaskBreakdown -->|no ambiguity| TaskList
 
     FeatureSpec --> SpecDir
     ImplPlan --> SpecDir
@@ -61,6 +70,53 @@ graph TB
 ```
 
 ---
+
+## Specification Workflow
+
+The specification process includes clarification loops at each stage:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API as DevGodzilla API
+    participant Engine as SpecifyEngine
+    participant Clarifier as Clarifier
+    participant DB as ClarificationStore
+
+    User->>API: POST /speckit/specify
+    API->>Engine: generate_spec(description)
+    
+    alt Ambiguity Detected
+        Engine->>Clarifier: detect_ambiguity(context)
+        Clarifier->>DB: store_clarification(blocking=true)
+        Clarifier-->>API: ClarificationRequired
+        API-->>User: 202 Accepted + clarification_id
+        
+        Note over User: User reviews question
+        User->>API: POST /clarifications/{id}/answer
+        API->>DB: store_answer()
+        API->>Engine: resume_with_clarifications()
+    end
+    
+    Engine-->>API: FeatureSpec
+    API-->>User: 200 OK + spec
+
+    User->>API: POST /speckit/plan
+    API->>Engine: generate_plan(spec)
+    
+    alt Ambiguity in Plan
+        Engine->>Clarifier: detect_ambiguity(context)
+        Note over User,Clarifier: Same clarification loop
+    end
+    
+    Engine-->>API: ImplementationPlan
+    API-->>User: 200 OK + plan
+
+    User->>API: POST /speckit/tasks
+    API->>Engine: generate_tasks(plan)
+    Engine-->>API: TaskList
+    API-->>User: 200 OK + tasks
+```
 
 ## Components
 
@@ -191,38 +247,139 @@ phases:
 
 ### 4. Clarifier
 
-Handles ambiguity resolution through structured clarification questions.
+The Clarifier is integrated at every stage of the specification workflow, detecting ambiguity and generating structured questions.
+
+```mermaid
+graph LR
+    subgraph ClarifierFlow["Clarification Flow"]
+        Detect[Detect Ambiguity]
+        Generate[Generate Question]
+        Store[Store in DB]
+        Block[Block Workflow]
+        Answer[User Answers]
+        Resume[Resume Process]
+    end
+
+    Detect -->|ambiguity found| Generate
+    Generate --> Store
+    Store --> Block
+    Block -->|wait| Answer
+    Answer --> Resume
+    Resume -->|inject context| Detect
+```
+
+**Integration Points:**
+- Called by `SpecifyEngine` when requirements are unclear
+- Called by `PlanGenerator` when technical decisions are needed
+- Called by `TaskBreakdown` when task scope is ambiguous
 
 ```python
 from specify import Clarifier
-from specify.models import Clarification
+from specify.models import Clarification, ClarificationStatus
 
-class PlanningService:
-    def request_clarification(
+class ClarificationService:
+    """Manages clarification workflow."""
+    
+    def __init__(self, db: Database):
+        self.db = db
+        self._clarifier = Clarifier()
+    
+    def detect_and_create(
         self,
         context: dict,
-        ambiguity: str
-    ) -> Clarification:
-        """Generate clarification question for ambiguous requirement."""
-        return Clarifier.generate(
+        stage: Literal["specify", "plan", "tasks"],
+        protocol_run_id: int
+    ) -> Clarification | None:
+        """Detect ambiguity and create clarification if needed."""
+        
+        # Use LLM to detect ambiguity
+        ambiguity = self._clarifier.detect_ambiguity(context)
+        
+        if not ambiguity:
+            return None
+        
+        # Generate structured question
+        clarification = self._clarifier.generate(
             context=context,
             ambiguity=ambiguity
         )
+        
+        # Store in database
+        return self.db.create_clarification(
+            scope="protocol",
+            protocol_run_id=protocol_run_id,
+            key=f"{stage}_{clarification.key}",
+            question=clarification.question,
+            options=clarification.options,
+            recommended=clarification.recommended,
+            blocking=True,
+            status=ClarificationStatus.OPEN
+        )
+    
+    def get_pending(self, protocol_run_id: int) -> list[Clarification]:
+        """Get all pending clarifications for a protocol."""
+        return self.db.get_clarifications(
+            protocol_run_id=protocol_run_id,
+            status=ClarificationStatus.OPEN
+        )
+    
+    def answer(
+        self,
+        clarification_id: int,
+        answer: Any,
+        answered_by: str
+    ) -> Clarification:
+        """Record user answer and unblock workflow."""
+        return self.db.update_clarification(
+            clarification_id,
+            answer=answer,
+            answered_by=answered_by,
+            answered_at=datetime.utcnow(),
+            status=ClarificationStatus.ANSWERED
+        )
+    
+    def inject_answers(self, context: dict, clarifications: list[Clarification]) -> dict:
+        """Inject answered clarifications into context."""
+        for c in clarifications:
+            if c.status == ClarificationStatus.ANSWERED:
+                context[c.key] = c.answer
+        return context
 ```
 
-**Clarification Structure:**
-```json
-{
-  "key": "password_hashing",
-  "question": "Which password hashing strategy should be used?",
-  "options": ["bcrypt", "argon2", "scrypt"],
-  "recommended": {
-    "value": "bcrypt",
-    "reason": "Most widely supported, well-tested"
-  },
-  "blocking": true
-}
+**Clarification Model:**
+```python
+class Clarification(BaseModel):
+    """Structured clarification question."""
+    
+    id: int
+    scope: Literal["project", "protocol", "step"]
+    protocol_run_id: int | None
+    step_run_id: int | None
+    
+    key: str                          # Unique identifier
+    question: str                     # Human-readable question
+    options: list[str] | None         # Possible answers
+    recommended: dict | None          # Suggested answer with reason
+    blocking: bool                    # Blocks workflow if True
+    
+    answer: Any | None                # User's answer
+    status: Literal["open", "answered", "skipped"]
+    
+    created_at: datetime
+    answered_at: datetime | None
+    answered_by: str | None
 ```
+
+**Clarification Types:**
+
+| Stage | Example Key | Example Question |
+|-------|-------------|------------------|
+| `specify` | `scope_boundary` | "Should user registration include email verification?" |
+| `specify` | `auth_method` | "Which authentication method: JWT, session, or OAuth?" |
+| `plan` | `database_choice` | "PostgreSQL or MongoDB for this use case?" |
+| `plan` | `api_style` | "REST or GraphQL for the API?" |
+| `tasks` | `test_framework` | "pytest or unittest for tests?" |
+| `tasks` | `parallel_limit` | "How many tasks can run in parallel?" |
 
 ---
 
