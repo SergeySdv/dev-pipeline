@@ -1,12 +1,4 @@
 <script lang="ts">
-    // import { createEventDispatcher } from 'svelte'; // Unused
-    // import { client, type UserStory } from './client';  // Unused
-    
-    // export let projectId: number; // Unused
-    // export let specId: string = ''; // Unused for now
-    
-    // const dispatch = createEventDispatcher(); // Unused
-    
     interface Story {
         id: string;
         title: string;
@@ -80,56 +72,88 @@
         }
     }
     
-    function getPriorityColor(priority: string): string {
+    function getPriorityClass(priority: string): string {
         switch (priority) {
-            case 'P1': return 'var(--red-500, #ef4444)';
-            case 'P2': return 'var(--yellow-500, #eab308)';
-            default: return 'var(--green-500, #22c55e)';
+            case 'P1': return 'bg-red-500';
+            case 'P2': return 'bg-yellow-500';
+            default: return 'bg-green-500';
         }
     }
     
     loadStories();
 </script>
 
-<div class="tracker">
-    <div class="header">
-        <h3>User Story Tracker</h3>
-        <div class="progress-bar">
-            <div class="progress-fill" style="width: {progress}%"></div>
-            <span class="progress-text">{progress}% Complete</span>
+<div class="bg-surface rounded-lg p-4">
+    <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-primary">User Story Tracker</h3>
+        <div class="relative w-48 h-6 bg-surface-secondary rounded-full overflow-hidden">
+            <div 
+                class="h-full bg-blue-500 transition-all duration-300" 
+                style="width: {progress}%"
+            ></div>
+            <span class="absolute inset-0 flex items-center justify-center text-xs font-semibold text-primary">
+                {progress}% Complete
+            </span>
         </div>
     </div>
     
-    <div class="filters">
-        <button class:active={filter === 'all'} on:click={() => filter = 'all'}>All</button>
-        <button class:active={filter === 'pending'} on:click={() => filter = 'pending'}>Pending</button>
-        <button class:active={filter === 'in_progress'} on:click={() => filter = 'in_progress'}>In Progress</button>
-        <button class:active={filter === 'completed'} on:click={() => filter = 'completed'}>Completed</button>
+    <div class="flex gap-2 mb-4">
+        <button 
+            class="px-3 py-1.5 text-sm rounded transition-colors
+                {filter === 'all' ? 'bg-surface-accent-primary text-white' : 'bg-surface-secondary text-secondary hover:bg-surface-hover'}"
+            on:click={() => filter = 'all'}
+        >
+            All
+        </button>
+        <button 
+            class="px-3 py-1.5 text-sm rounded transition-colors
+                {filter === 'pending' ? 'bg-surface-accent-primary text-white' : 'bg-surface-secondary text-secondary hover:bg-surface-hover'}"
+            on:click={() => filter = 'pending'}
+        >
+            Pending
+        </button>
+        <button 
+            class="px-3 py-1.5 text-sm rounded transition-colors
+                {filter === 'in_progress' ? 'bg-surface-accent-primary text-white' : 'bg-surface-secondary text-secondary hover:bg-surface-hover'}"
+            on:click={() => filter = 'in_progress'}
+        >
+            In Progress
+        </button>
+        <button 
+            class="px-3 py-1.5 text-sm rounded transition-colors
+                {filter === 'completed' ? 'bg-surface-accent-primary text-white' : 'bg-surface-secondary text-secondary hover:bg-surface-hover'}"
+            on:click={() => filter = 'completed'}
+        >
+            Completed
+        </button>
     </div>
     
     {#if loading}
-        <div class="loading">Loading stories...</div>
+        <div class="text-center py-8 text-secondary">Loading stories...</div>
     {:else if filteredStories.length === 0}
-        <div class="empty">No stories found</div>
+        <div class="text-center py-8 text-secondary">No stories found</div>
     {:else}
-        <div class="stories">
+        <div class="flex flex-col gap-3">
             {#each filteredStories as story}
-                <div class="story" class:completed={story.status === 'completed'}>
-                    <div class="story-header">
-                        <span class="status-icon">{getStatusIcon(story.status)}</span>
-                        <span class="priority" style="background: {getPriorityColor(story.priority)}">{story.priority}</span>
-                        <span class="story-id">{story.id}</span>
-                        <span class="story-title">{story.title}</span>
+                <div 
+                    class="bg-surface-secondary rounded-md p-3 border-l-4 transition-opacity
+                        {story.status === 'completed' ? 'opacity-70 border-green-500' : 'border-accent'}"
+                >
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg">{getStatusIcon(story.status)}</span>
+                        <span class="px-1.5 py-0.5 text-2xs font-semibold text-white rounded {getPriorityClass(story.priority)}">
+                            {story.priority}
+                        </span>
+                        <span class="font-semibold text-secondary">{story.id}</span>
+                        <span class="text-primary">{story.title}</span>
                     </div>
                     
                     {#if story.tasks.length > 0}
-                        <div class="tasks">
+                        <div class="mt-2 pl-6 space-y-1">
                             {#each story.tasks as task}
-                                <div class="task" class:completed={task.status === 'completed'}>
-                                    <span class="task-checkbox">
-                                        {task.status === 'completed' ? '☑' : '☐'}
-                                    </span>
-                                    <span class="task-name">{task.name}</span>
+                                <div class="flex items-center gap-2 text-sm {task.status === 'completed' ? 'line-through text-secondary' : 'text-secondary'}">
+                                    <span>{task.status === 'completed' ? '☑' : '☐'}</span>
+                                    <span>{task.name}</span>
                                 </div>
                             {/each}
                         </div>
@@ -139,132 +163,3 @@
         </div>
     {/if}
 </div>
-
-<style>
-    .tracker {
-        font-family: system-ui, sans-serif;
-        padding: 1rem;
-        background: var(--bg-primary, #1a1a2e);
-        border-radius: 8px;
-        color: var(--text-primary, #e0e0e0);
-    }
-    
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1rem;
-    }
-    
-    h3 {
-        margin: 0;
-        font-size: 1.2rem;
-    }
-    
-    .progress-bar {
-        position: relative;
-        width: 200px;
-        height: 24px;
-        background: var(--bg-secondary, #2d2d44);
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    
-    .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #4f46e5, #7c3aed);
-        transition: width 0.3s;
-    }
-    
-    .progress-text {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-    
-    .filters {
-        display: flex;
-        gap: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    
-    .filters button {
-        padding: 0.5rem 1rem;
-        border: none;
-        background: var(--bg-secondary, #2d2d44);
-        color: var(--text-secondary, #a0a0a0);
-        border-radius: 4px;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .filters button:hover,
-    .filters button.active {
-        background: var(--accent, #4f46e5);
-        color: white;
-    }
-    
-    .stories {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-    
-    .story {
-        background: var(--bg-secondary, #2d2d44);
-        border-radius: 6px;
-        padding: 0.75rem;
-        border-left: 3px solid var(--accent, #4f46e5);
-    }
-    
-    .story.completed {
-        opacity: 0.7;
-        border-left-color: var(--green-500, #22c55e);
-    }
-    
-    .story-header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    .priority {
-        padding: 0.125rem 0.375rem;
-        border-radius: 4px;
-        font-size: 0.7rem;
-        font-weight: 600;
-        color: white;
-    }
-    
-    .story-id {
-        font-weight: 600;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .tasks {
-        margin-top: 0.5rem;
-        padding-left: 1.5rem;
-    }
-    
-    .task {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.9rem;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .task.completed {
-        text-decoration: line-through;
-    }
-    
-    .loading, .empty {
-        text-align: center;
-        padding: 2rem;
-        color: var(--text-secondary, #a0a0a0);
-    }
-</style>

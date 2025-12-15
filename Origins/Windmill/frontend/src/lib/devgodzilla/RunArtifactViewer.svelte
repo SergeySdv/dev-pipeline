@@ -1,7 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     
-    // export let stepId: number = 0; // Unused
     export let artifacts: Artifact[] = [];
     
     const dispatch = createEventDispatcher();
@@ -32,10 +31,8 @@
         loading = true;
         
         try {
-            // Simulate loading content
             await new Promise(r => setTimeout(r, 500));
             
-            // Mock content based on type
             if (artifact.type === 'log') {
                 artifact.content = `[10:30:00] Starting execution...
 [10:30:01] Loading workspace at /home/user/project
@@ -83,8 +80,7 @@ No type errors.
 ### ✅ TestGate
 15/15 tests passed.`;
             } else {
-                artifact.content = `// Content of ${artifact.name}
-// ${artifact.size} bytes`;
+                artifact.content = `// Content of ${artifact.name}\n// ${artifact.size} bytes`;
             }
         } finally {
             loading = false;
@@ -117,198 +113,59 @@ No type errors.
     }
 </script>
 
-<div class="viewer">
-    <div class="sidebar">
-        <h3>📦 Artifacts</h3>
-        <div class="artifact-list">
+<div class="flex h-[400px] bg-surface rounded-lg overflow-hidden border">
+    <!-- Sidebar -->
+    <div class="w-60 border-r flex flex-col">
+        <h3 class="p-4 text-lg font-semibold text-primary">📦 Artifacts</h3>
+        <div class="flex-1 overflow-y-auto px-2 pb-2">
             {#each items as artifact}
                 <button 
-                    class="artifact-item"
-                    class:selected={selectedArtifact?.id === artifact.id}
+                    class="flex items-center gap-2 w-full p-2 rounded-md text-left transition-all mb-1
+                        {selectedArtifact?.id === artifact.id 
+                            ? 'bg-surface-accent-primary text-white' 
+                            : 'hover:bg-surface-hover text-primary'}"
                     on:click={() => viewArtifact(artifact)}
                 >
-                    <span class="type-icon">{getTypeIcon(artifact.type)}</span>
-                    <div class="artifact-info">
-                        <span class="name">{artifact.name}</span>
-                        <span class="meta">{formatSize(artifact.size)}</span>
+                    <span class="text-xl">{getTypeIcon(artifact.type)}</span>
+                    <div class="flex flex-col overflow-hidden">
+                        <span class="text-sm truncate">{artifact.name}</span>
+                        <span class="text-xs {selectedArtifact?.id === artifact.id ? 'text-white/70' : 'text-secondary'}">
+                            {formatSize(artifact.size)}
+                        </span>
                     </div>
                 </button>
             {/each}
         </div>
     </div>
     
-    <div class="content">
+    <!-- Content -->
+    <div class="flex-1 flex flex-col overflow-hidden">
         {#if loading}
-            <div class="loading">Loading...</div>
+            <div class="flex-1 flex items-center justify-center text-secondary">Loading...</div>
         {:else if selectedArtifact}
-            <div class="content-header">
-                <h4>{getTypeIcon(selectedArtifact.type)} {selectedArtifact.name}</h4>
-                <div class="actions">
-                    <button class="btn-small" on:click={() => selectedArtifact && downloadArtifact(selectedArtifact)}>
-                        ⬇️ Download
-                    </button>
-                </div>
+            <div class="flex justify-between items-center p-4 border-b">
+                <h4 class="font-semibold text-primary">
+                    {getTypeIcon(selectedArtifact.type)} {selectedArtifact.name}
+                </h4>
+                <button 
+                    class="px-2 py-1 text-xs bg-surface-secondary hover:bg-surface-hover rounded text-primary transition-colors"
+                    on:click={() => selectedArtifact && downloadArtifact(selectedArtifact)}
+                >
+                    ⬇️ Download
+                </button>
             </div>
-            <div class="content-meta">
+            <div class="flex gap-4 px-4 py-2 text-xs text-secondary bg-surface-secondary">
                 <span>Size: {formatSize(selectedArtifact.size)}</span>
                 <span>Created: {formatDate(selectedArtifact.createdAt)}</span>
             </div>
-            <pre class="content-body" 
-                 class:diff={selectedArtifact.type === 'diff'}
-                 class:log={selectedArtifact.type === 'log'}
-                 class:markdown={selectedArtifact.type === 'report'}
+            <pre class="flex-1 p-4 bg-surface-sunken font-mono text-sm overflow-auto whitespace-pre-wrap
+                {selectedArtifact.type === 'log' ? 'text-green-500' : 'text-primary'}"
             >{selectedArtifact.content || 'No content'}</pre>
         {:else}
-            <div class="empty">
-                <div class="empty-icon">📂</div>
+            <div class="flex-1 flex flex-col items-center justify-center text-secondary">
+                <div class="text-5xl mb-2">📂</div>
                 <p>Select an artifact to view</p>
             </div>
         {/if}
     </div>
 </div>
-
-<style>
-    .viewer {
-        font-family: system-ui, sans-serif;
-        display: flex;
-        height: 400px;
-        background: var(--bg-primary, #1a1a2e);
-        border-radius: 8px;
-        color: var(--text-primary, #e0e0e0);
-        overflow: hidden;
-    }
-    
-    .sidebar {
-        width: 240px;
-        border-right: 1px solid var(--border, #3d3d5c);
-        display: flex;
-        flex-direction: column;
-    }
-    
-    .sidebar h3 {
-        margin: 0;
-        padding: 1rem;
-        font-size: 1rem;
-    }
-    
-    .artifact-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 0 0.5rem 0.5rem;
-    }
-    
-    .artifact-item {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        width: 100%;
-        padding: 0.5rem;
-        background: none;
-        border: none;
-        border-radius: 6px;
-        color: var(--text-primary, #e0e0e0);
-        cursor: pointer;
-        text-align: left;
-        transition: all 0.2s;
-    }
-    
-    .artifact-item:hover {
-        background: var(--bg-secondary, #2d2d44);
-    }
-    
-    .artifact-item.selected {
-        background: var(--accent, #4f46e5);
-    }
-    
-    .type-icon {
-        font-size: 1.25rem;
-    }
-    
-    .artifact-info {
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-    
-    .name {
-        font-size: 0.9rem;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    
-    .meta {
-        font-size: 0.75rem;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-    
-    .content-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 1rem;
-        border-bottom: 1px solid var(--border, #3d3d5c);
-    }
-    
-    .content-header h4 {
-        margin: 0;
-    }
-    
-    .content-meta {
-        display: flex;
-        gap: 1rem;
-        padding: 0.5rem 1rem;
-        font-size: 0.8rem;
-        color: var(--text-secondary, #a0a0a0);
-        background: var(--bg-secondary, #2d2d44);
-    }
-    
-    .content-body {
-        flex: 1;
-        margin: 0;
-        padding: 1rem;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.85rem;
-        line-height: 1.5;
-        overflow: auto;
-        background: var(--bg-code, #0d0d17);
-    }
-    
-    .content-body.diff {
-        color: var(--text-primary, #e0e0e0);
-    }
-    
-    .content-body.log {
-        color: #22c55e;
-    }
-    
-    .btn-small {
-        padding: 0.25rem 0.5rem;
-        background: var(--bg-secondary, #2d2d44);
-        border: none;
-        border-radius: 4px;
-        color: var(--text-primary, #e0e0e0);
-        cursor: pointer;
-    }
-    
-    .loading, .empty {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .empty-icon {
-        font-size: 3rem;
-        margin-bottom: 0.5rem;
-    }
-</style>

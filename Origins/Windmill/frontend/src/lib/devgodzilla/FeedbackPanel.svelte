@@ -19,7 +19,7 @@
   }
 </script>
 
-<div class="feedback-panel bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
   <div class="flex justify-between items-center mb-4">
     <h3 class="text-sm font-semibold text-red-800 dark:text-red-200">Feedback Required</h3>
     
@@ -35,20 +35,20 @@
   
   <div class="space-y-3">
     {#each findings as finding}
-      <div class="bg-white dark:bg-gray-800 p-3 rounded border border-red-100 dark:border-red-900/50 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div class="bg-surface p-3 rounded border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1">
-            <span class="text-xs font-bold uppercase tracking-wide text-gray-500">{finding.category}</span>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-mono">{finding.suggestedAction}</span>
+            <span class="text-xs font-bold uppercase tracking-wide text-secondary">{finding.category}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded bg-surface-secondary text-secondary font-mono">{finding.suggestedAction}</span>
           </div>
-          <p class="text-sm text-gray-800 dark:text-gray-200">{finding.message}</p>
+          <p class="text-sm text-primary">{finding.message}</p>
         </div>
         
         <div class="actions flex gap-2 shrink-0">
           {#if finding.suggestedAction === 'auto_fix'}
             <button 
               on:click={() => handleAction(finding.id, 'auto_fix')}
-              class="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded"
+              class="px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-700 rounded"
             >
               Fix
             </button>
@@ -56,14 +56,14 @@
           
           <button 
              on:click={() => handleAction(finding.id, 'retry')}
-             class="px-2 py-1 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded"
+             class="px-2 py-1 text-xs font-medium text-secondary bg-surface-secondary hover:bg-surface-hover border rounded"
           >
             Retry
           </button>
           
           <button 
             on:click={() => handleAction(finding.id, 'escalate')}
-            class="px-2 py-1 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded"
+            class="px-2 py-1 text-xs font-medium text-secondary bg-surface-secondary hover:bg-surface-hover border rounded"
           >
             Escalate
           </button>

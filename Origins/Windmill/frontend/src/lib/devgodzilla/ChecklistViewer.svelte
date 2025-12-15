@@ -1,7 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     
-    // export let stepId: number = 0; // Unused
     export let checklistItems: ChecklistItem[] = [];
     
     const dispatch = createEventDispatcher();
@@ -34,54 +33,68 @@
     $: progress = Math.round((items.filter(i => i.checked).length / items.length) * 100);
     
     function toggleItem(item: ChecklistItem) {
-        if (item.autoVerified) return; // Can't toggle auto-verified items
+        if (item.autoVerified) return;
         item.checked = !item.checked;
         items = items;
         dispatch('change', { id: item.id, checked: item.checked });
     }
-    
-    /* function getCategoryColor(category: string): string { // Unused
-        switch (category) {
-            case 'required': return '#ef4444';
-            case 'recommended': return '#eab308';
-            default: return '#22c55e';
-        }
-    } */
 </script>
 
-<div class="checklist">
-    <div class="header">
-        <h3>📋 QA Checklist</h3>
-        <div class="progress-indicator" class:ready={requiredComplete}>
+<div class="bg-surface rounded-lg p-4">
+    <div class="flex justify-between items-center mb-3">
+        <h3 class="text-lg font-semibold text-primary">📋 QA Checklist</h3>
+        <div 
+            class="px-3 py-1 rounded-full text-xs font-medium
+                {requiredComplete 
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' 
+                    : 'bg-surface-secondary text-secondary'}"
+        >
             {requiredComplete ? '✅ Ready' : '⏳ Pending'}
         </div>
     </div>
     
-    <div class="progress-bar">
-        <div class="progress-fill" style="width: {progress}%"></div>
+    <!-- Progress bar -->
+    <div class="h-1 bg-surface-secondary rounded-full overflow-hidden mb-4">
+        <div 
+            class="h-full bg-blue-500 transition-all duration-300" 
+            style="width: {progress}%"
+        ></div>
     </div>
     
     {#if requiredItems.length > 0}
-        <div class="category">
-            <h4><span class="dot" style="background: #ef4444"></span> Required</h4>
+        <div class="mb-4">
+            <h4 class="flex items-center gap-2 text-sm text-secondary mb-2">
+                <span class="w-2 h-2 rounded-full bg-red-500"></span>
+                Required
+            </h4>
             {#each requiredItems as item}
                 <label 
-                    class="item" 
-                    class:checked={item.checked}
-                    class:auto={item.autoVerified}
+                    class="flex items-center gap-3 p-3 bg-surface-secondary rounded-md mb-1 transition-all
+                        {item.autoVerified ? 'cursor-default' : 'cursor-pointer hover:bg-surface-hover'}
+                        {item.checked ? 'opacity-70' : ''}"
                 >
                     <input 
                         type="checkbox" 
                         checked={item.checked}
                         disabled={item.autoVerified}
                         on:change={() => toggleItem(item)}
+                        class="hidden"
                     />
-                    <span class="checkbox-custom">
+                    <div 
+                        class="w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-all
+                            {item.checked 
+                                ? 'bg-green-500 border-green-500 text-white' 
+                                : 'border-secondary'}"
+                    >
                         {item.checked ? '✓' : ''}
+                    </div>
+                    <span class="flex-1 text-sm {item.checked ? 'line-through text-secondary' : 'text-primary'}">
+                        {item.text}
                     </span>
-                    <span class="item-text">{item.text}</span>
                     {#if item.autoVerified}
-                        <span class="auto-badge">AUTO</span>
+                        <span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-accent text-2xs font-semibold rounded">
+                            AUTO
+                        </span>
                     {/if}
                 </label>
             {/each}
@@ -89,26 +102,39 @@
     {/if}
     
     {#if recommendedItems.length > 0}
-        <div class="category">
-            <h4><span class="dot" style="background: #eab308"></span> Recommended</h4>
+        <div class="mb-4">
+            <h4 class="flex items-center gap-2 text-sm text-secondary mb-2">
+                <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+                Recommended
+            </h4>
             {#each recommendedItems as item}
                 <label 
-                    class="item" 
-                    class:checked={item.checked}
-                    class:auto={item.autoVerified}
+                    class="flex items-center gap-3 p-3 bg-surface-secondary rounded-md mb-1 transition-all
+                        {item.autoVerified ? 'cursor-default' : 'cursor-pointer hover:bg-surface-hover'}
+                        {item.checked ? 'opacity-70' : ''}"
                 >
                     <input 
                         type="checkbox" 
                         checked={item.checked}
                         disabled={item.autoVerified}
                         on:change={() => toggleItem(item)}
+                        class="hidden"
                     />
-                    <span class="checkbox-custom">
+                    <div 
+                        class="w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-all
+                            {item.checked 
+                                ? 'bg-green-500 border-green-500 text-white' 
+                                : 'border-secondary'}"
+                    >
                         {item.checked ? '✓' : ''}
+                    </div>
+                    <span class="flex-1 text-sm {item.checked ? 'line-through text-secondary' : 'text-primary'}">
+                        {item.text}
                     </span>
-                    <span class="item-text">{item.text}</span>
                     {#if item.autoVerified}
-                        <span class="auto-badge">AUTO</span>
+                        <span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-accent text-2xs font-semibold rounded">
+                            AUTO
+                        </span>
                     {/if}
                 </label>
             {/each}
@@ -116,170 +142,46 @@
     {/if}
     
     {#if optionalItems.length > 0}
-        <div class="category">
-            <h4><span class="dot" style="background: #22c55e"></span> Optional</h4>
+        <div class="mb-4">
+            <h4 class="flex items-center gap-2 text-sm text-secondary mb-2">
+                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                Optional
+            </h4>
             {#each optionalItems as item}
                 <label 
-                    class="item" 
-                    class:checked={item.checked}
-                    class:auto={item.autoVerified}
+                    class="flex items-center gap-3 p-3 bg-surface-secondary rounded-md mb-1 transition-all
+                        {item.autoVerified ? 'cursor-default' : 'cursor-pointer hover:bg-surface-hover'}
+                        {item.checked ? 'opacity-70' : ''}"
                 >
                     <input 
                         type="checkbox" 
                         checked={item.checked}
                         disabled={item.autoVerified}
                         on:change={() => toggleItem(item)}
+                        class="hidden"
                     />
-                    <span class="checkbox-custom">
+                    <div 
+                        class="w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-all
+                            {item.checked 
+                                ? 'bg-green-500 border-green-500 text-white' 
+                                : 'border-secondary'}"
+                    >
                         {item.checked ? '✓' : ''}
+                    </div>
+                    <span class="flex-1 text-sm {item.checked ? 'line-through text-secondary' : 'text-primary'}">
+                        {item.text}
                     </span>
-                    <span class="item-text">{item.text}</span>
                     {#if item.autoVerified}
-                        <span class="auto-badge">AUTO</span>
+                        <span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-accent text-2xs font-semibold rounded">
+                            AUTO
+                        </span>
                     {/if}
                 </label>
             {/each}
         </div>
     {/if}
     
-    <div class="summary">
+    <div class="text-center text-sm text-secondary">
         {items.filter(i => i.checked).length} / {items.length} complete
     </div>
 </div>
-
-<style>
-    .checklist {
-        font-family: system-ui, sans-serif;
-        background: var(--bg-primary, #1a1a2e);
-        border-radius: 8px;
-        color: var(--text-primary, #e0e0e0);
-        padding: 1rem;
-    }
-    
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 0.75rem;
-    }
-    
-    h3 {
-        margin: 0;
-    }
-    
-    .progress-indicator {
-        padding: 0.25rem 0.75rem;
-        background: var(--bg-secondary, #2d2d44);
-        border-radius: 12px;
-        font-size: 0.8rem;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .progress-indicator.ready {
-        background: rgba(34, 197, 94, 0.2);
-        color: #22c55e;
-    }
-    
-    .progress-bar {
-        height: 4px;
-        background: var(--bg-secondary, #2d2d44);
-        border-radius: 2px;
-        margin-bottom: 1rem;
-        overflow: hidden;
-    }
-    
-    .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #4f46e5, #7c3aed);
-        transition: width 0.3s;
-    }
-    
-    .category {
-        margin-bottom: 1rem;
-    }
-    
-    h4 {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin: 0 0 0.5rem;
-        font-size: 0.85rem;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-    }
-    
-    .item {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.5rem 0.75rem;
-        background: var(--bg-secondary, #2d2d44);
-        border-radius: 6px;
-        margin-bottom: 0.25rem;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .item:hover {
-        background: var(--bg-hover, #3d3d5c);
-    }
-    
-    .item.checked {
-        opacity: 0.7;
-    }
-    
-    .item.auto {
-        cursor: default;
-    }
-    
-    .item input {
-        display: none;
-    }
-    
-    .checkbox-custom {
-        width: 20px;
-        height: 20px;
-        border: 2px solid var(--text-secondary, #a0a0a0);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.75rem;
-        transition: all 0.2s;
-    }
-    
-    .item.checked .checkbox-custom {
-        background: #22c55e;
-        border-color: #22c55e;
-        color: white;
-    }
-    
-    .item-text {
-        flex: 1;
-    }
-    
-    .item.checked .item-text {
-        text-decoration: line-through;
-    }
-    
-    .auto-badge {
-        padding: 0.125rem 0.375rem;
-        background: rgba(79, 70, 229, 0.3);
-        border-radius: 4px;
-        font-size: 0.65rem;
-        font-weight: 600;
-        color: var(--accent, #4f46e5);
-    }
-    
-    .summary {
-        text-align: center;
-        font-size: 0.85rem;
-        color: var(--text-secondary, #a0a0a0);
-        margin-top: 0.5rem;
-    }
-</style>

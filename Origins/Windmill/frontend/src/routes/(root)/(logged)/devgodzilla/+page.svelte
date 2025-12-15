@@ -49,51 +49,51 @@
   <title>DevGodzilla - Dashboard</title>
 </svelte:head>
 
-<div class="dashboard">
-  <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-8">Dashboard</h1>
+<div>
+  <h1 class="text-3xl font-bold text-primary mb-8">Dashboard</h1>
 
   {#if error}
-    <div class="bg-red-100 dark:bg-red-900 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
+    <div class="bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
       <p class="text-red-800 dark:text-red-200">{error}</p>
     </div>
   {/if}
 
   <!-- Stats Cards -->
   <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
+    <div class="bg-surface rounded-xl shadow-sm p-6 border">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm text-gray-500 dark:text-gray-400">Total Projects</p>
-          <p class="text-3xl font-bold text-gray-900 dark:text-white">{stats.totalProjects}</p>
+          <p class="text-sm text-secondary">Total Projects</p>
+          <p class="text-3xl font-bold text-primary">{stats.totalProjects}</p>
         </div>
         <span class="text-3xl">📁</span>
       </div>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
+    <div class="bg-surface rounded-xl shadow-sm p-6 border">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm text-gray-500 dark:text-gray-400">Active Protocols</p>
-          <p class="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{stats.activeProtocols}</p>
+          <p class="text-sm text-secondary">Active Protocols</p>
+          <p class="text-3xl font-bold text-accent">{stats.activeProtocols}</p>
         </div>
         <span class="text-3xl">⚡</span>
       </div>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
+    <div class="bg-surface rounded-xl shadow-sm p-6 border">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm text-gray-500 dark:text-gray-400">Completed Today</p>
+          <p class="text-sm text-secondary">Completed Today</p>
           <p class="text-3xl font-bold text-green-600 dark:text-green-400">{stats.completedToday}</p>
         </div>
         <span class="text-3xl">✅</span>
       </div>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
+    <div class="bg-surface rounded-xl shadow-sm p-6 border">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm text-gray-500 dark:text-gray-400">Pending Clarifications</p>
+          <p class="text-sm text-secondary">Pending Clarifications</p>
           <p class="text-3xl font-bold text-amber-600 dark:text-amber-400">{stats.pendingClarifications}</p>
         </div>
         <span class="text-3xl">❓</span>
@@ -103,31 +103,31 @@
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Recent Projects -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-      <div class="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Recent Projects</h2>
-        <a href="/devgodzilla/projects" class="text-sm text-indigo-600 hover:text-indigo-700">View all →</a>
+    <div class="bg-surface rounded-xl shadow-sm border">
+      <div class="p-6 border-b flex justify-between items-center">
+        <h2 class="text-lg font-semibold text-primary">Recent Projects</h2>
+        <a href="/devgodzilla/projects" class="text-sm text-accent hover:opacity-80">View all →</a>
       </div>
-      <div class="divide-y divide-gray-200 dark:divide-gray-700">
+      <div class="divide-y">
         {#if loading}
-          <div class="p-6 text-center text-gray-500">Loading...</div>
+          <div class="p-6 text-center text-secondary">Loading...</div>
         {:else if projects.length === 0}
-          <div class="p-6 text-center text-gray-500">
+          <div class="p-6 text-center text-secondary">
             No projects yet. 
-            <a href="/devgodzilla/projects/new" class="text-indigo-600 hover:underline">Create one</a>
+            <a href="/devgodzilla/projects/new" class="text-accent hover:underline">Create one</a>
           </div>
         {:else}
           {#each projects.slice(0, 5) as project}
             <a 
               href="/devgodzilla/projects/{project.id}" 
-              class="block p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              class="block p-4 hover:bg-surface-hover transition-colors"
             >
               <div class="flex justify-between items-center">
                 <div>
-                  <p class="font-medium text-gray-900 dark:text-white">{project.name}</p>
-                  <p class="text-sm text-gray-500 dark:text-gray-400">{project.git_url || 'No repository'}</p>
+                  <p class="font-medium text-primary">{project.name}</p>
+                  <p class="text-sm text-secondary">{project.git_url || 'No repository'}</p>
                 </div>
-                <span class="text-gray-400">→</span>
+                <span class="text-secondary">→</span>
               </div>
             </a>
           {/each}
@@ -136,34 +136,34 @@
     </div>
 
     <!-- Recent Protocols -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-      <div class="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Recent Protocols</h2>
-        <a href="/devgodzilla/protocols" class="text-sm text-indigo-600 hover:text-indigo-700">View all →</a>
+    <div class="bg-surface rounded-xl shadow-sm border">
+      <div class="p-6 border-b flex justify-between items-center">
+        <h2 class="text-lg font-semibold text-primary">Recent Protocols</h2>
+        <a href="/devgodzilla/protocols" class="text-sm text-accent hover:opacity-80">View all →</a>
       </div>
-      <div class="divide-y divide-gray-200 dark:divide-gray-700">
+      <div class="divide-y">
         {#if loading}
-          <div class="p-6 text-center text-gray-500">Loading...</div>
+          <div class="p-6 text-center text-secondary">Loading...</div>
         {:else if recentProtocols.length === 0}
-          <div class="p-6 text-center text-gray-500">No protocol runs yet</div>
+          <div class="p-6 text-center text-secondary">No protocol runs yet</div>
         {:else}
           {#each recentProtocols.slice(0, 5) as protocol}
             <a 
               href="/devgodzilla/protocols/{protocol.id}" 
-              class="block p-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              class="block p-4 hover:bg-surface-hover transition-colors"
             >
               <div class="flex justify-between items-center">
                 <div>
-                  <p class="font-medium text-gray-900 dark:text-white">{protocol.protocol_name}</p>
-                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                  <p class="font-medium text-primary">{protocol.protocol_name}</p>
+                  <p class="text-sm text-secondary">
                     {new Date(protocol.created_at).toLocaleDateString()}
                   </p>
                 </div>
                 <span class="px-2 py-1 text-xs rounded-full
-                  {protocol.status === 'completed' ? 'bg-green-100 text-green-800' :
-                   protocol.status === 'running' ? 'bg-blue-100 text-blue-800' :
-                   protocol.status === 'failed' ? 'bg-red-100 text-red-800' :
-                   'bg-gray-100 text-gray-800'}">
+                  {protocol.status === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200' :
+                   protocol.status === 'running' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200' :
+                   protocol.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200' :
+                   'bg-surface-secondary text-secondary'}">
                   {protocol.status}
                 </span>
               </div>
@@ -176,17 +176,17 @@
 
   <!-- Quick Actions -->
   <div class="mt-8">
-    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Quick Actions</h2>
+    <h2 class="text-lg font-semibold text-primary mb-4">Quick Actions</h2>
     <div class="flex flex-wrap gap-4">
       <a 
         href="/devgodzilla/projects/new" 
-        class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+        class="px-4 py-2 bg-surface-accent-primary text-white rounded-lg hover:opacity-90 transition-opacity"
       >
         + New Project
       </a>
       <a 
         href="/devgodzilla/agents" 
-        class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+        class="px-4 py-2 bg-surface-secondary text-primary rounded-lg hover:bg-surface-hover transition-colors"
       >
         Configure Agents
       </a>

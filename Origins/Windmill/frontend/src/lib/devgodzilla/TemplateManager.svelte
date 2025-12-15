@@ -1,8 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     
-    // export let projectId: number = 0; // Unused
-    
     const dispatch = createEventDispatcher();
     
     interface Template {
@@ -121,7 +119,6 @@
     async function loadTemplates() {
         loading = true;
         try {
-            // Would fetch from API
             templates = [...defaultTemplates];
         } finally {
             loading = false;
@@ -167,40 +164,47 @@
     
     function getTypeColor(type: string): string {
         switch (type) {
-            case 'spec': return '#4f46e5';
-            case 'plan': return '#7c3aed';
-            case 'tasks': return '#22c55e';
-            case 'checklist': return '#eab308';
-            default: return '#a0a0a0';
+            case 'spec': return 'text-blue-600 dark:text-blue-400';
+            case 'plan': return 'text-purple-600 dark:text-purple-400';
+            case 'tasks': return 'text-green-600 dark:text-green-400';
+            case 'checklist': return 'text-yellow-600 dark:text-yellow-400';
+            default: return 'text-secondary';
         }
     }
     
     loadTemplates();
 </script>
 
-<div class="manager">
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h3>📑 Templates</h3>
+<div class="flex h-[500px] bg-surface rounded-lg overflow-hidden border">
+    <!-- Sidebar -->
+    <div class="w-64 border-r flex flex-col">
+        <div class="p-4 border-b">
+            <h3 class="text-lg font-semibold text-primary">📑 Templates</h3>
         </div>
         
         {#if loading}
-            <div class="loading">Loading...</div>
+            <div class="flex-1 flex items-center justify-center text-secondary">Loading...</div>
         {:else}
-            <div class="template-list">
+            <div class="flex-1 overflow-y-auto p-2">
                 {#each templates as template}
                     <button 
-                        class="template-item"
-                        class:selected={selectedTemplate?.id === template.id}
+                        class="flex items-center gap-2 w-full p-3 rounded-md text-left transition-all mb-1
+                            {selectedTemplate?.id === template.id 
+                                ? 'bg-surface-accent-primary text-white' 
+                                : 'hover:bg-surface-hover text-primary'}"
                         on:click={() => selectTemplate(template)}
                     >
-                        <span class="type-icon">{getTypeIcon(template.type)}</span>
-                        <div class="template-info">
-                            <span class="name">{template.name}</span>
-                            <span class="type" style="color: {getTypeColor(template.type)}">{template.type}</span>
+                        <span class="text-xl">{getTypeIcon(template.type)}</span>
+                        <div class="flex-1 overflow-hidden">
+                            <span class="block text-sm font-medium truncate">{template.name}</span>
+                            <span class="block text-xs uppercase {selectedTemplate?.id === template.id ? 'text-white/70' : getTypeColor(template.type)}">
+                                {template.type}
+                            </span>
                         </div>
                         {#if template.isDefault}
-                            <span class="default-badge">DEFAULT</span>
+                            <span class="px-1.5 py-0.5 bg-white/20 text-2xs font-semibold rounded">
+                                DEFAULT
+                            </span>
                         {/if}
                     </button>
                 {/each}
@@ -208,226 +212,60 @@
         {/if}
     </div>
     
-    <div class="content">
+    <!-- Content -->
+    <div class="flex-1 flex flex-col overflow-hidden">
         {#if selectedTemplate}
-            <div class="content-header">
-                <div class="header-info">
-                    <h4>{getTypeIcon(selectedTemplate.type)} {selectedTemplate.name}</h4>
-                    <p class="description">{selectedTemplate.description}</p>
+            <div class="flex justify-between items-start p-4 border-b">
+                <div>
+                    <h4 class="text-lg font-semibold text-primary">
+                        {getTypeIcon(selectedTemplate.type)} {selectedTemplate.name}
+                    </h4>
+                    <p class="text-sm text-secondary">{selectedTemplate.description}</p>
                 </div>
-                <div class="actions">
+                <div class="flex gap-2">
                     {#if editing}
-                        <button class="btn secondary" on:click={cancelEditing}>Cancel</button>
-                        <button class="btn primary" on:click={saveTemplate}>Save</button>
+                        <button 
+                            class="px-3 py-1.5 text-sm bg-surface-secondary text-primary rounded-md hover:bg-surface-hover transition-colors"
+                            on:click={cancelEditing}
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            class="px-3 py-1.5 text-sm bg-surface-accent-primary text-white rounded-md hover:opacity-90 transition-opacity"
+                            on:click={saveTemplate}
+                        >
+                            Save
+                        </button>
                     {:else}
-                        <button class="btn primary" on:click={startEditing}>✏️ Edit</button>
+                        <button 
+                            class="px-3 py-1.5 text-sm bg-surface-accent-primary text-white rounded-md hover:opacity-90 transition-opacity"
+                            on:click={startEditing}
+                        >
+                            ✏️ Edit
+                        </button>
                     {/if}
                 </div>
             </div>
             
             {#if editing}
                 <textarea 
-                    class="editor"
+                    class="flex-1 p-4 bg-surface-sunken font-mono text-sm resize-none border-0 focus:ring-0"
                     bind:value={editContent}
                     spellcheck="false"
                 ></textarea>
             {:else}
-                <pre class="preview">{selectedTemplate.content}</pre>
+                <pre class="flex-1 p-4 bg-surface-sunken font-mono text-sm overflow-auto whitespace-pre-wrap text-primary">{selectedTemplate.content}</pre>
             {/if}
             
-            <div class="footer">
+            <div class="flex justify-between p-3 bg-surface-secondary text-xs text-secondary border-t">
                 <span>Last modified: {new Date(selectedTemplate.lastModified).toLocaleString()}</span>
-                <span class="variables">Variables: {'{{variable_name}}'}</span>
+                <span class="font-mono">Variables: {'{{variable_name}}'}</span>
             </div>
         {:else}
-            <div class="empty">
-                <div class="empty-icon">📑</div>
+            <div class="flex-1 flex flex-col items-center justify-center text-secondary">
+                <div class="text-5xl mb-2">📑</div>
                 <p>Select a template to view or edit</p>
             </div>
         {/if}
     </div>
 </div>
-
-<style>
-    .manager {
-        font-family: system-ui, sans-serif;
-        display: flex;
-        height: 500px;
-        background: var(--bg-primary, #1a1a2e);
-        border-radius: 8px;
-        color: var(--text-primary, #e0e0e0);
-        overflow: hidden;
-    }
-    
-    .sidebar {
-        width: 260px;
-        border-right: 1px solid var(--border, #3d3d5c);
-        display: flex;
-        flex-direction: column;
-    }
-    
-    .sidebar-header {
-        padding: 1rem;
-        border-bottom: 1px solid var(--border, #3d3d5c);
-    }
-    
-    .sidebar-header h3 {
-        margin: 0;
-    }
-    
-    .template-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 0.5rem;
-    }
-    
-    .template-item {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        width: 100%;
-        padding: 0.75rem;
-        background: none;
-        border: none;
-        border-radius: 6px;
-        color: var(--text-primary, #e0e0e0);
-        cursor: pointer;
-        text-align: left;
-        transition: all 0.2s;
-        margin-bottom: 0.25rem;
-    }
-    
-    .template-item:hover {
-        background: var(--bg-secondary, #2d2d44);
-    }
-    
-    .template-item.selected {
-        background: var(--accent, #4f46e5);
-    }
-    
-    .type-icon {
-        font-size: 1.5rem;
-    }
-    
-    .template-info {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-    
-    .name {
-        font-size: 0.9rem;
-        font-weight: 500;
-    }
-    
-    .type {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-    }
-    
-    .default-badge {
-        padding: 0.125rem 0.375rem;
-        background: rgba(255,255,255,0.1);
-        border-radius: 4px;
-        font-size: 0.6rem;
-        font-weight: 600;
-    }
-    
-    .content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-    
-    .content-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        padding: 1rem;
-        border-bottom: 1px solid var(--border, #3d3d5c);
-    }
-    
-    .header-info h4 {
-        margin: 0 0 0.25rem;
-    }
-    
-    .description {
-        margin: 0;
-        font-size: 0.85rem;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .actions {
-        display: flex;
-        gap: 0.5rem;
-    }
-    
-    .btn {
-        padding: 0.5rem 1rem;
-        border: none;
-        border-radius: 6px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .btn.primary {
-        background: var(--accent, #4f46e5);
-        color: white;
-    }
-    
-    .btn.secondary {
-        background: var(--bg-secondary, #2d2d44);
-        color: var(--text-primary, #e0e0e0);
-    }
-    
-    .editor, .preview {
-        flex: 1;
-        margin: 0;
-        padding: 1rem;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.85rem;
-        line-height: 1.6;
-        overflow: auto;
-        background: var(--bg-code, #0d0d17);
-    }
-    
-    .editor {
-        border: none;
-        color: var(--text-primary, #e0e0e0);
-        resize: none;
-    }
-    
-    .editor:focus {
-        outline: none;
-    }
-    
-    .footer {
-        display: flex;
-        justify-content: space-between;
-        padding: 0.5rem 1rem;
-        font-size: 0.8rem;
-        color: var(--text-secondary, #a0a0a0);
-        background: var(--bg-secondary, #2d2d44);
-    }
-    
-    .variables {
-        font-family: monospace;
-    }
-    
-    .loading, .empty {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        color: var(--text-secondary, #a0a0a0);
-    }
-    
-    .empty-icon {
-        font-size: 3rem;
-        margin-bottom: 0.5rem;
-    }
-</style>
