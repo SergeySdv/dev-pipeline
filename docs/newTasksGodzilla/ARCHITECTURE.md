@@ -1,4 +1,4 @@
-# DevPilot: Integrated Architecture Design
+# DevGodzilla: Integrated Architecture Design
 
 > **SpecKit + WindMill + TasksGodzilla**
 > 
@@ -18,11 +18,11 @@
 > - **No Offline Mode**: System requires online AI agent access
 > - **No Fallbacks**: Clean-cut implementation, no backward compatibility layers
 > - **Gitignore Runtime**: `_runtime/runs/` is gitignored (ephemeral execution data)
-> - **Frontend**: Extend existing Windmill frontend (Svelte) with DevPilot-specific features
+> - **Frontend**: Extend existing Windmill frontend (Svelte) with DevGodzilla-specific features
 
 ## Executive Summary
 
-This document defines the architecture for **DevPilot**, a new integrated platform combining:
+This document defines the architecture for **DevGodzilla**, a new integrated platform combining:
 
 | Component | Role | Source |
 |-----------|------|--------|
@@ -222,7 +222,7 @@ graph LR
 
 **Gitignore Entry:**
 ```gitignore
-# DevPilot runtime artifacts (ephemeral)
+# DevGodzilla runtime artifacts (ephemeral)
 .specify/specs/*/_runtime/runs/
 ```
 
@@ -669,7 +669,7 @@ CREATE TABLE feedback_events (
 
 ### 2.6 User Interface Layer
 
-Extends Windmill's existing Svelte frontend with DevPilot-specific features.
+Extends Windmill's existing Svelte frontend with DevGodzilla-specific features.
 
 ```mermaid
 graph TB
@@ -684,7 +684,7 @@ graph TB
             WMLogs[Log Viewer]
         end
 
-        subgraph CoreExtensions["Core DevPilot Extensions"]
+        subgraph CoreExtensions["Core DevGodzilla Extensions"]
             SpecEditor[Specification Editor]
             ConstitutionEditor[Constitution Editor]
             DAGViewer[Task DAG Viewer]
@@ -774,7 +774,7 @@ graph TB
 ```
 windmill/frontend/src/
 ├── lib/
-│   └── devpilot/                    # DevPilot extension modules
+│   └── devgodzilla/                    # DevGodzilla extension modules
 │       ├── SpecificationEditor.svelte
 │       ├── ConstitutionEditor.svelte
 │       ├── AgentSelector.svelte
@@ -789,22 +789,22 @@ windmill/frontend/src/
 │       ├── RunArtifactViewer.svelte  # NEW: Logs/outputs/diffs
 │       └── TemplateManager.svelte    # NEW: Template editing
 ├── routes/
-│   └── devpilot/                    # DevPilot routes
-│       ├── +page.svelte             # DevPilot dashboard
+│   └── devgodzilla/                    # DevGodzilla routes
+│       ├── +page.svelte             # DevGodzilla dashboard
 │       ├── specifications/
 │       ├── protocols/
 │       ├── quality/
-│       ├── onboarding/              # NEW: /devpilot/onboarding
-│       └── agents/                  # NEW: /devpilot/agents
+│       ├── onboarding/              # NEW: /devgodzilla/onboarding
+│       └── agents/                  # NEW: /devgodzilla/agents
 └── stores/
-    └── devpilot.ts                  # DevPilot state management
+    └── devgodzilla.ts                  # DevGodzilla state management
 ```
 
 **UI Feature Mapping (Existing → New):**
 
 | Existing React Feature | New Svelte Extension |
 |------------------------|---------------------|
-| `ProtocolDetailPage.tsx` tabs (Steps, Events, Runs, Spec, Policy, Clarifications) | Integrated into Windmill Flow Viewer with DevPilot tabs |
+| `ProtocolDetailPage.tsx` tabs (Steps, Events, Runs, Spec, Policy, Clarifications) | Integrated into Windmill Flow Viewer with DevGodzilla tabs |
 | `StepDetailPage.tsx` (Run Step, Run QA, Approve) | AgentSelector + QADashboard actions |
 | `ProtocolsNewPage.tsx` (create protocol) | ProjectOnboarding + SpecificationEditor |
 | Steps list with dependencies | TaskDAGViewer |
@@ -976,7 +976,7 @@ graph TB
     subgraph Frontend["Frontend (Windmill + Extensions)"]
         Svelte[Svelte]
         WindmillUI[Windmill UI Components]
-        DevPilotExt[DevPilot Extensions]
+        DevGodzillaExt[DevGodzilla Extensions]
     end
 
     subgraph Backend["Backend"]
@@ -1072,7 +1072,7 @@ pytest tests/integration/test_windmill_dag.py -v
    **RESOLVED**: Open source solution, license compatible.
 
 ~~2. Is SpecKit available as a Python library, or CLI only?~~
-   **RESOLVED**: DevPilot will be available as both Python library AND CLI.
+   **RESOLVED**: DevGodzilla will be available as both Python library AND CLI.
 
 ~~3. Preferred agent selection priority when multiple are available?~~
    **RESOLVED**: User explicitly assigns agent per step. No auto-selection priority.
@@ -1093,4 +1093,4 @@ This architecture combines:
 - **Windmill's industrial workflow engine** for scalable, observable job execution
 - **TasksGodzilla's multi-agent execution layer** with feedback loops
 
-The result is **DevPilot**: a unified platform for AI-driven software development with proper orchestration, quality gates, and self-healing capabilities through specification feedback loops.
+The result is **DevGodzilla**: a unified platform for AI-driven software development with proper orchestration, quality gates, and self-healing capabilities through specification feedback loops.
