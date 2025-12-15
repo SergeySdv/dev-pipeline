@@ -45,7 +45,6 @@ graph TB
     subgraph SpecificationEngine["📋 Specification Engine"]
         direction TB
         SpecKit[SpecKit Library]
-        Constitution[Constitution Manager]
         SpecParser[Specification Parser]
         TaskBreakdown[Task Breakdown Engine]
     end
@@ -64,15 +63,15 @@ graph TB
         Codex[Codex Engine]
         OpenCode[OpenCode Engine]
         ClaudeCode[Claude Code]
-        Cursor[Cursor]
-        OtherAgents[18+ AI Agents]
+        OtherAgents[15+ More Agents]
     end
 
-    subgraph QualityAssurance["✅ Quality Assurance"]
+    subgraph CrossCutting["🔄 Cross-Cutting Services"]
         direction TB
-        QAGates[Constitutional QA Gates]
-        ChecklistValidator[Checklist Validator]
-        FeedbackLoop[Feedback Loop Handler]
+        Constitution[Constitution Manager]
+        Clarifier[Clarifier Service]
+        QAGates[QA Gates]
+        FeedbackLoop[Feedback Loop]
     end
 
     subgraph PlatformServices["🔧 Platform Services"]
@@ -91,9 +90,14 @@ graph TB
 
     %% Specification flow
     SpecificationEngine --> OrchestrationCore
-    SpecKit --> Constitution
     SpecKit --> SpecParser
     SpecParser --> TaskBreakdown
+
+    %% Cross-cutting integration with Specification
+    Constitution -->|governs| SpecKit
+    Constitution -->|governs| QAGates
+    SpecKit -->|ambiguity| Clarifier
+    Clarifier -->|resolved| SpecKit
 
     %% Orchestration flow
     OrchestrationCore --> ExecutionLayer
@@ -106,26 +110,29 @@ graph TB
     EngineRegistry --> Codex
     EngineRegistry --> OpenCode
     EngineRegistry --> ClaudeCode
-    EngineRegistry --> Cursor
     EngineRegistry --> OtherAgents
 
-    %% QA flow
-    ExecutionLayer --> QualityAssurance
-    QualityAssurance --> FeedbackLoop
-    FeedbackLoop -.->|Re-plan| SpecificationEngine
-    FeedbackLoop -.->|Re-schedule| OrchestrationCore
+    %% QA integration with Execution
+    ExecutionLayer -->|output| QAGates
+    QAGates -->|passed| OrchestrationCore
+    QAGates -->|failed| FeedbackLoop
+    
+    %% Feedback loop connections
+    FeedbackLoop -->|clarify| Clarifier
+    FeedbackLoop -->|re-plan| SpecificationEngine
+    FeedbackLoop -->|re-schedule| OrchestrationCore
+    Clarifier -->|user answer| FeedbackLoop
 
     %% Platform services
     OrchestrationCore --> PlatformServices
     ExecutionLayer --> PlatformServices
-    GitService --> StorageService
-    CIService --> EventBus
+    CrossCutting --> PlatformServices
 
     style UserLayer fill:#e1f5fe
     style SpecificationEngine fill:#f3e5f5
     style OrchestrationCore fill:#fff3e0
     style ExecutionLayer fill:#e8f5e9
-    style QualityAssurance fill:#fce4ec
+    style CrossCutting fill:#fce4ec
     style PlatformServices fill:#f5f5f5
 ```
 
@@ -933,6 +940,136 @@ graph LR
         G2 --> G3
         G3 --> G4
         G4 --> G5
+    end
+```
+
+### 3.3 Cross-Cutting Services Integration
+
+The Constitution Manager, Clarifier Service, and QA Gates form an integrated loop that operates across all phases:
+
+```mermaid
+graph TB
+    subgraph CrossCuttingFlow["Cross-Cutting Services Workflow"]
+        direction TB
+        
+        subgraph Constitution["Constitution Manager"]
+            ConstitutionFile[constitution.md]
+            PolicyPack[Policy Pack]
+            ArticleGates[Article Gates]
+        end
+
+        subgraph Clarifier["Clarifier Service"]
+            AmbiguityDetector[Ambiguity Detector]
+            QuestionGenerator[Question Generator]
+            AnswerStore[Answer Store]
+        end
+
+        subgraph QA["Quality Assurance"]
+            GateRunner[Gate Runner]
+            ChecklistValidator[Checklist Validator]
+            VerdictEngine[Verdict Engine]
+        end
+
+        subgraph Feedback["Feedback Loop"]
+            ErrorClassifier[Error Classifier]
+            ActionRouter[Action Router]
+        end
+    end
+
+    ConstitutionFile --> ArticleGates
+    PolicyPack --> ArticleGates
+    ArticleGates -->|enforce| GateRunner
+
+    AmbiguityDetector --> QuestionGenerator
+    QuestionGenerator --> AnswerStore
+    AnswerStore -->|context| AmbiguityDetector
+
+    GateRunner --> ChecklistValidator
+    ChecklistValidator --> VerdictEngine
+    VerdictEngine -->|passed| Done[Continue Workflow]
+    VerdictEngine -->|failed| ErrorClassifier
+
+    ErrorClassifier --> ActionRouter
+    ActionRouter -->|clarify| AmbiguityDetector
+    ActionRouter -->|re-plan| ReSpec[Re-Specification]
+    ActionRouter -->|retry| Retry[Retry Step]
+
+    style Constitution fill:#e8f5e9
+    style Clarifier fill:#e3f2fd
+    style QA fill:#fce4ec
+    style Feedback fill:#fff3e0
+```
+
+**Integration Points by Phase:**
+
+| Phase | Constitution | Clarifier | QA |
+|-------|--------------|-----------|-----|
+| **Specify** | Validates spec against articles | Resolves ambiguous requirements | Pre-validates spec structure |
+| **Plan** | Checks tech decisions against policies | Resolves technical choices | Validates plan completeness |
+| **Tasks** | Ensures task structure compliance | Resolves scope questions | Validates task dependencies |
+| **Execute** | N/A (already validated) | N/A (execution phase) | Validates step output |
+| **QA** | Enforces constitutional gates | Generates clarification for failures | Full quality assessment |
+| **Feedback** | Guides re-planning constraints | Handles user clarification answers | Triggers based on QA verdict |
+
+**Detailed Workflow:**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Spec as Specification Engine
+    participant Const as Constitution Manager
+    participant Clarify as Clarifier Service
+    participant Orch as Orchestrator
+    participant Exec as Execution Layer
+    participant QA as QA Gates
+
+    Note over User,QA: Phase: Specification with Constitution + Clarification
+    
+    User->>Spec: /speckit.specify "Add OAuth login"
+    Spec->>Const: Load constitution.md
+    Const-->>Spec: Articles I-X
+    Spec->>Spec: Generate spec with constraints
+    
+    alt Ambiguity Detected
+        Spec->>Clarify: detect_ambiguity(context)
+        Clarify->>User: "OAuth provider: Google, GitHub, or both?"
+        User->>Clarify: "Both"
+        Clarify->>Spec: inject_answer(provider=both)
+    end
+    
+    Spec->>Const: validate_spec(spec)
+    alt Article Violation
+        Const-->>Spec: Warning: Article VII (complexity)
+        Spec->>User: Show warning, continue
+    end
+    
+    Spec-->>User: FeatureSpec created
+
+    Note over User,QA: Phase: Execution with QA + Feedback Loop
+    
+    User->>Orch: Start protocol
+    Orch->>Exec: Execute step T001
+    Exec-->>QA: Step output
+    
+    QA->>Const: Load constitutional gates
+    Const-->>QA: Active gates (III, IV, IX)
+    
+    QA->>QA: Run gates + checklist
+    
+    alt QA Passed
+        QA-->>Orch: Step completed
+        Orch->>Orch: Mark T001 done, schedule T002
+    else QA Failed (needs clarification)
+        QA->>Clarify: generate_question(failure_context)
+        Clarify->>User: "Missing tests - defer or block?"
+        User->>Clarify: "Block"
+        Clarify->>Orch: Update step policy
+        Orch->>Exec: Retry with updated context
+    else QA Failed (needs re-plan)
+        QA->>Spec: trigger_replan(step, error)
+        Spec->>Spec: Generate updated tasks
+        Spec->>Orch: Replace remaining DAG
+        Orch->>Exec: Continue with new plan
     end
 ```
 

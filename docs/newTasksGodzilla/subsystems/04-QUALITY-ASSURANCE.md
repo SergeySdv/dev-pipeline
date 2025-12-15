@@ -37,14 +37,16 @@ graph TB
         subgraph Feedback["Feedback Loop"]
             Classifier[Error Classifier]
             FeedbackRouter[Feedback Router]
-            ClarificationGen[Clarification Generator]
+            ClarifierService[Clarifier Service]
             RePlanTrigger[Re-Plan Trigger]
+            RetryScheduler[Retry Scheduler]
         end
 
         subgraph Output["QA Output"]
             QAReport[QA Report]
             Findings[Policy Findings]
-            Verdict[Pass/Fail Verdict]
+            VerdictOut[Pass/Fail Verdict]
+            Clarifications[Clarification Questions]
         end
     end
 
@@ -64,12 +66,15 @@ graph TB
 
     Combiner -->|Failed| Classifier
     Classifier --> FeedbackRouter
-    FeedbackRouter --> ClarificationGen
-    FeedbackRouter --> RePlanTrigger
+    FeedbackRouter -->|clarify| ClarifierService
+    FeedbackRouter -->|re-plan| RePlanTrigger
+    FeedbackRouter -->|retry| RetryScheduler
+    ClarifierService --> Clarifications
+    Clarifications -->|answered| RetryScheduler
 
     Reporter --> QAReport
     Reporter --> Findings
-    Scorer --> Verdict
+    Scorer --> VerdictOut
 
     style Inputs fill:#e3f2fd
     style Engine fill:#e8f5e9
@@ -566,40 +571,61 @@ class QualityService:
 sequenceDiagram
     participant QA as QualityService
     participant FB as FeedbackRouter
+    participant Clarifier as ClarifierService
     participant Plan as PlanningService
     participant Orch as OrchestratorService
     participant User as User
 
-    QA->>FB: QA Failed
+    QA->>FB: QA Failed (verdict)
     FB->>FB: Classify Error
     
     alt Clarify Action
-        FB->>Plan: generate_clarification()
-        Plan->>User: Ask clarification
-        User->>Plan: Answer
-        Plan->>Orch: Update tasks
+        FB->>Clarifier: create_clarification(context, failure)
+        Clarifier->>Clarifier: Generate question from failure
+        Clarifier-->>FB: clarification_id
+        FB->>User: Ask clarification question
+        User->>Clarifier: POST /clarifications/{id}/answer
+        Clarifier->>Clarifier: Store answer
+        Clarifier->>FB: Answer received
+        FB->>Orch: Resume with updated context
         Orch->>Orch: Re-execute step
     else Re-Plan Action
-        FB->>Plan: replan_from_step()
+        FB->>Plan: replan_from_step(step, context)
+        Plan->>Clarifier: Check for additional ambiguity
+        opt Clarification needed
+            Clarifier->>User: Additional question
+            User->>Clarifier: Answer
+        end
         Plan->>Plan: Generate new tasks
         Plan->>Orch: Replace remaining tasks
         Orch->>Orch: Continue execution
     else Re-Specify Action
-        FB->>Plan: request_respecify()
-        Plan->>User: Request new spec
+        FB->>Plan: request_respecify(step, context)
+        Plan->>User: Request updated specification
         Note over User: User updates requirements
+        User->>Plan: Updated spec
+        Plan->>Clarifier: Validate no ambiguity
+        Plan->>Orch: New protocol from spec
+    else Retry Action
+        FB->>Orch: schedule_retry(step, delay)
+        Orch->>Orch: Re-execute step (no changes)
     end
 ```
 
 ### Feedback Router
 
+The FeedbackRouter integrates with the **ClarifierService** from the Specification Engine subsystem to generate structured clarification questions when QA fails.
+
 ```python
+from devgodzilla.services import ClarifierService
+
 class FeedbackRouter:
     """Routes QA failures to appropriate feedback action."""
     
     def __init__(self, db: Database):
         self.db = db
         self.classifier = ErrorClassifier()
+        self.clarifier = ClarifierService(db)  # Cross-cutting service
     
     def route(
         self,
@@ -612,7 +638,7 @@ class FeedbackRouter:
         classification = self.classifier.classify(verdict)
         
         if classification.action == "clarify":
-            return self._create_clarification(step, classification)
+            return self._create_clarification(step, verdict, classification)
         
         elif classification.action == "re_plan":
             return self._trigger_replan(step, classification)
@@ -630,22 +656,39 @@ class FeedbackRouter:
     def _create_clarification(
         self,
         step: StepRun,
+        verdict: QAVerdict,
         classification: ErrorClassification
     ) -> FeedbackAction:
-        """Create clarification question."""
+        """Create clarification question using ClarifierService."""
         
-        clarification = Clarification(
-            scope="step",
-            step_run_id=step.id,
-            protocol_run_id=step.protocol_run_id,
-            key=f"qa_clarify_{step.id}",
-            question=classification.suggested_question,
-            options=classification.options,
-            recommended=classification.recommended,
-            blocking=True
+        # Build context from QA failure
+        failure_context = {
+            "step_id": step.id,
+            "step_description": step.step_name,
+            "failure_reason": verdict.reason,
+            "findings": [f.message for f in verdict.blocking_issues],
+            "suggested_question": classification.suggested_question
+        }
+        
+        # Use ClarifierService to generate and store clarification
+        clarification = self.clarifier.detect_and_create(
+            context=failure_context,
+            stage="qa",
+            protocol_run_id=step.protocol_run_id
         )
         
-        self.db.create_clarification(clarification)
+        if not clarification:
+            # If clarifier doesn't detect ambiguity, use classification's suggestion
+            clarification = self.db.create_clarification(
+                scope="step",
+                step_run_id=step.id,
+                protocol_run_id=step.protocol_run_id,
+                key=f"qa_feedback_{step.id}",
+                question=classification.suggested_question,
+                options=classification.options,
+                recommended=classification.recommended,
+                blocking=True
+            )
         
         return FeedbackAction(
             action="clarify",
