@@ -45,6 +45,12 @@ graph TB
         end
     end
 
+    subgraph CrossCutting["Cross-Cutting Services"]
+        QAService[QA Service]
+        ClarifierService[Clarifier Service]
+        FeedbackHandler[Feedback Handler]
+    end
+
     API --> Scheduler
     API --> FlowEngine
     Scheduler --> PostgresQueue
@@ -56,12 +62,20 @@ graph TB
     
     PostgresQueue --> WorkerPool
     PythonWorker --> StepState
+
+    %% Cross-cutting integration
+    WorkerPool -->|step output| QAService
+    QAService -->|failed| FeedbackHandler
+    FeedbackHandler -->|clarify| ClarifierService
+    ClarifierService -->|answered| FeedbackHandler
+    FeedbackHandler -->|retry/replan| Scheduler
     
     style WindmillServer fill:#fff3e0
     style WorkerPool fill:#e8f5e9
     style DAGEngine fill:#e3f2fd
     style StateManager fill:#f3e5f5
     style JobQueue fill:#fce4ec
+    style CrossCutting fill:#ffebee
 ```
 
 ---
@@ -485,13 +499,22 @@ orchestration:
 
 ### Error Classification
 
+The orchestrator integrates with **ClarifierService** and **QualityService** for feedback loops:
+
 ```python
+from devgodzilla.services import ClarifierService, QualityService
+
 class OrchestratorService:
+    def __init__(self, db: Database):
+        self.db = db
+        self.clarifier = ClarifierService(db)
+        self.qa_service = QualityService(db)
+    
     def handle_step_error(self, step_id: str, error: Exception):
         """Classify error and determine action."""
         
         if isinstance(error, SpecificationError):
-            # Trigger feedback loop
+            # Trigger feedback loop with clarification
             return self._trigger_feedback_loop(step_id, error)
         
         elif isinstance(error, AgentUnavailableError):
@@ -509,6 +532,76 @@ class OrchestratorService:
         else:
             # Mark as failed, require manual intervention
             return self._mark_failed(step_id, error)
+    
+    def _trigger_feedback_loop(
+        self,
+        step_id: str,
+        error: SpecificationError
+    ) -> FeedbackAction:
+        """Trigger feedback loop using cross-cutting services."""
+        
+        step = self.db.get_step_run(step_id)
+        
+        if error.suggested_action == "clarify":
+            # Use ClarifierService to generate question
+            clarification = self.clarifier.detect_and_create(
+                context={
+                    "step_id": step_id,
+                    "error": str(error),
+                    "error_type": error.error_type
+                },
+                stage="execution",
+                protocol_run_id=step.protocol_run_id
+            )
+            
+            if clarification:
+                # Block step until clarification answered
+                self.db.update_step_run(step_id, status="blocked")
+                return FeedbackAction(
+                    action="clarify",
+                    clarification_id=clarification.id
+                )
+        
+        elif error.suggested_action == "re_plan":
+            # Trigger re-planning from this step
+            return FeedbackAction(
+                action="re_plan",
+                from_step_id=step_id
+            )
+        
+        elif error.suggested_action == "re_specify":
+            # Request user to update specification
+            self.db.update_step_run(step_id, status="blocked")
+            return FeedbackAction(
+                action="re_specify",
+                message="Specification update required"
+            )
+    
+    def handle_clarification_answered(
+        self,
+        clarification_id: int
+    ) -> None:
+        """Resume workflow after clarification is answered."""
+        
+        clarification = self.db.get_clarification(clarification_id)
+        step_run_id = clarification.step_run_id
+        
+        if step_run_id:
+            # Inject clarification into step context
+            step = self.db.get_step_run(step_run_id)
+            context = step.runtime_state or {}
+            context["clarifications"] = context.get("clarifications", {})
+            context["clarifications"][clarification.key] = clarification.answer
+            
+            # Update step and reschedule
+            self.db.update_step_run(
+                step_run_id,
+                status="pending",
+                runtime_state=context
+            )
+            
+            # Reschedule the step
+            self._schedule_step(step_run_id)
 ```
 
 ---
