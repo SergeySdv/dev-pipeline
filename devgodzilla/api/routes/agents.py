@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from devgodzilla.api import schemas
 from devgodzilla.engines.registry import get_registry
@@ -27,3 +27,36 @@ def list_agents():
         ))
         
     return agents
+
+
+@router.get("/agents/{agent_id}", response_model=schemas.AgentInfo)
+def get_agent(agent_id: str):
+    """Get agent details by ID."""
+    registry = get_registry()
+    meta = next((m for m in registry.list_metadata() if m.id == agent_id), None)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return schemas.AgentInfo(
+        id=meta.id,
+        name=meta.display_name,
+        kind=meta.kind.value if hasattr(meta.kind, "value") else str(meta.kind),
+        capabilities=meta.capabilities,
+        status="available",
+    )
+
+
+@router.post("/agents/{agent_id}/health")
+def check_agent_health(agent_id: str):
+    """Check agent health (availability)."""
+    registry = get_registry()
+    try:
+        engine = registry.get_or_default(agent_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        ok = engine.check_availability()
+    except Exception:
+        ok = False
+
+    return {"status": "available" if ok else "unavailable"}

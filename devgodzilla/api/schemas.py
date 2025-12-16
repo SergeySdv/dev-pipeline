@@ -60,8 +60,8 @@ class ProjectUpdate(BaseModel):
 class ProjectOut(APIModel):
     id: int
     name: str
-    description: Optional[str]
-    status: str
+    description: Optional[str] = None
+    status: Optional[str] = None
     git_url: Optional[str]
     local_path: Optional[str]
     created_at: Any
@@ -114,8 +114,14 @@ class StepOut(APIModel):
     step_name: str
     step_type: str
     status: str
+    retries: int = 0
+    model: Optional[str] = None
+    engine_id: Optional[str] = None
+    policy: Optional[Dict[str, Any]] = None
+    runtime_state: Optional[Dict[str, Any]] = None
+    summary: Optional[str] = None
     assigned_agent: Optional[str]
-    depends_on: Optional[List[str]] = None
+    depends_on: Optional[List[int]] = None
     parallel_group: Optional[str] = None
     created_at: Any
     updated_at: Any
@@ -153,6 +159,57 @@ class ClarificationOut(APIModel):
     protocol_run_id: Optional[int]
     question: str
     status: str
+    options: Optional[List[str]] = None
+    recommended: Optional[Dict[str, Any]] = None
+    applies_to: Optional[str] = None
+    blocking: Optional[bool] = None
     answer: Optional[Dict[str, Any]]
     created_at: Any
     answered_at: Optional[Any]
+    answered_by: Optional[str] = None
+
+# =============================================================================
+# QA Models
+# =============================================================================
+
+class QAFindingOut(BaseModel):
+    severity: str
+    message: str
+    file: Optional[str] = None
+    line: Optional[int] = None
+    rule_id: Optional[str] = None
+    suggestion: Optional[str] = None
+
+class QAGateOut(BaseModel):
+    id: str
+    name: str
+    status: str  # passed|warning|failed|skipped
+    findings: List[QAFindingOut] = Field(default_factory=list)
+
+class QAResultOut(BaseModel):
+    verdict: str  # passed|warning|failed
+    summary: Optional[str] = None
+    gates: List[QAGateOut] = Field(default_factory=list)
+
+# =============================================================================
+# Artifact Models
+# =============================================================================
+
+class ArtifactOut(BaseModel):
+    id: str
+    type: str  # log|diff|file|report|json|text|unknown
+    name: str
+    size: int
+    created_at: Optional[str] = None
+
+class ArtifactContentOut(BaseModel):
+    id: str
+    name: str
+    type: str
+    content: str
+    truncated: bool = False
+
+
+class ProtocolArtifactOut(ArtifactOut):
+    step_run_id: int
+    step_name: Optional[str] = None

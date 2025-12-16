@@ -1,10 +1,8 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
-    
-    export let checklistItems: ChecklistItem[] = [];
-    
-    const dispatch = createEventDispatcher();
-    
+    import { Badge } from '$lib/components/common';
+    import { CheckCircle2, Circle, Sparkles } from 'lucide-svelte';
+
     interface ChecklistItem {
         id: string;
         text: string;
@@ -13,9 +11,13 @@
         autoVerified?: boolean;
         verificationNote?: string;
     }
-    
+
+    let { checklistItems = [] }: { checklistItems?: ChecklistItem[] } = $props();
+
+    const dispatch = createEventDispatcher();
+
     // Default checklist if none provided
-    $: items = checklistItems.length ? checklistItems : [
+    const items = $derived(checklistItems.length ? checklistItems : [
         { id: '1', text: 'Document public APIs', category: 'required' as const, checked: true, autoVerified: true },
         { id: '2', text: 'Add unit tests for new logic', category: 'required' as const, checked: false, autoVerified: true },
         { id: '3', text: 'Update architecture diagrams', category: 'recommended' as const, checked: false, autoVerified: false },
@@ -23,40 +25,34 @@
         { id: '5', text: 'Security scan passes', category: 'recommended' as const, checked: true, autoVerified: true },
         { id: '6', text: 'Code reviewed', category: 'recommended' as const, checked: false, autoVerified: false },
         { id: '7', text: 'Performance tested', category: 'optional' as const, checked: false, autoVerified: false },
-    ];
-    
-    $: requiredItems = items.filter(i => i.category === 'required');
-    $: recommendedItems = items.filter(i => i.category === 'recommended');
-    $: optionalItems = items.filter(i => i.category === 'optional');
-    
-    $: requiredComplete = requiredItems.every(i => i.checked);
-    $: progress = Math.round((items.filter(i => i.checked).length / items.length) * 100);
-    
+    ]);
+
+    const requiredItems = $derived(items.filter(i => i.category === 'required'));
+    const recommendedItems = $derived(items.filter(i => i.category === 'recommended'));
+    const optionalItems = $derived(items.filter(i => i.category === 'optional'));
+
+    const requiredComplete = $derived(requiredItems.every(i => i.checked));
+    const progress = $derived(Math.round((items.filter(i => i.checked).length / items.length) * 100));
+
     function toggleItem(item: ChecklistItem) {
         if (item.autoVerified) return;
         item.checked = !item.checked;
-        items = items;
         dispatch('change', { id: item.id, checked: item.checked });
     }
 </script>
 
-<div class="bg-surface rounded-lg p-4">
+<div class="bg-surface rounded-lg border p-4">
     <div class="flex justify-between items-center mb-3">
-        <h3 class="text-lg font-semibold text-primary">📋 QA Checklist</h3>
-        <div 
-            class="px-3 py-1 rounded-full text-xs font-medium
-                {requiredComplete 
-                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' 
-                    : 'bg-surface-secondary text-secondary'}"
-        >
-            {requiredComplete ? '✅ Ready' : '⏳ Pending'}
-        </div>
+        <h3 class="text-lg font-semibold text-primary">QA Checklist</h3>
+        <Badge color={requiredComplete ? 'green' : 'gray'}>
+            {requiredComplete ? 'Ready' : 'Pending'}
+        </Badge>
     </div>
     
     <!-- Progress bar -->
     <div class="h-1 bg-surface-secondary rounded-full overflow-hidden mb-4">
         <div 
-            class="h-full bg-blue-500 transition-all duration-300" 
+            class="h-full bg-surface-accent-primary transition-all duration-300" 
             style="width: {progress}%"
         ></div>
     </div>
@@ -83,17 +79,22 @@
                     <div 
                         class="w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-all
                             {item.checked 
-                                ? 'bg-green-500 border-green-500 text-white' 
+                                ? 'bg-surface-accent-secondary border-surface-accent-secondary text-white' 
                                 : 'border-secondary'}"
                     >
-                        {item.checked ? '✓' : ''}
+                        {#if item.checked}
+                            <CheckCircle2 size={14} />
+                        {:else}
+                            <Circle size={14} />
+                        {/if}
                     </div>
                     <span class="flex-1 text-sm {item.checked ? 'line-through text-secondary' : 'text-primary'}">
                         {item.text}
                     </span>
                     {#if item.autoVerified}
-                        <span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-accent text-2xs font-semibold rounded">
-                            AUTO
+                        <span class="flex items-center gap-1 text-2xs text-accent font-semibold">
+                            <Sparkles size={12} />
+                            Auto
                         </span>
                     {/if}
                 </label>
@@ -123,17 +124,22 @@
                     <div 
                         class="w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-all
                             {item.checked 
-                                ? 'bg-green-500 border-green-500 text-white' 
+                                ? 'bg-surface-accent-secondary border-surface-accent-secondary text-white' 
                                 : 'border-secondary'}"
                     >
-                        {item.checked ? '✓' : ''}
+                        {#if item.checked}
+                            <CheckCircle2 size={14} />
+                        {:else}
+                            <Circle size={14} />
+                        {/if}
                     </div>
                     <span class="flex-1 text-sm {item.checked ? 'line-through text-secondary' : 'text-primary'}">
                         {item.text}
                     </span>
                     {#if item.autoVerified}
-                        <span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-accent text-2xs font-semibold rounded">
-                            AUTO
+                        <span class="flex items-center gap-1 text-2xs text-accent font-semibold">
+                            <Sparkles size={12} />
+                            Auto
                         </span>
                     {/if}
                 </label>
@@ -163,17 +169,22 @@
                     <div 
                         class="w-5 h-5 rounded border-2 flex items-center justify-center text-xs transition-all
                             {item.checked 
-                                ? 'bg-green-500 border-green-500 text-white' 
+                                ? 'bg-surface-accent-secondary border-surface-accent-secondary text-white' 
                                 : 'border-secondary'}"
                     >
-                        {item.checked ? '✓' : ''}
+                        {#if item.checked}
+                            <CheckCircle2 size={14} />
+                        {:else}
+                            <Circle size={14} />
+                        {/if}
                     </div>
                     <span class="flex-1 text-sm {item.checked ? 'line-through text-secondary' : 'text-primary'}">
                         {item.text}
                     </span>
                     {#if item.autoVerified}
-                        <span class="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-accent text-2xs font-semibold rounded">
-                            AUTO
+                        <span class="flex items-center gap-1 text-2xs text-accent font-semibold">
+                            <Sparkles size={12} />
+                            Auto
                         </span>
                     {/if}
                 </label>

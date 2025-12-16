@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { Button, Badge } from '$lib/components/common';
+  import { Save } from 'lucide-svelte';
   
   export let specContent = '';
   export let readOnly = false;
@@ -16,21 +18,24 @@
   }
 </script>
 
-<div class="spec-editor flex flex-col h-full border rounded-md overflow-hidden bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700">
-  <div class="toolbar flex items-center justify-between px-4 py-2 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+<div class="spec-editor flex flex-col h-full border rounded-md overflow-hidden bg-surface">
+  <div class="toolbar flex items-center justify-between px-4 py-2 bg-surface-secondary border-b">
     <div class="flex items-center space-x-2">
-      <span class="font-semibold text-sm text-gray-700 dark:text-gray-300">Feature Specification</span>
-      <span class="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">Markdown/YAML</span>
+      <span class="font-semibold text-sm text-primary">Feature Specification</span>
+      <Badge color="gray">Markdown/YAML</Badge>
     </div>
     
     <div class="actions">
       {#if !readOnly}
-        <button 
+        <Button
+          variant="accent"
+          unifiedSize="sm"
+          btnClasses="max-w-fit"
+          startIcon={{ icon: Save }}
           on:click={handleSave}
-          class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
         >
-          Save Spec
-        </button>
+          Save
+        </Button>
       {/if}
     </div>
   </div>
@@ -40,7 +45,7 @@
       value={specContent}
       on:input={handleInput}
       readonly={readOnly}
-      class="w-full h-full p-4 font-mono text-sm resize-none bg-transparent focus:outline-none dark:text-gray-300"
+      class="w-full h-full p-4 font-mono text-sm resize-none bg-transparent focus:outline-none text-primary"
       placeholder="# Feature Specification\n\nname: New Feature\ndescription: ...\n\n## Requirements\n- ..."
     ></textarea>
   </div>

@@ -37,12 +37,12 @@ def get_service_context():
 
 def get_db():
     """Get database connection."""
-    from devgodzilla.db.database import Database
+    from devgodzilla.db.database import SQLiteDatabase
     from devgodzilla.config import load_config
     
     config = load_config()
     db_path = Path(config.db_path) if hasattr(config, 'db_path') else Path.home() / ".devgodzilla" / "db.sqlite"
-    return Database(db_path)
+    return SQLiteDatabase(db_path)
 
 
 # =============================================================================

@@ -1,4 +1,6 @@
 from typing import List, Optional
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 
 from devgodzilla.api import schemas
@@ -8,6 +10,35 @@ from devgodzilla.db.database import Database
 from devgodzilla.services.planning import PlanningService
 
 router = APIRouter()
+
+
+def _workspace_root(run, project) -> Path:
+    if run.worktree_path:
+        return Path(run.worktree_path).expanduser()
+    if project.local_path:
+        return Path(project.local_path).expanduser()
+    return Path.cwd()
+
+
+def _protocol_root(run, workspace_root: Path) -> Path:
+    if run.protocol_root:
+        return Path(run.protocol_root).expanduser()
+    return workspace_root / ".specify" / "specs" / run.protocol_name
+
+
+def _artifact_type_from_name(name: str) -> str:
+    lower = name.lower()
+    if lower.endswith(".log") or "log" in lower:
+        return "log"
+    if lower.endswith(".diff") or lower.endswith(".patch"):
+        return "diff"
+    if lower.endswith(".md") and ("report" in lower or "qa" in lower):
+        return "report"
+    if lower.endswith(".json"):
+        return "json"
+    if lower.endswith(".txt") or lower.endswith(".md"):
+        return "text"
+    return "file"
 
 @router.post("/protocols", response_model=schemas.ProtocolOut)
 def create_protocol(
@@ -86,3 +117,107 @@ def start_protocol(
     background_tasks.add_task(run_planning)
     
     return db.get_protocol_run(protocol_id)
+
+
+@router.post("/protocols/{protocol_id}/actions/pause", response_model=schemas.ProtocolOut)
+def pause_protocol(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Pause a running protocol."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    if run.status != "running":
+        raise HTTPException(status_code=400, detail=f"Cannot pause protocol in {run.status} state")
+
+    db.update_protocol_status(protocol_id, "paused")
+    return db.get_protocol_run(protocol_id)
+
+
+@router.post("/protocols/{protocol_id}/actions/resume", response_model=schemas.ProtocolOut)
+def resume_protocol(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Resume a paused protocol."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    if run.status != "paused":
+        raise HTTPException(status_code=400, detail=f"Cannot resume protocol in {run.status} state")
+
+    db.update_protocol_status(protocol_id, "running")
+    return db.get_protocol_run(protocol_id)
+
+
+@router.post("/protocols/{protocol_id}/actions/cancel", response_model=schemas.ProtocolOut)
+def cancel_protocol(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Cancel a protocol."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    if run.status in ["completed", "cancelled"]:
+        return run
+
+    db.update_protocol_status(protocol_id, "cancelled")
+    return db.get_protocol_run(protocol_id)
+
+
+@router.get("/protocols/{protocol_id}/artifacts", response_model=List[schemas.ProtocolArtifactOut])
+def list_protocol_artifacts(
+    protocol_id: int,
+    limit: int = 200,
+    db: Database = Depends(get_db),
+):
+    """List artifacts across all steps for a protocol (aggregated)."""
+    limit = max(1, min(int(limit), 500))
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    project = db.get_project(run.project_id)
+    root = _protocol_root(run, _workspace_root(run, project))
+
+    items: List[schemas.ProtocolArtifactOut] = []
+    for step in db.list_step_runs(protocol_id):
+        artifacts_dir = root / ".devgodzilla" / "steps" / str(step.id) / "artifacts"
+        if not artifacts_dir.exists():
+            continue
+        for p in artifacts_dir.iterdir():
+            if not p.is_file():
+                continue
+            stat = p.stat()
+            items.append(
+                schemas.ProtocolArtifactOut(
+                    id=f"{step.id}:{p.name}",
+                    type=_artifact_type_from_name(p.name),
+                    name=p.name,
+                    size=stat.st_size,
+                    created_at=None,
+                    step_run_id=step.id,
+                    step_name=step.step_name,
+                )
+            )
+
+    # Sort by file mtime desc (best-effort)
+    def _mtime(item: schemas.ProtocolArtifactOut) -> float:
+        try:
+            step_id_str, filename = item.id.split(":", 1)
+            p = root / ".devgodzilla" / "steps" / step_id_str / "artifacts" / filename
+            return p.stat().st_mtime
+        except Exception:
+            return 0.0
+
+    items.sort(key=_mtime, reverse=True)
+    return items[:limit]

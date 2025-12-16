@@ -737,6 +737,13 @@ class SQLiteDatabase:
             raise KeyError("Clarification not found after answer")
         return self._row_to_clarification(row)
 
+    def get_clarification_by_id(self, clarification_id: int) -> Clarification:
+        """Get a clarification by numeric ID."""
+        row = self._fetchone("SELECT * FROM clarifications WHERE id = ? LIMIT 1", (clarification_id,))
+        if row is None:
+            raise KeyError(f"Clarification {clarification_id} not found")
+        return self._row_to_clarification(row)
+
     # Policy pack operations
     def _row_to_policy_pack(self, row) -> PolicyPack:
         """Convert row to PolicyPack."""

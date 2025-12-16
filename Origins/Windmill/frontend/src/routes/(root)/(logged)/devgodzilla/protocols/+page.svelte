@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { devGodzilla, type Project, type ProtocolRun } from '$lib/devgodzilla/client';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import { Alert } from '$lib/components/common';
 
   let protocols: ProtocolRun[] = [];
   let projects: Project[] = [];
@@ -8,9 +10,9 @@
   let error: string | null = null;
   let filterStatus = '';
 
-  $: filteredProtocols = filterStatus 
+  const filteredProtocols = $derived(filterStatus
     ? protocols.filter(p => p.status === filterStatus)
-    : protocols;
+    : protocols);
 
   onMount(async () => {
     try {
@@ -41,10 +43,8 @@
   <title>Protocols - DevGodzilla</title>
 </svelte:head>
 
-<div>
-  <div class="flex justify-between items-center mb-6">
-    <h1 class="text-3xl font-bold text-primary">Protocols</h1>
-  </div>
+<div class="max-w-7xl mx-auto px-4 sm:px-8 md:px-8 py-6">
+  <PageHeader title="Protocols" />
 
   <!-- Filters -->
   <div class="flex gap-4 mb-6">
@@ -62,9 +62,9 @@
   </div>
 
   {#if error}
-    <div class="bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
-      <p class="text-red-800 dark:text-red-200">{error}</p>
-    </div>
+    <Alert type="error" title="Failed to load protocols" class="mb-6">
+      {error}
+    </Alert>
   {/if}
 
   {#if loading}

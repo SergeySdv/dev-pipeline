@@ -30,20 +30,23 @@ def answer_clarification(
     db: Database = Depends(get_db)
 ):
     """Answer a clarification."""
-    # We need to find the clarification first to get scope/key
-    # The DB interface uses scope/key for updates, or we need to find by ID
-    
-    # Currently DB interface only has upsert/answer by scope/key
-    # We need to add get_clarification_by_id or list and filter
-    
-    # Hack: List all and find by ID (inefficient but works for now)
-    # Or rely on client passing scope/key? Rest API usually uses ID.
-    
-    # Let's assume we can fetch by ID or add that method to DatabaseProtocol later.
-    # For now, let's look up logic
-    
-    # Since we can't easily modify DB interface right now without touching huge file,
-    # let's try to pass ID. Accessing internal rows is possible via list.
-    
-    # For MVP: Return 501 if not easy, or implement lookup
-    raise HTTPException(status_code=501, detail="Answer by ID not yet supported in DB layer")
+    try:
+        clarification = db.get_clarification_by_id(clarification_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Clarification not found")
+
+    # Store answer as structured JSON (so UI can render rich answers later)
+    payload = {"text": answer.answer}
+
+    try:
+        updated = db.answer_clarification(
+            scope=clarification.scope,
+            key=clarification.key,
+            answer=payload,
+            answered_by=answer.answered_by,
+            status="answered",
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Clarification not found")
+
+    return updated

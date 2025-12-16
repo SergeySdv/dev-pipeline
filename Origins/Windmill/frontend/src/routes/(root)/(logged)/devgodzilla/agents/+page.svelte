@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { devGodzilla, type AgentInfo } from '$lib/devgodzilla/client';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import { Alert, Button } from '$lib/components/common';
+  import { Settings2, Activity } from 'lucide-svelte';
   import AgentSelector from '$lib/devgodzilla/AgentSelector.svelte';
   import AgentConfigManager from '$lib/devgodzilla/AgentConfigManager.svelte';
 
@@ -35,21 +38,23 @@
   <title>Agents - DevGodzilla</title>
 </svelte:head>
 
-<div>
-  <div class="flex justify-between items-center mb-8">
-    <h1 class="text-3xl font-bold text-primary">AI Agents</h1>
-    <button
-      on:click={() => showConfig = !showConfig}
-      class="px-4 py-2 bg-surface-secondary text-primary rounded-lg hover:bg-surface-hover transition-colors"
+<div class="max-w-7xl mx-auto px-4 sm:px-8 md:px-8 py-6">
+  <PageHeader title="AI Agents" childrenWrapperDivClasses="flex-1 flex flex-row gap-2 flex-wrap justify-end items-center">
+    <Button
+      variant="default"
+      unifiedSize="md"
+      btnClasses="max-w-fit"
+      startIcon={{ icon: Settings2 }}
+      on:click={() => (showConfig = !showConfig)}
     >
-      {showConfig ? 'Hide Config' : 'Show Config'}
-    </button>
-  </div>
+      {showConfig ? 'Hide config' : 'Show config'}
+    </Button>
+  </PageHeader>
 
   {#if error}
-    <div class="bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
-      <p class="text-red-800 dark:text-red-200">{error}</p>
-    </div>
+    <Alert type="error" title="Failed to load agents" class="mb-6">
+      {error}
+    </Alert>
   {/if}
 
   {#if loading}
@@ -81,12 +86,15 @@
             {/each}
           </div>
           
-          <button
+          <Button
+            variant="subtle"
+            unifiedSize="sm"
+            btnClasses="max-w-fit"
+            startIcon={{ icon: Activity }}
             on:click={() => checkAgentHealth(agent.id)}
-            class="text-sm text-accent hover:opacity-80"
           >
-            Check Health
-          </button>
+            Check health
+          </Button>
         </div>
       {/each}
     </div>

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { devGodzilla, type Project, type ProtocolRun } from '$lib/devgodzilla/client';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import { Alert, Button } from '$lib/components/common';
+  import { Folder, Zap, CheckCircle2, HelpCircle, Plus, Settings2 } from 'lucide-svelte';
 
   let projects: Project[] = [];
   let recentProtocols: ProtocolRun[] = [];
@@ -37,6 +40,10 @@
         return p.status === 'completed' && new Date(p.created_at).toDateString() === today;
       }).length;
 
+      // Pending clarifications
+      const openClarifications = await devGodzilla.listClarifications(undefined, undefined, 'open');
+      stats.pendingClarifications = openClarifications.length;
+
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load dashboard data';
     } finally {
@@ -49,13 +56,13 @@
   <title>DevGodzilla - Dashboard</title>
 </svelte:head>
 
-<div>
-  <h1 class="text-3xl font-bold text-primary mb-8">Dashboard</h1>
+<div class="max-w-7xl mx-auto px-4 sm:px-8 md:px-8 py-6">
+  <PageHeader title="DevGodzilla Dashboard" />
 
   {#if error}
-    <div class="bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
-      <p class="text-red-800 dark:text-red-200">{error}</p>
-    </div>
+    <Alert type="error" title="Failed to load DevGodzilla dashboard">
+      {error}
+    </Alert>
   {/if}
 
   <!-- Stats Cards -->
@@ -66,7 +73,7 @@
           <p class="text-sm text-secondary">Total Projects</p>
           <p class="text-3xl font-bold text-primary">{stats.totalProjects}</p>
         </div>
-        <span class="text-3xl">📁</span>
+        <Folder class="text-secondary" size={26} />
       </div>
     </div>
 
@@ -76,7 +83,7 @@
           <p class="text-sm text-secondary">Active Protocols</p>
           <p class="text-3xl font-bold text-accent">{stats.activeProtocols}</p>
         </div>
-        <span class="text-3xl">⚡</span>
+        <Zap class="text-secondary" size={26} />
       </div>
     </div>
 
@@ -86,7 +93,7 @@
           <p class="text-sm text-secondary">Completed Today</p>
           <p class="text-3xl font-bold text-green-600 dark:text-green-400">{stats.completedToday}</p>
         </div>
-        <span class="text-3xl">✅</span>
+        <CheckCircle2 class="text-secondary" size={26} />
       </div>
     </div>
 
@@ -96,7 +103,7 @@
           <p class="text-sm text-secondary">Pending Clarifications</p>
           <p class="text-3xl font-bold text-amber-600 dark:text-amber-400">{stats.pendingClarifications}</p>
         </div>
-        <span class="text-3xl">❓</span>
+        <HelpCircle class="text-secondary" size={26} />
       </div>
     </div>
   </div>
@@ -178,18 +185,24 @@
   <div class="mt-8">
     <h2 class="text-lg font-semibold text-primary mb-4">Quick Actions</h2>
     <div class="flex flex-wrap gap-4">
-      <a 
-        href="/devgodzilla/projects/new" 
-        class="px-4 py-2 bg-surface-accent-primary text-white rounded-lg hover:opacity-90 transition-opacity"
+      <Button
+        href="/devgodzilla/projects/new"
+        variant="accent"
+        unifiedSize="md"
+        btnClasses="max-w-fit"
+        startIcon={{ icon: Plus }}
       >
-        + New Project
-      </a>
-      <a 
-        href="/devgodzilla/agents" 
-        class="px-4 py-2 bg-surface-secondary text-primary rounded-lg hover:bg-surface-hover transition-colors"
+        New Project
+      </Button>
+      <Button
+        href="/devgodzilla/agents"
+        variant="default"
+        unifiedSize="md"
+        btnClasses="max-w-fit"
+        startIcon={{ icon: Settings2 }}
       >
         Configure Agents
-      </a>
+      </Button>
     </div>
   </div>
 </div>

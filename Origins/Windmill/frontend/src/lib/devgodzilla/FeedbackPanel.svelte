@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { Button, Badge } from '$lib/components/common';
+  import { Wrench, RefreshCcw, ArrowUpRight } from 'lucide-svelte';
   
   export let findings: Array<{
     id: string;
@@ -19,17 +21,14 @@
   }
 </script>
 
-<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+<div class="bg-surface rounded-lg border p-4">
   <div class="flex justify-between items-center mb-4">
-    <h3 class="text-sm font-semibold text-red-800 dark:text-red-200">Feedback Required</h3>
+    <h3 class="text-sm font-semibold text-primary">Feedback Required</h3>
     
     {#if findings.some(f => f.suggestedAction === 'auto_fix')}
-      <button 
-        on:click={handleFixAll}
-        class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded transition-colors shadow-sm"
-      >
-        Auto-Fix All
-      </button>
+      <Button variant="default" unifiedSize="sm" btnClasses="max-w-fit" startIcon={{ icon: Wrench }} on:click={handleFixAll}>
+        Auto-fix all
+      </Button>
     {/if}
   </div>
   
@@ -39,34 +38,43 @@
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1">
             <span class="text-xs font-bold uppercase tracking-wide text-secondary">{finding.category}</span>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-surface-secondary text-secondary font-mono">{finding.suggestedAction}</span>
+            <Badge color="gray">{finding.suggestedAction}</Badge>
           </div>
           <p class="text-sm text-primary">{finding.message}</p>
         </div>
         
         <div class="actions flex gap-2 shrink-0">
           {#if finding.suggestedAction === 'auto_fix'}
-            <button 
+            <Button
+              variant="default"
+              unifiedSize="sm"
+              btnClasses="max-w-fit"
+              startIcon={{ icon: Wrench }}
               on:click={() => handleAction(finding.id, 'auto_fix')}
-              class="px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-700 rounded"
             >
               Fix
-            </button>
+            </Button>
           {/if}
           
-          <button 
-             on:click={() => handleAction(finding.id, 'retry')}
-             class="px-2 py-1 text-xs font-medium text-secondary bg-surface-secondary hover:bg-surface-hover border rounded"
+          <Button
+            variant="default"
+            unifiedSize="sm"
+            btnClasses="max-w-fit"
+            startIcon={{ icon: RefreshCcw }}
+            on:click={() => handleAction(finding.id, 'retry')}
           >
             Retry
-          </button>
+          </Button>
           
-          <button 
+          <Button
+            variant="default"
+            unifiedSize="sm"
+            btnClasses="max-w-fit"
+            startIcon={{ icon: ArrowUpRight }}
             on:click={() => handleAction(finding.id, 'escalate')}
-            class="px-2 py-1 text-xs font-medium text-secondary bg-surface-secondary hover:bg-surface-hover border rounded"
           >
             Escalate
-          </button>
+          </Button>
         </div>
       </div>
     {/each}

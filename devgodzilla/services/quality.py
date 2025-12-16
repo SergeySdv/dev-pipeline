@@ -161,7 +161,6 @@ class QualityService(Service):
         gate_results = []
         for gate in gates_to_run:
             if gate.gate_id in skip_ids:
-                gate_results.append(gate.skip("Skipped by user"))
                 continue
             
             if not gate.enabled:

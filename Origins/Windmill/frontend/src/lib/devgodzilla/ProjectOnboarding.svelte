@@ -1,9 +1,11 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     import { devGodzilla as client } from './client';
-    
-    export let onComplete: (projectId: number) => void = () => {};
-    
+    import { Button } from '$lib/components/common';
+    import { Rocket, ArrowLeft, ArrowRight, Plus } from 'lucide-svelte';
+
+    let { onComplete = () => {} }: { onComplete?: (projectId: number) => void } = $props();
+
     const dispatch = createEventDispatcher();
     
     let currentStep = 1;
@@ -18,10 +20,10 @@
     let selectedAgents: string[] = ['opencode', 'claude-code'];
     
     const availableAgents = [
-        { id: 'codex', name: 'OpenAI Codex', icon: '🤖' },
-        { id: 'opencode', name: 'OpenCode', icon: '💻' },
-        { id: 'claude-code', name: 'Claude Code', icon: '🧠' },
-        { id: 'gemini-cli', name: 'Gemini CLI', icon: '✨' },
+        { id: 'codex', name: 'OpenAI Codex' },
+        { id: 'opencode', name: 'OpenCode' },
+        { id: 'claude-code', name: 'Claude Code' },
+        { id: 'gemini-cli', name: 'Gemini CLI' },
     ];
     
     const defaultConstitution = `# Project Constitution
@@ -89,29 +91,34 @@
             isSubmitting = false;
         }
     }
-    
-    $: canProceed = currentStep === 1 ? projectName && repoUrl :
-                    currentStep === 2 ? true :
-                    currentStep === 3 ? selectedAgents.length > 0 :
-                    true;
+
+    const canProceed = $derived(
+        currentStep === 1 ? projectName && repoUrl :
+        currentStep === 2 ? true :
+        currentStep === 3 ? selectedAgents.length > 0 :
+        true
+    );
 </script>
 
 <div class="max-w-xl mx-auto bg-surface rounded-xl overflow-hidden border">
     <!-- Header with steps -->
     <div class="p-6 bg-surface-accent-primary">
-        <h2 class="text-xl font-bold text-white text-center mb-4">🚀 New Project Setup</h2>
+        <h2 class="text-xl font-bold text-white text-center mb-4 flex items-center justify-center gap-2">
+            <Rocket size={18} />
+            New Project Setup
+        </h2>
         <div class="flex justify-center items-center">
             {#each Array(totalSteps) as _, i}
                 <div 
                     class="w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm transition-all
-                        {i + 1 === currentStep ? 'bg-white text-blue-600' : 
-                         i + 1 < currentStep ? 'bg-green-500 text-white' : 
+                        {i + 1 === currentStep ? 'bg-white text-accent' : 
+                         i + 1 < currentStep ? 'bg-surface-accent-secondary text-white' : 
                          'bg-white/20 text-white'}"
                 >
                     {i + 1}
                 </div>
                 {#if i < totalSteps - 1}
-                    <div class="w-10 h-0.5 {i + 1 < currentStep ? 'bg-green-500' : 'bg-white/20'}"></div>
+                    <div class="w-10 h-0.5 {i + 1 < currentStep ? 'bg-surface-accent-secondary' : 'bg-white/20'}"></div>
                 {/if}
             {/each}
         </div>
@@ -165,11 +172,10 @@
                         <button 
                             class="flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all
                                 {selectedAgents.includes(agent.id) 
-                                    ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
-                                    : 'border-transparent bg-surface-secondary hover:border-accent'}"
+                                    ? 'border-border-selected bg-surface-accent-selected' 
+                                    : 'border-transparent bg-surface-secondary hover:border-border-selected'}"
                             on:click={() => toggleAgent(agent.id)}
                         >
-                            <span class="text-3xl">{agent.icon}</span>
                             <span class="text-sm font-medium text-primary">{agent.name}</span>
                         </button>
                     {/each}
@@ -213,33 +219,42 @@
     <!-- Footer -->
     <div class="flex justify-between p-4 bg-surface-secondary border-t">
         {#if currentStep > 1}
-            <button 
-                class="px-4 py-2 text-sm font-medium text-secondary hover:text-primary transition-colors"
-                on:click={prevStep} 
+            <Button
+                variant="subtle"
+                unifiedSize="md"
+                btnClasses="max-w-fit"
+                startIcon={{ icon: ArrowLeft }}
+                on:click={prevStep}
                 disabled={isSubmitting}
             >
-                ← Back
-            </button>
+                Back
+            </Button>
         {:else}
             <div></div>
         {/if}
         
         {#if currentStep < totalSteps}
-            <button 
-                class="px-4 py-2 bg-surface-accent-primary text-white font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                on:click={nextStep} 
+            <Button
+                variant="accent"
+                unifiedSize="md"
+                btnClasses="max-w-fit"
+                endIcon={{ icon: ArrowRight }}
+                on:click={nextStep}
                 disabled={!canProceed}
             >
-                Next →
-            </button>
+                Next
+            </Button>
         {:else}
-            <button 
-                class="px-4 py-2 bg-surface-accent-primary text-white font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                on:click={handleSubmit} 
+            <Button
+                variant="accent"
+                unifiedSize="md"
+                btnClasses="max-w-fit"
+                startIcon={{ icon: Plus }}
+                on:click={handleSubmit}
                 disabled={isSubmitting || !canProceed}
             >
-                {isSubmitting ? 'Creating...' : 'Create Project 🎉'}
-            </button>
+                {isSubmitting ? 'Creating...' : 'Create project'}
+            </Button>
         {/if}
     </div>
 </div>

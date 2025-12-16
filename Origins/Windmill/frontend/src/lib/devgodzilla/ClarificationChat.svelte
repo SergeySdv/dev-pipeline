@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, afterUpdate } from 'svelte';
+  import { Button } from '$lib/components/common';
+  import { Send } from 'lucide-svelte';
   
   export let questions: Array<{
     id: string;
@@ -28,8 +30,8 @@
 </script>
 
 <div class="flex flex-col h-full bg-surface border rounded-lg overflow-hidden shadow-sm">
-  <div class="px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-100 dark:border-blue-800">
-    <h3 class="text-sm font-semibold text-blue-800 dark:text-blue-300">Clarification Requests</h3>
+  <div class="px-4 py-3 bg-surface-secondary border-b">
+    <h3 class="text-sm font-semibold text-primary">Clarification Requests</h3>
   </div>
   
   <div 
@@ -55,12 +57,14 @@
               {#if q.options && q.status === 'open'}
                 <div class="mt-2 space-y-1">
                   {#each q.options as opt}
-                    <button 
+                    <Button
+                      variant="default"
+                      unifiedSize="sm"
+                      btnClasses="justify-start text-left"
                       on:click={() => handleAnswer(q.id, opt)}
-                      class="block w-full text-left px-3 py-1.5 text-xs bg-surface hover:bg-surface-hover border rounded transition-colors text-accent"
                     >
                       {opt}
-                    </button>
+                    </Button>
                   {/each}
                 </div>
               {/if}
@@ -70,11 +74,11 @@
           <!-- User Answer -->
           {#if q.status === 'answered' && q.answer}
             <div class="flex items-start justify-end">
-              <div class="bg-blue-600 dark:bg-blue-700 text-white rounded-lg rounded-tr-none p-3 max-w-[85%] text-sm">
+              <div class="bg-surface-accent-primary text-white rounded-lg rounded-tr-none p-3 max-w-[85%] text-sm">
                 <p>{q.answer}</p>
               </div>
               <div class="flex-shrink-0 ml-3">
-                <div class="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-200 text-xs font-bold">
+                <div class="h-8 w-8 rounded-full bg-surface-secondary flex items-center justify-center text-secondary text-xs font-bold">
                   You
                 </div>
               </div>
@@ -89,13 +93,18 @@
                     placeholder="Type your answer..."
                     rows="3"
                   ></textarea>
-                  <button
-                    on:click={() => handleAnswer(q.id, currentAnswer)}
-                    disabled={!currentAnswer.trim()}
-                    class="absolute bottom-2 right-2 px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Send
-                  </button>
+                  <div class="absolute bottom-2 right-2">
+                    <Button
+                      variant="accent"
+                      unifiedSize="sm"
+                      btnClasses="max-w-fit"
+                      startIcon={{ icon: Send }}
+                      on:click={() => handleAnswer(q.id, currentAnswer)}
+                      disabled={!currentAnswer.trim()}
+                    >
+                      Send
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

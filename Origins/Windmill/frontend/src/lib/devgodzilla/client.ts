@@ -4,8 +4,10 @@
  * Interacts with the DevGodzilla Python REST API.
  */
 
-// API base URL - configurable for different environments
-const API_BASE_URL = 'http://192.168.1.227';
+// API base URL:
+// - default '' uses relative paths (proxied by Nginx)
+// - can be overridden via localStorage key `devgodzilla_api_url` (client-side)
+const DEFAULT_API_BASE_URL = '';
 
 export interface Project {
     id: number;
@@ -83,6 +85,27 @@ export interface QAResult {
     gates: QAGate[];
 }
 
+export interface ArtifactItem {
+    id: string;
+    type: 'log' | 'diff' | 'file' | 'report' | 'json' | 'text' | 'unknown';
+    name: string;
+    size: number;
+    created_at?: string | null;
+}
+
+export interface ArtifactContent {
+    id: string;
+    name: string;
+    type: string;
+    content: string;
+    truncated: boolean;
+}
+
+export interface ProtocolArtifactItem extends ArtifactItem {
+    step_run_id: number;
+    step_name?: string | null;
+}
+
 export interface SpecKitResponse {
     success: boolean;
     path?: string;
@@ -118,8 +141,20 @@ export interface SpecKitStatus {
 export class DevGodzillaClient {
     private baseUrl: string;
 
-    constructor(baseUrl: string = API_BASE_URL) {
-        this.baseUrl = baseUrl;
+    constructor(baseUrl: string = DEFAULT_API_BASE_URL) {
+        if (baseUrl) {
+            this.baseUrl = baseUrl;
+            return;
+        }
+
+        // Allow optional runtime override in the browser
+        if (typeof window !== 'undefined') {
+            const override = window.localStorage.getItem('devgodzilla_api_url');
+            this.baseUrl = override ?? '';
+            return;
+        }
+
+        this.baseUrl = '';
     }
 
     private async request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -247,6 +282,28 @@ export class DevGodzillaClient {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ gates })
         });
+    }
+
+    async listStepArtifacts(stepId: number): Promise<ArtifactItem[]> {
+        return this.request<ArtifactItem[]>(`/steps/${stepId}/artifacts`);
+    }
+
+    async getStepArtifactContent(stepId: number, artifactId: string, maxBytes: number = 200000): Promise<ArtifactContent> {
+        const params = new URLSearchParams();
+        params.append('max_bytes', String(maxBytes));
+        return this.request<ArtifactContent>(`/steps/${stepId}/artifacts/${encodeURIComponent(artifactId)}/content?${params.toString()}`);
+    }
+
+    getStepArtifactDownloadUrl(stepId: number, artifactId: string): string {
+        // If baseUrl is empty, use relative URL so it works behind nginx proxy.
+        const prefix = this.baseUrl || '';
+        return `${prefix}/steps/${stepId}/artifacts/${encodeURIComponent(artifactId)}/download`;
+    }
+
+    async listProtocolArtifacts(protocolId: number, limit: number = 200): Promise<ProtocolArtifactItem[]> {
+        const params = new URLSearchParams();
+        params.append('limit', String(limit));
+        return this.request<ProtocolArtifactItem[]>(`/protocols/${protocolId}/artifacts?${params.toString()}`);
     }
 
     // =========================================================================

@@ -37,3 +37,5 @@ docs/services-verification-report.md
 harness-output/
 reliability-output/
 validation-output/
+GEMINI.md
+.devgodzilla.sqlite
