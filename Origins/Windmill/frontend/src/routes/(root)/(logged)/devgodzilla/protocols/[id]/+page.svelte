@@ -28,17 +28,17 @@
 
   const protocolId = $derived(Number($page.params.id));
 
-  let protocol: ProtocolRun | null = null;
-  let steps: StepRun[] = [];
-  let clarifications: Clarification[] = [];
-  let loading = true;
-  let error: string | null = null;
-  let activeTab = 'steps';
-  let selectedStep: StepRun | null = null;
-  let qaResult: QAResult | null = null;
-  let busy = false;
-  let protocolArtifacts: ProtocolArtifactItem[] = [];
-  let artifactFocus: { stepId: number; artifactId: string } | null = null;
+  let protocol: ProtocolRun | null = $state(null);
+  let steps: StepRun[] = $state([]);
+  let clarifications: Clarification[] = $state([]);
+  let loading = $state(true);
+  let error: string | null = $state(null);
+  let activeTab = $state('steps');
+  let selectedStep: StepRun | null = $state(null);
+  let qaResult: QAResult | null = $state(null);
+  let busy = $state(false);
+  let protocolArtifacts: ProtocolArtifactItem[] = $state([]);
+  let artifactFocus: { stepId: number; artifactId: string } | null = $state(null);
 
   const tabs = [
     { id: 'steps', label: 'Steps' },

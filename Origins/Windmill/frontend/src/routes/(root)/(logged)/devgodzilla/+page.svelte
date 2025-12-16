@@ -5,18 +5,18 @@
   import { Alert, Button } from '$lib/components/common';
   import { Folder, Zap, CheckCircle2, HelpCircle, Plus, Settings2 } from 'lucide-svelte';
 
-  let projects: Project[] = [];
-  let recentProtocols: ProtocolRun[] = [];
-  let loading = true;
-  let error: string | null = null;
+  let projects: Project[] = $state([]);
+  let recentProtocols: ProtocolRun[] = $state([]);
+  let loading = $state(true);
+  let error: string | null = $state(null);
 
   // Stats
-  let stats = {
+  let stats = $state({
     totalProjects: 0,
     activeProtocols: 0,
     completedToday: 0,
     pendingClarifications: 0
-  };
+  });
 
   onMount(async () => {
     try {

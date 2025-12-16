@@ -183,6 +183,8 @@ class SQLiteDatabase:
         return Project(
             id=row["id"],
             name=row["name"],
+            description=row["description"] if "description" in keys else None,
+            status=row["status"] if "status" in keys else None,
             git_url=row["git_url"],
             base_branch=row["base_branch"],
             local_path=row["local_path"] if "local_path" in keys else None,
@@ -347,6 +349,10 @@ class SQLiteDatabase:
         project_id: int,
         *,
         name: Optional[str] = None,
+        description: Optional[str] = _UNSET,
+        status: Optional[str] = None,
+        git_url: Optional[str] = None,
+        base_branch: Optional[str] = None,
         local_path: Optional[str] = None,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
@@ -357,6 +363,18 @@ class SQLiteDatabase:
         if name is not None:
             updates.append("name = ?")
             params.append(name)
+        if description is not _UNSET:
+            updates.append("description = ?")
+            params.append(description)
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if git_url is not None:
+            updates.append("git_url = ?")
+            params.append(git_url)
+        if base_branch is not None:
+            updates.append("base_branch = ?")
+            params.append(base_branch)
         if local_path is not None:
             updates.append("local_path = ?")
             params.append(local_path)
@@ -374,6 +392,17 @@ class SQLiteDatabase:
                 tuple(params),
             )
         return self.get_project(project_id)
+
+    def delete_project(self, project_id: int) -> None:
+        """Delete a project and all associated data."""
+        with self._transaction() as conn:
+            # Delete in order respecting foreign keys
+            conn.execute("DELETE FROM feedback_events WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)", (project_id,))
+            conn.execute("DELETE FROM events WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)", (project_id,))
+            conn.execute("DELETE FROM step_runs WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)", (project_id,))
+            conn.execute("DELETE FROM clarifications WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM protocol_runs WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
     # Protocol run operations
     def create_protocol_run(

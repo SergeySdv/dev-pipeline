@@ -4,17 +4,17 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import { Alert } from '$lib/components/common';
 
-  let projects: Project[] = [];
-  let loading = true;
-  let error: string | null = null;
+  let projects: Project[] = $state([]);
+  let loading = $state(true);
+  let error: string | null = $state(null);
 
   // Placeholder QA stats
-  let qaStats = {
+  let qaStats = $state({
     totalChecks: 0,
     passed: 0,
     warnings: 0,
     failed: 0
-  };
+  });
 
   onMount(async () => {
     try {

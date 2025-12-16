@@ -1,0 +1,92 @@
+{
+    "summary": "Spec to Tasks Flow",
+    "description": "Generate specification, implementation plan, and task breakdown from a feature request.",
+    "value": {
+        "modules": [
+            {
+                "id": "generate_spec",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/generate_spec"
+                },
+                "input_transforms": {
+                    "project_path": {
+                        "type": "javascript",
+                        "expr": "flow_input.project_path"
+                    },
+                    "feature_request": {
+                        "type": "javascript",
+                        "expr": "flow_input.feature_request"
+                    },
+                    "constitution": {
+                        "type": "static",
+                        "value": ""
+                    }
+                }
+            },
+            {
+                "id": "generate_plan",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/generate_plan"
+                },
+                "input_transforms": {
+                    "project_path": {
+                        "type": "javascript",
+                        "expr": "flow_input.project_path"
+                    },
+                    "spec_path": {
+                        "type": "javascript",
+                        "expr": "results.generate_spec.spec_path"
+                    },
+                    "tech_hints": {
+                        "type": "javascript",
+                        "expr": "flow_input.tech_hints || ''"
+                    }
+                }
+            },
+            {
+                "id": "generate_tasks",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/generate_tasks"
+                },
+                "input_transforms": {
+                    "project_path": {
+                        "type": "javascript",
+                        "expr": "flow_input.project_path"
+                    },
+                    "plan_path": {
+                        "type": "javascript",
+                        "expr": "results.generate_plan.plan_path"
+                    }
+                }
+            }
+        ]
+    },
+    "schema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "project_path": {
+                "type": "string",
+                "description": "Path to the project directory",
+                "default": ""
+            },
+            "feature_request": {
+                "type": "string",
+                "description": "Description of the feature to implement",
+                "default": ""
+            },
+            "tech_hints": {
+                "type": "string",
+                "description": "Optional technology hints for the plan",
+                "default": ""
+            }
+        },
+        "required": [
+            "project_path",
+            "feature_request"
+        ]
+    }
+}

@@ -9,6 +9,8 @@ SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    description TEXT,
+    status TEXT DEFAULT 'active',
     git_url TEXT NOT NULL,
     base_branch TEXT NOT NULL,
     local_path TEXT,
@@ -176,6 +178,8 @@ SCHEMA_POSTGRES = """
 CREATE TABLE IF NOT EXISTS projects (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
+    description TEXT,
+    status TEXT DEFAULT 'active',
     git_url TEXT NOT NULL,
     base_branch TEXT NOT NULL,
     local_path TEXT,

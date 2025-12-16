@@ -1,0 +1,102 @@
+# Agents Resource
+# AI agent configurations for DevGodzilla
+
+resource_type: object
+
+description: "AI coding agent configurations"
+
+value:
+  default_agent: "codex"
+  
+  agents:
+    codex:
+      name: "OpenAI Codex"
+      kind: "cli"
+      cli_tool: "codex"
+      command_dir: ".codex/commands/"
+      format: "markdown"
+      default_model: "gpt-4.1"
+      sandbox: "workspace-write"
+      capabilities:
+        - code_generation
+        - code_review
+        - refactoring
+        - debugging
+      timeout_seconds: 300
+      max_retries: 3
+      available: true
+      
+    claude-code:
+      name: "Claude Code"
+      kind: "cli"
+      cli_tool: "claude"
+      command_dir: ".claude/commands/"
+      format: "markdown"
+      default_model: "claude-sonnet-4-20250514"
+      sandbox: "workspace-write"
+      capabilities:
+        - code_generation
+        - code_review
+        - refactoring
+        - testing
+        - documentation
+      timeout_seconds: 300
+      max_retries: 3
+      available: true
+      
+    opencode:
+      name: "OpenCode"
+      kind: "cli"
+      cli_tool: "opencode"
+      command_dir: ".opencode/command/"
+      format: "markdown"
+      default_model: "claude-sonnet-4-20250514"
+      sandbox: "workspace-write"
+      capabilities:
+        - code_generation
+        - code_review
+      timeout_seconds: 300
+      available: true
+      
+    gemini-cli:
+      name: "Gemini CLI"
+      kind: "cli"
+      cli_tool: "gemini"
+      command_dir: ".gemini/commands/"
+      format: "toml"
+      capabilities:
+        - code_generation
+        - code_review
+        - multimodal
+      timeout_seconds: 300
+      available: true
+      
+    cursor:
+      name: "Cursor"
+      kind: "ide"
+      command_dir: ".cursor/commands/"
+      format: "markdown"
+      capabilities:
+        - code_generation
+      available: true
+      
+    copilot:
+      name: "GitHub Copilot"
+      kind: "ide"
+      command_dir: ".github/agents/"
+      format: "markdown"
+      capabilities:
+        - code_generation
+        - code_completion
+      available: true
+      
+    qoder:
+      name: "Qoder"
+      kind: "cli"
+      cli_tool: "qoder"
+      command_dir: ".qoder/commands/"
+      format: "markdown"
+      capabilities:
+        - code_generation
+      timeout_seconds: 300
+      available: false

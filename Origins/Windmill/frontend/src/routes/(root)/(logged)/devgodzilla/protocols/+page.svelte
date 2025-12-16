@@ -4,11 +4,11 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import { Alert } from '$lib/components/common';
 
-  let protocols: ProtocolRun[] = [];
-  let projects: Project[] = [];
-  let loading = true;
-  let error: string | null = null;
-  let filterStatus = '';
+  let protocols: ProtocolRun[] = $state([]);
+  let projects: Project[] = $state([]);
+  let loading = $state(true);
+  let error: string | null = $state(null);
+  let filterStatus = $state('');
 
   const filteredProtocols = $derived(filterStatus
     ? protocols.filter(p => p.status === filterStatus)

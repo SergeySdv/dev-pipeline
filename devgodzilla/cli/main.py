@@ -26,13 +26,17 @@ BANNER = r"""
 """
 
 
-def get_service_context():
-    """Create a ServiceContext for CLI operations."""
+def get_service_context(project_id: Optional[int] = None):
+    """Create a ServiceContext for CLI operations.
+    
+    Args:
+        project_id: Optional project ID for request-scoped context.
+    """
     from devgodzilla.config import load_config
     from devgodzilla.services.base import ServiceContext
     
     config = load_config()
-    return ServiceContext(config=config)
+    return ServiceContext(config=config, project_id=project_id)
 
 
 def get_db():

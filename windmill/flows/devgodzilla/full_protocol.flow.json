@@ -1,0 +1,222 @@
+{
+    "summary": "Full Protocol Execution Flow",
+    "description": "Complete protocol execution with DAG-based parallel tasks, QA checks, and feedback loops.",
+    "value": {
+        "modules": [
+            {
+                "id": "plan_protocol",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/plan_protocol"
+                },
+                "input_transforms": {
+                    "project_id": {
+                        "type": "javascript",
+                        "expr": "flow_input.project_id"
+                    },
+                    "feature_request": {
+                        "type": "javascript",
+                        "expr": "flow_input.feature_request"
+                    },
+                    "protocol_name": {
+                        "type": "javascript",
+                        "expr": "flow_input.protocol_name || ''"
+                    },
+                    "branch_name": {
+                        "type": "javascript",
+                        "expr": "flow_input.branch_name || ''"
+                    }
+                }
+            },
+            {
+                "id": "parallel_tasks_group_1",
+                "value": {
+                    "type": "branchall",
+                    "branches": [
+                        {
+                            "modules": [
+                                {
+                                    "id": "task_T001",
+                                    "value": {
+                                        "type": "script",
+                                        "path": "u/devgodzilla/execute_step"
+                                    },
+                                    "input_transforms": {
+                                        "step_id": {
+                                            "type": "static",
+                                            "value": "T001"
+                                        },
+                                        "agent_id": {
+                                            "type": "javascript",
+                                            "expr": "flow_input.agent_id || 'codex'"
+                                        },
+                                        "protocol_run_id": {
+                                            "type": "javascript",
+                                            "expr": "results.plan_protocol.protocol_run_id"
+                                        },
+                                        "context": {
+                                            "type": "static",
+                                            "value": {}
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "modules": [
+                                {
+                                    "id": "task_T002",
+                                    "value": {
+                                        "type": "script",
+                                        "path": "u/devgodzilla/execute_step"
+                                    },
+                                    "input_transforms": {
+                                        "step_id": {
+                                            "type": "static",
+                                            "value": "T002"
+                                        },
+                                        "agent_id": {
+                                            "type": "javascript",
+                                            "expr": "flow_input.agent_id || 'codex'"
+                                        },
+                                        "protocol_run_id": {
+                                            "type": "javascript",
+                                            "expr": "results.plan_protocol.protocol_run_id"
+                                        },
+                                        "context": {
+                                            "type": "static",
+                                            "value": {}
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            {
+                "id": "qa_check",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/run_quality"
+                },
+                "input_transforms": {
+                    "step_run_id": {
+                        "type": "javascript",
+                        "expr": "results.plan_protocol.protocol_run_id"
+                    },
+                    "step_output": {
+                        "type": "javascript",
+                        "expr": "results.parallel_tasks_group_1"
+                    },
+                    "constitution_path": {
+                        "type": "static",
+                        "value": ""
+                    }
+                }
+            },
+            {
+                "id": "qa_verdict_branch",
+                "value": {
+                    "type": "branchone",
+                    "branches": [
+                        {
+                            "summary": "QA Passed",
+                            "expr": "results.qa_check.passed === true",
+                            "modules": [
+                                {
+                                    "id": "open_pr",
+                                    "value": {
+                                        "type": "script",
+                                        "path": "u/devgodzilla/open_pr"
+                                    },
+                                    "input_transforms": {
+                                        "protocol_run_id": {
+                                            "type": "javascript",
+                                            "expr": "results.plan_protocol.protocol_run_id"
+                                        },
+                                        "title": {
+                                            "type": "javascript",
+                                            "expr": "'[DevGodzilla] ' + flow_input.feature_request"
+                                        },
+                                        "description": {
+                                            "type": "static",
+                                            "value": ""
+                                        },
+                                        "draft": {
+                                            "type": "static",
+                                            "value": false
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "summary": "QA Failed - Feedback Loop",
+                            "expr": "results.qa_check.passed === false",
+                            "modules": [
+                                {
+                                    "id": "handle_feedback",
+                                    "value": {
+                                        "type": "script",
+                                        "path": "u/devgodzilla/handle_feedback"
+                                    },
+                                    "input_transforms": {
+                                        "action": {
+                                            "type": "javascript",
+                                            "expr": "results.qa_check.blocking_failures && results.qa_check.blocking_failures.length > 0 ? 'clarify' : 'retry'"
+                                        },
+                                        "context": {
+                                            "type": "javascript",
+                                            "expr": "results.qa_check"
+                                        },
+                                        "step_id": {
+                                            "type": "static",
+                                            "value": ""
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "default": []
+                }
+            }
+        ]
+    },
+    "schema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "project_id": {
+                "type": "integer",
+                "description": "Project ID",
+                "default": 1
+            },
+            "feature_request": {
+                "type": "string",
+                "description": "Feature request description",
+                "default": ""
+            },
+            "protocol_name": {
+                "type": "string",
+                "description": "Protocol name",
+                "default": ""
+            },
+            "branch_name": {
+                "type": "string",
+                "description": "Feature branch name",
+                "default": ""
+            },
+            "agent_id": {
+                "type": "string",
+                "description": "AI agent to use",
+                "default": "codex"
+            }
+        },
+        "required": [
+            "project_id",
+            "feature_request"
+        ]
+    }
+}

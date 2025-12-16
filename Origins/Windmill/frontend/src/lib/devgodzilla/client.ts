@@ -202,6 +202,24 @@ export class DevGodzillaClient {
         });
     }
 
+    async archiveProject(id: number): Promise<Project> {
+        return this.request<Project>(`/projects/${id}/archive`, {
+            method: "POST",
+        });
+    }
+
+    async unarchiveProject(id: number): Promise<Project> {
+        return this.request<Project>(`/projects/${id}/unarchive`, {
+            method: "POST",
+        });
+    }
+
+    async deleteProject(id: number): Promise<{ status: string; project_id: number }> {
+        return this.request(`/projects/${id}`, {
+            method: "DELETE",
+        });
+    }
+
     // =========================================================================
     // Protocols
     // =========================================================================

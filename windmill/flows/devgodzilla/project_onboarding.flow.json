@@ -1,0 +1,88 @@
+{
+    "summary": "Project Onboarding Flow",
+    "description": "Clone a GitHub repository, analyze its structure, and initialize SpecKit for AI-driven development.",
+    "value": {
+        "modules": [
+            {
+                "id": "clone_repo",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/clone_repo"
+                },
+                "input_transforms": {
+                    "repo_url": {
+                        "type": "javascript",
+                        "expr": "flow_input.repo_url"
+                    },
+                    "branch": {
+                        "type": "javascript",
+                        "expr": "flow_input.branch || 'main'"
+                    },
+                    "workspace_path": {
+                        "type": "static",
+                        "value": ""
+                    }
+                }
+            },
+            {
+                "id": "analyze_project",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/analyze_project"
+                },
+                "input_transforms": {
+                    "project_path": {
+                        "type": "javascript",
+                        "expr": "results.clone_repo.path"
+                    }
+                }
+            },
+            {
+                "id": "initialize_speckit",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/initialize_speckit"
+                },
+                "input_transforms": {
+                    "project_path": {
+                        "type": "javascript",
+                        "expr": "results.clone_repo.path"
+                    },
+                    "project_name": {
+                        "type": "javascript",
+                        "expr": "flow_input.project_name"
+                    },
+                    "constitution_template": {
+                        "type": "static",
+                        "value": ""
+                    }
+                }
+            }
+        ]
+    },
+    "schema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "repo_url": {
+                "type": "string",
+                "description": "GitHub repository URL (e.g., https://github.com/user/repo)",
+                "default": ""
+            },
+            "project_name": {
+                "type": "string",
+                "description": "Name for the project",
+                "default": ""
+            },
+            "branch": {
+                "type": "string",
+                "description": "Branch to clone",
+                "default": "main"
+            }
+        },
+        "required": [
+            "repo_url",
+            "project_name"
+        ]
+    }
+}

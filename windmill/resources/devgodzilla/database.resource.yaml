@@ -1,0 +1,17 @@
+# Database Resource
+# PostgreSQL connection for DevGodzilla database
+
+resource_type: postgresql
+
+description: "DevGodzilla PostgreSQL database connection"
+
+value:
+  host: "${POSTGRES_HOST:-db}"
+  port: 5432
+  user: "${POSTGRES_USER:-devgodzilla}"
+  password: "${POSTGRES_PASSWORD}"
+  dbname: "devgodzilla"
+  sslmode: "disable"  # For local Docker network
+
+# Alternative connection string format
+# connection_string: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:5432/devgodzilla"

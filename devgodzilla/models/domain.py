@@ -57,6 +57,8 @@ class Project:
     base_branch: str
     created_at: str
     updated_at: str
+    description: Optional[str] = None
+    status: Optional[str] = None  # active, archived, deleted
     local_path: Optional[str] = None
     ci_provider: Optional[str] = None
     secrets: Optional[Dict[str, Any]] = None

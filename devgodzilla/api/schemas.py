@@ -55,7 +55,9 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[ProjectStatus] = None
-    config: Optional[Dict[str, Any]] = None
+    git_url: Optional[str] = None
+    base_branch: Optional[str] = None
+    local_path: Optional[str] = None
 
 class ProjectOut(APIModel):
     id: int
@@ -63,6 +65,7 @@ class ProjectOut(APIModel):
     description: Optional[str] = None
     status: Optional[str] = None
     git_url: Optional[str]
+    base_branch: str = "main"
     local_path: Optional[str]
     created_at: Any
     updated_at: Any

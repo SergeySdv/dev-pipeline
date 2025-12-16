@@ -20,10 +20,12 @@ class ServiceContext:
     Attributes:
         config: Application configuration
         request_id: Optional request correlation ID for tracing
+        project_id: Optional project ID for scoped operations
         metadata: Additional contextual metadata
     """
     config: Config
     request_id: Optional[str] = None
+    project_id: Optional[int] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def with_request_id(self, request_id: str) -> "ServiceContext":
@@ -31,6 +33,7 @@ class ServiceContext:
         return ServiceContext(
             config=self.config,
             request_id=request_id,
+            project_id=self.project_id,
             metadata=self.metadata.copy(),
         )
 
@@ -40,6 +43,7 @@ class ServiceContext:
         return ServiceContext(
             config=self.config,
             request_id=self.request_id,
+            project_id=self.project_id,
             metadata=new_metadata,
         )
 

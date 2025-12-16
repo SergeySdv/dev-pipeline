@@ -7,10 +7,10 @@
   import AgentSelector from '$lib/devgodzilla/AgentSelector.svelte';
   import AgentConfigManager from '$lib/devgodzilla/AgentConfigManager.svelte';
 
-  let agents: AgentInfo[] = [];
-  let loading = true;
-  let error: string | null = null;
-  let showConfig = false;
+  let agents: AgentInfo[] = $state([]);
+  let loading = $state(true);
+  let error: string | null = $state(null);
+  let showConfig = $state(false);
 
   onMount(async () => {
     try {
