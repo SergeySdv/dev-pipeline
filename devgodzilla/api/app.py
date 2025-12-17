@@ -4,6 +4,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from devgodzilla.api import schemas
 from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit
 from devgodzilla.api.routes import metrics, webhooks, events
+from devgodzilla.engines import get_registry
+from devgodzilla.engines.codex import CodexEngine
+from devgodzilla.engines.claude_code import ClaudeCodeEngine
+from devgodzilla.engines.dummy import DummyEngine
+from devgodzilla.engines.opencode import OpenCodeEngine
+from devgodzilla.logging import get_logger
+
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="DevGodzilla API",
@@ -30,6 +38,28 @@ app.include_router(speckit.router, tags=["SpecKit"])
 app.include_router(metrics.router)  # /metrics
 app.include_router(webhooks.router)  # /webhooks/*
 app.include_router(events.router)  # /events
+
+
+@app.on_event("startup")
+def bootstrap_engines() -> None:
+    """
+    Register engines for API execution.
+
+    The docker dev stack frequently runs without any real agent CLI installed.
+    We always register a DummyEngine as the default so UI/flow integration can
+    be tested end-to-end.
+    """
+    registry = get_registry()
+    registry.register(DummyEngine(), default=True, replace=True)
+    registry.register(OpenCodeEngine(), default=False, replace=True)
+    registry.register(CodexEngine(), default=False, replace=True)
+    registry.register(ClaudeCodeEngine(), default=False, replace=True)
+
+    logger.info(
+        "engines_bootstrapped",
+        extra={"engines": registry.list_ids(), "default": registry.get_default().metadata.id},
+    )
+
 
 @app.get("/health", response_model=schemas.Health)
 def health_check():

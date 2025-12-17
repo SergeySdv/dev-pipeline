@@ -18,13 +18,15 @@ from devgodzilla.models.domain import (
 )
 from devgodzilla.engines import (
     Engine,
+    EngineNotFoundError,
     EngineRequest,
     EngineResult,
     SandboxMode,
     get_registry,
 )
+from devgodzilla.spec import get_step_spec as get_step_spec_from_template
 from devgodzilla.services.base import Service, ServiceContext
-from devgodzilla.services.events import get_event_bus, StepStarted, StepCompleted
+from devgodzilla.services.events import get_event_bus, StepStarted, StepCompleted, StepFailed
 
 logger = get_logger(__name__)
 
@@ -154,10 +156,13 @@ class ExecutionService(Service):
         
         # Emit event
         event_bus = get_event_bus()
-        event_bus.publish(StepStarted(
-            step_run_id=step_run_id,
-            step_name=step.step_name,
-        ))
+        event_bus.publish(
+            StepStarted(
+                step_run_id=step_run_id,
+                protocol_run_id=run.id,
+                step_name=step.step_name,
+            )
+        )
         
         try:
             # Resolve execution context
@@ -165,7 +170,33 @@ class ExecutionService(Service):
             
             # Get engine
             registry = get_registry()
-            engine = registry.get_or_default(resolution.engine_id)
+            try:
+                engine = registry.get(resolution.engine_id)
+            except EngineNotFoundError:
+                self.logger.warning(
+                    "engine_not_registered_falling_back",
+                    extra=self.log_extra(
+                        step_run_id=step_run_id,
+                        requested_engine_id=resolution.engine_id,
+                        fallback_engine_id=registry.get_default().metadata.id,
+                    ),
+                )
+                engine = registry.get_default()
+                resolution.engine_id = engine.metadata.id
+
+            if not engine.check_availability():
+                fallback = registry.get_default()
+                if fallback.metadata.id != engine.metadata.id:
+                    self.logger.warning(
+                        "engine_unavailable_falling_back",
+                        extra=self.log_extra(
+                            step_run_id=step_run_id,
+                            requested_engine_id=engine.metadata.id,
+                            fallback_engine_id=fallback.metadata.id,
+                        ),
+                    )
+                    engine = fallback
+                    resolution.engine_id = engine.metadata.id
             
             # Build request
             request = EngineRequest(
@@ -236,11 +267,17 @@ class ExecutionService(Service):
         if run.protocol_root:
             protocol_root = Path(run.protocol_root)
         else:
-            protocol_root = workspace_root / ".specify" / "specs" / run.protocol_name
+            protocols = workspace_root / ".protocols" / run.protocol_name
+            specify = workspace_root / ".specify" / "specs" / run.protocol_name
+            if protocols.exists():
+                protocol_root = protocols
+            elif specify.exists():
+                protocol_root = specify
+            else:
+                protocol_root = protocols
         
         # Get step spec from template config
-        template_config = run.template_config or {}
-        step_spec = self._get_step_spec(template_config, step.step_name)
+        step_spec = get_step_spec_from_template(run.template_config, step.step_name)
         
         # Resolve engine and model
         resolved_engine = (
@@ -311,8 +348,8 @@ class ExecutionService(Service):
         step_path = protocol_root / f"{step.step_name}.md"
         if step_path.exists():
             parts.append(f"# Task\n\n{step_path.read_text(encoding='utf-8')}")
-        elif step.description:
-            parts.append(f"# Task\n\n{step.description}")
+        elif step.summary:
+            parts.append(f"# Task\n\n{step.summary}")
         
         return "\n\n---\n\n".join(parts) if parts else f"Execute step: {step.step_name}"
 
@@ -337,10 +374,14 @@ class ExecutionService(Service):
             
             # Emit completion event
             event_bus = get_event_bus()
-            event_bus.publish(StepCompleted(
-                step_run_id=step.id,
-                success=True,
-            ))
+            event_bus.publish(
+                StepCompleted(
+                    step_run_id=step.id,
+                    protocol_run_id=run.id,
+                    step_name=step.step_name,
+                    summary=f"Executed via {engine.metadata.id}",
+                )
+            )
             
             self.logger.info(
                 "execute_step_completed",
@@ -358,6 +399,14 @@ class ExecutionService(Service):
                 summary=engine_result.error or "Execution failed",
             )
             self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            get_event_bus().publish(
+                StepFailed(
+                    step_run_id=step.id,
+                    protocol_run_id=run.id,
+                    step_name=step.step_name,
+                    error=engine_result.error or "Execution failed",
+                )
+            )
         
         return ExecutionResult(
             success=engine_result.success,

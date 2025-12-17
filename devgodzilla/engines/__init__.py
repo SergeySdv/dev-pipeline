@@ -24,6 +24,7 @@ from devgodzilla.engines.cli_adapter import CLIEngine, run_cli_command
 from devgodzilla.engines.codex import CodexEngine, register_codex_engine
 from devgodzilla.engines.claude_code import ClaudeCodeEngine, register_claude_code_engine
 from devgodzilla.engines.opencode import OpenCodeEngine, register_opencode_engine
+from devgodzilla.engines.dummy import DummyEngine
 from devgodzilla.engines.artifacts import Artifact, ArtifactWriter
 from devgodzilla.engines.sandbox import (
     SandboxType,
@@ -59,6 +60,7 @@ __all__ = [
     "register_claude_code_engine",
     "OpenCodeEngine",
     "register_opencode_engine",
+    "DummyEngine",
     # Artifacts
     "Artifact",
     "ArtifactWriter",

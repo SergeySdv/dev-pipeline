@@ -143,7 +143,19 @@ class QualityService(Service):
         
         # Build gate context
         workspace_root = self._get_workspace(run, project)
-        protocol_root = run.protocol_root or str(workspace_root / ".specify" / "specs" / run.protocol_name)
+        if run.protocol_root:
+            configured = Path(run.protocol_root)
+            protocol_root_path = configured if configured.is_absolute() else (workspace_root / configured)
+        else:
+            protocols = workspace_root / ".protocols" / run.protocol_name
+            specify = workspace_root / ".specify" / "specs" / run.protocol_name
+            if protocols.exists():
+                protocol_root_path = protocols
+            elif specify.exists():
+                protocol_root_path = specify
+            else:
+                protocol_root_path = protocols
+        protocol_root = str(protocol_root_path)
         
         context = GateContext(
             workspace_root=str(workspace_root),
@@ -444,4 +456,3 @@ class QualityService(Service):
         )
         
         return report_path
-

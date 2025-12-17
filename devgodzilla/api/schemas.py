@@ -100,7 +100,7 @@ class ProtocolOut(APIModel):
     status: str
     base_branch: str
     worktree_path: Optional[str]
-    summary: Optional[str]
+    summary: Optional[str] = None
     windmill_flow_id: Optional[str]
     speckit_metadata: Optional[Dict[str, Any]]
     created_at: Any

@@ -23,7 +23,13 @@ def _workspace_root(run, project) -> Path:
 def _protocol_root(run, workspace_root: Path) -> Path:
     if run.protocol_root:
         return Path(run.protocol_root).expanduser()
-    return workspace_root / ".specify" / "specs" / run.protocol_name
+    protocols = workspace_root / ".protocols" / run.protocol_name
+    specify = workspace_root / ".specify" / "specs" / run.protocol_name
+    if protocols.exists():
+        return protocols
+    if specify.exists():
+        return specify
+    return protocols
 
 
 def _artifact_type_from_name(name: str) -> str:
