@@ -1,0 +1,88 @@
+{
+  "summary": "Run next runnable step (DevGodzilla API)",
+  "description": "Selects the next runnable step for a protocol and executes it with QA.",
+  "value": {
+    "modules": [
+      {
+        "id": "select_next_step",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/protocol_select_next_step"
+        },
+        "input_transforms": {
+          "protocol_run_id": {
+            "type": "javascript",
+            "expr": "flow_input.protocol_run_id"
+          }
+        }
+      },
+      {
+        "id": "branch_has_step",
+        "value": {
+          "type": "branchone",
+          "branches": [
+            {
+              "summary": "No runnable steps",
+              "expr": "!results.select_next_step.step_run_id",
+              "modules": []
+            },
+            {
+              "summary": "Execute + QA",
+              "expr": "!!results.select_next_step.step_run_id",
+              "modules": [
+                {
+                  "id": "execute_step",
+                  "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/step_execute_api"
+                  },
+                  "input_transforms": {
+                    "step_run_id": {
+                      "type": "javascript",
+                      "expr": "results.select_next_step.step_run_id"
+                    }
+                  }
+                },
+                {
+                  "id": "run_qa",
+                  "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/step_run_qa_api"
+                  },
+                  "input_transforms": {
+                    "step_run_id": {
+                      "type": "javascript",
+                      "expr": "results.select_next_step.step_run_id"
+                    },
+                    "gates": {
+                      "type": "javascript",
+                      "expr": "flow_input.gates || null"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "default": []
+        }
+      }
+    ]
+  },
+  "schema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "protocol_run_id": {
+        "type": "integer",
+        "description": "Protocol run ID"
+      },
+      "gates": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional gates to run (lint, type, test)"
+      }
+    },
+    "required": ["protocol_run_id"]
+  }
+}
+

@@ -10,7 +10,7 @@ value:
   port: 5432
   user: "${POSTGRES_USER:-devgodzilla}"
   password: "${POSTGRES_PASSWORD}"
-  dbname: "devgodzilla"
+  dbname: "devgodzilla_db"
   sslmode: "disable"  # For local Docker network
 
 # Alternative connection string format

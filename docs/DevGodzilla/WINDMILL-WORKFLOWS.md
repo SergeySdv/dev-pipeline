@@ -111,6 +111,15 @@ Handle feedback loop actions when QA fails (clarify, re-plan, retry).
 
 All flows are located at `f/devgodzilla/` in Windmill.
 
+### protocol_start
+Plan a protocol in DevGodzilla (via API) and wait until it reaches a stable status (`planned`, `running`, `blocked`, etc).
+
+### run_next_step
+Select the next runnable step for a protocol (via API) and execute it with QA.
+
+### step_execute_with_qa
+Execute a specific `step_run_id` (via API) and run QA.
+
 ### project_onboarding
 Complete project setup: clone, analyze, and initialize SpecKit.
 

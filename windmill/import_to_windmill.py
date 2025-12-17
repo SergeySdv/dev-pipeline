@@ -19,9 +19,11 @@ import sys
 from pathlib import Path
 import urllib.request
 import urllib.error
+import re
 
 SCRIPTS_DIR = Path(__file__).parent / "scripts" / "devgodzilla"
 FLOWS_DIR = Path(__file__).parent / "flows" / "devgodzilla"
+APPS_DIR = Path(__file__).parent / "apps" / "devgodzilla"
 
 
 def read_script_content(script_path: Path) -> str:
@@ -67,6 +69,28 @@ def api_request(base_url: str, endpoint: str, token: str, method: str = "GET", d
         return {"error": error_body, "code": e.code}
     except Exception as e:
         return {"error": str(e)}
+
+def _load_token_from_env_file(path: Path) -> str | None:
+    """
+    Load a token from a simple KEY=VALUE env file.
+
+    Recognized keys (first match wins):
+    - WINDMILL_TOKEN
+    - DEVGODZILLA_WINDMILL_TOKEN
+    - VITE_TOKEN (Windmill React app dev token)
+    """
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8")
+    keys = ["WINDMILL_TOKEN", "DEVGODZILLA_WINDMILL_TOKEN", "VITE_TOKEN"]
+    for key in keys:
+        m = re.search(rf"^{re.escape(key)}=(.*)$", text, flags=re.MULTILINE)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        if value and not value.startswith("your_"):
+            return value
+    return None
 
 
 def create_script(base_url: str, token: str, workspace: str, path: str, content: str, summary: str) -> bool:
@@ -126,22 +150,62 @@ def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: 
         result = api_request(base_url, f"/w/{workspace}/flows/create", token, "POST", payload)
     
     return "error" not in result
-
+def create_app(base_url: str, token: str, workspace: str, path: str, app_def: dict) -> bool:
+    """Create or update an app in Windmill."""
+    
+    # Check if app exists
+    check = api_request(base_url, f"/w/{workspace}/apps/get/{path}", token)
+    
+    payload = {
+        "path": path,
+        "summary": app_def.get("summary", ""),
+        "value": app_def.get("value", {}),
+        "policy": app_def.get("policy", {"execution_mode": "viewer"}),
+    }
+    
+    if "error" not in check or check.get("code") != 404:
+        # App exists, update it
+        print(f"  App exists, updating...")
+        result = api_request(base_url, f"/w/{workspace}/apps/update/{path}", token, "POST", payload)
+    else:
+        # Create new app
+        result = api_request(base_url, f"/w/{workspace}/apps/create", token, "POST", payload)
+        
+        # Fallback: if create fails with 400, it might exist but hidden/archived or check failed
+        if "error" in result and result.get("code") == 400:
+             print(f"  Create failed (400), trying update...", end=" ")
+             result = api_request(base_url, f"/w/{workspace}/apps/update/{path}", token, "POST", payload)
+    
+    return "error" not in result
 
 def main():
     parser = argparse.ArgumentParser(description="Import DevGodzilla to Windmill")
     parser.add_argument("--url", default="http://192.168.1.227", help="Windmill base URL")
-    parser.add_argument("--token", required=True, help="Windmill API token")
+    parser.add_argument("--token", required=False, help="Windmill API token (or set WINDMILL_TOKEN env var)")
+    parser.add_argument(
+        "--token-file",
+        required=False,
+        help="Path to an env file containing WINDMILL_TOKEN/DEVGODZILLA_WINDMILL_TOKEN/VITE_TOKEN",
+    )
     parser.add_argument("--workspace", default="demo1", help="Windmill workspace")
     parser.add_argument("--scripts-only", action="store_true", help="Only import scripts")
     parser.add_argument("--flows-only", action="store_true", help="Only import flows")
     args = parser.parse_args()
+
+    token = args.token
+    if not token and args.token_file:
+        token = _load_token_from_env_file(Path(args.token_file))
+    if not token:
+        token = os.environ.get("WINDMILL_TOKEN") or os.environ.get("DEVGODZILLA_WINDMILL_TOKEN")
+    if not token:
+        print("Error: missing token (pass --token, or set WINDMILL_TOKEN, or use --token-file)")
+        sys.exit(2)
     
     print(f"Importing DevGodzilla to {args.url} (workspace: {args.workspace})")
     print()
     
     # Test connection
-    version = api_request(args.url, "/version", args.token)
+    version = api_request(args.url, "/version", token)
     if "error" in version:
         print(f"Error connecting to Windmill: {version['error']}")
         sys.exit(1)
@@ -154,31 +218,17 @@ def main():
     # Import scripts
     if not args.flows_only:
         print("=== Importing Scripts ===")
-        scripts = [
-            ("clone_repo", "Clone a GitHub repository"),
-            ("analyze_project", "Analyze project structure"),
-            ("initialize_speckit", "Initialize .specify/ directory"),
-            ("generate_spec", "Generate feature specification"),
-            ("generate_plan", "Generate implementation plan"),
-            ("generate_tasks", "Generate task breakdown"),
-            ("execute_step", "Execute step with AI agent"),
-            ("run_qa", "Run QA checks"),
-            ("handle_feedback", "Handle feedback loop"),
-        ]
-        
-        for script_name, summary in scripts:
+
+        script_files = sorted([p for p in SCRIPTS_DIR.glob("*.py") if p.is_file()])
+        for script_file in script_files:
+            script_name = script_file.stem
             path = f"u/devgodzilla/{script_name}"
-            script_file = SCRIPTS_DIR / f"{script_name}.py"
-            
-            if not script_file.exists():
-                print(f"✗ {path} - file not found")
-                error_count += 1
-                continue
-            
+            summary = script_name.replace("_", " ").strip().title()
+
             content = read_script_content(script_file)
             print(f"Importing {path}...", end=" ")
-            
-            if create_script(args.url, args.token, args.workspace, path, content, summary):
+
+            if create_script(args.url, token, args.workspace, path, content, summary):
                 print("✓")
                 success_count += 1
             else:
@@ -189,24 +239,45 @@ def main():
     # Import flows
     if not args.scripts_only:
         print("=== Importing Flows ===")
-        flows = [
-            ("project_onboarding", "f/devgodzilla/project_onboarding"),
-            ("spec_to_tasks", "f/devgodzilla/spec_to_tasks"),
-            ("execute_protocol", "f/devgodzilla/execute_protocol"),
-        ]
-        
-        for flow_name, path in flows:
-            flow_file = FLOWS_DIR / f"{flow_name}.flow.json"
-            
-            if not flow_file.exists():
-                print(f"✗ {path} - file not found")
-                error_count += 1
-                continue
-            
+
+        flow_files = sorted([p for p in FLOWS_DIR.glob("*.flow.json") if p.is_file()])
+        for flow_file in flow_files:
+            flow_name = flow_file.name.removesuffix(".flow.json")
+            path = f"f/devgodzilla/{flow_name}"
             flow_def = json.loads(flow_file.read_text())
             print(f"Importing {path}...", end=" ")
+
+            if create_flow(args.url, token, args.workspace, path, flow_def):
+                print("✓")
+                success_count += 1
+            else:
+                print("✗")
+                error_count += 1
+        print()
+    
+    # Import apps
+    if not args.scripts_only and not args.flows_only:
+        print("=== Importing Apps ===")
+        apps = [
+            ("devgodzilla_dashboard", "app/devgodzilla/dashboard"),
+            ("devgodzilla_projects", "app/devgodzilla/projects"),
+            ("devgodzilla_project_detail", "app/devgodzilla/project_detail"),
+            ("devgodzilla_protocols", "app/devgodzilla/protocols"),
+            ("devgodzilla_protocol_detail", "app/devgodzilla/protocol_detail"),
+        ]
+        
+        for app_name, path in apps:
+            app_file = APPS_DIR / f"{app_name}.app.json"
             
-            if create_flow(args.url, args.token, args.workspace, path, flow_def):
+            if not app_file.exists():
+                print(f"✗ {path} - file not found ({app_file})")
+                error_count += 1
+                continue
+                
+            app_def = json.loads(app_file.read_text())
+            print(f"Importing {path}...", end=" ")
+            
+            if create_app(args.url, token, args.workspace, path, app_def):
                 print("✓")
                 success_count += 1
             else:

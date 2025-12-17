@@ -1,0 +1,55 @@
+{
+  "summary": "Execute step + run QA (DevGodzilla API)",
+  "description": "Runs DevGodzilla step execution and QA in sequence for a given step_run_id.",
+  "value": {
+    "modules": [
+      {
+        "id": "execute_step",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/step_execute_api"
+        },
+        "input_transforms": {
+          "step_run_id": {
+            "type": "javascript",
+            "expr": "flow_input.step_run_id"
+          }
+        }
+      },
+      {
+        "id": "run_qa",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/step_run_qa_api"
+        },
+        "input_transforms": {
+          "step_run_id": {
+            "type": "javascript",
+            "expr": "flow_input.step_run_id"
+          },
+          "gates": {
+            "type": "javascript",
+            "expr": "flow_input.gates || null"
+          }
+        }
+      }
+    ]
+  },
+  "schema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "step_run_id": {
+        "type": "integer",
+        "description": "Step run ID"
+      },
+      "gates": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional gates to run (lint, type, test)"
+      }
+    },
+    "required": ["step_run_id"]
+  }
+}
+

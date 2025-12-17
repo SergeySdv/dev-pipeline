@@ -1,0 +1,188 @@
+{
+    "summary": "DevGodzilla Protocols - View and manage all protocols",
+    "value": {
+        "execution_mode": "viewer",
+        "css": ".card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; } .status-running { background: rgba(59, 130, 246, 0.1); color: #3b82f6; } .status-completed { background: rgba(34, 197, 94, 0.1); color: #22c55e; } .status-pending { background: rgba(156, 163, 175, 0.1); color: #9ca3af; } .status-failed { background: rgba(239, 68, 68, 0.1); color: #ef4444; } .status-paused { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }",
+        "hideLogo": false,
+        "norefreshaliasing": true,
+        "components": [
+            {
+                "id": "back_nav",
+                "type": "button",
+                "label": "← Back to Dashboard",
+                "size": "xs",
+                "color": "light",
+                "onClick": {
+                    "type": "goto",
+                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_dashboard"
+                }
+            },
+            {
+                "id": "header",
+                "type": "container",
+                "style": {
+                    "display": "flex",
+                    "justifyContent": "space-between",
+                    "alignItems": "center",
+                    "marginBottom": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "title",
+                        "type": "text",
+                        "value": "# Protocols"
+                    },
+                    {
+                        "id": "stats_summary",
+                        "type": "text",
+                        "value": "{protocols_data.stats.total || 0} total • {protocols_data.stats.running || 0} running",
+                        "style": {
+                            "color": "var(--text-secondary)"
+                        }
+                    }
+                ]
+            },
+            {
+                "id": "filters",
+                "type": "container",
+                "style": {
+                    "display": "flex",
+                    "gap": "1rem",
+                    "marginBottom": "1rem"
+                },
+                "children": [
+                    {
+                        "id": "status_filter",
+                        "type": "select",
+                        "label": "Status",
+                        "defaultValue": "",
+                        "options": [
+                            {
+                                "label": "All Statuses",
+                                "value": ""
+                            },
+                            {
+                                "label": "Pending",
+                                "value": "pending"
+                            },
+                            {
+                                "label": "Running",
+                                "value": "running"
+                            },
+                            {
+                                "label": "Completed",
+                                "value": "completed"
+                            },
+                            {
+                                "label": "Failed",
+                                "value": "failed"
+                            },
+                            {
+                                "label": "Paused",
+                                "value": "paused"
+                            },
+                            {
+                                "label": "Cancelled",
+                                "value": "cancelled"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "protocols_table",
+                "type": "table",
+                "label": "",
+                "configuration": {
+                    "search": "Enabled",
+                    "pagination": {
+                        "pageSize": 20
+                    }
+                },
+                "data": {
+                    "columns": [
+                        {
+                            "field": "protocol_name",
+                            "headerName": "Protocol",
+                            "type": "link",
+                            "flex": 2
+                        },
+                        {
+                            "field": "project_id",
+                            "headerName": "Project",
+                            "type": "text",
+                            "flex": 1
+                        },
+                        {
+                            "field": "status",
+                            "headerName": "Status",
+                            "type": "badge",
+                            "flex": 1
+                        },
+                        {
+                            "field": "created_at",
+                            "headerName": "Created",
+                            "type": "text",
+                            "flex": 1
+                        }
+                    ],
+                    "rows": "{protocols_data.protocols.filter(p => !status_filter.value || p.status === status_filter.value).map(p => ({ protocol_name: p.protocol_name, protocol_name_link: '/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocol_detail?protocol_id=' + p.id, project_id: 'Project #' + p.project_id, status: p.status, created_at: p.created_at ? p.created_at.slice(0,10) : '—' }))}"
+                }
+            },
+            {
+                "id": "no_protocols",
+                "type": "text",
+                "value": "No protocols yet. Start a protocol run from a project page!",
+                "style": {
+                    "textAlign": "center",
+                    "color": "var(--text-secondary)",
+                    "marginTop": "2rem"
+                },
+                "hidden": "{protocols_data.protocols.length > 0}"
+            }
+        ],
+        "hiddenInlineScripts": [
+            {
+                "name": "protocols_data",
+                "script": "u/devgodzilla/list_protocols",
+                "inlineScript": null,
+                "type": "runnableByName"
+            }
+        ],
+        "layout": {
+            "back_nav": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 1
+            },
+            "header": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 2
+            },
+            "filters": {
+                "x": 0,
+                "y": 3,
+                "w": 12,
+                "h": 2
+            },
+            "protocols_table": {
+                "x": 0,
+                "y": 5,
+                "w": 12,
+                "h": 12
+            },
+            "no_protocols": {
+                "x": 0,
+                "y": 17,
+                "w": 12,
+                "h": 2
+            }
+        }
+    },
+    "policy": {
+        "execution_mode": "viewer"
+    }
+}

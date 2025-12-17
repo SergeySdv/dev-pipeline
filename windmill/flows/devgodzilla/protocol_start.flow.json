@@ -1,0 +1,49 @@
+{
+  "summary": "Plan protocol (DevGodzilla API) and wait",
+  "description": "Triggers DevGodzilla planning for a protocol run and waits for it to become planned/running/etc.",
+  "value": {
+    "modules": [
+      {
+        "id": "plan_and_wait",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/protocol_plan_and_wait"
+        },
+        "input_transforms": {
+          "protocol_run_id": {
+            "type": "javascript",
+            "expr": "flow_input.protocol_run_id"
+          },
+          "timeout_seconds": {
+            "type": "javascript",
+            "expr": "flow_input.timeout_seconds || 300"
+          },
+          "poll_interval_ms": {
+            "type": "javascript",
+            "expr": "flow_input.poll_interval_ms || 500"
+          }
+        }
+      }
+    ]
+  },
+  "schema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "protocol_run_id": {
+        "type": "integer",
+        "description": "Protocol run ID"
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "default": 300
+      },
+      "poll_interval_ms": {
+        "type": "integer",
+        "default": 500
+      }
+    },
+    "required": ["protocol_run_id"]
+  }
+}
+

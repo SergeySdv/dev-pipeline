@@ -1,0 +1,474 @@
+{
+    "summary": "DevGodzilla Protocol Detail - View and control a protocol run",
+    "value": {
+        "execution_mode": "viewer",
+        "css": ".card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); padding: 20px; } .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border); } .tab-content { margin-top: 24px; } .step-item { padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; } .step-pending { border-left: 4px solid #9ca3af; } .step-running { border-left: 4px solid #3b82f6; background: rgba(59, 130, 246, 0.05); } .step-completed { border-left: 4px solid #22c55e; } .step-failed { border-left: 4px solid #ef4444; } .status-running { background: rgba(59, 130, 246, 0.1); color: #3b82f6; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .status-completed { background: rgba(34, 197, 94, 0.1); color: #22c55e; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .status-pending { background: rgba(156, 163, 175, 0.1); color: #9ca3af; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .status-failed { background: rgba(239, 68, 68, 0.1); color: #ef4444; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .status-paused { background: rgba(245, 158, 11, 0.1); color: #f59e0b; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .qa-gate { padding: 12px; border-radius: 8px; margin-bottom: 8px; } .qa-passed { background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); } .qa-failed { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); } .qa-warning { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); }",
+        "hideLogo": false,
+        "norefreshaliasing": true,
+        "components": [
+            {
+                "id": "back_nav",
+                "type": "button",
+                "label": "← Back to Protocols",
+                "size": "xs",
+                "color": "light",
+                "onClick": {
+                    "type": "goto",
+                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocols"
+                }
+            },
+            {
+                "id": "header",
+                "type": "container",
+                "style": {
+                    "display": "flex",
+                    "justifyContent": "space-between",
+                    "alignItems": "center",
+                    "marginBottom": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "title_section",
+                        "type": "container",
+                        "children": [
+                            {
+                                "id": "protocol_name",
+                                "type": "text",
+                                "value": "# {protocol_data.protocol.protocol_name || 'Protocol'}"
+                            },
+                            {
+                                "id": "protocol_summary",
+                                "type": "text",
+                                "value": "{protocol_data.protocol.summary || ''}",
+                                "style": {
+                                    "fontSize": "0.875rem",
+                                    "color": "var(--text-secondary)"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "control_buttons",
+                        "type": "container",
+                        "style": {
+                            "display": "flex",
+                            "gap": "0.5rem",
+                            "alignItems": "center"
+                        },
+                        "children": [
+                            {
+                                "id": "status_badge",
+                                "type": "text",
+                                "value": "**{protocol_data.protocol.status || 'pending'}**",
+                                "style": {
+                                    "padding": "4px 12px",
+                                    "borderRadius": "9999px",
+                                    "fontSize": "0.875rem"
+                                }
+                            },
+                            {
+                                "id": "btn_start",
+                                "type": "button",
+                                "label": "▶️ Start",
+                                "color": "blue",
+                                "size": "sm",
+                                "hidden": "{protocol_data.protocol.status !== 'pending'}",
+                                "onClick": {
+                                    "type": "runnableByName",
+                                    "name": "u/devgodzilla/execute_step"
+                                }
+                            },
+                            {
+                                "id": "btn_pause",
+                                "type": "button",
+                                "label": "⏸️ Pause",
+                                "color": "light",
+                                "size": "sm",
+                                "hidden": "{protocol_data.protocol.status !== 'running'}"
+                            },
+                            {
+                                "id": "btn_cancel",
+                                "type": "button",
+                                "label": "❌ Cancel",
+                                "color": "red",
+                                "size": "sm",
+                                "hidden": "{protocol_data.protocol.status !== 'running' && protocol_data.protocol.status !== 'paused'}"
+                            },
+                            {
+                                "id": "btn_refresh",
+                                "type": "button",
+                                "label": "🔄 Refresh",
+                                "color": "light",
+                                "size": "sm",
+                                "onClick": {
+                                    "type": "refresh"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "progress_bar",
+                "type": "container",
+                "style": {
+                    "marginBottom": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "progress_text",
+                        "type": "text",
+                        "value": "**Progress:** {protocol_data.completed_count || 0} / {protocol_data.step_count || 0} steps completed"
+                    },
+                    {
+                        "id": "progress_visual",
+                        "type": "container",
+                        "style": {
+                            "height": "8px",
+                            "background": "var(--border)",
+                            "borderRadius": "4px",
+                            "marginTop": "8px",
+                            "overflow": "hidden"
+                        },
+                        "children": [
+                            {
+                                "id": "progress_fill",
+                                "type": "container",
+                                "style": {
+                                    "height": "100%",
+                                    "background": "#22c55e",
+                                    "width": "{protocol_data.step_count > 0 ? (protocol_data.completed_count / protocol_data.step_count * 100) + '%' : '0%'}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "tabs",
+                "type": "tabs",
+                "tabs": [
+                    "Steps",
+                    "QA",
+                    "Artifacts",
+                    "Clarifications"
+                ],
+                "default": "Steps"
+            },
+            {
+                "id": "steps_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'Steps'}",
+                "children": [
+                    {
+                        "id": "steps_table",
+                        "type": "table",
+                        "label": "Steps",
+                        "configuration": {
+                            "search": "Disabled",
+                            "pagination": {
+                                "pageSize": 20
+                            }
+                        },
+                        "data": {
+                            "columns": [
+                                {
+                                    "field": "step_index",
+                                    "headerName": "#",
+                                    "type": "text",
+                                    "flex": 0.5
+                                },
+                                {
+                                    "field": "step_name",
+                                    "headerName": "Step",
+                                    "type": "text",
+                                    "flex": 2
+                                },
+                                {
+                                    "field": "step_type",
+                                    "headerName": "Type",
+                                    "type": "text",
+                                    "flex": 1
+                                },
+                                {
+                                    "field": "status",
+                                    "headerName": "Status",
+                                    "type": "badge",
+                                    "flex": 1
+                                },
+                                {
+                                    "field": "assigned_agent",
+                                    "headerName": "Agent",
+                                    "type": "text",
+                                    "flex": 1
+                                }
+                            ],
+                            "rows": "{protocol_data.steps.map(s => ({ step_index: s.step_index, step_name: s.step_name, step_type: s.step_type || '—', status: s.status, assigned_agent: s.assigned_agent || '—' }))}"
+                        }
+                    },
+                    {
+                        "id": "step_actions",
+                        "type": "container",
+                        "style": {
+                            "marginTop": "1rem",
+                            "display": "flex",
+                            "gap": "0.5rem"
+                        },
+                        "children": [
+                            {
+                                "id": "btn_execute_step",
+                                "type": "button",
+                                "label": "▶️ Execute Selected Step",
+                                "color": "blue",
+                                "onClick": {
+                                    "type": "runnableByName",
+                                    "name": "u/devgodzilla/execute_step"
+                                }
+                            },
+                            {
+                                "id": "btn_run_qa",
+                                "type": "button",
+                                "label": "🔍 Run QA",
+                                "color": "dark",
+                                "onClick": {
+                                    "type": "runnableByName",
+                                    "name": "u/devgodzilla/run_qa"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "qa_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'QA'}",
+                "children": [
+                    {
+                        "id": "qa_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "qa_title",
+                                "type": "text",
+                                "value": "## QA Gates"
+                            },
+                            {
+                                "id": "qa_info",
+                                "type": "text",
+                                "value": "Run QA checks on steps to validate code quality, tests, and constitution compliance.\n\nSelect a step and click **Run QA** to see gate results.",
+                                "style": {
+                                    "marginTop": "0.5rem"
+                                }
+                            },
+                            {
+                                "id": "btn_run_qa_full",
+                                "type": "button",
+                                "label": "🔍 Run Full QA",
+                                "color": "blue",
+                                "style": {
+                                    "marginTop": "1rem"
+                                },
+                                "onClick": {
+                                    "type": "runnableByName",
+                                    "name": "u/devgodzilla/run_quality"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "artifacts_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'Artifacts'}",
+                "children": [
+                    {
+                        "id": "artifacts_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "artifacts_title",
+                                "type": "text",
+                                "value": "## Protocol Artifacts"
+                            },
+                            {
+                                "id": "artifacts_info",
+                                "type": "text",
+                                "value": "Artifacts are generated during step execution including logs, diffs, and reports.\n\nClick on an artifact to view its content.",
+                                "style": {
+                                    "marginTop": "0.5rem"
+                                }
+                            },
+                            {
+                                "id": "artifacts_placeholder",
+                                "type": "text",
+                                "value": "_No artifacts yet. Execute steps to generate artifacts._",
+                                "style": {
+                                    "marginTop": "1rem",
+                                    "color": "var(--text-secondary)"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "clarifications_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'Clarifications'}",
+                "children": [
+                    {
+                        "id": "clarifications_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "clarifications_title",
+                                "type": "text",
+                                "value": "## Clarifications"
+                            },
+                            {
+                                "id": "clarifications_table",
+                                "type": "table",
+                                "label": "",
+                                "configuration": {
+                                    "search": "Disabled",
+                                    "pagination": {
+                                        "pageSize": 10
+                                    }
+                                },
+                                "data": {
+                                    "columns": [
+                                        {
+                                            "field": "question",
+                                            "headerName": "Question",
+                                            "type": "text",
+                                            "flex": 3
+                                        },
+                                        {
+                                            "field": "status",
+                                            "headerName": "Status",
+                                            "type": "badge",
+                                            "flex": 1
+                                        },
+                                        {
+                                            "field": "created_at",
+                                            "headerName": "Asked",
+                                            "type": "text",
+                                            "flex": 1
+                                        }
+                                    ],
+                                    "rows": "{clarifications_data.clarifications.map(c => ({ question: c.question, status: c.status, created_at: c.created_at ? c.created_at.slice(0,10) : '—' }))}"
+                                }
+                            },
+                            {
+                                "id": "no_clarifications",
+                                "type": "text",
+                                "value": "_No clarifications needed for this protocol._",
+                                "style": {
+                                    "marginTop": "1rem",
+                                    "color": "var(--text-secondary)"
+                                },
+                                "hidden": "{clarifications_data.clarifications.length > 0}"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "hiddenInlineScripts": [
+            {
+                "name": "protocol_data",
+                "script": "u/devgodzilla/get_protocol",
+                "inlineScript": null,
+                "type": "runnableByName",
+                "args": {
+                    "protocol_id": "{$state.protocol_id}"
+                }
+            },
+            {
+                "name": "clarifications_data",
+                "script": "u/devgodzilla/list_clarifications",
+                "inlineScript": null,
+                "type": "runnableByName",
+                "args": {
+                    "protocol_id": "{$state.protocol_id}"
+                }
+            }
+        ],
+        "layout": {
+            "back_nav": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 1
+            },
+            "header": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 2
+            },
+            "progress_bar": {
+                "x": 0,
+                "y": 3,
+                "w": 12,
+                "h": 2
+            },
+            "tabs": {
+                "x": 0,
+                "y": 5,
+                "w": 12,
+                "h": 1
+            },
+            "steps_tab": {
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 12
+            },
+            "qa_tab": {
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 8
+            },
+            "artifacts_tab": {
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 8
+            },
+            "clarifications_tab": {
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 10
+            }
+        }
+    },
+    "policy": {
+        "execution_mode": "viewer"
+    }
+}

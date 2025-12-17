@@ -228,7 +228,8 @@ RUN ln -s ${APP}/windmill /usr/local/bin/windmill
 
 COPY ./frontend/src/lib/hubPaths.json ${APP}/hubPaths.json
 
-RUN windmill cache ${APP}/hubPaths.json && rm ${APP}/hubPaths.json && chmod -R 777 /tmp/windmill
+# RUN windmill cache ${APP}/hubPaths.json && rm ${APP}/hubPaths.json && chmod -R 777 /tmp/windmill
+RUN rm ${APP}/hubPaths.json && chmod -R 777 /tmp/windmill
 
 
 

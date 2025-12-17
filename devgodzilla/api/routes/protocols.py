@@ -66,17 +66,19 @@ def create_protocol(
 @router.get("/protocols", response_model=List[schemas.ProtocolOut])
 def list_protocols(
     project_id: Optional[int] = None,
+    status: Optional[str] = None,
     limit: int = 20,
     db: Database = Depends(get_db)
 ):
     """List protocol runs."""
+    limit = max(1, min(int(limit), 500))
     if project_id is None:
-        # We need to support listing all, but our DB interface requires project_id
-        # We might need to extend the DB interface or fetch for all projects (inefficient).
-        # For now, require project_id
-        raise HTTPException(status_code=400, detail="project_id is required")
-        
-    runs = db.list_protocol_runs(project_id=project_id)
+        runs = db.list_all_protocol_runs(limit=limit)
+    else:
+        runs = db.list_protocol_runs(project_id=project_id)[:limit]
+
+    if status:
+        runs = [r for r in runs if r.status == status]
     return runs[:limit]
 
 @router.get("/protocols/{protocol_id}", response_model=schemas.ProtocolOut)
@@ -117,6 +119,37 @@ def start_protocol(
     background_tasks.add_task(run_planning)
     
     return db.get_protocol_run(protocol_id)
+
+@router.post("/protocols/{protocol_id}/actions/run_next_step", response_model=schemas.NextStepOut)
+def run_next_step(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """
+    Select the next runnable step for a protocol.
+
+    This does not execute the step; it only returns the next step_run_id whose
+    dependencies are satisfied and whose status is pending.
+    """
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    if run.status in ["cancelled", "completed"]:
+        return schemas.NextStepOut(step_run_id=None)
+
+    steps = db.list_step_runs(protocol_id)
+    completed_ids = {s.id for s in steps if s.status == "completed"}
+
+    for step in steps:
+        if step.status != "pending":
+            continue
+        depends_on = step.depends_on or []
+        if all(dep in completed_ids for dep in depends_on):
+            return schemas.NextStepOut(step_run_id=step.id)
+
+    return schemas.NextStepOut(step_run_id=None)
 
 
 @router.post("/protocols/{protocol_id}/actions/pause", response_model=schemas.ProtocolOut)
@@ -221,3 +254,137 @@ def list_protocol_artifacts(
 
     items.sort(key=_mtime, reverse=True)
     return items[:limit]
+
+
+@router.get("/protocols/{protocol_id}/quality", response_model=schemas.QualitySummaryOut)
+def get_protocol_quality(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """
+    Lightweight protocol quality summary for the Windmill React app.
+
+    Aggregates per-step QA verdicts (persisted in step.runtime_state["qa_verdict"]).
+    """
+    try:
+        db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    steps = db.list_step_runs(protocol_id)
+    qa_verdicts = []
+    for s in steps:
+        state = s.runtime_state or {}
+        verdict = (state.get("qa_verdict") or {}).get("verdict")
+        qa_verdicts.append((s, verdict))
+
+    blocking_issues = sum(1 for _, v in qa_verdicts if v in ("fail", "error"))
+    warnings = sum(1 for _, v in qa_verdicts if v == "warn")
+
+    def to_gate_status(verdict: str | None) -> str:
+        if verdict in ("pass", "skip"):
+            return "passed"
+        if verdict == "warn":
+            return "warning"
+        if verdict in ("fail", "error"):
+            return "failed"
+        return "skipped"
+
+    # Aggregate gate statuses across all steps (lint/type/test in current implementation).
+    gate_ids = ["lint", "type", "test"]
+    gate_statuses: dict[str, str] = {gid: "skipped" for gid in gate_ids}
+    for step, _ in qa_verdicts:
+        qa = (step.runtime_state or {}).get("qa_verdict") or {}
+        for g in qa.get("gates", []) or []:
+            gid = g.get("gate_id")
+            if gid not in gate_statuses:
+                continue
+            v = g.get("verdict")
+            current = gate_statuses[gid]
+            next_status = to_gate_status(v)
+            # Worst status wins: failed > warning > passed > skipped
+            order = {"failed": 3, "warning": 2, "passed": 1, "skipped": 0}
+            if order[next_status] > order[current]:
+                gate_statuses[gid] = next_status
+
+    gates = [
+        schemas.GateResultOut(article=gid, name=gid.upper(), status=gate_statuses[gid], findings=[])
+        for gid in gate_ids
+    ]
+
+    # Minimal checklist for now.
+    checklist_items = [
+        schemas.ChecklistItemOut(
+            id="all_steps_qa",
+            description="All executed steps have QA verdicts",
+            passed=all(v is not None for _, v in qa_verdicts) if steps else True,
+            required=False,
+        ),
+        schemas.ChecklistItemOut(
+            id="no_blocking",
+            description="No blocking QA failures",
+            passed=blocking_issues == 0,
+            required=True,
+        ),
+        schemas.ChecklistItemOut(
+            id="tests_run",
+            description="Test gate executed at least once",
+            passed=any((s.runtime_state or {}).get("qa_verdict") for s, _ in qa_verdicts),
+            required=False,
+        ),
+    ]
+    passed = sum(1 for i in checklist_items if i.passed)
+    total = len(checklist_items)
+    score = passed / total if total else 1.0
+
+    overall_status = "failed" if blocking_issues > 0 else "warning" if warnings > 0 else "passed"
+
+    return schemas.QualitySummaryOut(
+        protocol_run_id=protocol_id,
+        score=score,
+        gates=gates,
+        checklist=schemas.ChecklistResultOut(passed=passed, total=total, items=checklist_items),
+        overall_status=overall_status,
+        blocking_issues=blocking_issues,
+        warnings=warnings,
+    )
+
+
+@router.get("/protocols/{protocol_id}/quality/gates")
+def get_protocol_quality_gates(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    summary = get_protocol_quality(protocol_id, db)
+    return {"gates": summary.gates}
+
+
+@router.get("/protocols/{protocol_id}/feedback", response_model=schemas.FeedbackListOut)
+def list_protocol_feedback(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """
+    Feedback feed for the Windmill React app.
+
+    For now, this is derived from clarifications (open/answered) tied to the protocol.
+    """
+    try:
+        db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    clarifications = db.list_clarifications(protocol_run_id=protocol_id, limit=500)
+    events: list[schemas.FeedbackEventOut] = []
+    for c in clarifications:
+        action = "clarification_created" if c.status == "open" else "clarification_answered"
+        events.append(
+            schemas.FeedbackEventOut(
+                id=str(c.id),
+                action_taken=action,
+                created_at=c.created_at,
+                resolved=c.status == "answered",
+                clarification=schemas.ClarificationOut.model_validate(c),
+            )
+        )
+    return schemas.FeedbackListOut(events=events)

@@ -1,0 +1,387 @@
+{
+    "summary": "DevGodzilla Dashboard - Comprehensive management interface",
+    "value": {
+        "execution_mode": "viewer",
+        "css": ".stat-card { background: var(--surface); border-radius: 12px; padding: 20px; border: 1px solid var(--border); } .stat-value { font-size: 2rem; font-weight: bold; } .stat-label { font-size: 0.875rem; color: var(--text-secondary); } .section-title { font-size: 1.125rem; font-weight: 600; margin-bottom: 16px; } .card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; } .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; } .status-badge { padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; } .status-running { background: rgba(59, 130, 246, 0.1); color: #3b82f6; } .status-completed { background: rgba(34, 197, 94, 0.1); color: #22c55e; } .status-pending { background: rgba(156, 163, 175, 0.1); color: #9ca3af; } .status-failed { background: rgba(239, 68, 68, 0.1); color: #ef4444; }",
+        "hideLogo": false,
+        "norefreshaliasing": true,
+        "components": [
+            {
+                "id": "header",
+                "type": "text",
+                "value": "# DevGodzilla Dashboard\n\nManage your AI-driven development projects and protocols.",
+                "style": {
+                    "fontSize": "xl",
+                    "textAlign": "center"
+                }
+            },
+            {
+                "id": "stats_container",
+                "type": "container",
+                "style": {
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(4, 1fr)",
+                    "gap": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "stat_projects",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_projects_value",
+                                "type": "text",
+                                "value": "{projects_data.projects.length || 0}",
+                                "style": {
+                                    "class": "stat-value",
+                                    "color": "#3b82f6"
+                                }
+                            },
+                            {
+                                "id": "stat_projects_label",
+                                "type": "text",
+                                "value": "Total Projects",
+                                "style": {
+                                    "class": "stat-label"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "stat_active_protocols",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_active_value",
+                                "type": "text",
+                                "value": "{protocols_data.stats.running || 0}",
+                                "style": {
+                                    "class": "stat-value",
+                                    "color": "#8b5cf6"
+                                }
+                            },
+                            {
+                                "id": "stat_active_label",
+                                "type": "text",
+                                "value": "Active Protocols",
+                                "style": {
+                                    "class": "stat-label"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "stat_completed",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_completed_value",
+                                "type": "text",
+                                "value": "{protocols_data.stats.completed_today || 0}",
+                                "style": {
+                                    "class": "stat-value",
+                                    "color": "#22c55e"
+                                }
+                            },
+                            {
+                                "id": "stat_completed_label",
+                                "type": "text",
+                                "value": "Completed Today",
+                                "style": {
+                                    "class": "stat-label"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "stat_clarifications",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_clarifications_value",
+                                "type": "text",
+                                "value": "{clarifications_data.open_count || 0}",
+                                "style": {
+                                    "class": "stat-value",
+                                    "color": "#f59e0b"
+                                }
+                            },
+                            {
+                                "id": "stat_clarifications_label",
+                                "type": "text",
+                                "value": "Pending Clarifications",
+                                "style": {
+                                    "class": "stat-label"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "main_content",
+                "type": "container",
+                "style": {
+                    "display": "grid",
+                    "gridTemplateColumns": "1fr 1fr",
+                    "gap": "1.5rem",
+                    "marginTop": "2rem"
+                },
+                "children": [
+                    {
+                        "id": "recent_projects_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "projects_header",
+                                "type": "container",
+                                "style": {
+                                    "class": "card-header"
+                                },
+                                "children": [
+                                    {
+                                        "id": "projects_title",
+                                        "type": "text",
+                                        "value": "**Recent Projects**"
+                                    },
+                                    {
+                                        "id": "projects_link",
+                                        "type": "button",
+                                        "label": "View all →",
+                                        "size": "xs",
+                                        "color": "dark",
+                                        "onClick": {
+                                            "type": "goto",
+                                            "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_projects"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "projects_table",
+                                "type": "table",
+                                "label": "",
+                                "configuration": {
+                                    "search": "Disabled",
+                                    "pagination": {
+                                        "pageSize": 5
+                                    }
+                                },
+                                "data": {
+                                    "columns": [
+                                        {
+                                            "field": "name",
+                                            "headerName": "Project",
+                                            "type": "link"
+                                        },
+                                        {
+                                            "field": "status",
+                                            "headerName": "Status",
+                                            "type": "badge"
+                                        },
+                                        {
+                                            "field": "created_at",
+                                            "headerName": "Created",
+                                            "type": "text"
+                                        }
+                                    ],
+                                    "rows": "{projects_data.projects.slice(0, 5).map(p => ({ name: p.name, name_link: '/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_project_detail?project_id=' + p.id, status: p.status || 'active', created_at: p.created_at ? p.created_at.slice(0,10) : '—' }))}"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "recent_protocols_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "protocols_header",
+                                "type": "container",
+                                "style": {
+                                    "class": "card-header"
+                                },
+                                "children": [
+                                    {
+                                        "id": "protocols_title",
+                                        "type": "text",
+                                        "value": "**Recent Protocols**"
+                                    },
+                                    {
+                                        "id": "protocols_link",
+                                        "type": "button",
+                                        "label": "View all →",
+                                        "size": "xs",
+                                        "color": "dark",
+                                        "onClick": {
+                                            "type": "goto",
+                                            "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocols"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "protocols_table",
+                                "type": "table",
+                                "label": "",
+                                "configuration": {
+                                    "search": "Disabled",
+                                    "pagination": {
+                                        "pageSize": 5
+                                    }
+                                },
+                                "data": {
+                                    "columns": [
+                                        {
+                                            "field": "protocol_name",
+                                            "headerName": "Protocol",
+                                            "type": "link"
+                                        },
+                                        {
+                                            "field": "status",
+                                            "headerName": "Status",
+                                            "type": "badge"
+                                        },
+                                        {
+                                            "field": "created_at",
+                                            "headerName": "Created",
+                                            "type": "text"
+                                        }
+                                    ],
+                                    "rows": "{protocols_data.protocols.slice(0, 10).map(p => ({ protocol_name: p.protocol_name, protocol_name_link: '/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocol_detail?protocol_id=' + p.id, status: p.status, created_at: p.created_at ? p.created_at.slice(0,10) : '—' }))}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "quick_actions",
+                "type": "container",
+                "style": {
+                    "marginTop": "2rem"
+                },
+                "children": [
+                    {
+                        "id": "actions_title",
+                        "type": "text",
+                        "value": "**Quick Actions**",
+                        "style": {
+                            "marginBottom": "1rem"
+                        }
+                    },
+                    {
+                        "id": "actions_row",
+                        "type": "container",
+                        "style": {
+                            "display": "flex",
+                            "gap": "1rem",
+                            "flexWrap": "wrap"
+                        },
+                        "children": [
+                            {
+                                "id": "btn_new_project",
+                                "type": "button",
+                                "label": "➕ New Project",
+                                "color": "blue",
+                                "onClick": {
+                                    "type": "goto",
+                                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_projects"
+                                }
+                            },
+                            {
+                                "id": "btn_view_protocols",
+                                "type": "button",
+                                "label": "📋 View Protocols",
+                                "color": "dark",
+                                "onClick": {
+                                    "type": "goto",
+                                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocols"
+                                }
+                            },
+                            {
+                                "id": "btn_run_script",
+                                "type": "button",
+                                "label": "⚡ Run Scripts",
+                                "color": "dark",
+                                "onClick": {
+                                    "type": "goto",
+                                    "path": "/scripts"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "hiddenInlineScripts": [
+            {
+                "name": "projects_data",
+                "script": "u/devgodzilla/list_projects",
+                "inlineScript": null,
+                "type": "runnableByName"
+            },
+            {
+                "name": "protocols_data",
+                "script": "u/devgodzilla/list_protocols",
+                "inlineScript": null,
+                "type": "runnableByName"
+            },
+            {
+                "name": "clarifications_data",
+                "script": "u/devgodzilla/list_clarifications",
+                "inlineScript": null,
+                "args": {
+                    "status": "open"
+                },
+                "type": "runnableByName"
+            }
+        ],
+        "layout": {
+            "header": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 2
+            },
+            "stats_container": {
+                "x": 0,
+                "y": 2,
+                "w": 12,
+                "h": 3
+            },
+            "main_content": {
+                "x": 0,
+                "y": 5,
+                "w": 12,
+                "h": 8
+            },
+            "quick_actions": {
+                "x": 0,
+                "y": 13,
+                "w": 12,
+                "h": 3
+            }
+        }
+    },
+    "policy": {
+        "execution_mode": "viewer"
+    }
+}

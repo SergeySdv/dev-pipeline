@@ -1,0 +1,274 @@
+{
+    "summary": "DevGodzilla Projects - Manage all projects",
+    "value": {
+        "execution_mode": "viewer",
+        "css": ".stat-card { background: var(--surface); border-radius: 12px; padding: 16px; border: 1px solid var(--border); cursor: pointer; transition: all 0.2s; } .stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); } .stat-card.active { ring: 2px solid var(--blue-500); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3); } .card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; } .status-active { background: rgba(34, 197, 94, 0.1); color: #22c55e; } .status-archived { background: rgba(156, 163, 175, 0.1); color: #9ca3af; } .table-custom { width: 100%; } .table-custom th { text-align: left; padding: 12px 16px; font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); border-bottom: 1px solid var(--border); } .table-custom td { padding: 16px; border-bottom: 1px solid var(--border); }",
+        "hideLogo": false,
+        "norefreshaliasing": true,
+        "components": [
+            {
+                "id": "back_nav",
+                "type": "button",
+                "label": "← Back to Dashboard",
+                "size": "xs",
+                "color": "light",
+                "onClick": {
+                    "type": "goto",
+                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_dashboard"
+                }
+            },
+            {
+                "id": "header",
+                "type": "container",
+                "style": {
+                    "display": "flex",
+                    "justifyContent": "space-between",
+                    "alignItems": "center",
+                    "marginBottom": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "title",
+                        "type": "text",
+                        "value": "# Projects"
+                    },
+                    {
+                        "id": "btn_new_project",
+                        "type": "button",
+                        "label": "➕ New Project",
+                        "color": "blue",
+                        "onClick": {
+                            "type": "runnableByName",
+                            "name": "u/devgodzilla/clone_repo"
+                        }
+                    }
+                ]
+            },
+            {
+                "id": "stats_row",
+                "type": "container",
+                "style": {
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(3, 1fr)",
+                    "gap": "1rem",
+                    "marginBottom": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "stat_total",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_total_icon",
+                                "type": "text",
+                                "value": "📁"
+                            },
+                            {
+                                "id": "stat_total_value",
+                                "type": "text",
+                                "value": "{projects_data.projects.length || 0}",
+                                "style": {
+                                    "fontSize": "1.5rem",
+                                    "fontWeight": "bold",
+                                    "color": "#3b82f6"
+                                }
+                            },
+                            {
+                                "id": "stat_total_label",
+                                "type": "text",
+                                "value": "Total Projects",
+                                "style": {
+                                    "fontSize": "0.875rem",
+                                    "color": "var(--text-secondary)"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "stat_active",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_active_icon",
+                                "type": "text",
+                                "value": "🌿"
+                            },
+                            {
+                                "id": "stat_active_value",
+                                "type": "text",
+                                "value": "{projects_data.projects.filter(p => p.status === 'active' || !p.status).length || 0}",
+                                "style": {
+                                    "fontSize": "1.5rem",
+                                    "fontWeight": "bold",
+                                    "color": "#22c55e"
+                                }
+                            },
+                            {
+                                "id": "stat_active_label",
+                                "type": "text",
+                                "value": "Active",
+                                "style": {
+                                    "fontSize": "0.875rem",
+                                    "color": "var(--text-secondary)"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "stat_archived",
+                        "type": "container",
+                        "style": {
+                            "class": "stat-card"
+                        },
+                        "children": [
+                            {
+                                "id": "stat_archived_icon",
+                                "type": "text",
+                                "value": "📦"
+                            },
+                            {
+                                "id": "stat_archived_value",
+                                "type": "text",
+                                "value": "{projects_data.projects.filter(p => p.status === 'archived').length || 0}",
+                                "style": {
+                                    "fontSize": "1.5rem",
+                                    "fontWeight": "bold",
+                                    "color": "#9ca3af"
+                                }
+                            },
+                            {
+                                "id": "stat_archived_label",
+                                "type": "text",
+                                "value": "Archived",
+                                "style": {
+                                    "fontSize": "0.875rem",
+                                    "color": "var(--text-secondary)"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "search_input",
+                "type": "textinput",
+                "placeholder": "🔍 Search projects...",
+                "style": {
+                    "marginBottom": "1rem"
+                }
+            },
+            {
+                "id": "projects_table",
+                "type": "table",
+                "label": "",
+                "configuration": {
+                    "search": "Disabled",
+                    "pagination": {
+                        "pageSize": 20
+                    }
+                },
+                "data": {
+                    "columns": [
+                        {
+                            "field": "name",
+                            "headerName": "Name",
+                            "type": "link",
+                            "flex": 2
+                        },
+                        {
+                            "field": "git_url",
+                            "headerName": "Repository",
+                            "type": "text",
+                            "flex": 2
+                        },
+                        {
+                            "field": "base_branch",
+                            "headerName": "Branch",
+                            "type": "text",
+                            "flex": 1
+                        },
+                        {
+                            "field": "status",
+                            "headerName": "Status",
+                            "type": "badge",
+                            "flex": 1
+                        },
+                        {
+                            "field": "created_at",
+                            "headerName": "Created",
+                            "type": "text",
+                            "flex": 1
+                        }
+                    ],
+                    "rows": "{projects_data.projects.filter(p => !search_input.value || p.name.toLowerCase().includes(search_input.value.toLowerCase()) || (p.description && p.description.toLowerCase().includes(search_input.value.toLowerCase()))).map(p => ({ name: p.name, name_link: '/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_project_detail?project_id=' + p.id, git_url: p.git_url || '—', base_branch: p.base_branch || 'main', status: p.status || 'active', created_at: p.created_at ? p.created_at.slice(0,10) : '—' }))}"
+                }
+            },
+            {
+                "id": "no_projects",
+                "type": "text",
+                "value": "No projects yet. Click **New Project** to get started!",
+                "style": {
+                    "textAlign": "center",
+                    "color": "var(--text-secondary)",
+                    "marginTop": "2rem"
+                },
+                "hidden": "{projects_data.projects.length > 0}"
+            }
+        ],
+        "hiddenInlineScripts": [
+            {
+                "name": "projects_data",
+                "script": "u/devgodzilla/list_projects",
+                "inlineScript": null,
+                "type": "runnableByName"
+            }
+        ],
+        "layout": {
+            "back_nav": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 1
+            },
+            "header": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 2
+            },
+            "stats_row": {
+                "x": 0,
+                "y": 3,
+                "w": 12,
+                "h": 3
+            },
+            "search_input": {
+                "x": 0,
+                "y": 6,
+                "w": 12,
+                "h": 1
+            },
+            "projects_table": {
+                "x": 0,
+                "y": 7,
+                "w": 12,
+                "h": 10
+            },
+            "no_projects": {
+                "x": 0,
+                "y": 17,
+                "w": 12,
+                "h": 2
+            }
+        }
+    },
+    "policy": {
+        "execution_mode": "viewer"
+    }
+}

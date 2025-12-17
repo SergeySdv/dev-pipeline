@@ -23,6 +23,10 @@ class StepQARequest(BaseModel):
     gates: Optional[List[str]] = None
 
 
+class StepAssignAgentRequest(BaseModel):
+    agent_id: str
+
+
 def _workspace_root(run, project) -> Path:
     if run.worktree_path:
         return Path(run.worktree_path).expanduser()
@@ -90,6 +94,68 @@ def get_step(
         return db.get_step_run(step_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Step not found")
+
+
+@router.post("/steps/{step_id}/actions/assign_agent", response_model=schemas.StepOut)
+def assign_agent(
+    step_id: int,
+    request: StepAssignAgentRequest,
+    db: Database = Depends(get_db),
+):
+    """Assign an agent to a step."""
+    try:
+        db.get_step_run(step_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    return db.update_step_assigned_agent(step_id, request.agent_id)
+
+
+@router.get("/steps/{step_id}/quality", response_model=schemas.QualitySummaryOut)
+def get_step_quality(
+    step_id: int,
+    db: Database = Depends(get_db),
+):
+    """Return a lightweight quality summary for a single step."""
+    try:
+        step = db.get_step_run(step_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    qa = (step.runtime_state or {}).get("qa_verdict") or {}
+    verdict = qa.get("verdict")
+
+    def to_status(v: str | None) -> str:
+        if v in ("pass", "skip"):
+            return "passed"
+        if v == "warn":
+            return "warning"
+        if v in ("fail", "error"):
+            return "failed"
+        return "skipped"
+
+    gates = [
+        schemas.GateResultOut(article=g.get("gate_id", ""), name=str(g.get("gate_id", "")).upper(), status=to_status(g.get("verdict")), findings=[])
+        for g in (qa.get("gates") or [])
+    ]
+
+    blocking = 1 if verdict in ("fail", "error") else 0
+    warnings = 1 if verdict == "warn" else 0
+    score = 1.0 if verdict in ("pass", "skip") else 0.7 if verdict == "warn" else 0.0 if verdict in ("fail", "error") else 0.0
+    overall_status = "failed" if blocking else "warning" if warnings else "passed"
+
+    checklist_items = [
+        schemas.ChecklistItemOut(id="qa_ran", description="QA executed", passed=verdict is not None, required=False),
+    ]
+    return schemas.QualitySummaryOut(
+        protocol_run_id=step.protocol_run_id,
+        score=score,
+        gates=gates,
+        checklist=schemas.ChecklistResultOut(passed=sum(1 for i in checklist_items if i.passed), total=len(checklist_items), items=checklist_items),
+        overall_status=overall_status,
+        blocking_issues=blocking,
+        warnings=warnings,
+    )
 
 
 @router.post("/steps/{step_id}/actions/execute", response_model=schemas.StepOut)

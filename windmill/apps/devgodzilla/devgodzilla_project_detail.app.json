@@ -1,0 +1,511 @@
+{
+    "summary": "DevGodzilla Project Detail - View and manage a single project",
+    "value": {
+        "execution_mode": "viewer",
+        "css": ".card { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); padding: 20px; } .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; } .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; } .info-item label { display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; } .info-item value { display: block; font-size: 0.875rem; color: var(--text-primary); } .tab-content { margin-top: 24px; } .status-active { background: rgba(34, 197, 94, 0.1); color: #22c55e; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .status-archived { background: rgba(156, 163, 175, 0.1); color: #9ca3af; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; } .danger-zone { border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.05); }",
+        "hideLogo": false,
+        "norefreshaliasing": true,
+        "components": [
+            {
+                "id": "back_nav",
+                "type": "button",
+                "label": "← Back to Projects",
+                "size": "xs",
+                "color": "light",
+                "onClick": {
+                    "type": "goto",
+                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_projects"
+                }
+            },
+            {
+                "id": "header",
+                "type": "container",
+                "style": {
+                    "display": "flex",
+                    "justifyContent": "space-between",
+                    "alignItems": "center",
+                    "marginBottom": "1.5rem"
+                },
+                "children": [
+                    {
+                        "id": "title_section",
+                        "type": "container",
+                        "children": [
+                            {
+                                "id": "project_name",
+                                "type": "text",
+                                "value": "# {project_data.project.name || 'Project'}"
+                            },
+                            {
+                                "id": "project_status",
+                                "type": "text",
+                                "value": "Status: **{project_data.project.status || 'active'}**",
+                                "style": {
+                                    "fontSize": "0.875rem",
+                                    "color": "var(--text-secondary)"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "id": "action_buttons",
+                        "type": "container",
+                        "style": {
+                            "display": "flex",
+                            "gap": "0.5rem"
+                        },
+                        "children": [
+                            {
+                                "id": "btn_protocols",
+                                "type": "button",
+                                "label": "📋 Protocols",
+                                "color": "blue",
+                                "onClick": {
+                                    "type": "goto",
+                                    "path": "/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocols"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "tabs",
+                "type": "tabs",
+                "tabs": [
+                    "Overview",
+                    "SpecKit",
+                    "Protocols",
+                    "Settings"
+                ],
+                "default": "Overview"
+            },
+            {
+                "id": "overview_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'Overview'}",
+                "children": [
+                    {
+                        "id": "info_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "info_grid",
+                                "type": "container",
+                                "style": {
+                                    "class": "info-grid"
+                                },
+                                "children": [
+                                    {
+                                        "id": "info_repo",
+                                        "type": "container",
+                                        "style": {
+                                            "class": "info-item"
+                                        },
+                                        "children": [
+                                            {
+                                                "id": "repo_label",
+                                                "type": "text",
+                                                "value": "**Repository**"
+                                            },
+                                            {
+                                                "id": "repo_value",
+                                                "type": "text",
+                                                "value": "{project_data.project.git_url || '—'}"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "id": "info_branch",
+                                        "type": "container",
+                                        "style": {
+                                            "class": "info-item"
+                                        },
+                                        "children": [
+                                            {
+                                                "id": "branch_label",
+                                                "type": "text",
+                                                "value": "**Base Branch**"
+                                            },
+                                            {
+                                                "id": "branch_value",
+                                                "type": "text",
+                                                "value": "{project_data.project.base_branch || 'main'}"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "id": "info_path",
+                                        "type": "container",
+                                        "style": {
+                                            "class": "info-item"
+                                        },
+                                        "children": [
+                                            {
+                                                "id": "path_label",
+                                                "type": "text",
+                                                "value": "**Local Path**"
+                                            },
+                                            {
+                                                "id": "path_value",
+                                                "type": "text",
+                                                "value": "{project_data.project.local_path || '—'}"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "id": "info_created",
+                                        "type": "container",
+                                        "style": {
+                                            "class": "info-item"
+                                        },
+                                        "children": [
+                                            {
+                                                "id": "created_label",
+                                                "type": "text",
+                                                "value": "**Created**"
+                                            },
+                                            {
+                                                "id": "created_value",
+                                                "type": "text",
+                                                "value": "{project_data.project.created_at ? project_data.project.created_at.slice(0,10) : '—'}"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "speckit_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'SpecKit'}",
+                "children": [
+                    {
+                        "id": "speckit_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card"
+                        },
+                        "children": [
+                            {
+                                "id": "speckit_header",
+                                "type": "container",
+                                "style": {
+                                    "class": "card-header"
+                                },
+                                "children": [
+                                    {
+                                        "id": "speckit_title",
+                                        "type": "text",
+                                        "value": "**SpecKit**"
+                                    },
+                                    {
+                                        "id": "btn_init_speckit",
+                                        "type": "button",
+                                        "label": "🔧 Initialize SpecKit",
+                                        "color": "blue",
+                                        "size": "sm",
+                                        "onClick": {
+                                            "type": "runnableByName",
+                                            "name": "u/devgodzilla/initialize_speckit",
+                                            "args": {
+                                                "project_id": "{$state.project_id}"
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "speckit_info",
+                                "type": "text",
+                                "value": "SpecKit allows you to manage specifications, plans, and tasks for your project.\n\nClick **Initialize SpecKit** to set up the `.specify/` directory with constitution and templates."
+                            },
+                            {
+                                "id": "generate_spec_section",
+                                "type": "container",
+                                "style": {
+                                    "marginTop": "1.5rem",
+                                    "padding": "16px",
+                                    "background": "var(--surface-secondary)",
+                                    "borderRadius": "8px"
+                                },
+                                "children": [
+                                    {
+                                        "id": "gen_spec_title",
+                                        "type": "text",
+                                        "value": "**Generate a new spec**"
+                                    },
+                                    {
+                                        "id": "feature_input",
+                                        "type": "textinput",
+                                        "placeholder": "e.g. Add OAuth2 login with GitHub"
+                                    },
+                                    {
+                                        "id": "btn_generate_spec",
+                                        "type": "button",
+                                        "label": "✨ Generate Spec",
+                                        "color": "blue",
+                                        "size": "sm",
+                                        "onClick": {
+                                            "type": "runnableByName",
+                                            "name": "u/devgodzilla/generate_spec",
+                                            "args": {
+                                                "project_id": "{$state.project_id}",
+                                                "description": "{feature_input.value}"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "protocols_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'Protocols'}",
+                "children": [
+                    {
+                        "id": "protocols_table",
+                        "type": "table",
+                        "label": "Project Protocols",
+                        "configuration": {
+                            "search": "Enabled",
+                            "pagination": {
+                                "pageSize": 10
+                            }
+                        },
+                        "data": {
+                            "columns": [
+                                {
+                                    "field": "protocol_name",
+                                    "headerName": "Name",
+                                    "type": "link"
+                                },
+                                {
+                                    "field": "status",
+                                    "headerName": "Status",
+                                    "type": "badge"
+                                },
+                                {
+                                    "field": "created_at",
+                                    "headerName": "Created",
+                                    "type": "text"
+                                }
+                            ],
+                            "rows": "{protocols_data.protocols.filter(p => p.project_id === $state.project_id).map(p => ({ protocol_name: p.protocol_name, protocol_name_link: '/apps/get/u%2Fdevgodzilla%2Fdevgodzilla_protocol_detail?protocol_id=' + p.id, status: p.status, created_at: p.created_at ? p.created_at.slice(0,10) : '—' }))}"
+                        }
+                    }
+                ]
+            },
+            {
+                "id": "settings_tab",
+                "type": "container",
+                "style": {
+                    "class": "tab-content"
+                },
+                "hidden": "{tabs.selected !== 'Settings'}",
+                "children": [
+                    {
+                        "id": "settings_card",
+                        "type": "container",
+                        "style": {
+                            "class": "card",
+                            "marginBottom": "1.5rem"
+                        },
+                        "children": [
+                            {
+                                "id": "settings_title",
+                                "type": "text",
+                                "value": "## Project Settings"
+                            },
+                            {
+                                "id": "edit_name",
+                                "type": "textinput",
+                                "label": "Project Name",
+                                "defaultValue": "{project_data.project.name}"
+                            },
+                            {
+                                "id": "edit_description",
+                                "type": "textinput",
+                                "label": "Description",
+                                "defaultValue": "{project_data.project.description || ''}"
+                            },
+                            {
+                                "id": "edit_git_url",
+                                "type": "textinput",
+                                "label": "Git Repository URL",
+                                "defaultValue": "{project_data.project.git_url || ''}"
+                            },
+                            {
+                                "id": "edit_branch",
+                                "type": "textinput",
+                                "label": "Base Branch",
+                                "defaultValue": "{project_data.project.base_branch || 'main'}"
+                            },
+                            {
+                                "id": "btn_save_settings",
+                                "type": "button",
+                                "label": "💾 Save Settings",
+                                "color": "blue"
+                            }
+                        ]
+                    },
+                    {
+                        "id": "danger_zone",
+                        "type": "container",
+                        "style": {
+                            "class": "card danger-zone"
+                        },
+                        "children": [
+                            {
+                                "id": "danger_title",
+                                "type": "text",
+                                "value": "## ⚠️ Danger Zone",
+                                "style": {
+                                    "color": "#ef4444"
+                                }
+                            },
+                            {
+                                "id": "archive_section",
+                                "type": "container",
+                                "style": {
+                                    "display": "flex",
+                                    "justifyContent": "space-between",
+                                    "alignItems": "center",
+                                    "padding": "12px",
+                                    "background": "rgba(239, 68, 68, 0.05)",
+                                    "borderRadius": "8px",
+                                    "marginBottom": "12px"
+                                },
+                                "children": [
+                                    {
+                                        "id": "archive_text",
+                                        "type": "text",
+                                        "value": "**Archive this project**\nMark as archived. You can unarchive later."
+                                    },
+                                    {
+                                        "id": "btn_archive",
+                                        "type": "button",
+                                        "label": "📦 Archive",
+                                        "color": "light",
+                                        "size": "sm"
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "delete_section",
+                                "type": "container",
+                                "style": {
+                                    "display": "flex",
+                                    "justifyContent": "space-between",
+                                    "alignItems": "center",
+                                    "padding": "12px",
+                                    "background": "rgba(239, 68, 68, 0.05)",
+                                    "borderRadius": "8px"
+                                },
+                                "children": [
+                                    {
+                                        "id": "delete_text",
+                                        "type": "text",
+                                        "value": "**Delete this project**\nPermanently delete. This cannot be undone."
+                                    },
+                                    {
+                                        "id": "btn_delete",
+                                        "type": "button",
+                                        "label": "🗑️ Delete",
+                                        "color": "red",
+                                        "size": "sm"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "hiddenInlineScripts": [
+            {
+                "name": "project_data",
+                "script": "u/devgodzilla/get_project",
+                "inlineScript": null,
+                "type": "runnableByName",
+                "args": {
+                    "project_id": "{$state.project_id}"
+                }
+            },
+            {
+                "name": "protocols_data",
+                "script": "u/devgodzilla/list_protocols",
+                "inlineScript": null,
+                "type": "runnableByName",
+                "args": {
+                    "project_id": "{$state.project_id}"
+                }
+            }
+        ],
+        "layout": {
+            "back_nav": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 1
+            },
+            "header": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 2
+            },
+            "tabs": {
+                "x": 0,
+                "y": 3,
+                "w": 12,
+                "h": 1
+            },
+            "overview_tab": {
+                "x": 0,
+                "y": 4,
+                "w": 12,
+                "h": 6
+            },
+            "speckit_tab": {
+                "x": 0,
+                "y": 4,
+                "w": 12,
+                "h": 8
+            },
+            "protocols_tab": {
+                "x": 0,
+                "y": 4,
+                "w": 12,
+                "h": 8
+            },
+            "settings_tab": {
+                "x": 0,
+                "y": 4,
+                "w": 12,
+                "h": 12
+            }
+        }
+    },
+    "policy": {
+        "execution_mode": "viewer"
+    }
+}

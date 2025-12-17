@@ -10,7 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None  # type: ignore
 
 from devgodzilla.services.base import Service, ServiceContext
 
@@ -81,6 +84,17 @@ class AgentConfigService(Service):
     def load_config(self, force: bool = False) -> None:
         """Load agent configuration from YAML file."""
         if self._loaded and not force:
+            return
+
+        if yaml is None:
+            # Minimal fallback when PyYAML isn't installed.
+            self._agents = {
+                "codex": AgentConfig(id="codex", name="OpenAI Codex", kind="cli", enabled=True),
+                "opencode": AgentConfig(id="opencode", name="OpenCode", kind="cli", enabled=True),
+            }
+            self._defaults = {"code_gen": "opencode"}
+            self._health_config = {}
+            self._loaded = True
             return
             
         config_path = self._resolve_config_path()

@@ -46,11 +46,15 @@ export function DashboardPage() {
     return <LoadingState message="Loading dashboard..." />;
   }
 
-  const projectsCount = projects?.length ?? 0;
-  const activeProtocols = protocols?.filter((p) => p.status === 'running') ?? [];
-  const totalRuns = runs?.length ?? 0;
-  const failedRuns = runs?.filter((r) => r.status === 'failed').length ?? 0;
-  const recentRuns = runs?.slice(0, 5) ?? [];
+  const projectsList = Array.isArray(projects) ? projects : [];
+  const protocolsList = Array.isArray(protocols) ? protocols : [];
+  const runsList = Array.isArray(runs) ? runs : [];
+
+  const projectsCount = projectsList.length;
+  const activeProtocols = protocolsList.filter((p) => p.status === 'running');
+  const totalRuns = runsList.length;
+  const failedRuns = runsList.filter((r) => r.status === 'failed').length;
+  const recentRuns = runsList.slice(0, 5);
 
   const stats = [
     {
@@ -132,7 +136,7 @@ export function DashboardPage() {
                       <div className="space-y-1">
                         <p className="text-sm font-medium">{protocol.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          Project: {projects?.find((p) => p.id === protocol.project_id)?.name ?? 'Unknown'}
+                          Project: {projectsList.find((p) => p.id === protocol.project_id)?.name ?? 'Unknown'}
                         </p>
                       </div>
                       <Badge variant="secondary">{protocol.status}</Badge>

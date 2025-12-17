@@ -148,6 +148,8 @@ class AgentInfo(BaseModel):
     kind: str
     capabilities: List[str]
     status: str = "available"
+    default_model: Optional[str] = None
+    command_dir: Optional[str] = None
 
 # =============================================================================
 # Clarification Models
@@ -160,6 +162,7 @@ class ClarificationAnswer(BaseModel):
 class ClarificationOut(APIModel):
     id: int
     protocol_run_id: Optional[int]
+    key: Optional[str] = None
     question: str
     status: str
     options: Optional[List[str]] = None
@@ -216,3 +219,61 @@ class ArtifactContentOut(BaseModel):
 class ProtocolArtifactOut(ArtifactOut):
     step_run_id: int
     step_name: Optional[str] = None
+
+# =============================================================================
+# Workflow / UI Convenience Models (Windmill React app)
+# =============================================================================
+
+class NextStepOut(BaseModel):
+    step_run_id: Optional[int] = None
+
+
+class GateFindingOut(BaseModel):
+    code: str
+    severity: str  # info|warning|error
+    message: str
+    step_id: Optional[str] = None
+    suggested_fix: Optional[str] = None
+
+
+class GateResultOut(BaseModel):
+    article: str
+    name: str
+    status: str  # passed|warning|failed|skipped
+    findings: List[GateFindingOut] = Field(default_factory=list)
+
+
+class ChecklistItemOut(BaseModel):
+    id: str
+    description: str
+    passed: bool
+    required: bool
+
+
+class ChecklistResultOut(BaseModel):
+    passed: int
+    total: int
+    items: List[ChecklistItemOut] = Field(default_factory=list)
+
+
+class QualitySummaryOut(BaseModel):
+    protocol_run_id: int
+    constitution_version: str = "1"
+    score: float
+    gates: List[GateResultOut] = Field(default_factory=list)
+    checklist: ChecklistResultOut
+    overall_status: str  # passed|warning|failed
+    blocking_issues: int
+    warnings: int
+
+
+class FeedbackEventOut(BaseModel):
+    id: str
+    action_taken: str
+    created_at: Any
+    resolved: bool
+    clarification: Optional[ClarificationOut] = None
+
+
+class FeedbackListOut(BaseModel):
+    events: List[FeedbackEventOut] = Field(default_factory=list)

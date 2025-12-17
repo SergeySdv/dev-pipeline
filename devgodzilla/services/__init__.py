@@ -14,6 +14,7 @@ from devgodzilla.services.constitution import ConstitutionService, Constitution,
 from devgodzilla.services.orchestrator import OrchestratorService, OrchestratorResult, OrchestratorMode
 from devgodzilla.services.execution import ExecutionService, ExecutionResult, StepResolution
 from devgodzilla.services.quality import QualityService, QAResult, QAVerdict
+from devgodzilla.services.specification import SpecificationService, SpecifyResult, PlanResult, TasksResult
 
 __all__ = [
     # Base
@@ -33,6 +34,11 @@ __all__ = [
     # Planning
     "PlanningService",
     "PlanningResult",
+    # Specification
+    "SpecificationService",
+    "SpecifyResult",
+    "PlanResult",
+    "TasksResult",
     # Constitution
     "ConstitutionService",
     "Constitution",

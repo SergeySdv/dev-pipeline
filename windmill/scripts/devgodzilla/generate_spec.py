@@ -1,147 +1,67 @@
 """
-Generate Specification Script
+Generate Feature Specification Script
 
-Generates a feature specification from user input using AI.
+Generates a feature specification using AI via SpecificationService.
 
 Args:
-    project_path: Path to the project directory
-    feature_request: Description of the feature to specify
-    constitution: Optional constitution content (defaults to project constitution)
+    project_id: Project ID
+    feature_request: Feature description
+    branch_name: Optional branch name
 
 Returns:
-    spec_path: Path to generated specification
-    feature_spec: Parsed specification content
+    spec_path: Path to generated spec
 """
 
 import os
 from pathlib import Path
 from datetime import datetime
-import json
 
-# Import DevGodzilla services if available
 try:
-    from devgodzilla.services import SpecificationService
+    from devgodzilla.config import Config
+    from devgodzilla.services.base import ServiceContext
     from devgodzilla.db import get_database
+    from devgodzilla.services import SpecificationService
     DEVGODZILLA_AVAILABLE = True
 except ImportError:
     DEVGODZILLA_AVAILABLE = False
 
 
-def slugify(text: str) -> str:
-    """Convert text to slug format."""
-    import re
-    text = text.lower()
-    text = re.sub(r'[^\w\s-]', '', text)
-    text = re.sub(r'[\s_-]+', '-', text)
-    return text.strip('-')[:50]
-
-
 def main(
-    project_path: str,
+    project_id: int,
     feature_request: str,
-    constitution: str = "",
+    branch_name: str = "",
 ) -> dict:
-    """Generate a feature specification."""
+    """Generate feature specification."""
     
-    path = Path(project_path)
-    specify_dir = path / ".specify"
+    if not DEVGODZILLA_AVAILABLE:
+        return {"error": "DevGodzilla services not available"}
     
-    if not specify_dir.exists():
-        return {"error": f".specify/ directory not found in {project_path}. Run initialize_speckit first."}
+    start_time = datetime.now()
+    db = get_database()
+    config = Config()
+    context = ServiceContext(config=config)
     
-    # Load constitution if not provided
-    if not constitution:
-        constitution_path = specify_dir / "memory" / "constitution.md"
-        if constitution_path.exists():
-            constitution = constitution_path.read_text()
+    # Get project
+    project = db.get_project(project_id)
+    if not project or not project.local_path:
+        return {"error": f"Project {project_id} not found"}
+        
+    spec_service = SpecificationService(context, db=db)
     
-    # Create feature branch directory
-    feature_slug = slugify(feature_request)
-    branch_name = f"feature-{feature_slug}"
-    spec_dir = specify_dir / "specs" / branch_name
-    spec_dir.mkdir(parents=True, exist_ok=True)
+    # Generate spec
+    result = spec_service.run_specify(
+        project_path=project.local_path,
+        description=feature_request,
+        project_id=project_id,
+        feature_name=branch_name.replace("feature-", "") if branch_name.startswith("feature-") else None
+    )
     
-    # Generate specification using DevGodzilla if available
-    if DEVGODZILLA_AVAILABLE:
-        try:
-            db = get_database()
-            spec_service = SpecificationService(db)
-            result = spec_service.generate_specification(
-                feature_request=feature_request,
-                project_path=str(path),
-                constitution=constitution,
-            )
-            spec_content = result.content if hasattr(result, 'content') else str(result)
-        except Exception as e:
-            spec_content = _generate_fallback_spec(feature_request, constitution)
-    else:
-        spec_content = _generate_fallback_spec(feature_request, constitution)
-    
-    # Write specification
-    spec_path = spec_dir / "feature-spec.md"
-    spec_path.write_text(spec_content)
-    
-    # Create runtime directory
-    runtime_dir = spec_dir / "_runtime"
-    runtime_dir.mkdir(exist_ok=True)
-    
-    # Write context file
-    context = {
-        "feature_request": feature_request,
-        "created_at": datetime.now().isoformat(),
-        "constitution_used": bool(constitution),
-        "branch_name": branch_name,
-    }
-    (runtime_dir / "context.json").write_text(json.dumps(context, indent=2))
-    
+    if not result.success:
+        return {"error": result.error}
+        
     return {
-        "spec_path": str(spec_path),
-        "branch_name": branch_name,
-        "feature_spec": {
-            "title": feature_request,
-            "path": str(spec_path.relative_to(path)),
-        },
-        "runtime_dir": str(runtime_dir),
+        "spec_path": result.spec_path,
+        "feature_name": result.feature_name,
+        "spec_number": result.spec_number,
+        "duration_seconds": (datetime.now() - start_time).total_seconds(),
     }
-
-
-def _generate_fallback_spec(feature_request: str, constitution: str) -> str:
-    """Generate a basic specification without AI."""
-    return f"""# Feature Specification: {feature_request}
-
-## Summary
-{feature_request}
-
-## Context
-This specification was generated from the following request:
-> {feature_request}
-
-## User Stories
-- [ ] As a user, I want {feature_request.lower()}
-
-## Requirements
-
-### Functional Requirements
-1. The feature should implement the requested functionality
-2. The implementation should follow project conventions
-
-### Non-Functional Requirements
-1. Should maintain backward compatibility
-2. Should include appropriate error handling
-3. Should include adequate test coverage
-
-## Acceptance Criteria
-- [ ] Feature works as described
-- [ ] Tests pass
-- [ ] Documentation is updated
-
-## Technical Notes
-<!-- Add technical details as the plan develops -->
-
-## Open Questions
-1. What is the priority of this feature?
-2. Are there any edge cases to consider?
-
----
-*Generated by DevGodzilla SpecKit*
-"""

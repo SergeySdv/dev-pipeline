@@ -79,6 +79,7 @@ class DatabaseProtocol(Protocol):
     
     def get_protocol_run(self, run_id: int) -> ProtocolRun: ...
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]: ...
+    def list_all_protocol_runs(self, *, limit: int = 200) -> List[ProtocolRun]: ...
     def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun: ...
     
     # Step runs
@@ -97,6 +98,8 @@ class DatabaseProtocol(Protocol):
     def get_step_run(self, step_run_id: int) -> StepRun: ...
     def list_step_runs(self, protocol_run_id: int) -> List[StepRun]: ...
     def update_step_status(self, step_run_id: int, status: str, **kwargs) -> StepRun: ...
+    def update_step_run(self, step_run_id: int, **kwargs) -> StepRun: ...
+    def update_step_assigned_agent(self, step_run_id: int, assigned_agent: Optional[str]) -> StepRun: ...
     
     # Events
     def append_event(
@@ -442,6 +445,14 @@ class SQLiteDatabase:
         )
         return [self._row_to_protocol_run(row) for row in rows]
 
+    def list_all_protocol_runs(self, *, limit: int = 200) -> List[ProtocolRun]:
+        limit = max(1, min(int(limit), 500))
+        rows = self._fetchall(
+            "SELECT * FROM protocol_runs ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [self._row_to_protocol_run(row) for row in rows]
+
     def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun:
         with self._transaction() as conn:
             conn.execute(
@@ -553,6 +564,42 @@ class SQLiteDatabase:
                 tuple(params),
             )
         return self.get_step_run(step_run_id)
+
+    def update_step_run(self, step_run_id: int, **kwargs) -> StepRun:
+        """
+        Update mutable fields on a step run.
+
+        Supported keys (subset): assigned_agent, runtime_state, summary, status.
+        """
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+
+        if "assigned_agent" in kwargs:
+            updates.append("assigned_agent = ?")
+            params.append(kwargs.get("assigned_agent"))
+        if "runtime_state" in kwargs:
+            updates.append("runtime_state = ?")
+            params.append(json.dumps(kwargs.get("runtime_state")))
+        if "summary" in kwargs:
+            updates.append("summary = ?")
+            params.append(kwargs.get("summary"))
+        if "status" in kwargs:
+            updates.append("status = ?")
+            params.append(kwargs.get("status"))
+
+        if len(updates) == 1:
+            return self.get_step_run(step_run_id)
+
+        params.append(step_run_id)
+        with self._transaction() as conn:
+            conn.execute(
+                f"UPDATE step_runs SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+        return self.get_step_run(step_run_id)
+
+    def update_step_assigned_agent(self, step_run_id: int, assigned_agent: Optional[str]) -> StepRun:
+        return self.update_step_run(step_run_id, assigned_agent=assigned_agent)
 
     # Event operations
     def append_event(
@@ -1175,6 +1222,14 @@ class PostgresDatabase:
         )
         return [self._row_to_protocol_run(row) for row in rows]
 
+    def list_all_protocol_runs(self, *, limit: int = 200) -> List[ProtocolRun]:
+        limit = max(1, min(int(limit), 500))
+        rows = self._fetchall(
+            "SELECT * FROM protocol_runs ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        )
+        return [self._row_to_protocol_run(row) for row in rows]
+
     def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun:
         with self._transaction() as conn:
             with conn.cursor() as cur:
@@ -1266,6 +1321,43 @@ class PostgresDatabase:
                     tuple(params),
                 )
         return self.get_step_run(step_run_id)
+
+    def update_step_run(self, step_run_id: int, **kwargs) -> StepRun:
+        """
+        Update mutable fields on a step run.
+
+        Supported keys (subset): assigned_agent, runtime_state, summary, status.
+        """
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+
+        if "assigned_agent" in kwargs:
+            updates.append("assigned_agent = %s")
+            params.append(kwargs.get("assigned_agent"))
+        if "runtime_state" in kwargs:
+            updates.append("runtime_state = %s")
+            params.append(json.dumps(kwargs.get("runtime_state")))
+        if "summary" in kwargs:
+            updates.append("summary = %s")
+            params.append(kwargs.get("summary"))
+        if "status" in kwargs:
+            updates.append("status = %s")
+            params.append(kwargs.get("status"))
+
+        if len(updates) == 1:
+            return self.get_step_run(step_run_id)
+
+        params.append(step_run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE step_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_step_run(step_run_id)
+
+    def update_step_assigned_agent(self, step_run_id: int, assigned_agent: Optional[str]) -> StepRun:
+        return self.update_step_run(step_run_id, assigned_agent=assigned_agent)
 
     # Event operations
     def append_event(
