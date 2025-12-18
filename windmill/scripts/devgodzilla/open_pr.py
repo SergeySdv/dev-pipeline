@@ -53,7 +53,7 @@ def main(
     if not protocol_info:
         return {"error": f"Protocol {protocol_run_id} not found"}
     
-    project_path = Path(protocol_info["local_path"])
+    project_path = Path(protocol_info.get("worktree_path") or protocol_info["local_path"])
     branch_name = protocol_info["branch_name"]
     base_branch = protocol_info.get("base_branch", "main")
     git_url = protocol_info["git_url"]
@@ -99,11 +99,17 @@ def _get_protocol_info(protocol_run_id: int) -> dict | None:
             db = get_database()
             protocol = db.get_protocol_run(protocol_run_id)
             project = db.get_project(protocol.project_id)
+
+            single_worktree = os.environ.get("DEVGODZILLA_SINGLE_WORKTREE", "true").lower() in ("1", "true", "yes", "on")
+            shared_branch = os.environ.get("DEVGODZILLA_WORKTREE_BRANCH", "devgodzilla-worktree")
+            branch_name = shared_branch if single_worktree else protocol.protocol_name
+
             return {
                 "protocol_name": protocol.protocol_name,
-                "branch_name": protocol.branch_name or f"devgodzilla-{protocol_run_id}",
+                "branch_name": branch_name,
                 "base_branch": protocol.base_branch or "main",
                 "local_path": project.local_path,
+                "worktree_path": protocol.worktree_path,
                 "git_url": project.git_url,
             }
         except:

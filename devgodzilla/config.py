@@ -7,7 +7,7 @@ Uses DEVGODZILLA_ prefix for all environment variables.
 
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -87,6 +87,9 @@ class Config(BaseModel):
     # Misc
     spec_audit_interval_seconds: Optional[int] = Field(default=None)
     skip_simple_decompose: bool = Field(default=False)
+
+    # API / web
+    cors_allow_origins: List[str] = Field(default_factory=list)
     
     # Windmill integration
     windmill_url: Optional[str] = Field(default=None)
@@ -148,6 +151,95 @@ def _parse_bool(value: Optional[str], default: bool = False) -> bool:
     return value.lower() in ("1", "true", "yes", "on")
 
 
+def _parse_csv(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    if value.strip() == "*":
+        return ["*"]
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _read_simple_env_file(path: Path) -> Dict[str, str]:
+    """
+    Read a simple KEY=VALUE env file.
+
+    Supports:
+    - blank lines and comments (# ...)
+    - optional "export " prefix
+    - quoted values ("..." or '...')
+    """
+    data: Dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return data
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and ((value[0] == value[-1] == '"') or (value[0] == value[-1] == "'")):
+            value = value[1:-1]
+        if key:
+            data[key] = value
+    return data
+
+
+def _maybe_load_windmill_env_defaults() -> None:
+    """
+    Populate DEVGODZILLA_WINDMILL_* from a local env file.
+
+    This is a convenience for local/dev setups where Windmill is already running and
+    tokens live in a Windmill app env file.
+    """
+    candidates: list[Path] = []
+    explicit = os.environ.get("DEVGODZILLA_WINDMILL_ENV_FILE")
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+    candidates.extend(
+        [
+            Path("windmill/apps/devgodzilla-react-app/.env.development"),
+            Path(".env.development"),
+        ]
+    )
+
+    env: Dict[str, str] = {}
+    for candidate in candidates:
+        if candidate.exists():
+            env = _read_simple_env_file(candidate)
+            if env:
+                break
+
+    if not env:
+        return
+
+    if not os.environ.get("DEVGODZILLA_WINDMILL_TOKEN"):
+        token = env.get("DEVGODZILLA_WINDMILL_TOKEN") or env.get("WINDMILL_TOKEN") or env.get("VITE_TOKEN")
+        if token:
+            os.environ["DEVGODZILLA_WINDMILL_TOKEN"] = token
+
+    if not os.environ.get("DEVGODZILLA_WINDMILL_WORKSPACE"):
+        workspace = env.get("DEVGODZILLA_WINDMILL_WORKSPACE") or env.get("VITE_WORKSPACE")
+        if workspace:
+            os.environ["DEVGODZILLA_WINDMILL_WORKSPACE"] = workspace
+
+    if not os.environ.get("DEVGODZILLA_WINDMILL_URL"):
+        url = env.get("DEVGODZILLA_WINDMILL_URL") or env.get("WINDMILL_URL") or env.get("VITE_API_URL")
+        if url:
+            normalized = url.strip().rstrip("/")
+            if normalized.endswith("/api"):
+                normalized = normalized[: -len("/api")]
+            os.environ["DEVGODZILLA_WINDMILL_URL"] = normalized
+
+
 def load_config() -> Config:
     """
     Load DevGodzilla configuration from environment.
@@ -155,6 +247,11 @@ def load_config() -> Config:
     Environment variables use the DEVGODZILLA_ prefix.
     Also supports DEVGODZILLA_CONFIG env var pointing to a config file (future).
     """
+    _maybe_load_windmill_env_defaults()
+    env = os.environ.get("DEVGODZILLA_ENV", "local")
+    cors = _parse_csv(os.environ.get("DEVGODZILLA_CORS_ORIGINS"))
+    if not cors and env == "local":
+        cors = ["*"]
     return Config(
         # Database
         db_url=os.environ.get("DEVGODZILLA_DB_URL"),
@@ -162,7 +259,7 @@ def load_config() -> Config:
         db_pool_size=int(os.environ.get("DEVGODZILLA_DB_POOL_SIZE", "5")),
         
         # Environment
-        environment=os.environ.get("DEVGODZILLA_ENV", "local"),
+        environment=env,
         api_token=os.environ.get("DEVGODZILLA_API_TOKEN"),
         log_level=os.environ.get("DEVGODZILLA_LOG_LEVEL", "INFO"),
         webhook_token=os.environ.get("DEVGODZILLA_WEBHOOK_TOKEN"),
@@ -217,6 +314,9 @@ def load_config() -> Config:
         # Misc
         spec_audit_interval_seconds=int(v) if (v := os.environ.get("DEVGODZILLA_SPEC_AUDIT_INTERVAL_SECONDS")) else None,
         skip_simple_decompose=_parse_bool(os.environ.get("DEVGODZILLA_SKIP_SIMPLE_DECOMPOSE")),
+
+        # API / web
+        cors_allow_origins=cors,
         
         # Windmill
         windmill_url=os.environ.get("DEVGODZILLA_WINDMILL_URL"),

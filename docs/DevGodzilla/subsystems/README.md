@@ -46,7 +46,7 @@ graph TB
 
 | # | Subsystem | Description | Size |
 |---|-----------|-------------|------|
-| 1 | [Specification Engine](./01-SPECIFICATION-ENGINE.md) | SpecKit integration for spec-driven development | ~12KB |
+| 1 | [Specification Engine](./01-SPECIFICATION-ENGINE.md) | Speckit-style `.specify/` artifacts (spec/plan/tasks) | ~12KB |
 | 2 | [Orchestration Core](./02-ORCHESTRATION-CORE.md) | Windmill-based workflow engine and DAG execution | ~18KB |
 | 3 | [Execution Layer](./03-EXECUTION-LAYER.md) | Multi-agent execution with 18+ AI coding agents | ~23KB |
 | 4 | [Quality Assurance](./04-QUALITY-ASSURANCE.md) | Constitutional QA gates and feedback loops | ~23KB |
@@ -61,7 +61,7 @@ graph TB
 
 | Subsystem | Primary Responsibility | Key Components |
 |-----------|----------------------|----------------|
-| **Specification Engine** | Transform requirements → specs → tasks | `SpecifyEngine`, `PlanGenerator`, `TaskBreakdown` |
+| **Specification Engine** | Transform requirements → spec/plan/tasks artifacts | `SpecificationService`, templates, clarifications |
 | **Orchestration Core** | Execute task DAGs with Windmill | `DAGBuilder`, `JobScheduler`, `StateManager` |
 | **Execution Layer** | Run AI agents for code generation | `AgentRegistry`, `CLIAdapter`, `SandboxManager` |
 | **Quality Assurance** | Validate output against constitution | `ConstitutionalGates`, `ChecklistValidator`, `FeedbackRouter` |
@@ -127,7 +127,7 @@ orchestration:
   # See 02-ORCHESTRATION-CORE.md
 
 execution:
-  default_agent: codex
+  default_agent: opencode
   # See 03-EXECUTION-LAYER.md
 
 quality:
@@ -135,7 +135,7 @@ quality:
   # See 04-QUALITY-ASSURANCE.md
 
 platform:
-  database_url: "${DATABASE_URL}"
+  database_url: "${DEVGODZILLA_DB_URL}"
   # See 05-PLATFORM-SERVICES.md
 
 ui:

@@ -12,7 +12,7 @@ agents:
     name: OpenCode
     kind: cli
     command: opencode
-    default_model: claude-sonnet-4-20250514
+    default_model: zai-coding-plan/glm-4.6
     sandbox: workspace-write
     capabilities: [code_gen, code_review, reasoning]
     enabled: true

@@ -9,8 +9,11 @@ import hmac
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel
+
+from devgodzilla.api.dependencies import get_db
+from devgodzilla.db.database import Database
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
@@ -55,6 +58,7 @@ class GitLabWebhook(BaseModel):
 async def windmill_job_webhook(
     payload: WindmillJobUpdate,
     request: Request,
+    db: Database = Depends(get_db),
 ):
     """
     Handle Windmill job status updates.
@@ -73,8 +77,29 @@ async def windmill_job_webhook(
         },
     )
     
-    # TODO: Look up job_run by windmill_job_id and update status
-    # db.update_job_run_by_windmill_id(payload.job_id, status=payload.status)
+    status_map = {
+        "queued": "queued",
+        "running": "running",
+        "success": "succeeded",
+        "completed": "succeeded",
+        "failure": "failed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+    }
+
+    try:
+        db.update_job_run_by_windmill_id(
+            payload.job_id,
+            status=status_map.get(payload.status.lower(), payload.status.lower()),
+            result=payload.result,
+            error=payload.error,
+            started_at=payload.started_at.isoformat() if payload.started_at else None,
+            finished_at=payload.finished_at.isoformat() if payload.finished_at else None,
+        )
+    except KeyError:
+        # Webhook can arrive before we persist the job run; don't fail the webhook.
+        pass
     
     return {
         "status": "received",

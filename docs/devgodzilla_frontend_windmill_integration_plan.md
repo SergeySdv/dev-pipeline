@@ -1,10 +1,10 @@
 # Devgodzilla Frontend ↔ Windmill Integration Plan
 
 ## Goal
-Wire the MVP React UI in `dev-pipeline-frontend` to “devgodzilla Windmill” so users can: start runs, watch status/logs, and view outputs/artifacts—without exposing Windmill secrets in the browser.
+Wire the React web console in `frontend/` to Windmill-backed “devgodzilla” runs so users can: start runs, watch status/logs, and view outputs/artifacts—without exposing Windmill secrets in the browser.
 
 ## Key Decision (do this first)
-### A) Recommended: Frontend → Devgodzilla API (FastAPI) → Windmill
+### A) Recommended: Frontend → TasksGodzilla API (FastAPI) → Windmill
 - Pros: keeps Windmill token server-side, consistent auth, avoids CORS/token leakage, easier auditing.
 - Cons: may require adding a few proxy endpoints in the API if they don’t exist yet.
 
@@ -22,14 +22,13 @@ Proceed with **A** unless you explicitly choose **B**.
    - Workspace/tenant name
    - Auth method: service token, OAuth, SSO, etc.
    - Which Windmill “scripts/flows” map to Devgodzilla actions (names/paths)
-2. Devgodzilla API details (if it already exists)
+2. API details (TasksGodzilla and/or Devgodzilla)
    - API base URL for dev/staging
    - Auth: cookie session vs bearer token, and how login happens
    - Any existing endpoints for “runs/jobs/logs/artifacts” (OpenAPI link if available)
 
 ### Phase 1 — Repo discovery + run locally
-1. Clone `https://github.com/ilyafedotov-ops/dev-pipeline-frontend` into the workspace (or as sibling).
-2. Install deps, run the dev server, and inventory:
+1. Install deps, run the dev server, and inventory:
    - routes/pages/components
    - current mocked data / placeholder services
    - state management (Redux/Zustand/Context) and data fetching patterns
@@ -101,4 +100,3 @@ Deliverable: user can start a run and watch it complete.
 2. Do you want **Frontend → Devgodzilla API → Windmill** (recommended) or direct-to-Windmill?
 3. What are the top 3 user actions the UI must support in MVP (e.g., “start protocol run”, “view logs”, “download artifact”)?
 4. Is there already a Devgodzilla API endpoint spec (OpenAPI URL) to match?
-

@@ -232,7 +232,7 @@ def qa_step(
 ):
     """Run QA on a step."""
     try:
-        db.get_step_run(step_id)
+        step = db.get_step_run(step_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Step not found")
 
@@ -245,16 +245,28 @@ def qa_step(
         "test": TestGate(),
     }
     gates_to_run = None
-    if request.gates:
-        unknown = [g for g in request.gates if g not in gate_map]
-        if unknown:
-            raise HTTPException(status_code=400, detail=f"Unknown gates: {', '.join(unknown)}")
-        gates_to_run = [gate_map[g] for g in request.gates]
+    if request.gates is not None:
+        if len(request.gates) == 0:
+            gates_to_run = []
+        else:
+            unknown = [g for g in request.gates if g not in gate_map]
+            if unknown:
+                raise HTTPException(status_code=400, detail=f"Unknown gates: {', '.join(unknown)}")
+            gates_to_run = [gate_map[g] for g in request.gates]
 
     qa = quality.run_qa(step_id, gates=gates_to_run)
 
     # Persist a compact verdict in runtime_state for later UI
     quality.persist_verdict(qa, step_id)
+
+    # Best-effort: if all steps are terminal, update protocol status to completed/failed.
+    try:
+        from devgodzilla.services.orchestrator import OrchestratorService
+
+        orchestrator = OrchestratorService(context=ctx, db=db)
+        orchestrator.check_and_complete_protocol(step.protocol_run_id)
+    except Exception:
+        pass
 
     # Generate human-readable report as an artifact (best-effort)
     try:

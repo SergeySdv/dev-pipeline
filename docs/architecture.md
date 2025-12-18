@@ -315,8 +315,8 @@ If you want consistent behavior across “beginner” through “enterprise” p
   - Small utility that reads `dataset.csv` (category/value), aggregates metrics, and renders a PDF via reportlab. Current inputs are toy data; output path defaults to `docs/dataset_report.pdf`.
 - **TerraformManager workflow plan (`docs/terraformmanager-workflow-plan.md`)**  
   - Checklists for cloning/running the TerraformManager demo under `projects/`, covering API/CLI/UI validation and optional infra tooling; serves as an example end-to-end ops workflow.
-- **Orchestrator (alpha)**  
-  - `tasksgodzilla/storage.py` supports SQLite and Postgres; `alembic/` carries migrations for both. `tasksgodzilla/api/app.py` exposes projects/protocols/steps/events, queue inspection, metrics, webhook listeners, CodeMachine import, and actions (start/pause/resume/run/rerun/run_qa/approve/open_pr). Redis/RQ is the queue backend; set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to spin up a background RQ worker thread inside the API for local dev/tests. `scripts/api_server.py` runs the API, `scripts/rq_worker.py` runs dedicated workers, and `tasksgodzilla/api/frontend` hosts the console UI assets.
+- **Orchestrator (legacy / archived)**  
+  - The legacy TasksGodzilla orchestrator lives under `archive/tasksgodzilla/` (including `archive/tasksgodzilla/api/app.py`). The old console source is in `frontend/`, and build output is published to `archive/tasksgodzilla/api/frontend_dist/`.
   - Worker jobs cover planning, execution, QA, project setup, PR open, and CodeMachine import. Execution/QA paths share the spec-driven resolver + engine registry; loop/trigger policies from StepSpecs (often CodeMachine modules) drive retries or inline triggers with runtime_state updates and events.
 
 ## Operational workflows

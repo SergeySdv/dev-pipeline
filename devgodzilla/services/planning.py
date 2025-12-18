@@ -6,6 +6,7 @@ Handles specification parsing, step decomposition, and DAG generation.
 """
 
 import shutil
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -196,9 +197,93 @@ class PlanningService(Service):
                 protocol_run_id=protocol_run_id,
                 error="Could not resolve workspace path",
             )
+
+        # Ensure worktree for reproducible, isolated execution.
+        # Uses the project repo root (local_path) as the base; updates run.worktree_path.
+        if not run.worktree_path:
+            git_service = self.git_service
+            if git_service is None:
+                try:
+                    from devgodzilla.services.git import GitService
+
+                    git_service = GitService(self.context)
+                except Exception:
+                    git_service = None
+
+            if git_service and project.local_path:
+                try:
+                    repo_root = Path(project.local_path).expanduser()
+                    worktree = git_service.ensure_worktree(
+                        repo_root,
+                        run.protocol_name,
+                        run.base_branch,
+                        protocol_run_id=protocol_run_id,
+                        project_id=project.id,
+                    )
+                    run = self.db.update_protocol_paths(protocol_run_id, worktree_path=str(worktree))
+                    workspace = worktree
+                except Exception as e:
+                    self.logger.warning(
+                        "worktree_setup_failed",
+                        extra={**log_extra, "error": str(e), "repo_root": project.local_path},
+                    )
         
         # Resolve protocol root
         protocol_root = self._resolve_protocol_root(run, workspace)
+
+        # If protocol files are missing, optionally generate them via agent (headless SWE mode).
+        auto_generate = os.environ.get("DEVGODZILLA_AUTO_GENERATE_PROTOCOL", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if auto_generate:
+            step_files = sorted(protocol_root.glob("step-*.md"))
+            if not step_files:
+                try:
+                    from devgodzilla.services.protocol_generation import ProtocolGenerationService
+
+                    engine_id = (
+                        self.context.config.engine_defaults.get("planning")  # type: ignore[union-attr]
+                        if getattr(self.context, "config", None)
+                        else None
+                    )
+                    if not isinstance(engine_id, str) or not engine_id.strip():
+                        engine_id = "opencode"
+
+                    model = None
+                    try:
+                        model = self.context.config.planning_model  # type: ignore[union-attr]
+                    except Exception:
+                        model = None
+
+                    gen = ProtocolGenerationService(self.context)
+                    gen_result = gen.generate(
+                        worktree_root=workspace,
+                        protocol_name=run.protocol_name,
+                        description=run.description or "",
+                        step_count=3,
+                        engine_id=engine_id,
+                        model=model,
+                        timeout_seconds=int(os.environ.get("DEVGODZILLA_PROTOCOL_GENERATE_TIMEOUT_SECONDS", "900")),
+                        strict_outputs=True,
+                    )
+                    if not gen_result.success:
+                        return PlanningResult(
+                            success=False,
+                            protocol_run_id=protocol_run_id,
+                            error=f"Protocol generation failed: {gen_result.error}",
+                        )
+
+                    protocol_root = gen_result.protocol_root
+                    run = self.db.update_protocol_paths(protocol_run_id, protocol_root=str(protocol_root))
+                except Exception as e:
+                    return PlanningResult(
+                        success=False,
+                        protocol_run_id=protocol_run_id,
+                        error=f"Protocol generation failed: {e}",
+                    )
         
         # Resolve effective policy
         policy_hash = None
@@ -347,7 +432,14 @@ class PlanningService(Service):
                 return existing_spec
         
         # Build spec from protocol files
-        return build_spec_from_protocol_files(protocol_root)
+        default_engine_id: Optional[str] = None
+        try:
+            candidate = self.context.config.engine_defaults.get("exec")  # type: ignore[union-attr]
+            if isinstance(candidate, str) and candidate.strip():
+                default_engine_id = candidate.strip()
+        except Exception:
+            default_engine_id = None
+        return build_spec_from_protocol_files(protocol_root, default_engine_id=default_engine_id)
 
     def build_repo_snapshot(
         self,

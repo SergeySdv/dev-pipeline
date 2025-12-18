@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from devgodzilla.engines.interface import EngineRequest, SandboxMode
+from devgodzilla.engines.opencode import OpenCodeEngine
+from devgodzilla.engines.bootstrap import bootstrap_default_engines
+
+
+def _completed_process(*, args: list[str]) -> Any:
+    class _Proc:
+        returncode = 0
+        stdout = "ok\n"
+        stderr = ""
+
+        def __init__(self) -> None:
+            self.args = args
+
+    return _Proc()
+
+
+def test_opencode_engine_invokes_opencode_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001
+        captured["cmd"] = cmd
+        captured["cwd"] = kwargs.get("cwd")
+        captured["input"] = kwargs.get("input")
+        return _completed_process(args=cmd)
+
+    monkeypatch.setattr("devgodzilla.engines.cli_adapter.subprocess.run", fake_run)
+
+    engine = OpenCodeEngine(default_model="provider/model")
+    req = EngineRequest(
+        project_id=0,
+        protocol_run_id=0,
+        step_run_id=1,
+        model="provider/model",
+        prompt_text="Create a file named hello.txt with content 'ok'.",
+        prompt_files=[],
+        working_dir=str(tmp_path),
+        sandbox=SandboxMode.WORKSPACE_WRITE,
+        timeout=10,
+        extra={"output_format": "text"},
+    )
+    result = engine.execute(req)
+    assert result.success is True
+
+    cmd = captured.get("cmd")
+    assert isinstance(cmd, list)
+    assert cmd[:2] == ["opencode", "run"]
+    assert "--model" in cmd
+    assert "--file" in cmd
+    assert captured.get("cwd") == tmp_path
+    assert captured.get("input") is None
+
+
+def test_bootstrap_prefers_opencode_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("devgodzilla.engines.opencode.OpenCodeEngine.check_availability", lambda _self: True)
+    monkeypatch.setattr("devgodzilla.engines.codex.CodexEngine.check_availability", lambda _self: False)
+    monkeypatch.setattr("devgodzilla.engines.claude_code.ClaudeCodeEngine.check_availability", lambda _self: False)
+
+    monkeypatch.setattr("devgodzilla.engines.registry._registry", None)
+    bootstrap_default_engines(replace=True)
+
+    from devgodzilla.engines.registry import get_registry
+
+    assert get_registry().get_default().metadata.id == "opencode"

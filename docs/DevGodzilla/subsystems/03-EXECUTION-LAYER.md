@@ -422,7 +422,7 @@ agents:
     cli_tool: opencode
     command_dir: .opencode/command/
     format: markdown
-    default_model: claude-sonnet-4-20250514
+    default_model: zai-coding-plan/glm-4.6
     sandbox: workspace-write
     capabilities:
       - code_generation
@@ -793,7 +793,7 @@ class BlockDetector:
 ```yaml
 # config/execution.yaml
 execution:
-  default_agent: codex
+  default_agent: opencode
   
   sandbox:
     enabled: true

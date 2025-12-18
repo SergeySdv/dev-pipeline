@@ -17,6 +17,7 @@ from devgodzilla.config import get_config
 from devgodzilla.db import get_database
 from devgodzilla.logging import get_logger
 from devgodzilla.services.base import ServiceContext
+from devgodzilla.engines.bootstrap import bootstrap_default_engines
 
 logger = get_logger(__name__)
 
@@ -52,6 +53,7 @@ def plan_protocol(protocol_run_id: int) -> Dict[str, Any]:
     
     context = get_context()
     db = get_db()
+    bootstrap_default_engines(replace=False)
     
     planning = PlanningService(context, db)
     result = planning.plan_protocol(protocol_run_id)
@@ -67,7 +69,7 @@ def plan_protocol(protocol_run_id: int) -> Dict[str, Any]:
 
 def execute_step(
     step_run_id: int,
-    agent_id: str = "codex",
+    agent_id: str = "opencode",
     protocol_run_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
@@ -85,36 +87,40 @@ def execute_step(
     """
     context = get_context()
     db = get_db()
-    
-    # Get step and update status
-    step = db.get_step_run(step_run_id)
+    bootstrap_default_engines(replace=False)
     
     logger.info(
         "execute_step_started",
         extra={
             "step_run_id": step_run_id,
-            "step_name": step.step_name,
             "agent_id": agent_id,
         },
     )
     
     try:
-        # TODO: Import and use ExecutionService when available
-        # For now, simulate execution
-        from devgodzilla.models.domain import StepStatus
-        
-        db.update_step_status(step_run_id, StepStatus.COMPLETED, summary="Step executed")
-        
+        from devgodzilla.services.execution import ExecutionService
+
+        service = ExecutionService(context, db)
+        result = service.execute_step(step_run_id, engine_id=agent_id)
+        step = db.get_step_run(step_run_id)
+
         return {
-            "success": True,
+            "success": result.success,
             "step_run_id": step_run_id,
+            "engine_id": result.engine_id,
             "agent_id": agent_id,
+            "status": step.status,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
         }
     except Exception as e:
-        from devgodzilla.models.domain import StepStatus
-        
-        db.update_step_status(step_run_id, StepStatus.FAILED, summary=str(e))
-        
+        try:
+            from devgodzilla.models.domain import StepStatus
+
+            db.update_step_status(step_run_id, StepStatus.FAILED, summary=str(e))
+        except Exception:
+            pass
+
         logger.error(
             "execute_step_failed",
             extra={
@@ -148,28 +154,29 @@ def run_qa(
     """
     context = get_context()
     db = get_db()
-    
-    step = db.get_step_run(step_run_id)
+    bootstrap_default_engines(replace=False)
     
     logger.info(
         "run_qa_started",
         extra={
             "step_run_id": step_run_id,
-            "step_name": step.step_name,
         },
     )
     
     try:
-        # TODO: Import and use QualityService when available
-        # For now, mark as completed
-        from devgodzilla.models.domain import StepStatus
-        
-        db.update_step_status(step_run_id, StepStatus.COMPLETED)
-        
+        from devgodzilla.services.quality import QualityService
+
+        service = QualityService(context, db)
+        qa = service.run_qa(step_run_id)
+        service.persist_verdict(qa, step_run_id)
+
         return {
             "success": True,
-            "passed": True,
+            "passed": qa.passed,
             "step_run_id": step_run_id,
+            "verdict": qa.verdict.value,
+            "findings_count": len(qa.all_findings),
+            "blocking_findings_count": len(qa.blocking_findings),
         }
     except Exception as e:
         logger.error(
@@ -219,15 +226,22 @@ def open_pr(protocol_run_id: int) -> Dict[str, Any]:
     )
     
     try:
+        worktree_path = run.worktree_path or project.local_path
+        if not worktree_path:
+            return {"success": False, "protocol_run_id": protocol_run_id, "error": "Project has no local_path/worktree_path"}
+
+        head_branch = git.get_branch_name(run.protocol_name)
         pr_info = git.open_pr(
-            project_id=run.project_id,
-            branch_name=run.protocol_name,
+            Path(worktree_path).expanduser(),
+            run.protocol_name,
+            run.base_branch or project.base_branch or "main",
+            head_branch=head_branch,
             title=f"[DevGodzilla] {run.protocol_name}",
             description=run.description or "Automated changes from DevGodzilla",
         )
         
         return {
-            "success": True,
+            "success": bool(pr_info.get("success")),
             "protocol_run_id": protocol_run_id,
             "pr_url": pr_info.get("url"),
         }

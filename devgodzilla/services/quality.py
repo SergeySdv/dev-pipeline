@@ -268,6 +268,12 @@ class QualityService(Service):
                 StepStatus.COMPLETED,
                 summary="QA passed",
             )
+        elif result.verdict == QAVerdict.SKIP:
+            self.db.update_step_status(
+                step.id,
+                StepStatus.COMPLETED,
+                summary="QA skipped",
+            )
         elif result.verdict == QAVerdict.WARN:
             self.db.update_step_status(
                 step.id,

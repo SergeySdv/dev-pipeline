@@ -39,7 +39,7 @@ This plan turns the P0 items from `docs/DevGodzilla/ARCHITECTURE_REVIEW.md` into
 ### C) Windmill convergence (supported execution model)
 
 **Supported model (after this PR):**
-- Windmill scripts call the DevGodzilla API (`windmill/scripts/devgodzilla/*_api.py`).
+- Windmill scripts call the DevGodzilla API (primarily the `*_api.py` scripts under `windmill/scripts/devgodzilla/`).
 - DevGodzilla holds Windmill token server-side; browser never needs it.
 
 Changes:
@@ -54,15 +54,16 @@ Changes:
   - Update `windmill/flows/devgodzilla/execute_protocol.flow.json` to use step-run IDs + API scripts.
   - Update `windmill/flows/devgodzilla/spec_to_tasks.flow.json` to use `speckit_*_api` scripts and `project_id` (not `project_path`).
   - Move `windmill/flows/devgodzilla/full_protocol.flow.json` out of the default import set (it is currently inconsistent/dummy).
+    - Repo path after move: `windmill/flows/devgodzilla/_deprecated/full_protocol.flow.json`
+    - Note: `windmill/import_to_windmill.py` only imports `windmill/flows/devgodzilla/*.flow.json` (non-recursive), so `_deprecated/` is excluded.
 
 ### D) Tests / validation
 
 - Update `tests/test_devgodzilla_windmill_workflows.py` to assert the new script paths.
-- Run `pytest -q tests/test_devgodzilla_*.py`.
+- Run `scripts/ci/test.sh` (or `pytest -q tests/test_devgodzilla_*.py`).
 
 ## Suggested follow-ups (P1)
 
 - Add minimal API auth + restricted CORS for non-local environments.
 - Provide a UI-safe “runs/logs/artifacts/events” contract for the embedded React app.
 - Wire SSE events to persisted DB events and service lifecycle signals.
-

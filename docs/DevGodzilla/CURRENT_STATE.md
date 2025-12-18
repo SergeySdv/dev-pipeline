@@ -50,6 +50,15 @@ Implementation references:
 - Spec building: `devgodzilla/spec.py` (`build_spec_from_protocol_files`)
 - Planning: `devgodzilla/services/planning.py` (parses protocol root, creates steps)
 
+### Auto-generating protocol files (headless agent)
+
+If `.protocols/<protocol_name>/step-*.md` are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL=true` (default), planning runs a headless agent to generate:
+- `.protocols/<protocol_name>/plan.md`
+- `.protocols/<protocol_name>/step-*.md`
+
+Implementation reference:
+- `devgodzilla/services/protocol_generation.py`
+
 ## SpecKit Artifacts (.specify/)
 
 The SpecKit-style workflow in DevGodzilla is currently **template-based**:
@@ -63,6 +72,44 @@ It does **not** require an external `specify` binary for the current implementat
 
 Implementation reference:
 - `devgodzilla/services/specification.py`
+
+## Headless Repo Discovery (agent-written artifacts)
+
+DevGodzilla supports a TasksGodzilla-style “discovery” phase driven by a headless agent (default engine `opencode`, default model `zai-coding-plan/glm-4.6`).
+
+The discovery agent writes and validates these expected outputs under the repo root:
+- `tasksgodzilla/DISCOVERY.md`
+- `tasksgodzilla/DISCOVERY_SUMMARY.json`
+- `tasksgodzilla/ARCHITECTURE.md`
+- `tasksgodzilla/API_REFERENCE.md`
+- `tasksgodzilla/CI_NOTES.md`
+
+Entry points:
+- API onboarding: `POST /projects/{id}/actions/onboard` with `run_discovery_agent=true`
+- CLI: `devgodzilla project discover <id> --agent --pipeline`
+
+Implementation reference:
+- `devgodzilla/services/discovery_agent.py`
+
+## Execution Artifacts (“git report”)
+
+Step execution persists artifacts under the protocol root (in the protocol worktree):
+
+`.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`
+
+This includes `execution.json`, `stdout.log`, optional `stderr.log`, plus best-effort `git-status.txt` and diffs.
+
+Implementation reference:
+- `devgodzilla/services/execution.py`
+
+## QA Completion Semantics
+
+- `POST /steps/{id}/actions/qa` supports `"gates": []` to skip QA and still mark the step completed.
+- After QA, DevGodzilla best-effort checks whether all steps are terminal and updates the protocol status to `completed` / `failed`.
+
+Implementation references:
+- `devgodzilla/services/quality.py`
+- `devgodzilla/api/routes/steps.py`
 
 ## Windmill Integration (Supported Pattern)
 
@@ -94,4 +141,3 @@ Recommended flows to use in the default stack:
 - `f/devgodzilla/run_next_step` (selection only)
 
 See: `docs/DevGodzilla/WINDMILL-WORKFLOWS.md`.
-

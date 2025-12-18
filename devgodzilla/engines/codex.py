@@ -102,6 +102,22 @@ class CodexEngine(CLIEngine):
         
         return cmd
 
+    def check_availability(self) -> bool:
+        """
+        Check if Codex CLI can run in this environment.
+
+        In addition to the binary being present, Codex typically requires an API key.
+        Set `DEVGODZILLA_ASSUME_AGENT_AUTH=true` to bypass the key check (e.g. local
+        configs/credential helpers).
+        """
+        if not super().check_availability():
+            return False
+
+        if os.environ.get("DEVGODZILLA_ASSUME_AGENT_AUTH", "").lower() in ("1", "true", "yes", "on"):
+            return True
+
+        return bool(os.environ.get("OPENAI_API_KEY"))
+
 
 def register_codex_engine(*, default: bool = True) -> CodexEngine:
     """

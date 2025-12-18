@@ -1837,7 +1837,7 @@ agents:
 
 **Components:**
 ```
-web/console/src/features/speckit/
+frontend/src/features/speckit/
 ├── SpecifyForm.tsx       # Feature specification input
 ├── PlanViewer.tsx        # Implementation plan display
 ├── TasksDAG.tsx          # Dependency graph visualization

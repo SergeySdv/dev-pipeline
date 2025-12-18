@@ -1,39 +1,39 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `tasksgodzilla/` houses the FastAPI orchestrator, queue workers, job definitions, and shared config/logging helpers. UI assets for the console live under `tasksgodzilla/api/frontend/`.
-- `scripts/` holds operational CLIs (protocol pipeline, quality orchestrator, project bootstrap) plus `scripts/ci/*.sh` hooks invoked by both GitHub Actions and GitLab CI.
-- `tests/` uses `pytest` for API, worker, and Codex coverage.
-- `docs/` and `prompts/` contain process guidance and reusable agent prompts; `schemas/` stores JSON Schemas; `alembic/` tracks DB migrations.
+- `devgodzilla/` is the primary backend: FastAPI API, services layer, engines, Windmill integration.
+- `windmill/` contains Windmill scripts/flows/apps exported from this repo (DevGodzilla workspace).
+- `Origins/` contains vendored upstream sources (Windmill, spec-kit, etc); avoid editing unless explicitly required.
+- `scripts/` holds operational CLIs and `scripts/ci/*.sh` hooks for lint/typecheck/tests/build.
+- `tests/` uses `pytest` for DevGodzilla API/service/workflow coverage (`tests/test_devgodzilla_*.py`).
+- `docs/` and `prompts/` contain process guidance and reusable agent prompts; `schemas/` stores JSON Schemas.
 
 ## Build, Test, and Development Commands
-- Bootstrap CI/local env: `scripts/ci/bootstrap.sh` (`python3 -m venv .venv`, install `requirements-orchestrator.txt` + `ruff`, defaults `TASKSGODZILLA_DB_PATH=/tmp/tasksgodzilla-ci.sqlite`, `TASKSGODZILLA_REDIS_URL=redis://localhost:6379/15`).
-- Lint: `scripts/ci/lint.sh` (`ruff check tasksgodzilla scripts tests --select E9,F63,F7,F82`).
-- Typecheck: `scripts/ci/typecheck.sh` (compileall + import smoke for config, API app, and CLIs).
-- Tests: `scripts/ci/test.sh` (`pytest -q --disable-warnings --maxfail=1` with temp SQLite and a real Redis URL). API locally: `.venv/bin/python scripts/api_server.py --host 0.0.0.0 --port 8010`; worker: `.venv/bin/python scripts/rq_worker.py`.
-- Build: `scripts/ci/build.sh` (`docker build -t tasksgodzilla-ci .`; falls back to `docker-compose config -q` if Docker is absent). Full stack: `docker-compose up --build`.
-- Discovery helpers (default model: `zai-coding-plan/glm-4.6`):
- - Multi-pass discovery pipeline (recommended): `python scripts/discovery_pipeline.py --engine opencode --model zai-coding-plan/glm-4.6 --repo-root <repo> --artifacts inventory,architecture,api_reference,ci_notes`.
- - Legacy single-pass bootstrap (Codex CLI): `python scripts/codex_ci_bootstrap.py --model zai-coding-plan/glm-4.6 --prompt-file prompts/repo-discovery.prompt.md --repo-root <repo>` (streams output and writes `<repo>/codex-discovery.log`).
+- Bootstrap env: `scripts/ci/bootstrap.sh` (creates `.venv`, installs `requirements.txt` + `ruff`).
+- Lint: `scripts/ci/lint.sh` (`ruff check devgodzilla windmill scripts tests --select E9,F63,F7,F82`).
+- Typecheck: `scripts/ci/typecheck.sh` (compileall + import smoke for key modules).
+- Tests: `scripts/ci/test.sh` (`pytest -q tests/test_devgodzilla_*.py`).
+- Docker stack (single solution): `docker compose up --build -d` (nginx + devgodzilla-api + windmill + workers + db).
+- Windmill bootstrap import (one-shot): `docker compose up --build -d windmill_import` or `docker compose logs windmill_import`.
+- Windmill JS transforms: `WINDMILL_FEATURES` defaults to `static_frontend python deno_core` (set `WINDMILL_FEATURES="static_frontend python"` to skip `deno_core`, but flows that use JavaScript `input_transforms` will not work).
 
 ## Coding Style & Naming Conventions
 - Python 3.12, PEP8/black-like formatting with 4-space indents; prefer explicit imports and type hints.
 - Module/files: `snake_case.py`; classes: `CamelCase`; functions/vars: `snake_case`; constants/env keys: `UPPER_SNAKE`.
-- Centralize config via `tasksgodzilla.config.load_config()` and log through `tasksgodzilla.logging.setup_logging` to keep structured output consistent.
-- When touching prompts or schemas, mirror existing naming (`protocol_pipeline`, `*_prompt.md`, `*.schema.json`).
+- Centralize config via `devgodzilla.config.load_config()` and log through `devgodzilla.logging.get_logger()` for structured output.
+- When touching Windmill scripts/flows/apps, mirror existing naming and paths under `windmill/`.
 
 ## Testing Guidelines
-- Add/extend `pytest` cases next to existing patterns (e.g., `tests/test_storage.py` for DB access, `tests/test_workers_auto_qa.py` for queue flows).
-- Prefer small, isolated units; use a real Redis instance (`TASKSGODZILLA_REDIS_URL`, defaulting to `redis://localhost:6379/15`) and temp SQLite DBs for storage; enable the inline worker with `TASKSGODZILLA_INLINE_RQ_WORKER=true` when you need background processing inside API tests.
-- Keep golden path + error path assertions; mock Codex/HTTP calls with `httpx` test clients where possible.
+- Add/extend `pytest` cases next to existing patterns (e.g., `tests/test_devgodzilla_windmill_workflows.py`).
+- Prefer small, isolated units; use temp SQLite DBs for API tests and override Windmill via dependency injection for deterministic behavior.
+- Keep golden path + error path assertions; only hit real Windmill in local/manual tests (not CI).
 
 ## Commit & Pull Request Guidelines
 - Follow the repo’s short, typed subject style: `feat:`, `chore:`, `fix:`, `docs:` (see `git log`).
 - Scope commits narrowly and keep messages imperative (`feat: add worker retry backoff`). For protocol work, include the protocol tag (`[protocol-NNNN/YY]`) when relevant.
-- PRs should summarize changes, list test commands run, call out config/env impacts (e.g., new `TASKSGODZILLA_*` vars), and link issues/tasks; include console/API screenshots when UI behavior changes. Prefer code/test changes over plan-only diffs.
-- PR creation options: `scripts/protocol_pipeline.py --pr-platform github|gitlab` (uses gh/glab or GitHub REST via `GITHUB_TOKEN`/`GH_TOKEN`), or API `POST /protocols/{id}/actions/open_pr` which enqueues `open_pr_job` with the same fallbacks.
+- PRs should summarize changes, list test commands run, call out config/env impacts (e.g., new `DEVGODZILLA_*` vars), and include console/API screenshots when UI behavior changes.
 
 ## Security & Configuration Tips
-- Never commit real tokens or DB/Redis URLs; rely on env vars (`TASKSGODZILLA_REDIS_URL`, `TASKSGODZILLA_DB_URL`/`TASKSGODZILLA_DB_PATH`, `TASKSGODZILLA_API_TOKEN`).
-- Prefer SQLite for local work with a local Redis instance; use Postgres + rotated tokens in shared stacks.
-- Keep queue/CI callbacks consistent via `scripts/ci/report.sh` and `TASKSGODZILLA_PROTOCOL_RUN_ID` when branch detection is ambiguous.
+- Never commit real tokens or DB URLs; rely on env vars (`DEVGODZILLA_DB_URL`, `DEVGODZILLA_DB_PATH`, `DEVGODZILLA_WINDMILL_TOKEN`).
+- For local Windmill tokens, use `DEVGODZILLA_WINDMILL_ENV_FILE` (defaults to `windmill/apps/devgodzilla-react-app/.env.development`), which is expected to be local-only.
+- Default agent/engine: `opencode` with model `zai-coding-plan/glm-4.6` (override via `DEVGODZILLA_OPENCODE_MODEL` or agent config YAML).

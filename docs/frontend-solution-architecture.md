@@ -42,7 +42,7 @@ The goal is to evolve from the current single-file static console into a maintai
 
 ### 1.1 Existing Frontend
 
-**Location**: `tasksgodzilla/api/frontend/`
+**Location**: source in `frontend/`, legacy build output published to `archive/tasksgodzilla/api/frontend_dist/`
 
 | File | Purpose |
 |------|---------|
@@ -1117,110 +1117,21 @@ X-Frame-Options: DENY
 ### 11.1 New Frontend Workspace
 
 ```
-web/
-└── console/
-    ├── package.json
-    ├── tsconfig.json
-    ├── vite.config.ts
-    ├── tailwind.config.ts
-    ├── index.html
-    ├── public/
-    │   ├── logo.png
-    │   └── banner.png
-    └── src/
-        ├── main.tsx
-        ├── app/
-        │   ├── App.tsx
-        │   ├── routes.tsx
-        │   ├── providers.tsx
-        │   └── layout/
-        │       ├── Layout.tsx
-        │       ├── Navigation.tsx
-        │       └── Header.tsx
-        ├── api/
-        │   ├── client.ts
-        │   ├── errors.ts
-        │   ├── types.ts          # or schema.ts (generated)
-        │   └── queryKeys.ts
-        ├── features/
-        │   ├── projects/
-        │   │   ├── pages/
-        │   │   │   ├── ProjectsListPage.tsx
-        │   │   │   └── ProjectDetailPage.tsx
-        │   │   ├── components/
-        │   │   │   ├── ProjectCard.tsx
-        │   │   │   ├── ProjectForm.tsx
-        │   │   │   └── OnboardingStages.tsx
-        │   │   └── hooks.ts
-        │   ├── protocols/
-        │   │   ├── pages/
-        │   │   │   └── ProtocolDetailPage.tsx
-        │   │   ├── components/
-        │   │   │   ├── ProtocolHeader.tsx
-        │   │   │   ├── StepsTable.tsx
-        │   │   │   └── ProtocolActions.tsx
-        │   │   └── hooks.ts
-        │   ├── steps/
-        │   │   ├── pages/
-        │   │   │   └── StepDetailPage.tsx
-        │   │   ├── components/
-        │   │   │   └── StepActions.tsx
-        │   │   └── hooks.ts
-        │   ├── runs/
-        │   │   ├── pages/
-        │   │   │   ├── RunsListPage.tsx
-        │   │   │   └── RunDetailPage.tsx
-        │   │   ├── components/
-        │   │   │   ├── RunsTable.tsx
-        │   │   │   ├── LogViewer.tsx
-        │   │   │   └── ArtifactList.tsx
-        │   │   └── hooks.ts
-        │   ├── policy/
-        │   │   ├── pages/
-        │   │   │   ├── PolicyPacksPage.tsx
-        │   │   │   └── PolicyPackDetailPage.tsx
-        │   │   ├── components/
-        │   │   │   ├── PolicyForm.tsx
-        │   │   │   ├── FindingsList.tsx
-        │   │   │   └── PolicyPackEditor.tsx
-        │   │   └── hooks.ts
-        │   ├── clarifications/
-        │   │   ├── components/
-        │   │   │   ├── ClarificationCard.tsx
-        │   │   │   └── ClarificationsList.tsx
-        │   │   └── hooks.ts
-        │   ├── ops/
-        │   │   ├── pages/
-        │   │   │   ├── QueuesPage.tsx
-        │   │   │   ├── EventsPage.tsx
-        │   │   │   └── MetricsPage.tsx
-        │   │   ├── components/
-        │   │   │   ├── QueueStats.tsx
-        │   │   │   └── EventTimeline.tsx
-        │   │   └── hooks.ts
-        │   └── settings/
-        │       └── pages/
-        │           └── SettingsPage.tsx
-        ├── components/
-        │   ├── ui/
-        │   │   ├── Button.tsx
-        │   │   ├── StatusPill.tsx
-        │   │   ├── Modal.tsx
-        │   │   ├── Tabs.tsx
-        │   │   ├── Select.tsx
-        │   │   └── Toast.tsx
-        │   ├── DataTable.tsx
-        │   ├── CodeBlock.tsx
-        │   ├── Timeline.tsx
-        │   ├── ErrorBoundary.tsx
-        │   ├── LoadingState.tsx
-        │   └── EmptyState.tsx
-        ├── lib/
-        │   ├── format.ts
-        │   ├── time.ts
-        │   └── cn.ts
-        └── styles/
-            └── globals.css
+frontend/
+├── package.json
+├── tsconfig.json
+├── vite.config.ts
+├── tailwind.config.cjs
+├── index.html
+├── public/
+└── src/
+    ├── api/
+    ├── app/
+    ├── components/
+    ├── features/
+    ├── lib/
+    ├── styles/
+    └── main.tsx
 ```
 
 ### 11.2 Build Output
@@ -1228,7 +1139,7 @@ web/
 **Option A** (recommended for MVP):
 ```
 # Build and copy to FastAPI static directory
-cd web/console
+cd frontend
 npm run build
 cp -r dist/* ../../tasksgodzilla/api/frontend_dist/
 
@@ -1249,7 +1160,7 @@ app.mount("/console", StaticFiles(directory="frontend_dist"), name="console")
 
 ### Phase 1: Foundation (Week 1-2)
 
-- [ ] Initialize `web/console` workspace
+- [ ] Initialize `frontend/` workspace
 - [ ] Set up Vite + React + TypeScript + Tailwind
 - [ ] Implement API client with auth
 - [ ] Create base layout and navigation

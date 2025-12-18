@@ -129,34 +129,45 @@ graph LR
 ### Task-to-Flow Conversion
 
 ```python
-from windmill import WindmillClient
-from tasksgodzilla.models import TaskList
+import os
+
+from devgodzilla.windmill.client import WindmillClient, get_windmill_config
+from devgodzilla.windmill.flow_generator import DAGBuilder, FlowGenerator
 
 class OrchestratorService:
     def __init__(self, db: Database):
         self.db = db
-        self.windmill = WindmillClient(
-            base_url=os.environ["WINDMILL_BASE_URL"],
-            token=os.environ["WINDMILL_TOKEN"]
-        )
+        # Reads:
+        # - DEVGODZILLA_WINDMILL_URL
+        # - DEVGODZILLA_WINDMILL_TOKEN
+        # - DEVGODZILLA_WINDMILL_WORKSPACE
+        self.windmill = WindmillClient(get_windmill_config())
+        self._dag_builder = DAGBuilder()
+        self._flow_generator = FlowGenerator()
     
-    def create_flow_from_tasks(
-        self,
-        protocol_run_id: int,
-        task_list: TaskList
-    ) -> str:
-        """Convert TaskList to Windmill Flow."""
-        
-        # Build DAG from task dependencies
-        dag = self._build_dag(task_list)
-        
-        # Detect cycles (fail if found)
-        if self._has_cycles(dag):
-            raise TaskGraphError("Cycle detected in task dependencies")
-        
-        # Convert to Windmill flow definition
-        flow_def = self._to_windmill_flow(dag, task_list)
-        
+    def create_flow_from_steps(self, protocol_run_id: int) -> str:
+        """Convert step runs to a Windmill Flow."""
+        steps = self.db.list_step_runs(protocol_run_id)
+
+        step_data = [
+            {
+                "id": s.id,
+                "step_name": s.step_name,
+                "description": s.step_name,
+                "depends_on": s.depends_on,
+                "assigned_agent": s.assigned_agent,
+                "parallel": True,
+            }
+            for s in steps
+        ]
+
+        dag = self._dag_builder.build_from_steps(step_data)
+        cycles = self._dag_builder.detect_cycles(dag)
+        if cycles:
+            raise ValueError(f"Cycle detected in task dependencies: {cycles[0]}")
+
+        flow_def = self._flow_generator.generate(dag, protocol_run_id)
+
         # Create flow in Windmill
         flow_path = f"f/devgodzilla/protocol-{protocol_run_id}"
         self.windmill.create_flow(path=flow_path, definition=flow_def)
@@ -229,7 +240,7 @@ def _to_windmill_flow(self, dag: DAG, task_list: TaskList) -> dict:
                     "path": "u/devgodzilla/execute_step",
                     "input_transforms": {
                         "step_id": {"type": "static", "value": task.id},
-                        "agent_id": {"type": "static", "value": task.agent or "codex"},
+                        "agent_id": {"type": "static", "value": task.agent or "opencode"},
                         "protocol_run_id": {"type": "flow_input", "key": "protocol_run_id"}
                     }
                 }
@@ -249,7 +260,7 @@ def _to_windmill_flow(self, dag: DAG, task_list: TaskList) -> dict:
                                     "path": "u/devgodzilla/execute_step",
                                     "input_transforms": {
                                         "step_id": {"type": "static", "value": task_id},
-                                        "agent_id": {"type": "static", "value": task_list.get_task(task_id).agent or "codex"}
+                                        "agent_id": {"type": "static", "value": task_list.get_task(task_id).agent or "opencode"}
                                     }
                                 }
                             }]
@@ -643,7 +654,7 @@ Executes a single task step using the assigned AI agent.
 
 Args:
     step_id: Task identifier (e.g., T001)
-    agent_id: Agent to use (e.g., codex, claude-code)
+    agent_id: Agent to use (e.g., opencode, claude-code)
     protocol_run_id: Parent protocol run
     config_override: Optional agent config overrides
     
@@ -705,9 +716,10 @@ The Windmill UI provides:
 ```yaml
 # config/windmill.yaml
 windmill:
-  base_url: "http://localhost:8000"
-  token: "${WINDMILL_TOKEN}"
-  workspace: "devgodzilla"
+  # Used by DevGodzilla to call Windmill's API.
+  base_url: "${DEVGODZILLA_WINDMILL_URL:-http://localhost:8000}"
+  token: "${DEVGODZILLA_WINDMILL_TOKEN}"
+  workspace: "${DEVGODZILLA_WINDMILL_WORKSPACE:-devgodzilla}"
   
   workers:
     count: 4
@@ -720,7 +732,7 @@ windmill:
     base_path: "u/devgodzilla"
     
   database:
-    # Uses same PostgreSQL as DevGodzilla
+    # Windmill's own DB connection (Windmill containers use DATABASE_URL)
     connection_string: "${DATABASE_URL}"
 ```
 

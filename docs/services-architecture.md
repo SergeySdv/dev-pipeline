@@ -1,11 +1,11 @@
 # Services Architecture and Refactor Plan
 
-This document captures the proposed service-oriented architecture for Tasksgodzilla and how it maps to the current codebase. It builds on the high-level view in `docs/architecture.md` and `docs/orchestrator.md` and is intended as a guide for incremental refactors.
+This document captures the proposed service-oriented architecture for the legacy TasksGodzilla backend (now archived under `archive/tasksgodzilla/`).
 
 ## 1. Current services mapped to code
 
 ### User Console (WEB / TUI / CLI)
-- Web/API: `tasksgodzilla/api/app.py`, `tasksgodzilla/api/frontend`
+- Web/API: `archive/tasksgodzilla/api/app.py`, `frontend/` (source), `archive/tasksgodzilla/api/frontend_dist/` (build output)
 - CLI: `tasksgodzilla/cli/main.py`, `scripts/tasksgodzilla_cli.py`
 - TUI: `tasksgodzilla/cli/tui.py`, `tui`, `tui-rs`, `scripts/tasksgodzilla_tui.py`
 

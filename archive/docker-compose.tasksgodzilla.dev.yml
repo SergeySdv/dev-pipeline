@@ -1,0 +1,13 @@
+version: "3.9"
+
+# Development overrides for the legacy TasksGodzilla compose stack
+# (`docker-compose.tasksgodzilla.yml`).
+
+services:
+  db:
+    ports:
+      - "5433:5432"
+
+  redis:
+    ports:
+      - "6380:6379"

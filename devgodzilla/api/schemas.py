@@ -198,6 +198,20 @@ class QAResultOut(BaseModel):
     gates: List[QAGateOut] = Field(default_factory=list)
 
 # =============================================================================
+# Events
+# =============================================================================
+
+
+class EventOut(APIModel):
+    id: int
+    protocol_run_id: int
+    step_run_id: Optional[int] = None
+    event_type: str
+    message: str
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: Any
+
+# =============================================================================
 # Artifact Models
 # =============================================================================
 
@@ -219,6 +233,39 @@ class ArtifactContentOut(BaseModel):
 class ProtocolArtifactOut(ArtifactOut):
     step_run_id: int
     step_name: Optional[str] = None
+
+
+# =============================================================================
+# Job Runs / Run Registry Models
+# =============================================================================
+
+
+class JobRunOut(APIModel):
+    run_id: str
+    job_type: str
+    status: str
+    run_kind: Optional[str] = None
+    project_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    queue: Optional[str] = None
+    attempt: Optional[int] = None
+    worker_id: Optional[str] = None
+    started_at: Optional[Any] = None
+    finished_at: Optional[Any] = None
+    params: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    log_path: Optional[str] = None
+    cost_tokens: Optional[int] = None
+    cost_cents: Optional[int] = None
+    windmill_job_id: Optional[str] = None
+    created_at: Any
+    updated_at: Any
+
+
+class RunArtifactOut(ArtifactOut):
+    run_id: str
 
 # =============================================================================
 # Workflow / UI Convenience Models (Windmill React app)

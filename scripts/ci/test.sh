@@ -19,11 +19,13 @@ if [ ! -x "${PYTEST_BIN}" ]; then
 fi
 
 export PYTHONPATH="${PYTHONPATH:-.}"
-export TASKSGODZILLA_DB_PATH="${TASKSGODZILLA_DB_PATH:-/tmp/tasksgodzilla-test.sqlite}"
-export TASKSGODZILLA_REDIS_URL="${TASKSGODZILLA_REDIS_URL:-redis://localhost:6380/15}"
-export TASKSGODZILLA_AUTO_CLONE="${TASKSGODZILLA_AUTO_CLONE:-false}"
 
-"${PYTEST_BIN}" -q --disable-warnings --maxfail=1
+if ! command -v opencode >/dev/null 2>&1; then
+  ci_error "test opencode missing" "hint=install_opencode_and_authenticate"
+  exit 1
+fi
+
+"${PYTEST_BIN}" -q --disable-warnings --maxfail=1 tests/test_devgodzilla_*.py
 
 ci_info "tests completed" "result=pass"
 report_status success

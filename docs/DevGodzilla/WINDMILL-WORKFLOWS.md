@@ -150,6 +150,9 @@ These flows are intended to work in the default Docker Compose stack, without re
 - `step_execute_with_qa`
 - `run_next_step` (selection only; execution is separate)
 
+Notes:
+- `onboard_to_tasks` can optionally run headless repo discovery during onboarding (writes `tasksgodzilla/*`).
+
 ### Note: JavaScript `input_transforms` require `deno_core`
 
 The `protocol_start`, `run_next_step`, and `step_execute_with_qa` flows use `input_transforms` of type `javascript` (e.g. `flow_input.protocol_run_id`, `results.select_next_step.step_run_id`). That requires Windmill to be built with the `deno_core` feature enabled.
@@ -164,11 +167,21 @@ The default `docker-compose.yml` build enables `deno_core` (see `WINDMILL_FEATUR
 ### protocol_start
 Plan a protocol in DevGodzilla (via API) and wait until it reaches a stable status (`planned`, `running`, `blocked`, etc).
 
+Notes:
+- Planning is **protocol-file driven** (`.protocols/<protocol_name>/step-*.md` in the protocol worktree).
+- If protocol files are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL=true` (default), planning runs a headless agent to generate `.protocols/<protocol_name>/plan.md` + `step-*.md`.
+
 ### run_next_step
-Select the next runnable step for a protocol (via API) and execute it with QA.
+Select the next runnable step for a protocol (via API).
+
+This flow/script is selection-only and returns a `step_run_id`; execution is performed separately (e.g., `step_execute_with_qa`).
 
 ### step_execute_with_qa
 Execute a specific `step_run_id` (via API) and run QA.
+
+Notes:
+- QA supports `"gates": []` to skip QA and still complete the step (useful for E2E/system tests).
+- Step execution/QA writes artifacts under `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`.
 
 ### project_onboarding
 Complete project setup: clone, analyze, and initialize SpecKit.

@@ -627,14 +627,22 @@ class OrchestratorService(Service):
         
         run = self.db.get_protocol_run(protocol_run_id)
         project = self.db.get_project(run.project_id)
-        
-        # Open PR via git service
+
+        worktree_path = run.worktree_path or project.local_path
+        if not worktree_path:
+            return OrchestratorResult(success=False, error="Project has no local_path/worktree_path configured")
+
+        head_branch = self.git_service.get_branch_name(run.protocol_name)
         pr_info = self.git_service.open_pr(
-            project_id=run.project_id,
-            branch_name=run.protocol_name,
+            Path(worktree_path).expanduser(),
+            run.protocol_name,
+            run.base_branch or project.base_branch or "main",
+            head_branch=head_branch,
             title=f"[DevGodzilla] {run.protocol_name}",
             description=run.description or "Automated changes from DevGodzilla",
         )
+        if not pr_info.get("success"):
+            return OrchestratorResult(success=False, error="Failed to open PR/MR")
         
         self.logger.info(
             "protocol_pr_opened",

@@ -11,23 +11,13 @@ Args:
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any, Dict
 
 from ._api import api_json
-from . import emit_tasksgodzilla_codex_refs
 
 
 def main(protocol_run_id: int, timeout_seconds: int = 300, poll_interval_ms: int = 500) -> Dict[str, Any]:
-    if os.environ.get("WM_JOB_ID"):
-        try:
-            emit_tasksgodzilla_codex_refs.main(
-                run_kind="devgodzilla.protocol_plan_and_wait",
-                protocol_run_id=protocol_run_id,
-            )
-        except Exception:
-            pass
     started = api_json("POST", f"/protocols/{protocol_run_id}/actions/start", body={})
     if started.get("error"):
         return started

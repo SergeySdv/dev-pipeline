@@ -91,6 +91,20 @@ class ClaudeCodeEngine(CLIEngine):
         
         return cmd
 
+    def check_availability(self) -> bool:
+        """
+        Check if Claude Code CLI can run in this environment.
+
+        Set `DEVGODZILLA_ASSUME_AGENT_AUTH=true` to bypass the key check.
+        """
+        if not super().check_availability():
+            return False
+
+        if os.environ.get("DEVGODZILLA_ASSUME_AGENT_AUTH", "").lower() in ("1", "true", "yes", "on"):
+            return True
+
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
 
 def register_claude_code_engine(*, default: bool = False) -> ClaudeCodeEngine:
     """

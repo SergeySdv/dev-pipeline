@@ -14,7 +14,9 @@ The DevGodzilla API provides a unified interface for:
 - **Quality assurance** with constitutional gates
 - **Feedback loops** for self-healing workflows
 
-**Base URL**: `http://localhost:8011` (Docker Compose) or `http://localhost:8010` (local)
+**Base URL**: `http://localhost:8080` (nginx reverse proxy, Docker Compose) or `http://localhost:8000` (direct API)
+
+**Source of truth**: `GET /openapi.json`. This document mixes “current API” details with subsystem/roadmap notes; prefer OpenAPI for exact request/response shapes.
 
 ---
 
@@ -84,9 +86,10 @@ graph TB
 
 ```yaml
 # Environment Variables
-DEVPILOT_API_TOKEN: "your-bearer-token"    # Global API access
-DEVPILOT_WEBHOOK_TOKEN: "webhook-secret"   # Webhook signature verification
-DEVPILOT_SESSION_SECRET: "session-key"     # Session management
+DEVGODZILLA_API_TOKEN: "your-bearer-token"       # Optional API bearer token (future)
+DEVGODZILLA_WEBHOOK_TOKEN: "webhook-secret"      # Optional webhook signature verification (future)
+DEVGODZILLA_SESSION_SECRET: "session-key"        # Optional session management secret (future)
+DEVGODZILLA_JWT_SECRET: "jwt-signing-secret"     # Optional JWT signing secret (future)
 ```
 
 ### Authentication Methods
@@ -165,14 +168,14 @@ graph LR
 
 | Endpoint | Method | Description | Service |
 |----------|--------|-------------|---------|
-| `/projects` | POST | Create project | `OnboardingService.register_project()` |
+| `/projects` | POST | Create project | Direct DB |
 | `/projects` | GET | List projects | Direct DB |
 | `/projects/{id}` | GET | Get project | Direct DB |
-| `/projects/{id}` | PATCH | Update project | Direct DB |
-| `/projects/{id}/onboarding` | GET | Onboarding status | `OnboardingService.get_summary()` |
-| `/projects/{id}/onboarding/actions/start` | POST | Start onboarding | `OnboardingService.start_onboarding()` |
-| `/projects/{id}/branches` | GET | List branches | `GitService.list_branches()` |
-| `/projects/{id}/clarifications` | GET | Get clarifications | `ClarificationsService.list()` |
+| `/projects/{id}` | PUT | Update project | Direct DB |
+| `/projects/{id}/archive` | POST | Archive project | Direct DB |
+| `/projects/{id}/unarchive` | POST | Unarchive project | Direct DB |
+| `/projects/{id}` | DELETE | Delete project | Direct DB |
+| `/projects/{id}/actions/onboard` | POST | Clone repo + init `.specify/` | `GitService` + `SpecificationService` |
 
 #### Create Project
 
@@ -206,10 +209,7 @@ Authorization: Bearer <token>
 ```
 
 **Side Effects:**
-1. Clones repository to `local_path`
-2. Initializes `.specify/` directory structure
-3. Creates `constitution.md` from project classification
-4. Enqueues `project_setup_job` via Windmill
+Creating a project record does not clone repositories. Repository cloning and SpecKit initialization are typically handled by Windmill scripts (e.g. `u/devgodzilla/project_setup`) which call the API.
 
 ---
 
@@ -219,11 +219,13 @@ Authorization: Bearer <token>
 |----------|--------|-------------|---------|
 | `/projects/{id}/protocols` | POST | Create protocol | `OrchestratorService.create_protocol()` |
 | `/projects/{id}/protocols` | GET | List protocols | Direct DB |
+| `/protocols` | GET | List protocols | Direct DB |
+| `/protocols` | POST | Create protocol | Direct DB |
 | `/protocols/{id}` | GET | Get protocol | Direct DB |
-| `/protocols/{id}/steps` | GET | List steps | Direct DB |
 | `/protocols/{id}/events` | GET | List events | Direct DB |
-| `/protocols/{id}/runs` | GET | List runs | Direct DB |
-| `/protocols/{id}/clarifications` | GET | Get clarifications | `ClarificationsService.list()` |
+| `/protocols/{id}/quality` | GET | Protocol QA summary | Aggregated |
+| `/protocols/{id}/feedback` | GET | Feedback feed | Derived from clarifications |
+| `/protocols/{id}/artifacts` | GET | Protocol artifacts | File system |
 
 #### Protocol Actions
 
@@ -234,8 +236,8 @@ Authorization: Bearer <token>
 | `/protocols/{id}/actions/resume` | POST | Resume execution | `OrchestratorService.resume_protocol()` |
 | `/protocols/{id}/actions/cancel` | POST | Cancel protocol | `OrchestratorService.cancel_protocol()` |
 | `/protocols/{id}/actions/run_next_step` | POST | Execute next step | `OrchestratorService.enqueue_next_step()` |
-| `/protocols/{id}/actions/retry_latest` | POST | Retry failed step | `OrchestratorService.retry_latest()` |
-| `/protocols/{id}/actions/open_pr` | POST | Open PR/MR | `GitService.open_pr()` |
+| `/protocols/{id}/flow` | GET | Get protocol flow | `OrchestratorService.get_windmill_flow()` |
+| `/protocols/{id}/flow` | POST | Create protocol flow | `OrchestratorService.create_windmill_flow()` |
 
 #### Protocol Status State Machine
 
@@ -244,26 +246,12 @@ stateDiagram-v2
     [*] --> pending: Created
     
     pending --> planning: /actions/start
-    planning --> planned: PlanningService completes
-    planned --> running: /actions/run_next_step
-    
-    running --> running: step completed, more steps
-    running --> needs_qa: step needs QA
+    planning --> running: planning complete
     running --> paused: /actions/pause
-    running --> blocked: step blocked
-    running --> failed: unrecoverable error
-    running --> completed: all steps done
-    running --> cancelled: /actions/cancel
-    
-    needs_qa --> running: QA passed
-    needs_qa --> blocked: QA failed
-    
-    blocked --> running: /actions/retry_latest
-    blocked --> running: feedback resolved
-    
     paused --> running: /actions/resume
-    
-    planned --> cancelled: /actions/cancel
+    running --> completed: all steps done
+    running --> failed: error
+    running --> cancelled: /actions/cancel
 ```
 
 ---
@@ -272,18 +260,19 @@ stateDiagram-v2
 
 | Endpoint | Method | Description | Service |
 |----------|--------|-------------|---------|
-| `/protocols/{id}/steps` | POST | Create step | Direct DB |
+| `/steps` | GET | List steps for protocol | Direct DB |
 | `/steps/{id}` | GET | Get step | Direct DB |
-| `/steps/{id}/runs` | GET | List step runs | Direct DB |
+| `/steps/{id}/quality` | GET | Step QA summary | Aggregated |
+| `/steps/{id}/artifacts` | GET | List step artifacts | File system |
+| `/steps/{id}/artifacts/{artifact_id}/content` | GET | Artifact content | File system |
 
 #### Step Actions
 
 | Endpoint | Method | Description | Service |
 |----------|--------|-------------|---------|
-| `/steps/{id}/actions/run` | POST | Execute step | `ExecutionService.execute_step()` |
-| `/steps/{id}/actions/run_qa` | POST | Run QA | `QualityService.run_for_step()` |
-| `/steps/{id}/actions/approve` | POST | Approve step | `OrchestratorService.handle_step_completion()` |
-| `/steps/{id}/actions/assign_agent` | POST | Assign agent | `AgentService.assign_to_step()` |
+| `/steps/{id}/actions/assign_agent` | POST | Assign agent | Direct DB |
+| `/steps/{id}/actions/execute` | POST | Execute step | `ExecutionService.execute_step()` |
+| `/steps/{id}/actions/qa` | POST | Run QA | `QualityService.run_for_step()` |
 
 #### Assign Agent to Step
 
@@ -292,10 +281,7 @@ POST /steps/{id}/actions/assign_agent
 Content-Type: application/json
 
 {
-  "agent_id": "claude-code",
-  "config_override": {
-    "model": "claude-sonnet-4-20250514"
-  }
+  "agent_id": "claude-code"
 }
 ```
 
@@ -313,7 +299,7 @@ Content-Type: application/json
 | `/projects/{id}/speckit/tasks` | POST | Generate tasks | `PlanningService.generate_tasks()` |
 | `/projects/{id}/speckit/constitution` | GET | Get constitution | `PolicyService.get_constitution()` |
 | `/projects/{id}/speckit/constitution` | PUT | Update constitution | `PolicyService.update_constitution()` |
-| `/projects/{id}/speckit/checklist` | POST | Generate checklist | `QualityService.generate_checklist()` |
+| `/speckit/*` | Various | Legacy SpecKit endpoints | Back-compat |
 
 #### Generate Specification
 
@@ -500,10 +486,12 @@ GET /agents
 | Endpoint | Method | Description | Service |
 |----------|--------|-------------|---------|
 | `/flows` | GET | List flows | `WindmillService.list_flows()` |
-| `/flows/{id}` | GET | Get flow | `WindmillService.get_flow()` |
-| `/flows/{id}/runs` | GET | List flow runs | `WindmillService.list_runs()` |
+| `/flows/{flow_path}` | GET | Get flow | `WindmillService.get_flow()` |
+| `/flows/{flow_path}/runs` | GET | List flow runs | `WindmillService.list_runs()` |
 | `/protocols/{id}/flow` | GET | Get protocol flow | `OrchestratorService.get_windmill_flow()` |
 | `/protocols/{id}/flow` | POST | Create flow from tasks | `OrchestratorService.create_windmill_flow()` |
+
+`flow_path` is the full Windmill flow path (e.g. `f/devgodzilla/full_protocol`) and is treated as a “path” parameter, so it may contain slashes.
 
 #### Create Windmill Flow from Tasks
 
@@ -532,7 +520,7 @@ Content-Type: application/json
             "path": "u/devgodzilla/execute_step",
             "input_transforms": {
               "step_id": {"type": "static", "value": "T001"},
-              "agent_id": {"type": "static", "value": "codex"}
+              "agent_id": {"type": "static", "value": "opencode"}
             }
           }
         }
@@ -577,8 +565,8 @@ Content-Type: application/json
 | `/protocols/{id}/quality/gates` | GET | Get gate results | `QualityService.get_gate_results()` |
 | `/steps/{id}/quality` | GET | Get step QA | `QualityService.get_step_quality()` |
 | `/protocols/{id}/feedback` | GET | List feedback events | `PlanningService.list_feedback()` |
-| `/protocols/{id}/feedback` | POST | Submit feedback | `PlanningService.handle_feedback()` |
-| `/protocols/{id}/checklists` | GET | List checklists | `QualityService.list_checklists()` |
+| `/clarifications` | GET | List clarifications | Direct DB |
+| `/clarifications/{id}/answer` | POST | Answer clarification | Direct DB |
 
 #### Feedback Loop API
 
@@ -695,8 +683,10 @@ GET /protocols/{id}/quality/gates
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/events` | GET | List events |
-| `/events/stream` | GET | SSE event stream |
+| `/events` | GET | SSE event stream |
+| `/events/recent` | GET | Recent events (placeholder) |
+| `/webhooks/windmill/job` | POST | Windmill job updates |
+| `/webhooks/windmill/flow` | POST | Windmill flow updates |
 | `/webhooks/github` | POST | GitHub webhook |
 | `/webhooks/gitlab` | POST | GitLab webhook |
 
@@ -889,7 +879,7 @@ protocol = client.protocols.create(
     project_id=project.id,
     tasks_id=tasks.tasks_id,
     agent_assignments={
-        "T001": "codex",
+        "T001": "opencode",
         "T002": "claude-code",
         "T003": "claude-code"
     }
@@ -911,7 +901,7 @@ devgodzilla speckit plan
 devgodzilla speckit tasks
 
 # Assign agents
-devgodzilla step assign T001 --agent codex
+devgodzilla step assign T001 --agent opencode
 devgodzilla step assign T002 T003 --agent claude-code
 
 # Execute

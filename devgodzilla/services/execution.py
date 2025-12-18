@@ -24,6 +24,7 @@ from devgodzilla.engines import (
     SandboxMode,
     get_registry,
 )
+from devgodzilla.engines.artifacts import ArtifactWriter
 from devgodzilla.spec import get_step_spec as get_step_spec_from_template
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.events import get_event_bus, StepStarted, StepCompleted, StepFailed
@@ -197,6 +198,11 @@ class ExecutionService(Service):
                     )
                     engine = fallback
                     resolution.engine_id = engine.metadata.id
+
+            # Persist the model choice deterministically: if the step didn't specify a model,
+            # use the engine default so downstream audits/tests can validate engine+model.
+            if resolution.model is None:
+                resolution.model = engine.metadata.default_model
             
             # Build request
             request = EngineRequest(
@@ -362,6 +368,24 @@ class ExecutionService(Service):
         resolution: StepResolution,
     ) -> ExecutionResult:
         """Handle engine execution result."""
+        outputs_written: Dict[str, Path] = {}
+
+        # Always write artifacts so the API and E2E checks can validate real outputs.
+        try:
+            outputs_written = self._write_execution_artifacts(
+                step=step,
+                run=run,
+                engine=engine,
+                engine_result=engine_result,
+                resolution=resolution,
+            )
+        except Exception as e:
+            # Best-effort; do not fail the step solely because artifact capture failed.
+            self.logger.warning(
+                "execution_artifacts_write_failed",
+                extra=self.log_extra(step_run_id=step.id, protocol_run_id=run.id, error=str(e)),
+            )
+
         if engine_result.success:
             # Mark as needs QA (or completed if QA skipped)
             self.db.update_step_status(
@@ -418,6 +442,7 @@ class ExecutionService(Service):
             duration_seconds=engine_result.duration_seconds,
             stdout=engine_result.stdout,
             stderr=engine_result.stderr,
+            outputs_written=outputs_written,
             metadata=engine_result.metadata,
             error=engine_result.error,
         )
@@ -427,3 +452,85 @@ class ExecutionService(Service):
         registry = get_registry()
         engine = registry.get_or_default(engine_id)
         return engine.check_availability()
+
+    def _write_execution_artifacts(
+        self,
+        *,
+        step: StepRun,
+        run: ProtocolRun,
+        engine: Engine,
+        engine_result: EngineResult,
+        resolution: StepResolution,
+    ) -> Dict[str, Path]:
+        protocol_root = resolution.protocol_root
+        artifacts_dir = protocol_root / ".devgodzilla" / "steps" / str(step.id) / "artifacts"
+        writer = ArtifactWriter(artifacts_dir=artifacts_dir, step_run_id=step.id)
+
+        outputs: Dict[str, Path] = {}
+
+        meta = {
+            "engine_id": engine.metadata.id,
+            "model": resolution.model,
+            "protocol_run_id": run.id,
+            "step_run_id": step.id,
+            "step_name": step.step_name,
+            "workspace_root": str(resolution.workspace_root),
+            "protocol_root": str(protocol_root),
+        }
+        outputs["execution_meta"] = writer.write_json("execution", meta, kind="meta").path
+
+        if engine_result.stdout:
+            outputs["stdout"] = writer.write_text("stdout", engine_result.stdout, kind="log", extension=".log").path
+        if engine_result.stderr:
+            outputs["stderr"] = writer.write_text("stderr", engine_result.stderr, kind="log", extension=".log").path
+        if engine_result.error:
+            outputs["error"] = writer.write_text("error", engine_result.error, kind="log", extension=".txt").path
+
+        # Capture best-effort git status/diff if the workspace is a git repo.
+        repo_root = resolution.workspace_root
+        if (repo_root / ".git").exists():
+            import subprocess
+
+            status = subprocess.run(  # noqa: S603
+                ["git", "status", "--porcelain=v1"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            outputs["git_status"] = writer.write_text(
+                "git-status",
+                (status.stdout or "").strip() + ("\n" if (status.stdout or "").strip() else ""),
+                kind="diff",
+                extension=".txt",
+            ).path
+
+            diff = subprocess.run(  # noqa: S603
+                ["git", "diff"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            outputs["git_diff"] = writer.write_text(
+                "changes",
+                diff.stdout or "",
+                kind="diff",
+                extension=".diff",
+            ).path
+
+            diff_cached = subprocess.run(  # noqa: S603
+                ["git", "diff", "--cached"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            outputs["git_diff_cached"] = writer.write_text(
+                "changes_cached",
+                diff_cached.stdout or "",
+                kind="diff",
+                extension=".diff",
+            ).path
+
+        return outputs

@@ -1,0 +1,91 @@
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "${TASKSGODZILLA_NGINX_PORT:-8011}:80"
+    volumes:
+      - ./nginx.tasksgodzilla.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: archive/Dockerfile.tasksgodzilla
+    restart: unless-stopped
+    environment:
+      PYTHONPATH: /app/archive
+      TASKSGODZILLA_DB_URL: ${TASKSGODZILLA_DB_URL:-postgresql://tasksgodzilla:${POSTGRES_PASSWORD:-tasksgodzilla}@db:5432/tasksgodzilla}
+      TASKSGODZILLA_REDIS_URL: ${TASKSGODZILLA_REDIS_URL:-redis://redis:6379/0}
+      # Enable classic username/password login for the web console (JWT in HttpOnly cookie).
+      # IMPORTANT: override these defaults in production.
+      TASKSGODZILLA_JWT_SECRET: ${TASKSGODZILLA_JWT_SECRET:-dev-jwt-secret-change-me}
+      TASKSGODZILLA_ADMIN_USERNAME: ${TASKSGODZILLA_ADMIN_USERNAME:-admin}
+      TASKSGODZILLA_ADMIN_PASSWORD: ${TASKSGODZILLA_ADMIN_PASSWORD:-changeme}
+      TASKSGODZILLA_JWT_ACCESS_TTL_SECONDS: ${TASKSGODZILLA_JWT_ACCESS_TTL_SECONDS:-900}
+      TASKSGODZILLA_JWT_REFRESH_TTL_SECONDS: ${TASKSGODZILLA_JWT_REFRESH_TTL_SECONDS:-1209600}
+      TASKSGODZILLA_JWT_REFRESH_ROTATE: ${TASKSGODZILLA_JWT_REFRESH_ROTATE:-true}
+      TASKSGODZILLA_LOG_LEVEL: INFO
+    expose:
+      - "8010"
+    depends_on:
+      - db
+      - redis
+    command: ["python", "scripts/api_server.py"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=2).read()",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: ..
+      dockerfile: archive/Dockerfile.tasksgodzilla
+    restart: unless-stopped
+    environment:
+      PYTHONPATH: /app/archive
+      TASKSGODZILLA_DB_URL: ${TASKSGODZILLA_DB_URL:-postgresql://tasksgodzilla:${POSTGRES_PASSWORD:-tasksgodzilla}@db:5432/tasksgodzilla}
+      TASKSGODZILLA_REDIS_URL: ${TASKSGODZILLA_REDIS_URL:-redis://redis:6379/0}
+      TASKSGODZILLA_LOG_LEVEL: INFO
+      # Engine configuration (defaults to opencode when not set)
+      TASKSGODZILLA_DEFAULT_ENGINE_ID: ${TASKSGODZILLA_DEFAULT_ENGINE_ID:-opencode}
+      TASKSGODZILLA_DISCOVERY_ENGINE_ID: ${TASKSGODZILLA_DISCOVERY_ENGINE_ID:-}
+      TASKSGODZILLA_PLANNING_ENGINE_ID: ${TASKSGODZILLA_PLANNING_ENGINE_ID:-}
+      TASKSGODZILLA_EXEC_ENGINE_ID: ${TASKSGODZILLA_EXEC_ENGINE_ID:-}
+      TASKSGODZILLA_QA_ENGINE_ID: ${TASKSGODZILLA_QA_ENGINE_ID:-}
+      # Pass through API keys for engines
+      TASKSGODZILLA_OPENCODE_API_KEY: ${TASKSGODZILLA_OPENCODE_API_KEY:-}
+    depends_on:
+      - db
+      - redis
+    command: ["python", "scripts/rq_worker.py"]
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tasksgodzilla
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tasksgodzilla}
+      POSTGRES_DB: tasksgodzilla
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -156,12 +156,61 @@ Start a protocol run.
 devgodzilla protocol start PROTOCOL_ID
 ```
 
+Notes:
+- `protocol start` uses the Orchestrator (Windmill when configured) and is intended for the full API/worker workflow.
+- For local/headless planning without Windmill, use `protocol worktree` + `protocol plan`.
+
 ### `protocol status`
 
 Get the status of a protocol.
 
 ```bash
 devgodzilla protocol status PROTOCOL_ID
+```
+
+### `protocol worktree`
+
+Ensure a git worktree exists for a protocol and store it on the run.
+
+```bash
+devgodzilla protocol worktree PROTOCOL_ID
+```
+
+### `protocol plan`
+
+Plan a protocol locally (creates `StepRun` rows from `.protocols/<protocol_name>/step-*.md`).
+
+```bash
+devgodzilla protocol plan PROTOCOL_ID
+```
+
+If step markdown files are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL=true` (default), planning runs a headless agent to generate `.protocols/<protocol_name>/plan.md` + `step-*.md` in the protocol worktree.
+
+### `protocol generate`
+
+Generate `.protocols/<protocol_name>/` artifacts via a headless AI agent (no manual scaffolding).
+
+```bash
+devgodzilla protocol generate PROTOCOL_ID [OPTIONS]
+
+Options:
+  --steps INTEGER           Number of step-*.md files to generate (default: 3)
+  --prompt PATH             Prompt file to use (default: prompts/devgodzilla-protocol-generate.prompt.md)
+  --engine TEXT             Engine ID (default: opencode)
+  --model TEXT              Model (default: engine default)
+  --timeout-seconds INTEGER Agent timeout (default: 900)
+```
+
+### `protocol scaffold`
+
+Create placeholder `.protocols/<protocol_name>/step-*.md` files (manual scaffolding).
+
+```bash
+devgodzilla protocol scaffold PROTOCOL_ID [OPTIONS]
+
+Options:
+  --step TEXT       Step name (repeatable)
+  --overwrite       Overwrite existing files
 ```
 
 ### `protocol pause`
@@ -211,6 +260,7 @@ devgodzilla project create NAME [OPTIONS]
 Options:
   -r, --repo TEXT         Git repository URL (required)
   -b, --branch TEXT       Base branch (default: main)
+  --local-path PATH       Optional local repo path (already cloned)
 ```
 
 ### `project list`
@@ -228,6 +278,26 @@ Show project details.
 ```bash
 devgodzilla project show PROJECT_ID
 ```
+
+### `project discover`
+
+Generate repository discovery artifacts.
+
+```bash
+devgodzilla project discover PROJECT_ID [OPTIONS]
+
+Options:
+  --output-dir PATH          Write non-agent discovery artifacts here (default: <repo>/.devgodzilla)
+  --agent                    Run discovery via headless agent prompt(s) (writes tasksgodzilla/*)
+  --pipeline / --single      Use multi-stage pipeline (default: --pipeline)
+  --engine TEXT              Engine ID for agent discovery (default: opencode)
+  --model TEXT               Model for agent discovery (default: engine default)
+  --timeout-seconds INTEGER  Agent timeout (default: 900)
+  --stage TEXT               Discovery stage(s): inventory, architecture, api_reference, ci_notes (repeatable)
+```
+
+Agent discovery writes (and validates) the expected outputs under `tasksgodzilla/` in the repo:
+- `DISCOVERY.md`, `DISCOVERY_SUMMARY.json`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `CI_NOTES.md`
 
 ---
 
@@ -280,10 +350,22 @@ devgodzilla clarify answer CLARIFICATION_ID ANSWER
 
 ### `step run`
 
-Execute a step.
+Execute a step via the Orchestrator (Windmill when configured).
 
 ```bash
 devgodzilla step run STEP_ID
+```
+
+### `step execute`
+
+Execute a step locally via `ExecutionService` (no Windmill required).
+
+```bash
+devgodzilla step execute STEP_ID [OPTIONS]
+
+Options:
+  --engine TEXT   Engine ID (default: config)
+  --model TEXT    Model (default: engine default)
 ```
 
 ### `step qa`
@@ -294,7 +376,7 @@ Run QA on a step.
 devgodzilla step qa STEP_ID [OPTIONS]
 
 Options:
-  -g, --gates TEXT    Comma-separated list of gates to run
+  -g, --gates TEXT    Gate to run (repeatable)
 ```
 
 ### `step status`

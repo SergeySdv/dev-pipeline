@@ -271,7 +271,7 @@ class Database:
     
     def __init__(self, connection_string: str = None):
         self.connection_string = connection_string or os.environ.get(
-            "DATABASE_URL",
+            "DEVGODZILLA_DB_URL",
             "postgresql://localhost/devgodzilla"
         )
         self.engine = create_engine(self.connection_string)
@@ -798,7 +798,7 @@ logger = structlog.get_logger()
 logger.info(
     "step_execution_started",
     step_id="T001",
-    agent_id="codex",
+    agent_id="opencode",
     event="started"
 )
 
@@ -920,7 +920,7 @@ class HealthChecker:
 # config/platform.yaml
 platform:
   database:
-    url: "${DATABASE_URL}"
+    url: "${DEVGODZILLA_DB_URL}"
     pool_size: 10
     max_overflow: 20
     

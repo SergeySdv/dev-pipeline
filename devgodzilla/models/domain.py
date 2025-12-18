@@ -31,6 +31,7 @@ class StepStatus:
     PENDING = "pending"
     RUNNING = "running"
     NEEDS_QA = "needs_qa"
+    SKIPPED = "skipped"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

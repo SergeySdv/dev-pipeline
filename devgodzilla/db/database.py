@@ -112,6 +112,77 @@ class DatabaseProtocol(Protocol):
     ) -> Event: ...
     
     def list_events(self, protocol_run_id: int) -> List[Event]: ...
+    def list_recent_events(
+        self,
+        *,
+        limit: int = 50,
+        protocol_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> List[Event]: ...
+    def list_events_since_id(
+        self,
+        *,
+        since_id: int,
+        limit: int = 200,
+        protocol_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> List[Event]: ...
+
+    # Job runs + artifacts
+    def create_job_run(
+        self,
+        run_id: str,
+        job_type: str,
+        status: str,
+        *,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+        log_path: Optional[str] = None,
+        cost_tokens: Optional[int] = None,
+        cost_cents: Optional[int] = None,
+        windmill_job_id: Optional[str] = None,
+    ) -> JobRun: ...
+
+    def get_job_run(self, run_id: str) -> JobRun: ...
+
+    def list_job_runs(
+        self,
+        *,
+        limit: int = 200,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+        windmill_job_id: Optional[str] = None,
+    ) -> List[JobRun]: ...
+
+    def update_job_run(self, run_id: str, **kwargs: Any) -> JobRun: ...
+
+    def update_job_run_by_windmill_id(self, windmill_job_id: str, **kwargs: Any) -> JobRun: ...
+
+    def create_run_artifact(
+        self,
+        run_id: str,
+        name: str,
+        kind: str,
+        path: str,
+        *,
+        sha256: Optional[str] = None,
+        bytes: Optional[int] = None,
+    ) -> RunArtifact: ...
+
+    def list_run_artifacts(self, run_id: str) -> List[RunArtifact]: ...
+
+    def get_run_artifact(self, run_id: str, name: str) -> RunArtifact: ...
 
 
 class SQLiteDatabase:
@@ -278,8 +349,8 @@ class SQLiteDatabase:
             queue=row["queue"] if "queue" in keys else None,
             attempt=row["attempt"] if "attempt" in keys else None,
             worker_id=row["worker_id"] if "worker_id" in keys else None,
-            started_at=self._coerce_ts(row["started_at"]) if row.get("started_at") else None,
-            finished_at=self._coerce_ts(row["finished_at"]) if row.get("finished_at") else None,
+            started_at=self._coerce_ts(row["started_at"]) if ("started_at" in keys and row["started_at"]) else None,
+            finished_at=self._coerce_ts(row["finished_at"]) if ("finished_at" in keys and row["finished_at"]) else None,
             prompt_version=row["prompt_version"] if "prompt_version" in keys else None,
             params=self._parse_json(row["params"] if "params" in keys else None),
             result=self._parse_json(row["result"] if "result" in keys else None),
@@ -290,6 +361,19 @@ class SQLiteDatabase:
             windmill_job_id=row["windmill_job_id"] if "windmill_job_id" in keys else None,
             created_at=self._coerce_ts(row["created_at"]),
             updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    def _row_to_run_artifact(self, row: sqlite3.Row) -> RunArtifact:
+        keys = set(row.keys())
+        return RunArtifact(
+            id=row["id"],
+            run_id=row["run_id"],
+            name=row["name"],
+            kind=row["kind"],
+            path=row["path"],
+            sha256=row["sha256"] if "sha256" in keys else None,
+            bytes=row["bytes"] if "bytes" in keys else None,
+            created_at=self._coerce_ts(row["created_at"]),
         )
 
     # Project operations
@@ -485,6 +569,35 @@ class SQLiteDatabase:
             )
         return self.get_protocol_run(run_id)
 
+    def update_protocol_paths(
+        self,
+        run_id: int,
+        *,
+        worktree_path: Optional[str] = None,
+        protocol_root: Optional[str] = None,
+    ) -> ProtocolRun:
+        """Update worktree/protocol root paths on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+
+        if worktree_path is not None:
+            updates.append("worktree_path = ?")
+            params.append(worktree_path)
+        if protocol_root is not None:
+            updates.append("protocol_root = ?")
+            params.append(protocol_root)
+
+        if len(params) == 0:
+            return self.get_protocol_run(run_id)
+
+        params.append(run_id)
+        with self._transaction() as conn:
+            conn.execute(
+                f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+        return self.get_protocol_run(run_id)
+
     # Step run operations
     def create_step_run(
         self,
@@ -631,6 +744,259 @@ class SQLiteDatabase:
         )
         return [self._row_to_event(row) for row in rows]
 
+    def list_recent_events(
+        self,
+        *,
+        limit: int = 50,
+        protocol_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> List[Event]:
+        limit = max(1, min(int(limit), 500))
+        where: list[str] = []
+        params: list[Any] = []
+        if protocol_run_id is not None:
+            where.append("e.protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if project_id is not None:
+            where.append("pr.project_id = ?")
+            params.append(project_id)
+
+        sql = """
+            SELECT e.*
+            FROM events e
+            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+        """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY e.id DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._fetchall(sql, params)
+        return [self._row_to_event(row) for row in rows]
+
+    def list_events_since_id(
+        self,
+        *,
+        since_id: int,
+        limit: int = 200,
+        protocol_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> List[Event]:
+        limit = max(1, min(int(limit), 500))
+        where: list[str] = ["e.id > ?"]
+        params: list[Any] = [int(since_id)]
+        if protocol_run_id is not None:
+            where.append("e.protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if project_id is not None:
+            where.append("pr.project_id = ?")
+            params.append(project_id)
+
+        sql = """
+            SELECT e.*
+            FROM events e
+            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            WHERE
+        """
+        sql += " AND ".join(where)
+        sql += " ORDER BY e.id ASC LIMIT ?"
+        params.append(limit)
+
+        rows = self._fetchall(sql, params)
+        return [self._row_to_event(row) for row in rows]
+
+    # Job runs + artifacts
+    def create_job_run(
+        self,
+        run_id: str,
+        job_type: str,
+        status: str,
+        *,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+        log_path: Optional[str] = None,
+        cost_tokens: Optional[int] = None,
+        cost_cents: Optional[int] = None,
+        windmill_job_id: Optional[str] = None,
+    ) -> JobRun:
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO job_runs (
+                    run_id, job_type, status, run_kind,
+                    project_id, protocol_run_id, step_run_id,
+                    queue, attempt, worker_id,
+                    params, result, error, log_path,
+                    cost_tokens, cost_cents, windmill_job_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    job_type,
+                    status,
+                    run_kind,
+                    project_id,
+                    protocol_run_id,
+                    step_run_id,
+                    queue,
+                    attempt,
+                    worker_id,
+                    json.dumps(params) if params is not None else None,
+                    json.dumps(result) if result is not None else None,
+                    error,
+                    log_path,
+                    cost_tokens,
+                    cost_cents,
+                    windmill_job_id,
+                ),
+            )
+        return self.get_job_run(run_id)
+
+    def get_job_run(self, run_id: str) -> JobRun:
+        row = self._fetchone("SELECT * FROM job_runs WHERE run_id = ?", (run_id,))
+        if row is None:
+            raise KeyError(f"JobRun {run_id} not found")
+        return self._row_to_job_run(row)
+
+    def list_job_runs(
+        self,
+        *,
+        limit: int = 200,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+        windmill_job_id: Optional[str] = None,
+    ) -> List[JobRun]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = ?")
+            params.append(step_run_id)
+        if status is not None:
+            where.append("status = ?")
+            params.append(status)
+        if job_type is not None:
+            where.append("job_type = ?")
+            params.append(job_type)
+        if windmill_job_id is not None:
+            where.append("windmill_job_id = ?")
+            params.append(windmill_job_id)
+
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM job_runs {clause} ORDER BY created_at DESC LIMIT ?",
+            (*params, limit),
+        )
+        return [self._row_to_job_run(row) for row in rows]
+
+    def update_job_run(self, run_id: str, **kwargs: Any) -> JobRun:
+        allowed = {
+            "status",
+            "run_kind",
+            "project_id",
+            "protocol_run_id",
+            "step_run_id",
+            "queue",
+            "attempt",
+            "worker_id",
+            "started_at",
+            "finished_at",
+            "prompt_version",
+            "params",
+            "result",
+            "error",
+            "log_path",
+            "cost_tokens",
+            "cost_cents",
+            "windmill_job_id",
+        }
+        updates = []
+        params: list[Any] = []
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in ("params", "result") and value is not None:
+                updates.append(f"{key} = ?")
+                params.append(json.dumps(value))
+                continue
+            updates.append(f"{key} = ?")
+            params.append(value)
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(run_id)
+
+        with self._transaction() as conn:
+            conn.execute(
+                f"UPDATE job_runs SET {', '.join(updates)} WHERE run_id = ?",
+                tuple(params),
+            )
+        return self.get_job_run(run_id)
+
+    def update_job_run_by_windmill_id(self, windmill_job_id: str, **kwargs: Any) -> JobRun:
+        row = self._fetchone("SELECT run_id FROM job_runs WHERE windmill_job_id = ? LIMIT 1", (windmill_job_id,))
+        if row is None:
+            raise KeyError(f"JobRun with windmill_job_id={windmill_job_id} not found")
+        return self.update_job_run(row["run_id"], **kwargs)
+
+    def create_run_artifact(
+        self,
+        run_id: str,
+        name: str,
+        kind: str,
+        path: str,
+        *,
+        sha256: Optional[str] = None,
+        bytes: Optional[int] = None,
+    ) -> RunArtifact:
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO run_artifacts (run_id, name, kind, path, sha256, bytes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, name) DO UPDATE SET
+                    kind=excluded.kind,
+                    path=excluded.path,
+                    sha256=excluded.sha256,
+                    bytes=excluded.bytes
+                """,
+                (run_id, name, kind, path, sha256, bytes),
+            )
+        return self.get_run_artifact(run_id, name)
+
+    def list_run_artifacts(self, run_id: str) -> List[RunArtifact]:
+        rows = self._fetchall(
+            "SELECT * FROM run_artifacts WHERE run_id = ? ORDER BY created_at DESC",
+            (run_id,),
+        )
+        return [self._row_to_run_artifact(row) for row in rows]
+
+    def get_run_artifact(self, run_id: str, name: str) -> RunArtifact:
+        row = self._fetchone(
+            "SELECT * FROM run_artifacts WHERE run_id = ? AND name = ? LIMIT 1",
+            (run_id, name),
+        )
+        if row is None:
+            raise KeyError(f"RunArtifact {run_id}:{name} not found")
+        return self._row_to_run_artifact(row)
+
     # Feedback event operations (new for DevGodzilla)
     def append_feedback_event(
         self,
@@ -726,6 +1092,8 @@ class SQLiteDatabase:
     def _row_to_clarification(self, row) -> Clarification:
         """Convert row to Clarification."""
         keys = set(row.keys()) if hasattr(row, "keys") else set()
+        blocking_val = row["blocking"] if "blocking" in keys else None
+        answered_at_val = row["answered_at"] if "answered_at" in keys else None
         return Clarification(
             id=row["id"],
             scope=row["scope"],
@@ -737,10 +1105,10 @@ class SQLiteDatabase:
             recommended=self._parse_json(row["recommended"] if "recommended" in keys else None),
             options=self._parse_json(row["options"] if "options" in keys else None),
             applies_to=row["applies_to"] if "applies_to" in keys else None,
-            blocking=bool(row["blocking"]) if row.get("blocking") is not None else False,
+            blocking=bool(blocking_val) if blocking_val is not None else False,
             answer=self._parse_json(row["answer"] if "answer" in keys else None),
             status=row["status"],
-            answered_at=self._coerce_ts(row["answered_at"]) if row.get("answered_at") else None,
+            answered_at=self._coerce_ts(answered_at_val) if answered_at_val else None,
             answered_by=row["answered_by"] if "answered_by" in keys else None,
             created_at=self._coerce_ts(row["created_at"]),
             updated_at=self._coerce_ts(row["updated_at"]),
@@ -1124,6 +1492,44 @@ class PostgresDatabase:
             created_at=self._coerce_ts(row["created_at"]),
         )
 
+    def _row_to_job_run(self, row: Dict[str, Any]) -> JobRun:
+        return JobRun(
+            run_id=row["run_id"],
+            job_type=row["job_type"],
+            status=row["status"],
+            run_kind=row.get("run_kind"),
+            project_id=row.get("project_id"),
+            protocol_run_id=row.get("protocol_run_id"),
+            step_run_id=row.get("step_run_id"),
+            queue=row.get("queue"),
+            attempt=row.get("attempt"),
+            worker_id=row.get("worker_id"),
+            started_at=self._coerce_ts(row["started_at"]) if row.get("started_at") else None,
+            finished_at=self._coerce_ts(row["finished_at"]) if row.get("finished_at") else None,
+            prompt_version=row.get("prompt_version"),
+            params=row.get("params"),
+            result=row.get("result"),
+            error=row.get("error"),
+            log_path=row.get("log_path"),
+            cost_tokens=row.get("cost_tokens"),
+            cost_cents=row.get("cost_cents"),
+            windmill_job_id=row.get("windmill_job_id"),
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    def _row_to_run_artifact(self, row: Dict[str, Any]) -> RunArtifact:
+        return RunArtifact(
+            id=row["id"],
+            run_id=row["run_id"],
+            name=row["name"],
+            kind=row["kind"],
+            path=row["path"],
+            sha256=row.get("sha256"),
+            bytes=row.get("bytes"),
+            created_at=self._coerce_ts(row["created_at"]),
+        )
+
     # Project operations (PostgreSQL uses %s instead of ?)
     def create_project(
         self,
@@ -1179,6 +1585,57 @@ class PostgresDatabase:
                 cur.execute(
                     "UPDATE projects SET local_path = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                     (local_path, project_id),
+                )
+        return self.get_project(project_id)
+
+    def update_project(
+        self,
+        project_id: int,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = _UNSET,
+        status: Optional[str] = None,
+        git_url: Optional[str] = None,
+        base_branch: Optional[str] = None,
+        local_path: Optional[str] = None,
+        constitution_version: Optional[str] = None,
+        constitution_hash: Optional[str] = None,
+    ) -> Project:
+        """Update project fields (PostgreSQL)."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if name is not None:
+            updates.append("name = %s")
+            params.append(name)
+        if description is not _UNSET:
+            updates.append("description = %s")
+            params.append(description)
+        if status is not None:
+            updates.append("status = %s")
+            params.append(status)
+        if git_url is not None:
+            updates.append("git_url = %s")
+            params.append(git_url)
+        if base_branch is not None:
+            updates.append("base_branch = %s")
+            params.append(base_branch)
+        if local_path is not None:
+            updates.append("local_path = %s")
+            params.append(local_path)
+        if constitution_version is not None:
+            updates.append("constitution_version = %s")
+            params.append(constitution_version)
+        if constitution_hash is not None:
+            updates.append("constitution_hash = %s")
+            params.append(constitution_hash)
+
+        params.append(project_id)
+
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE projects SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
                 )
         return self.get_project(project_id)
 
@@ -1390,6 +1847,265 @@ class PostgresDatabase:
             (protocol_run_id,),
         )
         return [self._row_to_event(row) for row in rows]
+
+    def list_recent_events(
+        self,
+        *,
+        limit: int = 50,
+        protocol_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> List[Event]:
+        limit = max(1, min(int(limit), 500))
+        where: list[str] = []
+        params: list[Any] = []
+        if protocol_run_id is not None:
+            where.append("e.protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if project_id is not None:
+            where.append("pr.project_id = %s")
+            params.append(project_id)
+
+        sql = """
+            SELECT e.*
+            FROM events e
+            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+        """
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY e.id DESC LIMIT %s"
+        params.append(limit)
+
+        rows = self._fetchall(sql, params)
+        return [self._row_to_event(row) for row in rows]
+
+    def list_events_since_id(
+        self,
+        *,
+        since_id: int,
+        limit: int = 200,
+        protocol_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> List[Event]:
+        limit = max(1, min(int(limit), 500))
+        where: list[str] = ["e.id > %s"]
+        params: list[Any] = [int(since_id)]
+        if protocol_run_id is not None:
+            where.append("e.protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if project_id is not None:
+            where.append("pr.project_id = %s")
+            params.append(project_id)
+
+        sql = """
+            SELECT e.*
+            FROM events e
+            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            WHERE
+        """
+        sql += " AND ".join(where)
+        sql += " ORDER BY e.id ASC LIMIT %s"
+        params.append(limit)
+
+        rows = self._fetchall(sql, params)
+        return [self._row_to_event(row) for row in rows]
+
+    # Job runs + artifacts
+    def create_job_run(
+        self,
+        run_id: str,
+        job_type: str,
+        status: str,
+        *,
+        run_kind: Optional[str] = None,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        queue: Optional[str] = None,
+        attempt: Optional[int] = None,
+        worker_id: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+        log_path: Optional[str] = None,
+        cost_tokens: Optional[int] = None,
+        cost_cents: Optional[int] = None,
+        windmill_job_id: Optional[str] = None,
+    ) -> JobRun:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO job_runs (
+                        run_id, job_type, status, run_kind,
+                        project_id, protocol_run_id, step_run_id,
+                        queue, attempt, worker_id,
+                        params, result, error, log_path,
+                        cost_tokens, cost_cents, windmill_job_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        run_id,
+                        job_type,
+                        status,
+                        run_kind,
+                        project_id,
+                        protocol_run_id,
+                        step_run_id,
+                        queue,
+                        attempt,
+                        worker_id,
+                        json.dumps(params) if params is not None else None,
+                        json.dumps(result) if result is not None else None,
+                        error,
+                        log_path,
+                        cost_tokens,
+                        cost_cents,
+                        windmill_job_id,
+                    ),
+                )
+        return self.get_job_run(run_id)
+
+    def get_job_run(self, run_id: str) -> JobRun:
+        row = self._fetchone("SELECT * FROM job_runs WHERE run_id = %s", (run_id,))
+        if row is None:
+            raise KeyError(f"JobRun {run_id} not found")
+        return self._row_to_job_run(row)
+
+    def list_job_runs(
+        self,
+        *,
+        limit: int = 200,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+        windmill_job_id: Optional[str] = None,
+    ) -> List[JobRun]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = %s")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            params.append(step_run_id)
+        if status is not None:
+            where.append("status = %s")
+            params.append(status)
+        if job_type is not None:
+            where.append("job_type = %s")
+            params.append(job_type)
+        if windmill_job_id is not None:
+            where.append("windmill_job_id = %s")
+            params.append(windmill_job_id)
+
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM job_runs {clause} ORDER BY created_at DESC LIMIT %s",
+            (*params, limit),
+        )
+        return [self._row_to_job_run(row) for row in rows]
+
+    def update_job_run(self, run_id: str, **kwargs: Any) -> JobRun:
+        allowed = {
+            "status",
+            "run_kind",
+            "project_id",
+            "protocol_run_id",
+            "step_run_id",
+            "queue",
+            "attempt",
+            "worker_id",
+            "started_at",
+            "finished_at",
+            "prompt_version",
+            "params",
+            "result",
+            "error",
+            "log_path",
+            "cost_tokens",
+            "cost_cents",
+            "windmill_job_id",
+        }
+        updates = []
+        params: list[Any] = []
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in ("params", "result") and value is not None:
+                updates.append(f"{key} = %s")
+                params.append(json.dumps(value))
+                continue
+            updates.append(f"{key} = %s")
+            params.append(value)
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(run_id)
+
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE job_runs SET {', '.join(updates)} WHERE run_id = %s",
+                    tuple(params),
+                )
+        return self.get_job_run(run_id)
+
+    def update_job_run_by_windmill_id(self, windmill_job_id: str, **kwargs: Any) -> JobRun:
+        row = self._fetchone(
+            "SELECT run_id FROM job_runs WHERE windmill_job_id = %s LIMIT 1",
+            (windmill_job_id,),
+        )
+        if row is None:
+            raise KeyError(f"JobRun with windmill_job_id={windmill_job_id} not found")
+        return self.update_job_run(row["run_id"], **kwargs)
+
+    def create_run_artifact(
+        self,
+        run_id: str,
+        name: str,
+        kind: str,
+        path: str,
+        *,
+        sha256: Optional[str] = None,
+        bytes: Optional[int] = None,
+    ) -> RunArtifact:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO run_artifacts (run_id, name, kind, path, sha256, bytes)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, name) DO UPDATE SET
+                        kind=excluded.kind,
+                        path=excluded.path,
+                        sha256=excluded.sha256,
+                        bytes=excluded.bytes
+                    """,
+                    (run_id, name, kind, path, sha256, bytes),
+                )
+        return self.get_run_artifact(run_id, name)
+
+    def list_run_artifacts(self, run_id: str) -> List[RunArtifact]:
+        rows = self._fetchall(
+            "SELECT * FROM run_artifacts WHERE run_id = %s ORDER BY created_at DESC",
+            (run_id,),
+        )
+        return [self._row_to_run_artifact(row) for row in rows]
+
+    def get_run_artifact(self, run_id: str, name: str) -> RunArtifact:
+        row = self._fetchone(
+            "SELECT * FROM run_artifacts WHERE run_id = %s AND name = %s LIMIT 1",
+            (run_id, name),
+        )
+        if row is None:
+            raise KeyError(f"RunArtifact {run_id}:{name} not found")
+        return self._row_to_run_artifact(row)
 
 
 # Type alias for the unified database interface

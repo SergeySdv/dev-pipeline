@@ -11,7 +11,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 import httpx
 
@@ -389,6 +389,7 @@ class GitService(Service):
         config = get_config()
         pushed = False
         branch_exists = False
+        branch_name = self.get_branch_name(protocol_name)
 
         def _git_add_and_commit() -> bool:
             run_process(["git", "add", "."], cwd=worktree)
@@ -414,7 +415,7 @@ class GitService(Service):
 
         def _git_push() -> None:
             run_process(
-                ["git", "push", "--set-upstream", "origin", protocol_name],
+                ["git", "push", "--set-upstream", "origin", branch_name],
                 cwd=worktree,
             )
 
@@ -428,7 +429,7 @@ class GitService(Service):
             _git_push()
             pushed = True
         except Exception as exc:
-            branch_exists = self.remote_branch_exists(worktree, protocol_name)
+            branch_exists = self.remote_branch_exists(worktree, branch_name)
             self.logger.warning(
                 "Failed to push branch",
                 extra=self.log_extra(
@@ -445,7 +446,7 @@ class GitService(Service):
                 except Exception:
                     return False
 
-        self._create_pr_if_possible(worktree, protocol_name, base_branch)
+        self._create_pr_if_possible(worktree, protocol_name, base_branch, head_branch=branch_name)
         return pushed or branch_exists
 
     def remote_branch_exists(self, repo_root: Path, branch: str) -> bool:
@@ -541,50 +542,103 @@ class GitService(Service):
         )
         return result
 
+    def open_pr(
+        self,
+        worktree: Path,
+        protocol_name: str,
+        base_branch: str,
+        *,
+        head_branch: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Best-effort PR/MR creation for an existing branch.
+
+        Returns a dict with a best-effort `url` when available.
+        """
+
+        def _extract_url(text: str) -> Optional[str]:
+            for token in (text or "").split():
+                if token.startswith("http://") or token.startswith("https://"):
+                    return token.strip()
+            return None
+
+        pr_title = title or f"WIP: {protocol_name}"
+        pr_body = description or f"Protocol {protocol_name} in progress"
+        head = head_branch or self.get_branch_name(protocol_name)
+
+        if shutil.which("gh"):
+            try:
+                res = run_process(
+                    [
+                        "gh",
+                        "pr",
+                        "create",
+                        "--title",
+                        pr_title,
+                        "--body",
+                        pr_body,
+                        "--base",
+                        base_branch,
+                        "--head",
+                        head,
+                    ],
+                    cwd=worktree,
+                    check=False,
+                )
+                if res.returncode == 0:
+                    return {"success": True, "url": _extract_url((res.stdout or "") + "\n" + (res.stderr or "")) or ""}
+            except Exception:
+                pass
+        elif shutil.which("glab"):
+            try:
+                res = run_process(
+                    [
+                        "glab",
+                        "mr",
+                        "create",
+                        "--title",
+                        pr_title,
+                        "--description",
+                        pr_body,
+                        "--target-branch",
+                        base_branch,
+                        "--source-branch",
+                        head,
+                    ],
+                    cwd=worktree,
+                    check=False,
+                )
+                if res.returncode == 0:
+                    return {"success": True, "url": _extract_url((res.stdout or "") + "\n" + (res.stderr or ""))}
+            except Exception:
+                pass
+
+        if self._create_github_pr_api(worktree, head=head, base=base_branch, title=pr_title, body=pr_body):
+            return {"success": True, "url": None}
+        return {"success": False, "url": None}
+
     def _create_pr_if_possible(
         self,
         worktree: Path,
         protocol_name: str,
         base_branch: str,
+        *,
+        head_branch: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> bool:
         """Helper to try creating PR via GH/GLAB CLI or API fallback."""
-        pr_title = f"WIP: {protocol_name}"
-        pr_body = f"Protocol {protocol_name} in progress"
-
-        if shutil.which("gh"):
-            try:
-                run_process(
-                    [
-                        "gh", "pr", "create",
-                        "--title", pr_title,
-                        "--body", pr_body,
-                        "--base", base_branch,
-                    ],
-                    cwd=worktree,
-                )
-                return True
-            except Exception:
-                pass
-        elif shutil.which("glab"):
-            try:
-                run_process(
-                    [
-                        "glab", "mr", "create",
-                        "--title", pr_title,
-                        "--description", pr_body,
-                        "--target-branch", base_branch,
-                    ],
-                    cwd=worktree,
-                )
-                return True
-            except Exception:
-                pass
-        else:
-            if self._create_github_pr_api(
-                worktree, head=protocol_name, base=base_branch, title=pr_title, body=pr_body
-            ):
-                return True
-        return False
+        result = self.open_pr(
+            worktree,
+            protocol_name,
+            base_branch,
+            head_branch=head_branch,
+            title=title,
+            description=description,
+        )
+        return bool(result.get("success"))
 
     def _create_github_pr_api(
         self,

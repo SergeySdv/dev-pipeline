@@ -19,19 +19,15 @@ if [ ! -x "${PY_BIN}" ]; then
 fi
 
 export PYTHONPATH="${PYTHONPATH:-.}"
-export TASKSGODZILLA_DB_PATH="${TASKSGODZILLA_DB_PATH:-/tmp/tasksgodzilla-ci.sqlite}"
-export TASKSGODZILLA_REDIS_URL="${TASKSGODZILLA_REDIS_URL:-redis://localhost:6380/15}"
 
-"${PY_BIN}" -m compileall -q tasksgodzilla scripts
+"${PY_BIN}" -m compileall -q devgodzilla windmill scripts
 
 "${PY_BIN}" - <<'PY'
 import importlib
 modules = [
-    "tasksgodzilla.config",
-    "tasksgodzilla.api.app",
-    "scripts.api_server",
-    "scripts.protocol_pipeline",
-    "scripts.quality_orchestrator",
+    "devgodzilla.config",
+    "devgodzilla.api.app",
+    "devgodzilla.windmill.worker",
 ]
 for mod in modules:
     importlib.import_module(mod)

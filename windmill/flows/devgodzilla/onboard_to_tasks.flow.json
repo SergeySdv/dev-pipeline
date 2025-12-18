@@ -1,0 +1,108 @@
+{
+  "summary": "Onboard GitHub Repo → Spec → Plan → Tasks (DevGodzilla API)",
+  "description": "End-to-end workflow: create a DevGodzilla project, clone it, initialize .specify/, then generate spec/plan/tasks via DevGodzilla API.",
+  "value": {
+    "modules": [
+      {
+        "id": "onboard_project",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/project_onboard_api",
+          "input_transforms": {
+            "git_url": { "type": "javascript", "expr": "flow_input.git_url" },
+            "project_name": { "type": "javascript", "expr": "flow_input.project_name" },
+            "branch": { "type": "javascript", "expr": "flow_input.branch || 'main'" },
+            "description": { "type": "javascript", "expr": "flow_input.description || ''" },
+            "constitution_content": { "type": "javascript", "expr": "flow_input.constitution_content || ''" },
+            "run_discovery_agent": { "type": "javascript", "expr": "flow_input.run_discovery_agent || false" }
+          }
+        },
+        "input_transforms": {}
+      },
+      {
+        "id": "speckit_specify",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_specify_api",
+          "input_transforms": {
+            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+            "description": { "type": "javascript", "expr": "flow_input.feature_request" },
+            "feature_name": { "type": "javascript", "expr": "flow_input.feature_name || ''" }
+          }
+        },
+        "input_transforms": {}
+      },
+      {
+        "id": "speckit_plan",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_plan_api",
+          "input_transforms": {
+            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+            "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" }
+          }
+        },
+        "input_transforms": {}
+      },
+      {
+        "id": "speckit_tasks",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_tasks_api",
+          "input_transforms": {
+            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+            "plan_path": { "type": "javascript", "expr": "results.speckit_plan.plan_path" }
+          }
+        },
+        "input_transforms": {}
+      }
+    ]
+  },
+  "schema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "git_url": {
+        "type": "string",
+        "description": "GitHub repository URL (public or private if accessible)",
+        "default": ""
+      },
+      "project_name": {
+        "type": "string",
+        "description": "DevGodzilla project name",
+        "default": ""
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branch to checkout",
+        "default": "main"
+      },
+      "description": {
+        "type": "string",
+        "description": "Optional project description",
+        "default": ""
+      },
+      "constitution_content": {
+        "type": "string",
+        "description": "Optional custom SpecKit constitution content",
+        "default": ""
+      },
+      "feature_request": {
+        "type": "string",
+        "description": "Feature request text for spec generation",
+        "default": ""
+      },
+      "feature_name": {
+        "type": "string",
+        "description": "Optional short feature name",
+        "default": ""
+      },
+      "run_discovery_agent": {
+        "type": "boolean",
+        "description": "Run headless agent discovery during onboarding",
+        "default": false
+      }
+    },
+    "required": ["git_url", "project_name", "feature_request"]
+  }
+}

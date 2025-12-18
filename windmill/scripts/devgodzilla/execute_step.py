@@ -5,7 +5,7 @@ Executes a single task step using the specified AI agent via ExecutionService.
 
 Args:
     step_id: Task identifier (DB ID string or int)
-    agent_id: Agent to use (e.g., codex, claude-code)
+    agent_id: Agent to use (e.g., opencode, claude-code)
     protocol_run_id: Parent protocol run ID
     context: Additional context
 
@@ -29,7 +29,7 @@ except ImportError:
 
 def main(
     step_id: str | int,
-    agent_id: str = "codex",
+    agent_id: str = "opencode",
     protocol_run_id: int = 0,
     context: dict = None,
 ) -> dict:

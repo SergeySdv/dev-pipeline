@@ -68,7 +68,7 @@ def get_windmill_config() -> WindmillConfig:
     return WindmillConfig(
         base_url=os.environ.get("DEVGODZILLA_WINDMILL_URL", "http://localhost:8000"),
         token=os.environ.get("DEVGODZILLA_WINDMILL_TOKEN", ""),
-        workspace=os.environ.get("DEVGODZILLA_WINDMILL_WORKSPACE", "starter"),
+        workspace=os.environ.get("DEVGODZILLA_WINDMILL_WORKSPACE", "devgodzilla"),
         timeout=float(os.environ.get("DEVGODZILLA_WINDMILL_TIMEOUT", "30")),
     )
 
@@ -201,7 +201,7 @@ class WindmillClient:
         """List flows, optionally filtered by path prefix."""
         params = {}
         if prefix:
-            params["path_prefix"] = prefix
+            params["path_start"] = prefix
         
         resp = self._get_client().get(self._url("/flows/list"), params=params)
         resp.raise_for_status()
@@ -213,6 +213,48 @@ class WindmillClient:
                 name=item.get("summary", ""),
             ))
         return flows
+
+    def list_jobs(
+        self,
+        *,
+        per_page: int = 50,
+        page: int = 1,
+        job_kinds: Optional[str] = None,
+        script_path_exact: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        List jobs in Windmill.
+
+        Uses `/api/w/{workspace}/jobs/list`.
+        """
+        params: Dict[str, Any] = {
+            "per_page": max(1, min(int(per_page), 200)),
+            "page": max(1, int(page)),
+        }
+        if job_kinds:
+            params["job_kinds"] = job_kinds
+        if script_path_exact:
+            params["script_path_exact"] = script_path_exact
+
+        resp = self._get_client().get(self._url("/jobs/list"), params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    def list_flow_runs(
+        self,
+        flow_path: str,
+        *,
+        per_page: int = 50,
+        page: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """List job runs for a specific flow."""
+        return self.list_jobs(
+            per_page=per_page,
+            page=page,
+            job_kinds="flow",
+            script_path_exact=flow_path,
+        )
 
     # Job Management
     def run_flow(
@@ -280,21 +322,24 @@ class WindmillClient:
 
     def get_job(self, job_id: str) -> JobInfo:
         """Get job status and details."""
-        resp = self._get_client().get(self._url(f"/jobs/get/{job_id}"))
+        # Windmill exposes job details under jobs_u/*.
+        resp = self._get_client().get(self._url(f"/jobs_u/get/{job_id}"))
         resp.raise_for_status()
         data = resp.json()
         
-        # Map Windmill status to our enum
-        raw_status = data.get("status", "").lower()
+        # Map Windmill job type/success to a stable status enum.
+        job_type = str(data.get("type") or "").lower()
         status = JobStatus.QUEUED
-        if raw_status == "running":
+        if "running" in job_type:
             status = JobStatus.RUNNING
-        elif raw_status in ("success", "completed"):
-            status = JobStatus.COMPLETED
-        elif raw_status == "failure":
-            status = JobStatus.FAILED
-        elif raw_status == "canceled":
+        elif "queued" in job_type:
+            status = JobStatus.QUEUED
+        elif "canceled" in job_type or "cancelled" in job_type:
             status = JobStatus.CANCELED
+        elif "failed" in job_type:
+            status = JobStatus.FAILED
+        elif "completed" in job_type:
+            status = JobStatus.COMPLETED if bool(data.get("success", True)) else JobStatus.FAILED
         
         return JobInfo(
             id=job_id,
@@ -303,18 +348,18 @@ class WindmillClient:
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
             result=data.get("result"),
-            error=data.get("error"),
+            error=data.get("error") or data.get("err"),
         )
 
     def get_job_logs(self, job_id: str) -> str:
         """Get job logs."""
-        resp = self._get_client().get(self._url(f"/jobs/get/{job_id}/logs"))
+        resp = self._get_client().get(self._url(f"/jobs_u/get_logs/{job_id}"))
         resp.raise_for_status()
         return resp.text
 
     def cancel_job(self, job_id: str) -> None:
         """Cancel a running job."""
-        resp = self._get_client().post(self._url(f"/jobs/cancel/{job_id}"))
+        resp = self._get_client().post(self._url(f"/jobs_u/queue/cancel/{job_id}"))
         resp.raise_for_status()
         logger.info("job_canceled", extra={"job_id": job_id})
 
@@ -345,6 +390,14 @@ class WindmillClient:
         while True:
             job = self.get_job(job_id)
             if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED):
+                # Best-effort: completed jobs often store results under the completed endpoints.
+                if job.status == JobStatus.COMPLETED and job.result is None:
+                    try:
+                        r = self._get_client().get(self._url(f"/jobs_u/completed/get_result_maybe/{job_id}"))
+                        if r.status_code == 200:
+                            job.result = r.json()
+                    except Exception:
+                        pass
                 return job
             
             if time.time() - start > timeout:

@@ -68,6 +68,45 @@ Get a project by ID.
 
 Update a project.
 
+### `POST /projects/{id}/actions/onboard`
+
+Onboard a project repo for DevGodzilla workflows:
+- ensure repo exists locally (clone if missing)
+- checkout branch
+- initialize `.specify/`
+- (optional) run headless agent discovery (writes `tasksgodzilla/*`)
+
+**Request Body:**
+```json
+{
+  "branch": "main",
+  "clone_if_missing": true,
+  "constitution_content": "# Optional custom constitution\n...",
+  "run_discovery_agent": true,
+  "discovery_pipeline": true,
+  "discovery_engine_id": "opencode",
+  "discovery_model": "zai-coding-plan/glm-4.6"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "project": { "id": 1, "name": "my-project", "git_url": "https://...", "base_branch": "main" },
+  "local_path": "/abs/path/to/repo",
+  "speckit_initialized": true,
+  "speckit_path": "/abs/path/to/repo/.specify",
+  "constitution_hash": "abc123",
+  "warnings": [],
+  "discovery_success": true,
+  "discovery_log_path": "/abs/path/to/repo/opencode-discovery.log",
+  "discovery_missing_outputs": [],
+  "discovery_error": null,
+  "error": null
+}
+```
+
 ---
 
 ## SpecKit
@@ -223,7 +262,28 @@ Get a protocol by ID.
 
 ### `POST /protocols/{id}/actions/start`
 
-Start a protocol run.
+Start planning for a protocol run (async background task).
+
+Notes:
+- Planning is **protocol-file driven**: it reads `.protocols/<protocol_name>/step-*.md` in the protocol worktree.
+- If protocol files are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL` is enabled (default `true`), DevGodzilla runs a headless agent to generate:
+  - `.protocols/<protocol_name>/plan.md`
+  - `.protocols/<protocol_name>/step-*.md`
+- Planning also ensures a git worktree exists for isolation and persists `worktree_path` on the protocol run.
+
+### `POST /protocols/{id}/actions/run_next_step`
+
+Select the next runnable step for a protocol (selection-only; does not execute).
+
+**Response:**
+```json
+{ "step_run_id": 123 }
+```
+
+When there is no runnable step (blocked/completed), it returns:
+```json
+{ "step_run_id": null }
+```
 
 ### `POST /protocols/{id}/actions/pause`
 
@@ -267,6 +327,35 @@ Run QA on a step.
   "gates": ["test", "lint", "type"]
 }
 ```
+
+Notes:
+- Omit `gates` (or set it to `null`) to run the default QA gate set.
+- Set `"gates": []` to **skip QA** and still mark the step completed (useful for E2E/system tests).
+
+### `POST /steps/{id}/actions/assign_agent`
+
+Assign a specific engine/agent to a step.
+
+**Request Body:**
+```json
+{ "agent_id": "opencode" }
+```
+
+### `GET /steps/{id}/quality`
+
+Return a lightweight quality summary derived from the persisted QA verdict.
+
+### `GET /steps/{id}/artifacts`
+
+List step artifacts stored under `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`.
+
+### `GET /steps/{id}/artifacts/{artifact_id}/content`
+
+Fetch artifact content for preview (truncates large files).
+
+### `GET /steps/{id}/artifacts/{artifact_id}/download`
+
+Download an artifact as a file.
 
 ---
 

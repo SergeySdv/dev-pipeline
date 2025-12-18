@@ -1,180 +1,89 @@
 """
 DevGodzilla Events Endpoint
 
-Server-Sent Events (SSE) endpoint for real-time updates.
+DB-backed Server-Sent Events (SSE) endpoint for real-time updates.
 """
 
 import asyncio
 import json
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
+
+from devgodzilla.api import schemas
+from devgodzilla.api.dependencies import get_db
+from devgodzilla.db.database import Database
 
 router = APIRouter(tags=["Events"])
 
-# In-memory event queue (would use Redis in production)
-_event_queues: Dict[str, asyncio.Queue] = {}
 
-
-# ==================== Event Types ====================
-
-class Event:
-    """Base event class."""
-    
-    def __init__(
-        self,
-        event_type: str,
-        data: Dict[str, Any],
-        *,
-        protocol_id: Optional[int] = None,
-        project_id: Optional[int] = None,
-    ):
-        self.event_type = event_type
-        self.data = data
-        self.protocol_id = protocol_id
-        self.project_id = project_id
-        self.timestamp = datetime.now().isoformat()
-    
-    def to_sse(self) -> str:
-        """Convert to SSE format."""
-        payload = {
-            "type": self.event_type,
-            "data": self.data,
-            "timestamp": self.timestamp,
-        }
-        if self.protocol_id:
-            payload["protocol_id"] = self.protocol_id
-        if self.project_id:
-            payload["project_id"] = self.project_id
-        
-        return f"event: {self.event_type}\ndata: {json.dumps(payload)}\n\n"
-
-
-# ==================== Event Publishing ====================
-
-async def publish_event(event: Event):
-    """Publish an event to all connected clients."""
-    for queue in _event_queues.values():
-        try:
-            queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass  # Drop event if queue is full
-
-
-def emit_protocol_started(protocol_id: int, protocol_name: str, project_id: int):
-    """Emit protocol started event."""
-    asyncio.create_task(publish_event(Event(
-        "protocol.started",
-        {"name": protocol_name},
-        protocol_id=protocol_id,
-        project_id=project_id,
-    )))
-
-
-def emit_protocol_completed(protocol_id: int, status: str, project_id: int):
-    """Emit protocol completed event."""
-    asyncio.create_task(publish_event(Event(
-        "protocol.completed",
-        {"status": status},
-        protocol_id=protocol_id,
-        project_id=project_id,
-    )))
-
-
-def emit_step_started(protocol_id: int, step_id: int, step_name: str):
-    """Emit step started event."""
-    asyncio.create_task(publish_event(Event(
-        "step.started",
-        {"step_id": step_id, "step_name": step_name},
-        protocol_id=protocol_id,
-    )))
-
-
-def emit_step_completed(protocol_id: int, step_id: int, status: str):
-    """Emit step completed event."""
-    asyncio.create_task(publish_event(Event(
-        "step.completed",
-        {"step_id": step_id, "status": status},
-        protocol_id=protocol_id,
-    )))
-
-
-def emit_qa_result(protocol_id: int, step_id: int, verdict: str, findings_count: int):
-    """Emit QA result event."""
-    asyncio.create_task(publish_event(Event(
-        "qa.result",
-        {"step_id": step_id, "verdict": verdict, "findings_count": findings_count},
-        protocol_id=protocol_id,
-    )))
-
-
-def emit_clarification_needed(protocol_id: int, clarification_id: int, question: str):
-    """Emit clarification needed event."""
-    asyncio.create_task(publish_event(Event(
-        "clarification.needed",
-        {"clarification_id": clarification_id, "question": question},
-        protocol_id=protocol_id,
-    )))
+def _event_to_sse(event: schemas.EventOut) -> str:
+    payload = event.model_dump()
+    return (
+        f"id: {event.id}\n"
+        f"event: {event.event_type}\n"
+        f"data: {json.dumps(payload, default=str)}\n\n"
+    )
 
 
 # ==================== SSE Endpoint ====================
 
 async def event_generator(
-    client_id: str,
+    db: Database,
     protocol_id: Optional[int] = None,
     project_id: Optional[int] = None,
+    *,
+    since_id: int = 0,
+    poll_interval_seconds: float = 0.5,
 ) -> AsyncGenerator[str, None]:
-    """Generate SSE events for a client."""
-    queue = asyncio.Queue(maxsize=100)
-    _event_queues[client_id] = queue
-    
-    try:
-        # Send initial connection event
-        yield Event("connected", {"client_id": client_id}).to_sse()
-        
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=30)
-                
-                # Filter by protocol/project if specified
-                if protocol_id and event.protocol_id != protocol_id:
-                    continue
-                if project_id and event.project_id != project_id:
-                    continue
-                
-                yield event.to_sse()
-            except asyncio.TimeoutError:
-                # Send heartbeat
+    last_id = max(0, int(since_id))
+    yield "event: connected\ndata: {}\n\n"
+
+    idle_ticks = 0
+    while True:
+        batch = db.list_events_since_id(
+            since_id=last_id,
+            limit=200,
+            protocol_run_id=protocol_id,
+            project_id=project_id,
+        )
+        if batch:
+            idle_ticks = 0
+            for e in batch:
+                out = schemas.EventOut.model_validate(e)
+                yield _event_to_sse(out)
+                last_id = max(last_id, out.id)
+        else:
+            idle_ticks += 1
+            if idle_ticks >= int(30 / max(poll_interval_seconds, 0.1)):
+                idle_ticks = 0
                 yield ": heartbeat\n\n"
-    finally:
-        del _event_queues[client_id]
+
+        await asyncio.sleep(poll_interval_seconds)
 
 
 @router.get("/events")
 async def events_stream(
     protocol_id: Optional[int] = Query(None, description="Filter by protocol ID"),
     project_id: Optional[int] = Query(None, description="Filter by project ID"),
+    since_id: int = Query(0, ge=0, description="Only stream events with id > since_id"),
+    last_event_id: Optional[str] = Header(None, alias="Last-Event-ID"),
+    db: Database = Depends(get_db),
 ):
     """
     Server-Sent Events stream for real-time updates.
-    
-    Connect to this endpoint to receive live updates about:
-    - Protocol status changes
-    - Step execution progress
-    - QA results
-    - Clarification requests
     
     Use query parameters to filter events:
     - protocol_id: Only receive events for this protocol
     - project_id: Only receive events for this project
     """
-    import uuid
-    client_id = str(uuid.uuid4())
-    
+    effective_since = since_id
+    if last_event_id and last_event_id.isdigit():
+        effective_since = max(effective_since, int(last_event_id))
+
     return StreamingResponse(
-        event_generator(client_id, protocol_id, project_id),
+        event_generator(db, protocol_id, project_id, since_id=effective_since),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -186,14 +95,16 @@ async def events_stream(
 @router.get("/events/recent")
 async def recent_events(
     limit: int = Query(50, ge=1, le=200),
+    protocol_id: Optional[int] = Query(None, description="Filter by protocol ID"),
+    project_id: Optional[int] = Query(None, description="Filter by project ID"),
+    db: Database = Depends(get_db),
 ):
     """
     Get recent events (non-streaming).
     
-    Returns the last N events from the event store.
+    Returns the last N events from the DB-backed event store.
     """
-    # In production, this would query an event store
+    items = db.list_recent_events(limit=limit, protocol_run_id=protocol_id, project_id=project_id)
     return {
-        "events": [],
-        "message": "Event store not yet implemented",
+        "events": [schemas.EventOut.model_validate(e).model_dump() for e in items],
     }

@@ -36,6 +36,22 @@ This document defines the architecture for **DevGodzilla**, a new integrated pla
 > - The upstream SpecKit project is vendored under `Origins/spec-kit/` for reference, but the current implementation generates `.specify/` artifacts directly (no external `specify` CLI/library dependency).
 > - The legacy TasksGodzilla stack lives under `archive/` and is not part of the main DevGodzilla runtime.
 
+## 0. Current Runtime Workflow (Headless SWE-agent)
+
+DevGodzilla’s primary workflow is **agent-driven**: a headless SWE-agent runs prompt(s), writes artifacts into the repo/worktree, and DevGodzilla validates/records those artifacts.
+
+High-level flow:
+1. **Onboard repo**: ensure repo exists locally and initialize `.specify/` (`POST /projects/{id}/actions/onboard`).
+2. **Discovery (optional)**: run headless discovery agent (writes `tasksgodzilla/*`).
+3. **Plan protocol**: ensure a git worktree, then read `.protocols/<protocol_name>/step-*.md` to create `StepRun` rows.
+   - If protocol files are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL=true` (default), generate `.protocols/<protocol_name>/plan.md` + `step-*.md` via headless agent.
+4. **Execute step**: engine runs inside the protocol worktree; DevGodzilla writes execution artifacts (“git report”) under `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`.
+5. **QA**: QA gates run on step output; `"gates": []` skips QA and still completes the step (useful for E2E/system tests). After QA, DevGodzilla best-effort updates protocol status to `completed` / `failed` when all steps are terminal.
+
+Default engine/model for headless workflows:
+- Engine: `opencode` (`DEVGODZILLA_DEFAULT_ENGINE_ID`)
+- Model: `zai-coding-plan/glm-4.6` (`DEVGODZILLA_OPENCODE_MODEL`)
+
 ---
 
 ## 1. High-Level Architecture

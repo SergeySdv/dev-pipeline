@@ -8,6 +8,14 @@ This document captures an end-to-end architecture review of the **DevGodzilla** 
 - Embedded React app approach (preferred UI)
 - Security/ops best practices and missing pieces
 
+## Implementation Status (As of 2025-12-18)
+
+- SpecKit: **template-based** and does **not** require an external `specify` binary (`devgodzilla/services/specification.py`).
+- Windmill execution model: **standardized on API-wrapper scripts** for supported flows (see `docs/DevGodzilla/CURRENT_STATE.md`).
+- Events/SSE: **DB-backed events table + SSE stream** (EventBus events are persisted; `/events` streams from DB).
+- Auth/CORS: **configurable** via env (`DEVGODZILLA_API_TOKEN`, `DEVGODZILLA_CORS_ORIGINS`).
+- Embedded app: `.env.example` is committed; `.env.development` remains local-only/ignored.
+
 ## Decisions (Confirmed)
 
 1. **No legacy support for TasksGodzilla**
@@ -65,8 +73,7 @@ See: `docker-compose.yml`, `DEPLOYMENT.md`, `README.md`.
 
 ### 1) SpecKit integration: documentation vs implementation mismatch
 
-- Docs claim: “no external `specify` CLI/library dependency”.
-- Implementation (`devgodzilla/services/specification.py`) explicitly uses a CLI wrapper approach to call `specify`.
+Resolved: current SpecKit implementation is template-based and does not call an external `specify` CLI.
 
 **Why it matters**
 - Deployment and reproducibility: the stack behavior differs depending on whether `specify` is installed in the runtime.
@@ -90,12 +97,7 @@ See: `docker-compose.yml`, `DEPLOYMENT.md`, `README.md`.
 - “Supported stack” ambiguity: flows may or may not work depending on whether Windmill workers have the DevGodzilla package available.
 - Operator confusion: two different orchestration/control paths for the same lifecycle operations.
 
-**Recommendation**
-- Standardize on **API-wrapper scripts for Windmill execution**:
-  - Windmill scripts do not import `devgodzilla` directly.
-  - DevGodzilla remains the single “brain” and has stable server-side auth, policy, and audit.
-- Align these defaults:
-  - Update DevGodzilla flow generator + orchestrator calls to point to `*_api` scripts, or clearly mark the non-API scripts as dev/demo only.
+Resolved: supported flows use `*_api` adapter scripts; non-API scripts/flows are treated as deprecated/demo paths.
 
 ### 3) Embedded React app: security model must be explicit
 
@@ -114,8 +116,7 @@ There is an ignored local env file used for Windmill bootstrap tokens:
 
 ### 4) Authentication and CORS are currently “local dev” defaults
 
-- `devgodzilla/api/app.py` currently allows `allow_origins=["*"]`.
-- No API auth enforcement is implemented (even though config fields exist for tokens/JWT/OIDC).
+Resolved: CORS origins and API auth are now environment-configurable.
 
 **Recommendation**
 - Add a minimal auth layer for non-local environments:
@@ -125,7 +126,7 @@ There is an ignored local env file used for Windmill bootstrap tokens:
 
 ### 5) Events/SSE is not wired to service events
 
-- There is an in-memory SSE endpoint (`devgodzilla/api/routes/events.py`), but it’s not the same as the in-process `EventBus` and is not persisted.
+Resolved: service `EventBus` events are persisted to the DB `events` table and streamed from DB via SSE.
 
 **Recommendation**
 - Decide on one event architecture:
@@ -190,4 +191,3 @@ Target a single correlation model:
 - Windmill assets: `windmill/flows/devgodzilla/`, `windmill/scripts/devgodzilla/`, `windmill/apps/devgodzilla/`
 - Windmill import: `windmill/import_to_windmill.py`
 - Deployment: `docker-compose.yml`, `DEPLOYMENT.md`, `nginx.devgodzilla.conf`
-

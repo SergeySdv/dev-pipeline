@@ -6,7 +6,12 @@
 
 ## Overview
 
-The Specification Engine is the foundation of DevGodzilla's spec-driven development approach. It integrates the SpecKit library to transform natural language requirements into structured, executable specifications.
+The Specification Engine is the foundation of DevGodzilla's spec-driven development approach. In the current implementation it provides a SpecKit-style workflow by creating and updating `.specify/` artifacts (constitution, templates, and generated spec/plan/tasks markdown) via the DevGodzilla API/CLI.
+
+Implementation entry points:
+- `devgodzilla/services/specification.py` (creates `.specify/` structure and generates files)
+- `devgodzilla/api/routes/speckit.py` (REST surface under `/speckit/*`)
+- `devgodzilla/cli/speckit.py` (CLI surface under `devgodzilla spec ...`)
 
 ```mermaid
 graph TB

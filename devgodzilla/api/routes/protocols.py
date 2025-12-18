@@ -1,13 +1,16 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from pydantic import BaseModel, Field
 
 from devgodzilla.api import schemas
-from devgodzilla.api.dependencies import get_db, get_service_context
+from devgodzilla.api.dependencies import get_db, get_service_context, get_windmill_client
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
+from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
 from devgodzilla.services.planning import PlanningService
+from devgodzilla.windmill.client import WindmillClient
 
 router = APIRouter()
 
@@ -45,6 +48,60 @@ def _artifact_type_from_name(name: str) -> str:
     if lower.endswith(".txt") or lower.endswith(".md"):
         return "text"
     return "file"
+
+
+class ProjectProtocolCreate(BaseModel):
+    protocol_name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    base_branch: str = "main"
+    auto_start: bool = False
+
+
+class CreateFlowRequest(BaseModel):
+    tasks_path: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/protocols", response_model=List[schemas.ProtocolOut])
+def list_project_protocols(
+    project_id: int,
+    limit: int = 200,
+    db: Database = Depends(get_db),
+):
+    try:
+        db.get_project(project_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    limit = max(1, min(int(limit), 500))
+    return db.list_protocol_runs(project_id)[:limit]
+
+
+@router.post("/projects/{project_id}/protocols", response_model=schemas.ProtocolOut)
+def create_project_protocol(
+    project_id: int,
+    request: ProjectProtocolCreate,
+    background_tasks: BackgroundTasks,
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
+):
+    try:
+        db.get_project(project_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    run = db.create_protocol_run(
+        project_id=project_id,
+        protocol_name=request.protocol_name,
+        status="pending",
+        base_branch=request.base_branch,
+        description=request.description,
+    )
+    if request.auto_start:
+        def run_planning() -> None:
+            service = PlanningService(ctx, db)
+            service.plan_protocol(run.id)
+
+        db.update_protocol_status(run.id, "planning")
+        background_tasks.add_task(run_planning)
+    return db.get_protocol_run(run.id)
 
 @router.post("/protocols", response_model=schemas.ProtocolOut)
 def create_protocol(
@@ -97,6 +154,58 @@ def get_protocol(
         return db.get_protocol_run(protocol_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Protocol {protocol_id} not found")
+
+
+@router.get("/protocols/{protocol_id}/events", response_model=List[schemas.EventOut])
+def list_protocol_events(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    try:
+        db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    return [schemas.EventOut.model_validate(e) for e in db.list_events(protocol_id)]
+
+
+@router.get("/protocols/{protocol_id}/flow")
+def get_protocol_flow(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    return {"windmill_flow_id": run.windmill_flow_id}
+
+
+@router.post("/protocols/{protocol_id}/flow")
+def create_protocol_flow(
+    protocol_id: int,
+    _request: CreateFlowRequest,
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
+    windmill: WindmillClient = Depends(get_windmill_client),
+):
+    try:
+        db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    orchestrator = OrchestratorService(
+        context=ctx,
+        db=db,
+        windmill_client=windmill,
+        mode=OrchestratorMode.WINDMILL,
+    )
+    result = orchestrator.create_flow_from_steps(protocol_id)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Failed to create flow")
+    return {
+        "windmill_flow_id": result.flow_id,
+        "flow_definition": (result.data or {}).get("flow_definition"),
+    }
 
 @router.post("/protocols/{protocol_id}/actions/start", response_model=schemas.ProtocolOut)
 def start_protocol(

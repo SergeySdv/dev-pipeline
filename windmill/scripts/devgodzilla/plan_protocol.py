@@ -347,7 +347,7 @@ def _create_windmill_flow(protocol_run_id: int, dag: dict, tasks: list) -> str |
                 },
                 "input_transforms": {
                     "step_id": {"type": "static", "value": task_id},
-                    "agent_id": {"type": "javascript", "expr": "flow_input.agent_id || 'codex'"},
+                    "agent_id": {"type": "javascript", "expr": "flow_input.agent_id || 'opencode'"},
                     "protocol_run_id": {"type": "static", "value": protocol_run_id},
                     "context": {"type": "static", "value": {}}
                 }
@@ -365,7 +365,7 @@ def _create_windmill_flow(protocol_run_id: int, dag: dict, tasks: list) -> str |
                         },
                         "input_transforms": {
                             "step_id": {"type": "static", "value": task_id},
-                            "agent_id": {"type": "javascript", "expr": "flow_input.agent_id || 'codex'"},
+                            "agent_id": {"type": "javascript", "expr": "flow_input.agent_id || 'opencode'"},
                             "protocol_run_id": {"type": "static", "value": protocol_run_id},
                             "context": {"type": "static", "value": {}}
                         }
@@ -387,7 +387,7 @@ def _create_windmill_flow(protocol_run_id: int, dag: dict, tasks: list) -> str |
         "schema": {
             "type": "object",
             "properties": {
-                "agent_id": {"type": "string", "default": "codex"}
+                "agent_id": {"type": "string", "default": "opencode"}
             }
         }
     }
