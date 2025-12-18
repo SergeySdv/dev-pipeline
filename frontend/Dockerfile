@@ -1,7 +1,11 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
+RUN npm install -g pnpm \
+    && pnpm config set fetch-retries 5 \
+    && pnpm config set fetch-timeout 60000 \
+    && pnpm config set network-timeout 600000 \
+    && pnpm install --frozen-lockfile
 COPY . .
 # Set env to avoid build errors if API is not reachable during build (static generation)
 ENV NEXT_PUBLIC_MOCK_MODE=false

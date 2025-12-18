@@ -8,6 +8,27 @@ x-logging: &default-logging
     compress: "true"
 
 services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
+      - NEXT_PUBLIC_MOCK_MODE=false
+      - NODE_ENV=production
+    expose:
+      - "3000"
+    depends_on:
+      devgodzilla-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/console"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -18,6 +39,7 @@ services:
     depends_on:
       - devgodzilla-api
       - windmill
+      - frontend
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
       interval: 10s
@@ -46,10 +68,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     command: ["uvicorn", "devgodzilla.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
       - .:/app  # Hot, live reload for development
       - /var/run/docker.sock:/var/run/docker.sock # For agent execution
+    logging: *default-logging
 
   windmill:
     build:
