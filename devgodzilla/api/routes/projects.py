@@ -236,3 +236,30 @@ def onboard_project(
         discovery_error=discovery_error,
         error=init_result.error,
     )
+
+@router.get("/projects/{project_id}/sprints", response_model=List[schemas.SprintOut])
+def list_project_sprints(
+    project_id: int,
+    status: Optional[str] = None,
+    db: Database = Depends(get_db)
+):
+    """List sprints for a specific project."""
+    return db.list_sprints(project_id=project_id, status=status)
+
+@router.get("/projects/{project_id}/tasks", response_model=List[schemas.AgileTaskOut])
+def list_project_tasks(
+    project_id: int,
+    sprint_id: Optional[int] = None,
+    board_status: Optional[str] = None,
+    assignee: Optional[str] = None,
+    limit: int = 100,
+    db: Database = Depends(get_db)
+):
+    """List tasks for a specific project."""
+    return db.list_tasks(
+        project_id=project_id,
+        sprint_id=sprint_id,
+        board_status=board_status,
+        assignee=assignee,
+        limit=limit
+    )

@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol, Union
 
 from devgodzilla.logging import get_logger
 from devgodzilla.models.domain import (
+    AgileTask,
     Clarification,
     Event,
     FeedbackEvent,
@@ -21,6 +22,7 @@ from devgodzilla.models.domain import (
     Project,
     ProtocolRun,
     RunArtifact,
+    Sprint,
     StepRun,
 )
 
@@ -183,6 +185,54 @@ class DatabaseProtocol(Protocol):
     def list_run_artifacts(self, run_id: str) -> List[RunArtifact]: ...
 
     def get_run_artifact(self, run_id: str, name: str) -> RunArtifact: ...
+
+    # Agile: Sprints
+    def create_sprint(
+        self,
+        project_id: int,
+        name: str,
+        status: str = "planned",
+        goal: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        velocity_planned: Optional[int] = None,
+    ) -> Sprint: ...
+
+    def get_sprint(self, sprint_id: int) -> Sprint: ...
+    def list_sprints(self, project_id: Optional[int] = None, status: Optional[str] = None) -> List[Sprint]: ...
+    def update_sprint(self, sprint_id: int, **kwargs: Any) -> Sprint: ...
+
+    # Agile: Tasks
+    def create_task(
+        self,
+        project_id: int,
+        title: str,
+        task_type: str = "story",
+        priority: str = "medium",
+        board_status: str = "backlog",
+        sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        description: Optional[str] = None,
+        assignee: Optional[str] = None,
+        reporter: Optional[str] = None,
+        story_points: Optional[int] = None,
+        labels: Optional[List[str]] = None,
+        acceptance_criteria: Optional[List[str]] = None,
+        due_date: Optional[str] = None,
+    ) -> AgileTask: ...
+
+    def get_task(self, task_id: int) -> AgileTask: ...
+    def list_tasks(
+        self,
+        project_id: Optional[int] = None,
+        sprint_id: Optional[int] = None,
+        board_status: Optional[str] = None,
+        assignee: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[AgileTask]: ...
+    def update_task(self, task_id: int, **kwargs: Any) -> AgileTask: ...
+
 
 
 class SQLiteDatabase:
@@ -374,6 +424,53 @@ class SQLiteDatabase:
             sha256=row["sha256"] if "sha256" in keys else None,
             bytes=row["bytes"] if "bytes" in keys else None,
             created_at=self._coerce_ts(row["created_at"]),
+        )
+
+    def _row_to_sprint(self, row: sqlite3.Row) -> Sprint:
+        return Sprint(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            goal=row["goal"],
+            status=row["status"],
+            start_date=self._coerce_ts(row["start_date"]) if row["start_date"] else None,
+            end_date=self._coerce_ts(row["end_date"]) if row["end_date"] else None,
+            velocity_planned=row["velocity_planned"],
+            velocity_actual=row["velocity_actual"],
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    def _row_to_agile_task(self, row: sqlite3.Row) -> AgileTask:
+        keys = set(row.keys())
+        labels = self._parse_json(row["labels"] if "labels" in keys else "[]")
+        criteria = self._parse_json(row["acceptance_criteria"] if "acceptance_criteria" in keys else "[]")
+        blocked_by = self._parse_json(row["blocked_by"] if "blocked_by" in keys else "[]")
+        blocks = self._parse_json(row["blocks"] if "blocks" in keys else "[]")
+
+        return AgileTask(
+            id=row["id"],
+            project_id=row["project_id"],
+            sprint_id=row["sprint_id"],
+            protocol_run_id=row["protocol_run_id"],
+            step_run_id=row["step_run_id"],
+            title=row["title"],
+            description=row["description"],
+            task_type=row["task_type"],
+            priority=row["priority"],
+            board_status=row["board_status"],
+            story_points=row["story_points"],
+            assignee=row["assignee"],
+            reporter=row["reporter"],
+            labels=labels if isinstance(labels, list) else [],
+            acceptance_criteria=criteria if isinstance(criteria, list) else [],
+            blocked_by=blocked_by if isinstance(blocked_by, list) else [],
+            blocks=blocks if isinstance(blocks, list) else [],
+            due_date=self._coerce_ts(row["due_date"]) if row["due_date"] else None,
+            started_at=self._coerce_ts(row["started_at"]) if row["started_at"] else None,
+            completed_at=self._coerce_ts(row["completed_at"]) if row["completed_at"] else None,
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
         )
 
     # Project operations
@@ -1341,6 +1438,195 @@ class SQLiteDatabase:
             )
         return self.get_protocol_run(protocol_run_id)
 
+    # Agile: Sprints
+    def create_sprint(
+        self,
+        project_id: int,
+        name: str,
+        status: str = "planned",
+        goal: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        velocity_planned: Optional[int] = None,
+    ) -> Sprint:
+        with self._transaction() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO sprints (
+                    project_id, name, status, goal,
+                    start_date, end_date, velocity_planned
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id, name, status, goal,
+                    start_date, end_date, velocity_planned,
+                ),
+            )
+            sprint_id = cur.lastrowid
+        return self.get_sprint(sprint_id)
+
+    def get_sprint(self, sprint_id: int) -> Sprint:
+        row = self._fetchone("SELECT * FROM sprints WHERE id = ?", (sprint_id,))
+        if row is None:
+            raise KeyError(f"Sprint {sprint_id} not found")
+        return self._row_to_sprint(row)
+
+    def list_sprints(
+        self,
+        project_id: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> List[Sprint]:
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
+        if status is not None:
+            where.append("status = ?")
+            params.append(status)
+        
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM sprints {clause} ORDER BY created_at DESC",
+            tuple(params),
+        )
+        return [self._row_to_sprint(row) for row in rows]
+
+    def update_sprint(self, sprint_id: int, **kwargs: Any) -> Sprint:
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        
+        allowed = {"name", "status", "goal", "start_date", "end_date", "velocity_planned", "velocity_actual"}
+        for key, value in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(value)
+        
+        if len(updates) == 1:
+            return self.get_sprint(sprint_id)
+            
+        params.append(sprint_id)
+        with self._transaction() as conn:
+            conn.execute(
+                f"UPDATE sprints SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+        return self.get_sprint(sprint_id)
+
+    # Agile: Tasks
+    def create_task(
+        self,
+        project_id: int,
+        title: str,
+        task_type: str = "story",
+        priority: str = "medium",
+        board_status: str = "backlog",
+        sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        description: Optional[str] = None,
+        assignee: Optional[str] = None,
+        reporter: Optional[str] = None,
+        story_points: Optional[int] = None,
+        labels: Optional[List[str]] = None,
+        acceptance_criteria: Optional[List[str]] = None,
+        due_date: Optional[str] = None,
+    ) -> AgileTask:
+        with self._transaction() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO tasks (
+                    project_id, title, task_type, priority, board_status,
+                    sprint_id, protocol_run_id, step_run_id, description,
+                    assignee, reporter, story_points, labels, acceptance_criteria,
+                    due_date
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id, title, task_type, priority, board_status,
+                    sprint_id, protocol_run_id, step_run_id, description,
+                    assignee, reporter, story_points,
+                    json.dumps(labels or []),
+                    json.dumps(acceptance_criteria or []),
+                    due_date
+                ),
+            )
+            task_id = cur.lastrowid
+        return self.get_task(task_id)
+
+    def get_task(self, task_id: int) -> AgileTask:
+        row = self._fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        if row is None:
+            raise KeyError(f"Task {task_id} not found")
+        return self._row_to_agile_task(row)
+
+    def list_tasks(
+        self,
+        project_id: Optional[int] = None,
+        sprint_id: Optional[int] = None,
+        board_status: Optional[str] = None,
+        assignee: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[AgileTask]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
+        if sprint_id is not None:
+            where.append("sprint_id = ?")
+            params.append(sprint_id)
+        if board_status is not None:
+            where.append("board_status = ?")
+            params.append(board_status)
+        if assignee is not None:
+            where.append("assignee = ?")
+            params.append(assignee)
+            
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM tasks {clause} ORDER BY created_at DESC LIMIT ?",
+            (*params, limit),
+        )
+        return [self._row_to_agile_task(row) for row in rows]
+
+    def update_task(self, task_id: int, **kwargs: Any) -> AgileTask:
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        
+        allowed = {
+            "title", "description", "task_type", "priority", "board_status",
+            "sprint_id", "protocol_run_id", "step_run_id", "story_points",
+            "assignee", "reporter", "labels", "acceptance_criteria",
+            "started_at", "completed_at", "due_date", "blocked_by", "blocks"
+        }
+        
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in ("labels", "acceptance_criteria", "blocked_by", "blocks") and value is not None:
+                updates.append(f"{key} = ?")
+                params.append(json.dumps(value))
+                continue
+            updates.append(f"{key} = ?")
+            params.append(value)
+            
+        if len(updates) == 1:
+            return self.get_task(task_id)
+            
+        params.append(task_id)
+        with self._transaction() as conn:
+            conn.execute(
+                f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+        return self.get_task(task_id)
+
+
+
 
 class PostgresDatabase:
     """
@@ -1529,6 +1815,245 @@ class PostgresDatabase:
             bytes=row.get("bytes"),
             created_at=self._coerce_ts(row["created_at"]),
         )
+
+    def _row_to_sprint(self, row: Dict[str, Any]) -> Sprint:
+        return Sprint(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            goal=row.get("goal"),
+            status=row["status"],
+            start_date=self._coerce_ts(row["start_date"]) if row.get("start_date") else None,
+            end_date=self._coerce_ts(row["end_date"]) if row.get("end_date") else None,
+            velocity_planned=row.get("velocity_planned"),
+            velocity_actual=row.get("velocity_actual"),
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    def _row_to_agile_task(self, row: Dict[str, Any]) -> AgileTask:
+        labels = row.get("labels", []) or []
+        criteria = row.get("acceptance_criteria", []) or []
+        blocked_by = row.get("blocked_by", []) or []
+        blocks = row.get("blocks", []) or []
+
+        return AgileTask(
+            id=row["id"],
+            project_id=row["project_id"],
+            sprint_id=row.get("sprint_id"),
+            protocol_run_id=row.get("protocol_run_id"),
+            step_run_id=row.get("step_run_id"),
+            title=row["title"],
+            description=row.get("description"),
+            task_type=row["task_type"],
+            priority=row["priority"],
+            board_status=row["board_status"],
+            story_points=row.get("story_points"),
+            assignee=row.get("assignee"),
+            reporter=row.get("reporter"),
+            labels=labels if isinstance(labels, list) else [],
+            acceptance_criteria=criteria if isinstance(criteria, list) else [],
+            blocked_by=blocked_by if isinstance(blocked_by, list) else [],
+            blocks=blocks if isinstance(blocks, list) else [],
+            due_date=self._coerce_ts(row["due_date"]) if row.get("due_date") else None,
+            started_at=self._coerce_ts(row["started_at"]) if row.get("started_at") else None,
+            completed_at=self._coerce_ts(row["completed_at"]) if row.get("completed_at") else None,
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    # Agile: Sprints
+    def create_sprint(
+        self,
+        project_id: int,
+        name: str,
+        status: str = "planned",
+        goal: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        velocity_planned: Optional[int] = None,
+    ) -> Sprint:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO sprints (
+                        project_id, name, status, goal,
+                        start_date, end_date, velocity_planned
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        project_id, name, status, goal,
+                        start_date, end_date, velocity_planned,
+                    ),
+                )
+                sprint_id = cur.fetchone()["id"]
+        return self.get_sprint(sprint_id)
+
+    def get_sprint(self, sprint_id: int) -> Sprint:
+        row = self._fetchone("SELECT * FROM sprints WHERE id = %s", (sprint_id,))
+        if row is None:
+            raise KeyError(f"Sprint {sprint_id} not found")
+        return self._row_to_sprint(row)
+
+    def list_sprints(
+        self,
+        project_id: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> List[Sprint]:
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = %s")
+            params.append(project_id)
+        if status is not None:
+            where.append("status = %s")
+            params.append(status)
+        
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM sprints {clause} ORDER BY created_at DESC",
+            tuple(params),
+        )
+        return [self._row_to_sprint(row) for row in rows]
+
+    def update_sprint(self, sprint_id: int, **kwargs: Any) -> Sprint:
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        
+        allowed = {"name", "status", "goal", "start_date", "end_date", "velocity_planned", "velocity_actual"}
+        for key, value in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = %s")
+                params.append(value)
+        
+        if len(updates) == 1:
+            return self.get_sprint(sprint_id)
+            
+        params.append(sprint_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE sprints SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_sprint(sprint_id)
+
+    # Agile: Tasks
+    def create_task(
+        self,
+        project_id: int,
+        title: str,
+        task_type: str = "story",
+        priority: str = "medium",
+        board_status: str = "backlog",
+        sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        description: Optional[str] = None,
+        assignee: Optional[str] = None,
+        reporter: Optional[str] = None,
+        story_points: Optional[int] = None,
+        labels: Optional[List[str]] = None,
+        acceptance_criteria: Optional[List[str]] = None,
+        due_date: Optional[str] = None,
+    ) -> AgileTask:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tasks (
+                        project_id, title, task_type, priority, board_status,
+                        sprint_id, protocol_run_id, step_run_id, description,
+                        assignee, reporter, story_points, labels, acceptance_criteria,
+                        due_date
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        project_id, title, task_type, priority, board_status,
+                        sprint_id, protocol_run_id, step_run_id, description,
+                        assignee, reporter, story_points,
+                        json.dumps(labels or []),
+                        json.dumps(acceptance_criteria or []),
+                        due_date
+                    ),
+                )
+                task_id = cur.fetchone()["id"]
+        return self.get_task(task_id)
+
+    def get_task(self, task_id: int) -> AgileTask:
+        row = self._fetchone("SELECT * FROM tasks WHERE id = %s", (task_id,))
+        if row is None:
+            raise KeyError(f"Task {task_id} not found")
+        return self._row_to_agile_task(row)
+
+    def list_tasks(
+        self,
+        project_id: Optional[int] = None,
+        sprint_id: Optional[int] = None,
+        board_status: Optional[str] = None,
+        assignee: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[AgileTask]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = %s")
+            params.append(project_id)
+        if sprint_id is not None:
+            where.append("sprint_id = %s")
+            params.append(sprint_id)
+        if board_status is not None:
+            where.append("board_status = %s")
+            params.append(board_status)
+        if assignee is not None:
+            where.append("assignee = %s")
+            params.append(assignee)
+            
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM tasks {clause} ORDER BY created_at DESC LIMIT %s",
+            (*params, limit),
+        )
+        return [self._row_to_agile_task(row) for row in rows]
+
+    def update_task(self, task_id: int, **kwargs: Any) -> AgileTask:
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        
+        allowed = {
+            "title", "description", "task_type", "priority", "board_status",
+            "sprint_id", "protocol_run_id", "step_run_id", "story_points",
+            "assignee", "reporter", "labels", "acceptance_criteria",
+            "started_at", "completed_at", "due_date", "blocked_by", "blocks"
+        }
+        
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in ("labels", "acceptance_criteria", "blocked_by", "blocks") and value is not None:
+                updates.append(f"{key} = %s")
+                params.append(json.dumps(value))
+                continue
+            updates.append(f"{key} = %s")
+            params.append(value)
+            
+        if len(updates) == 1:
+            return self.get_task(task_id)
+            
+        params.append(task_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE tasks SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_task(task_id)
 
     # Project operations (PostgreSQL uses %s instead of ?)
     def create_project(

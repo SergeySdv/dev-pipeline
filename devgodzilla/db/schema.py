@@ -172,6 +172,47 @@ CREATE TABLE IF NOT EXISTS feedback_events (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_events_protocol ON feedback_events(protocol_run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS sprints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    goal TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    start_date DATETIME,
+    end_date DATETIME,
+    velocity_planned INTEGER,
+    velocity_actual INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    sprint_id INTEGER REFERENCES sprints(id),
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    step_run_id INTEGER REFERENCES step_runs(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    task_type TEXT NOT NULL DEFAULT 'story',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    board_status TEXT NOT NULL DEFAULT 'backlog',
+    story_points INTEGER,
+    assignee TEXT,
+    reporter TEXT,
+    labels TEXT DEFAULT '[]',
+    acceptance_criteria TEXT DEFAULT '[]',
+    blocked_by TEXT DEFAULT '[]',
+    blocks TEXT DEFAULT '[]',
+    due_date DATETIME,
+    started_at DATETIME,
+    completed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, board_status);
+CREATE INDEX IF NOT EXISTS idx_tasks_sprint ON tasks(sprint_id);
 """
 
 SCHEMA_POSTGRES = """
@@ -341,4 +382,45 @@ CREATE TABLE IF NOT EXISTS feedback_events (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_events_protocol ON feedback_events(protocol_run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS sprints (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    goal TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    start_date TIMESTAMP,
+    end_date TIMESTAMP,
+    velocity_planned INTEGER,
+    velocity_actual INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    sprint_id INTEGER REFERENCES sprints(id),
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    step_run_id INTEGER REFERENCES step_runs(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    task_type TEXT NOT NULL DEFAULT 'story',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    board_status TEXT NOT NULL DEFAULT 'backlog',
+    story_points INTEGER,
+    assignee TEXT,
+    reporter TEXT,
+    labels JSONB DEFAULT '[]',
+    acceptance_criteria JSONB DEFAULT '[]',
+    blocked_by JSONB DEFAULT '[]',
+    blocks JSONB DEFAULT '[]',
+    due_date TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, board_status);
+CREATE INDEX IF NOT EXISTS idx_tasks_sprint ON tasks(sprint_id);
 """

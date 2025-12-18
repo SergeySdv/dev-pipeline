@@ -24,6 +24,20 @@ services:
       timeout: 3s
       retries: 10
 
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://devgodzilla-api:8000
+      - NEXT_PUBLIC_MOCK_MODE=false
+    depends_on:
+      - devgodzilla-api
+
   devgodzilla-api:
     build:
       context: .

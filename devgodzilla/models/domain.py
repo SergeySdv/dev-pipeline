@@ -304,3 +304,46 @@ class AgentConfig:
     sandbox: Optional[str] = None
     command_dir: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class Sprint:
+    """An agile sprint for project management."""
+    id: int
+    project_id: int
+    name: str
+    status: str
+    created_at: str
+    updated_at: str
+    goal: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    velocity_planned: Optional[int] = None
+    velocity_actual: Optional[int] = None
+
+
+@dataclass
+class AgileTask:
+    """An agile task (story, bug, etc.) for tracking work."""
+    id: int
+    project_id: int
+    title: str
+    task_type: str
+    priority: str
+    board_status: str
+    created_at: str
+    updated_at: str
+    sprint_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    description: Optional[str] = None
+    story_points: Optional[int] = None
+    assignee: Optional[str] = None
+    reporter: Optional[str] = None
+    labels: List[str] = field(default_factory=list)
+    acceptance_criteria: List[str] = field(default_factory=list)
+    blocked_by: List[int] = field(default_factory=list)
+    blocks: List[int] = field(default_factory=list)
+    due_date: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None

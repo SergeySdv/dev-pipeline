@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from devgodzilla.api import schemas
-from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit
+from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit, sprints, tasks
 from devgodzilla.api.routes import metrics, webhooks, events
 from devgodzilla.api.routes import windmill as windmill_routes
 from devgodzilla.api.routes import runs as runs_routes
@@ -46,6 +46,8 @@ app.include_router(events.router, dependencies=auth_deps)  # /events
 app.include_router(windmill_routes.router, dependencies=auth_deps)  # /flows, /jobs (Windmill)
 app.include_router(runs_routes.router, dependencies=auth_deps)  # /runs (Job runs)
 app.include_router(project_speckit_routes.router, dependencies=auth_deps)  # /projects/{id}/speckit/*
+app.include_router(sprints.router, tags=["Sprints"], dependencies=auth_deps)
+app.include_router(tasks.router, tags=["Tasks"], dependencies=auth_deps)
 
 
 @app.on_event("startup")

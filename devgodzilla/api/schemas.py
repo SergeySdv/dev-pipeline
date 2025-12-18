@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -324,3 +325,90 @@ class FeedbackEventOut(BaseModel):
 
 class FeedbackListOut(BaseModel):
     events: List[FeedbackEventOut] = Field(default_factory=list)
+
+# =============================================================================
+# Agile Models
+# =============================================================================
+
+class SprintCreate(BaseModel):
+    project_id: int
+    name: str
+    goal: Optional[str] = None
+    status: str = "planned"
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    velocity_planned: Optional[int] = None
+
+class SprintUpdate(BaseModel):
+    name: Optional[str] = None
+    goal: Optional[str] = None
+    status: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    velocity_planned: Optional[int] = None
+    velocity_actual: Optional[int] = None
+
+class SprintOut(APIModel):
+    id: int
+    project_id: int
+    name: str
+    goal: Optional[str] = None
+    status: str
+    start_date: Optional[Any] = None
+    end_date: Optional[Any] = None
+    velocity_planned: Optional[int] = None
+    velocity_actual: Optional[int] = None
+    created_at: Any
+    updated_at: Any
+
+class AgileTaskCreate(BaseModel):
+    project_id: int
+    title: str
+    task_type: str = "story"
+    priority: str = "medium"
+    board_status: str = "backlog"
+    sprint_id: Optional[int] = None
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    story_points: Optional[int] = None
+    due_date: Optional[datetime] = None
+    labels: List[str] = Field(default_factory=list)
+    acceptance_criteria: List[str] = Field(default_factory=list)
+
+class AgileTaskUpdate(BaseModel):
+    title: Optional[str] = None
+    task_type: Optional[str] = None
+    priority: Optional[str] = None
+    board_status: Optional[str] = None
+    sprint_id: Optional[int] = None
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    story_points: Optional[int] = None
+    due_date: Optional[datetime] = None
+    labels: Optional[List[str]] = None
+    acceptance_criteria: Optional[List[str]] = None
+    blocked_by: Optional[List[int]] = None
+
+class AgileTaskOut(APIModel):
+    id: int
+    project_id: int
+    sprint_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    task_type: str
+    priority: str
+    board_status: str
+    story_points: Optional[int] = None
+    assignee: Optional[str] = None
+    reporter: Optional[str] = None
+    labels: List[str] = Field(default_factory=list)
+    acceptance_criteria: List[str] = Field(default_factory=list)
+    blocked_by: List[int] = Field(default_factory=list)
+    blocks: List[int] = Field(default_factory=list)
+    due_date: Optional[Any] = None
+    started_at: Optional[Any] = None
+    completed_at: Optional[Any] = None
+    created_at: Any
+    updated_at: Any

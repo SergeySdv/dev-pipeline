@@ -1,0 +1,82 @@
+"use client"
+
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Separator } from "@/components/ui/separator"
+import { Command } from "lucide-react"
+
+interface KeyboardShortcutsProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+const shortcuts = [
+  {
+    category: "Navigation",
+    items: [
+      { keys: ["⌘", "K"], description: "Open command palette" },
+      { keys: ["G", "P"], description: "Go to Projects" },
+      { keys: ["G", "R"], description: "Go to Runs" },
+      { keys: ["G", "O"], description: "Go to Operations" },
+      { keys: ["G", "S"], description: "Go to Settings" },
+    ],
+  },
+  {
+    category: "Actions",
+    items: [
+      { keys: ["C"], description: "Create new project" },
+      { keys: ["N"], description: "Create new protocol" },
+      { keys: ["/"], description: "Focus search" },
+      { keys: ["?"], description: "Show keyboard shortcuts" },
+    ],
+  },
+  {
+    category: "General",
+    items: [
+      { keys: ["Esc"], description: "Close dialog or modal" },
+      { keys: ["⌘", "Enter"], description: "Submit form" },
+      { keys: ["Tab"], description: "Navigate between fields" },
+    ],
+  },
+]
+
+export function KeyboardShortcuts({ open, onOpenChange }: KeyboardShortcutsProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Command className="h-5 w-5" />
+            Keyboard Shortcuts
+          </DialogTitle>
+          <DialogDescription>Quick reference for navigating TasksGodzilla Console</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-6 py-4">
+          {shortcuts.map((section) => (
+            <div key={section.category}>
+              <h3 className="text-sm font-semibold mb-3">{section.category}</h3>
+              <div className="space-y-2">
+                {section.items.map((item, index) => (
+                  <div key={index} className="flex items-center justify-between py-2 text-sm">
+                    <span className="text-muted-foreground">{item.description}</span>
+                    <div className="flex gap-1">
+                      {item.keys.map((key, keyIndex) => (
+                        <kbd
+                          key={keyIndex}
+                          className="pointer-events-none inline-flex h-6 select-none items-center gap-1 rounded border bg-muted px-2 font-mono text-xs font-medium text-muted-foreground"
+                        >
+                          {key}
+                        </kbd>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {section.category !== shortcuts[shortcuts.length - 1].category && <Separator className="mt-4" />}
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
