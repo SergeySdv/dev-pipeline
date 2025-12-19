@@ -1,7 +1,7 @@
 import useSWR, { mutate } from "swr"
 import { apiClient } from "../client"
 import { queryKeys } from "../query-keys"
-import type { Sprint, SprintCreate, AgileTask, AgileTaskCreate, AgileTaskUpdate, SprintMetrics } from "../types"
+import type { Sprint, SprintCreate, AgileTask, AgileTaskCreate, AgileTaskUpdate, SprintMetrics, SyncResult } from "../types"
 export function useSprints(projectId: number) {
   return useSWR<Sprint[]>(queryKeys.sprints.byProject(projectId), async () => {
     return apiClient.get<Sprint[]>(`/projects/${projectId}/sprints`)
@@ -72,6 +72,20 @@ export function useCreateSprint() {
     mutateAsync: async (projectId: number, data: SprintCreate) => {
       const result = await apiClient.post<Sprint>(`/sprints`, { ...data, project_id: projectId })
       mutate(queryKeys.sprints.byProject(projectId))
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useImportTasksToSprint(projectId: number) {
+  return {
+    mutateAsync: async (sprintId: number, data: { spec_path: string; overwrite_existing?: boolean }) => {
+      const result = await apiClient.post<SyncResult>(`/sprints/${sprintId}/actions/import-tasks`, data)
+      mutate(queryKeys.tasks.byProject(projectId, sprintId))
+      mutate(queryKeys.tasks.all)
+      mutate(queryKeys.sprints.byProject(projectId))
+      mutate(queryKeys.sprints.all)
       return result
     },
     isPending: false,

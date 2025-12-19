@@ -19,6 +19,9 @@ export interface SpecKitStatus {
 export interface SpecListItem {
     name: string
     path: string
+    spec_path?: string | null
+    plan_path?: string | null
+    tasks_path?: string | null
     has_spec: boolean
     has_plan: boolean
     has_tasks: boolean

@@ -432,6 +432,9 @@ class SpecificationService(Service):
                 specs.append({
                     "name": spec_folder.name,
                     "path": str(spec_folder),
+                    "spec_path": str(spec_file) if spec_file.exists() else None,
+                    "plan_path": str(plan_file) if plan_file.exists() else None,
+                    "tasks_path": str(tasks_file) if tasks_file.exists() else None,
                     "has_spec": spec_file.exists(),
                     "has_plan": plan_file.exists(),
                     "has_tasks": tasks_file.exists(),

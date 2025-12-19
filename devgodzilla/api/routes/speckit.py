@@ -78,6 +78,9 @@ class ConstitutionRequest(BaseModel):
 class SpecListItem(BaseModel):
     name: str
     path: str
+    spec_path: Optional[str] = None
+    plan_path: Optional[str] = None
+    tasks_path: Optional[str] = None
     has_spec: bool
     has_plan: bool
     has_tasks: bool
@@ -512,4 +515,3 @@ def run_workflow(
         parallelizable_count=parallelizable_count,
         steps=steps,
     )
-

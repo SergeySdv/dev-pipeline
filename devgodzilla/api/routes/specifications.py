@@ -6,6 +6,7 @@ Enhanced with comprehensive filtering support.
 """
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timedelta
+from pathlib import Path
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -152,7 +153,16 @@ def list_specifications(
             continue
             
         try:
-            specs = service.list_specs(project.id)
+            specs = service.list_specs(project.local_path)
+            project_tasks = db.list_tasks(project_id=project.id, limit=500)
+            project_sprints = {sprint.id: sprint for sprint in db.list_sprints(project_id=project.id)}
+            spec_task_map: Dict[str, List[Any]] = {}
+            for task in project_tasks:
+                spec_label = next((label for label in task.labels if label.startswith("spec:")), None)
+                if not spec_label:
+                    continue
+                spec_slug = spec_label.split(":", 1)[1]
+                spec_task_map.setdefault(spec_slug, []).append(task)
             for spec in specs:
                 spec_id += 1
                 
@@ -192,8 +202,10 @@ def list_specifications(
                 # Get spec file modification time for date filtering
                 spec_created_at = None
                 try:
-                    from pathlib import Path
-                    spec_file = Path(project.local_path) / spec.path / "spec.md"
+                    spec_dir = Path(project.local_path) / spec.path
+                    spec_file = spec_dir / "feature-spec.md"
+                    if not spec_file.exists():
+                        spec_file = spec_dir / "spec.md"
                     if spec_file.exists():
                         stat = spec_file.stat()
                         spec_created_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
@@ -219,14 +231,28 @@ def list_specifications(
                     except ValueError:
                         pass
                 
-                # TODO: Check sprint linking when sprint metadata is stored
+                spec_slug = Path(spec.path).name
+                spec_tasks = spec_task_map.get(spec_slug, [])
+                linked_tasks = len(spec_tasks)
+                completed_tasks = sum(1 for t in spec_tasks if t.board_status == "done")
+                story_points = sum(t.story_points or 0 for t in spec_tasks)
+                spec_sprint_ids = {t.sprint_id for t in spec_tasks if t.sprint_id}
                 spec_sprint_id = None
                 spec_sprint_name = None
-                
-                # Apply sprint_id filter (when spec-sprint linking is implemented)
-                if sprint_id is not None and spec_sprint_id != sprint_id:
-                    # For now, skip sprint filtering until linking is implemented
-                    pass
+
+                if len(spec_sprint_ids) == 1:
+                    spec_sprint_id = next(iter(spec_sprint_ids))
+                    sprint = project_sprints.get(spec_sprint_id)
+                    spec_sprint_name = sprint.name if sprint else None
+                elif len(spec_sprint_ids) > 1:
+                    spec_sprint_name = "Multiple"
+
+                if sprint_id is not None:
+                    if sprint_id not in spec_sprint_ids:
+                        continue
+                    spec_sprint_id = sprint_id
+                    sprint = project_sprints.get(spec_sprint_id)
+                    spec_sprint_name = sprint.name if sprint else spec_sprint_name
                 
                 all_specifications.append(SpecificationOut(
                     id=spec_id,
@@ -237,6 +263,9 @@ def list_specifications(
                     status=spec_status,
                     created_at=spec_created_at,
                     tasks_generated=spec.has_tasks,
+                    linked_tasks=linked_tasks,
+                    completed_tasks=completed_tasks,
+                    story_points=story_points,
                     has_plan=spec.has_plan,
                     has_tasks=spec.has_tasks,
                     sprint_id=spec_sprint_id,
@@ -297,15 +326,16 @@ def get_specification_content(
     if not project.local_path:
         raise HTTPException(status_code=400, detail="Project has no local path")
     
-    from pathlib import Path
     spec_dir = Path(project.local_path) / spec.path
     
     spec_content = None
     plan_content = None
     tasks_content = None
     
-    # Read spec.md
-    spec_file = spec_dir / "spec.md"
+    # Read feature-spec.md (fallback to spec.md)
+    spec_file = spec_dir / "feature-spec.md"
+    if not spec_file.exists():
+        spec_file = spec_dir / "spec.md"
     if spec_file.exists():
         try:
             spec_content = spec_file.read_text()

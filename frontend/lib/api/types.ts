@@ -456,6 +456,13 @@ export interface SprintMetrics {
   velocity_trend: number[]
 }
 
+export interface SyncResult {
+  sprint_id: number
+  protocol_run_id: number
+  tasks_synced: number
+  task_ids: number[]
+}
+
 export interface BurndownPoint {
   date: string
   ideal: number

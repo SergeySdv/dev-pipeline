@@ -7,6 +7,7 @@ Synchronizes SpecKit markdown task files with database AgileTask records.
 import re
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from devgodzilla.db.database import Database
@@ -48,6 +49,11 @@ class TaskSyncService:
             content = f.read()
 
         parsed_tasks = self.parse_task_markdown(content)
+        spec_label = None
+        try:
+            spec_label = f"spec:{Path(spec_path).parent.name}"
+        except Exception:
+            spec_label = None
 
         if overwrite_existing:
             # Delete existing tasks in the sprint
@@ -71,6 +77,7 @@ class TaskSyncService:
                 if any(t.title == item["title"] for t in existing):
                     continue
 
+            labels = [label for label in [spec_label, "speckit"] if label]
             task = self.db.create_task(
                 project_id=project_id,
                 sprint_id=sprint_id,
@@ -80,6 +87,7 @@ class TaskSyncService:
                 priority="medium",
                 board_status=item["board_status"],
                 story_points=item.get("story_points"),
+                labels=labels,
             )
             created_tasks.append(task)
 

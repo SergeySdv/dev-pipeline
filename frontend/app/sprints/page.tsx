@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useAllSprints, useAllTasks, useUpdateTask, useCreateTask } from "@/lib/api"
+import { useAllSprints, useAllTasks, useUpdateTask, useCreateTask, useProjects } from "@/lib/api"
 import { SprintBoard } from "@/components/agile/sprint-board"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -29,6 +29,7 @@ import type { TaskBoardStatus, Sprint } from "@/lib/api/types"
 export default function SprintsPage() {
   const { data: sprints, isLoading: sprintsLoading } = useAllSprints()
   const { data: tasks, isLoading: tasksLoading, mutate: mutateTasks } = useAllTasks()
+  const { data: projects } = useProjects()
   const updateTask = useUpdateTask()
   const createTask = useCreateTask()
   const [viewMode, setViewMode] = useState<"board" | "list">("board")
@@ -56,6 +57,7 @@ export default function SprintsPage() {
     }) || []
 
   const projectIds = [...new Set(tasks?.map((t) => t.project_id) || [])]
+  const projectNameById = new Map(projects?.map((project) => [project.id, project.name]) || [])
 
   const handleTaskUpdate = async (taskId: number, data: { board_status: TaskBoardStatus }) => {
     await updateTask.mutateAsync(taskId, data)
@@ -192,7 +194,7 @@ export default function SprintsPage() {
                   <SelectItem value="all">All Projects</SelectItem>
                   {projectIds.map((id) => (
                     <SelectItem key={id} value={id.toString()}>
-                      Project #{id}
+                      {projectNameById.get(id) || `Project #${id}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -237,7 +239,12 @@ export default function SprintsPage() {
                 </h3>
                 <div className="space-y-3">
                   {activeSprints.map((sprint) => (
-                    <SprintCard key={sprint.id} sprint={sprint} tasks={tasks || []} />
+                    <SprintCard
+                      key={sprint.id}
+                      sprint={sprint}
+                      tasks={tasks || []}
+                      projectName={projectNameById.get(sprint.project_id)}
+                    />
                   ))}
                   {activeSprints.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-8">No active sprints</p>
@@ -252,7 +259,12 @@ export default function SprintsPage() {
                 </h3>
                 <div className="space-y-3">
                   {planningSprints.map((sprint) => (
-                    <SprintCard key={sprint.id} sprint={sprint} tasks={tasks || []} />
+                    <SprintCard
+                      key={sprint.id}
+                      sprint={sprint}
+                      tasks={tasks || []}
+                      projectName={projectNameById.get(sprint.project_id)}
+                    />
                   ))}
                   {planningSprints.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-8">No sprints in planning</p>
@@ -267,7 +279,12 @@ export default function SprintsPage() {
                 </h3>
                 <div className="space-y-3">
                   {completedSprints.slice(0, 5).map((sprint) => (
-                    <SprintCard key={sprint.id} sprint={sprint} tasks={tasks || []} />
+                    <SprintCard
+                      key={sprint.id}
+                      sprint={sprint}
+                      tasks={tasks || []}
+                      projectName={projectNameById.get(sprint.project_id)}
+                    />
                   ))}
                   {completedSprints.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-8">No completed sprints</p>
@@ -334,7 +351,15 @@ export default function SprintsPage() {
   )
 }
 
-function SprintCard({ sprint, tasks }: { sprint: Sprint; tasks: any[] }) {
+function SprintCard({
+  sprint,
+  tasks,
+  projectName,
+}: {
+  sprint: Sprint
+  tasks: any[]
+  projectName?: string
+}) {
   const sprintTasks = tasks.filter((t) => t.sprint_id === sprint.id)
   const totalPoints = sprintTasks.reduce((acc, t) => acc + (t.story_points || 0), 0)
   const completedPoints = sprintTasks
@@ -348,7 +373,9 @@ function SprintCard({ sprint, tasks }: { sprint: Sprint; tasks: any[] }) {
         <div className="flex items-start justify-between mb-2">
           <div>
             <h4 className="font-medium text-sm">{sprint.name}</h4>
-            <p className="text-xs text-muted-foreground">Project #{sprint.project_id}</p>
+            <p className="text-xs text-muted-foreground">
+              {projectName ? projectName : `Project #${sprint.project_id}`}
+            </p>
           </div>
           <Badge
             variant={sprint.status === "active" ? "default" : sprint.status === "completed" ? "secondary" : "outline"}
