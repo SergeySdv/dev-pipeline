@@ -286,25 +286,22 @@ def _calculate_velocity_trend(db: Database, project_id: int, current_sprint_id: 
     # Get completed sprints from the same project (excluding current sprint)
     all_sprints = db.list_sprints(project_id=project_id)
     completed_sprints = [
-        s for s in all_sprints 
+        s for s in all_sprints
         if s.id != current_sprint_id and s.status == "completed"
     ]
-    
-    # Sort by creation date (most recent first)
-    completed_sprints.sort(key=lambda s: s.created_at, reverse=True)
-    
-    # Calculate velocity for last 5 sprints
+
+    # Sort oldest to newest with deterministic tie-breaking.
+    completed_sprints.sort(key=lambda s: (s.created_at or "", s.id))
+
+    # Calculate velocity for up to the first 5 completed sprints.
     velocity_trend = []
     for sprint in completed_sprints[:5]:
         tasks = db.list_tasks(sprint_id=sprint.id)
         completed_points = sum(t.story_points or 0 for t in tasks if t.board_status == "done")
         velocity_trend.append(completed_points)
-    
-    # Reverse to show oldest to newest
-    velocity_trend.reverse()
-    
-    # If we have fewer than 5 sprints, pad with zeros
+
+    # If we have fewer than 5 sprints, pad with zeros on the left.
     while len(velocity_trend) < 5:
         velocity_trend.insert(0, 0)
-    
+
     return velocity_trend
