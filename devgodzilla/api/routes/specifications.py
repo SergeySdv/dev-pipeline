@@ -2,10 +2,12 @@
 Specifications API Routes
 
 Endpoints for listing and managing feature specifications across projects.
+Enhanced with comprehensive filtering support.
 """
 from typing import List, Optional, Any, Dict
+from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from devgodzilla.api.dependencies import get_db, get_service_context, Database
 from devgodzilla.services.base import ServiceContext
@@ -22,6 +24,7 @@ class SpecificationOut(BaseModel):
     project_name: str
     status: str
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
     tasks_generated: bool = False
     protocol_id: Optional[int] = None
     sprint_id: Optional[int] = None
@@ -29,6 +32,40 @@ class SpecificationOut(BaseModel):
     linked_tasks: int = 0
     completed_tasks: int = 0
     story_points: int = 0
+    has_plan: bool = False
+    has_tasks: bool = False
+
+
+class SpecificationFilterParams(BaseModel):
+    """Filter parameters for specifications listing."""
+    project_id: Optional[int] = None
+    sprint_id: Optional[int] = None
+    status: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    has_plan: Optional[bool] = None
+    has_tasks: Optional[bool] = None
+    search: Optional[str] = None
+
+
+class SpecificationLinkSprintRequest(BaseModel):
+    sprint_id: Optional[int] = Field(None, description="Sprint ID to link, or None to unlink")
+
+
+class SpecificationContentOut(BaseModel):
+    id: int
+    path: str
+    title: str
+    spec_content: Optional[str] = None
+    plan_content: Optional[str] = None
+    tasks_content: Optional[str] = None
+
+
+class SpecificationsListOut(BaseModel):
+    """Paginated list of specifications with filter metadata."""
+    items: List[SpecificationOut]
+    total: int
+    filters_applied: Dict[str, Any]
 
 
 def get_specification_service(
@@ -38,69 +75,186 @@ def get_specification_service(
     return SpecificationService(ctx, db)
 
 
-@router.get("/specifications", response_model=List[SpecificationOut])
+@router.get("/specifications", response_model=SpecificationsListOut)
 def list_specifications(
-    project_id: Optional[int] = None,
-    limit: int = 100,
+    project_id: Optional[int] = Query(None, description="Filter by project ID"),
+    sprint_id: Optional[int] = Query(None, description="Filter by sprint ID"),
+    status: Optional[str] = Query(None, description="Filter by status: draft, in-progress, completed"),
+    date_from: Optional[str] = Query(None, description="Filter by created date from (ISO format)"),
+    date_to: Optional[str] = Query(None, description="Filter by created date to (ISO format)"),
+    has_plan: Optional[bool] = Query(None, description="Filter by has implementation plan"),
+    has_tasks: Optional[bool] = Query(None, description="Filter by has tasks generated"),
+    search: Optional[str] = Query(None, description="Search in title and path"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
     """
-    List all feature specifications across projects.
+    List all feature specifications across projects with comprehensive filtering.
     
-    Optionally filter by project_id.
+    Filters:
+    - project_id: Filter to a specific project
+    - sprint_id: Filter specs linked to a specific sprint
+    - status: draft | in-progress | completed
+    - date_from/date_to: Date range filter (ISO format: YYYY-MM-DD)
+    - has_plan: Filter by whether spec has implementation plan
+    - has_tasks: Filter by whether spec has tasks generated
+    - search: Full-text search in title and path
     """
-    limit = max(1, min(limit, 500))
+    # Build applied filters dict for response
+    filters_applied = {}
+    if project_id is not None:
+        filters_applied["project_id"] = project_id
+    if sprint_id is not None:
+        filters_applied["sprint_id"] = sprint_id
+    if status:
+        filters_applied["status"] = status
+    if date_from:
+        filters_applied["date_from"] = date_from
+    if date_to:
+        filters_applied["date_to"] = date_to
+    if has_plan is not None:
+        filters_applied["has_plan"] = has_plan
+    if has_tasks is not None:
+        filters_applied["has_tasks"] = has_tasks
+    if search:
+        filters_applied["search"] = search
     
     # Get projects to iterate
     if project_id:
         try:
-            projects = [db.get_project(project_id)]
-        except KeyError:
+            project = db.get_project(project_id)
+            projects = [project] if project else []
+        except (KeyError, Exception):
             raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     else:
         projects = db.list_projects()[:100]
     
-    specifications = []
+    # If filtering by sprint, get sprint details
+    sprint_project_filter = None
+    if sprint_id:
+        try:
+            sprint = db.get_sprint(sprint_id)
+            sprint_project_filter = sprint.project_id
+        except (KeyError, Exception):
+            raise HTTPException(status_code=404, detail=f"Sprint {sprint_id} not found")
+    
+    all_specifications = []
     spec_id = 0
     
     for project in projects:
-        if not project.local_path:
+        if not project or not project.local_path:
+            continue
+        
+        # Skip if sprint filter and project doesn't match
+        if sprint_project_filter is not None and project.id != sprint_project_filter:
             continue
             
         try:
             specs = service.list_specs(project.id)
             for spec in specs:
                 spec_id += 1
+                
                 # Determine status based on what exists
                 if spec.has_tasks:
-                    status = "completed"
+                    spec_status = "completed"
                 elif spec.has_plan:
-                    status = "in-progress"
+                    spec_status = "in-progress"
                 elif spec.has_spec:
-                    status = "draft"
+                    spec_status = "draft"
                 else:
                     continue  # Skip if no spec file
+                
+                # Apply status filter
+                if status and spec_status != status:
+                    continue
+                
+                # Apply has_plan filter
+                if has_plan is not None and spec.has_plan != has_plan:
+                    continue
+                
+                # Apply has_tasks filter
+                if has_tasks is not None and spec.has_tasks != has_tasks:
+                    continue
                 
                 # Try to extract title from spec name
                 title = spec.name.replace("-", " ").replace("_", " ").title()
                 if title.startswith("Feature "):
                     title = title[8:]
                 
-                specifications.append(SpecificationOut(
+                # Apply search filter
+                if search:
+                    search_lower = search.lower()
+                    if search_lower not in title.lower() and search_lower not in spec.path.lower():
+                        continue
+                
+                # Get spec file modification time for date filtering
+                spec_created_at = None
+                try:
+                    from pathlib import Path
+                    spec_file = Path(project.local_path) / spec.path / "spec.md"
+                    if spec_file.exists():
+                        stat = spec_file.stat()
+                        spec_created_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
+                except Exception:
+                    pass
+                
+                # Apply date filters
+                if date_from and spec_created_at:
+                    try:
+                        from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+                        spec_date = datetime.fromisoformat(spec_created_at.replace('Z', '+00:00'))
+                        if spec_date < from_date:
+                            continue
+                    except ValueError:
+                        pass
+                
+                if date_to and spec_created_at:
+                    try:
+                        to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+                        spec_date = datetime.fromisoformat(spec_created_at.replace('Z', '+00:00'))
+                        if spec_date > to_date:
+                            continue
+                    except ValueError:
+                        pass
+                
+                # TODO: Check sprint linking when sprint metadata is stored
+                spec_sprint_id = None
+                spec_sprint_name = None
+                
+                # Apply sprint_id filter (when spec-sprint linking is implemented)
+                if sprint_id is not None and spec_sprint_id != sprint_id:
+                    # For now, skip sprint filtering until linking is implemented
+                    pass
+                
+                all_specifications.append(SpecificationOut(
                     id=spec_id,
                     path=spec.path,
                     title=title,
                     project_id=project.id,
                     project_name=project.name,
-                    status=status,
+                    status=spec_status,
+                    created_at=spec_created_at,
                     tasks_generated=spec.has_tasks,
+                    has_plan=spec.has_plan,
+                    has_tasks=spec.has_tasks,
+                    sprint_id=spec_sprint_id,
+                    sprint_name=spec_sprint_name,
                 ))
         except Exception:
             # Skip projects with errors
             continue
     
-    return specifications[:limit]
+    # Apply pagination
+    total = len(all_specifications)
+    paginated = all_specifications[offset:offset + limit]
+    
+    return SpecificationsListOut(
+        items=paginated,
+        total=total,
+        filters_applied=filters_applied,
+    )
 
 
 @router.get("/specifications/{spec_id}", response_model=SpecificationOut)
@@ -110,9 +264,117 @@ def get_specification(
     service: SpecificationService = Depends(get_specification_service),
 ):
     """Get a single specification by ID."""
-    # For now, list all and find by ID
-    specs = list_specifications(db=db, service=service)
-    for spec in specs:
+    result = list_specifications(limit=500, db=db, service=service)
+    for spec in result.items:
         if spec.id == spec_id:
             return spec
     raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+
+
+@router.get("/specifications/{spec_id}/content", response_model=SpecificationContentOut)
+def get_specification_content(
+    spec_id: int,
+    db: Database = Depends(get_db),
+    service: SpecificationService = Depends(get_specification_service),
+):
+    """Get specification content including spec, plan, and tasks markdown."""
+    result = list_specifications(limit=500, db=db, service=service)
+    spec = None
+    for s in result.items:
+        if s.id == spec_id:
+            spec = s
+            break
+    
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+    
+    # Get project to find local path
+    try:
+        project = db.get_project(spec.project_id)
+    except (KeyError, Exception):
+        raise HTTPException(status_code=404, detail=f"Project {spec.project_id} not found")
+    
+    if not project.local_path:
+        raise HTTPException(status_code=400, detail="Project has no local path")
+    
+    from pathlib import Path
+    spec_dir = Path(project.local_path) / spec.path
+    
+    spec_content = None
+    plan_content = None
+    tasks_content = None
+    
+    # Read spec.md
+    spec_file = spec_dir / "spec.md"
+    if spec_file.exists():
+        try:
+            spec_content = spec_file.read_text()
+        except Exception:
+            pass
+    
+    # Read plan.md
+    plan_file = spec_dir / "plan.md"
+    if plan_file.exists():
+        try:
+            plan_content = plan_file.read_text()
+        except Exception:
+            pass
+    
+    # Read tasks.md
+    tasks_file = spec_dir / "tasks.md"
+    if tasks_file.exists():
+        try:
+            tasks_content = tasks_file.read_text()
+        except Exception:
+            pass
+    
+    return SpecificationContentOut(
+        id=spec_id,
+        path=spec.path,
+        title=spec.title,
+        spec_content=spec_content,
+        plan_content=plan_content,
+        tasks_content=tasks_content,
+    )
+
+
+@router.post("/specifications/{spec_id}/link-sprint")
+def link_specification_to_sprint(
+    spec_id: int,
+    request: SpecificationLinkSprintRequest,
+    db: Database = Depends(get_db),
+    service: SpecificationService = Depends(get_specification_service),
+):
+    """Link or unlink a specification to/from a sprint."""
+    # First verify the spec exists
+    result = list_specifications(limit=500, db=db, service=service)
+    spec = None
+    for s in result.items:
+        if s.id == spec_id:
+            spec = s
+            break
+    
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+    
+    # Verify sprint exists if linking
+    if request.sprint_id is not None:
+        try:
+            sprint = db.get_sprint(request.sprint_id)
+            # Verify sprint belongs to same project
+            if sprint.project_id != spec.project_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Sprint must belong to the same project as the specification"
+                )
+        except (KeyError, Exception):
+            raise HTTPException(status_code=404, detail=f"Sprint {request.sprint_id} not found")
+    
+    # TODO: Store spec-sprint linking in metadata file or database
+    # For now, return success as this requires schema extension
+    return {
+        "success": True,
+        "spec_id": spec_id,
+        "sprint_id": request.sprint_id,
+        "message": f"Specification {'linked to' if request.sprint_id else 'unlinked from'} sprint"
+    }

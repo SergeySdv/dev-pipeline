@@ -289,3 +289,227 @@ def get_speckit_status(
         "spec_count": len(specs),
         "specs": specs,
     }
+
+
+# =============================================================================
+# Workflow Orchestration
+# =============================================================================
+
+class WorkflowRequest(BaseModel):
+    """Request for full spec→plan→tasks workflow."""
+    project_id: int
+    description: str = Field(..., min_length=10, description="Feature description")
+    feature_name: Optional[str] = Field(None, description="Optional feature name")
+    stop_after: Optional[str] = Field(
+        None,
+        description="Stop workflow after step: 'spec', 'plan', or run full pipeline (None)"
+    )
+    skip_existing: bool = Field(
+        False,
+        description="Skip steps if artifacts already exist"
+    )
+
+
+class WorkflowStepResult(BaseModel):
+    """Result of a single workflow step."""
+    step: str
+    success: bool
+    path: Optional[str] = None
+    error: Optional[str] = None
+    skipped: bool = False
+
+
+class WorkflowResponse(BaseModel):
+    """Response from workflow orchestration."""
+    success: bool
+    spec_path: Optional[str] = None
+    plan_path: Optional[str] = None
+    tasks_path: Optional[str] = None
+    task_count: int = 0
+    parallelizable_count: int = 0
+    steps: List[WorkflowStepResult] = Field(default_factory=list)
+    stopped_after: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/workflow", response_model=WorkflowResponse)
+def run_workflow(
+    request: WorkflowRequest,
+    db: Database = Depends(get_db),
+    service: SpecificationService = Depends(get_specification_service),
+):
+    """
+    Run the full SpecKit workflow: spec → plan → tasks.
+    
+    This endpoint orchestrates the full specification pipeline:
+    1. Generate feature specification from description
+    2. Generate implementation plan from spec
+    3. Generate task list from plan
+    
+    Use `stop_after` to run partial pipelines:
+    - "spec": Only generate the specification
+    - "plan": Generate spec and plan
+    - None: Run the full pipeline (default)
+    """
+    project = db.get_project(request.project_id)
+    if not project or not project.local_path:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    steps: List[WorkflowStepResult] = []
+    spec_path = None
+    plan_path = None
+    tasks_path = None
+    task_count = 0
+    parallelizable_count = 0
+
+    # Step 1: Generate Specification
+    try:
+        spec_result = service.run_specify(
+            project.local_path,
+            request.description,
+            feature_name=request.feature_name,
+            project_id=request.project_id,
+        )
+        
+        if not spec_result.success:
+            steps.append(WorkflowStepResult(
+                step="spec",
+                success=False,
+                error=spec_result.error,
+            ))
+            return WorkflowResponse(
+                success=False,
+                steps=steps,
+                error=f"Specification generation failed: {spec_result.error}",
+            )
+        
+        spec_path = spec_result.spec_path
+        steps.append(WorkflowStepResult(
+            step="spec",
+            success=True,
+            path=spec_path,
+        ))
+        
+        if request.stop_after == "spec":
+            return WorkflowResponse(
+                success=True,
+                spec_path=spec_path,
+                steps=steps,
+                stopped_after="spec",
+            )
+    except Exception as e:
+        steps.append(WorkflowStepResult(
+            step="spec",
+            success=False,
+            error=str(e),
+        ))
+        return WorkflowResponse(
+            success=False,
+            steps=steps,
+            error=f"Specification generation error: {str(e)}",
+        )
+
+    # Step 2: Generate Plan
+    try:
+        plan_result = service.run_plan(
+            project.local_path,
+            spec_path,
+            project_id=request.project_id,
+        )
+        
+        if not plan_result.success:
+            steps.append(WorkflowStepResult(
+                step="plan",
+                success=False,
+                error=plan_result.error,
+            ))
+            return WorkflowResponse(
+                success=False,
+                spec_path=spec_path,
+                steps=steps,
+                error=f"Plan generation failed: {plan_result.error}",
+            )
+        
+        plan_path = plan_result.plan_path
+        steps.append(WorkflowStepResult(
+            step="plan",
+            success=True,
+            path=plan_path,
+        ))
+        
+        if request.stop_after == "plan":
+            return WorkflowResponse(
+                success=True,
+                spec_path=spec_path,
+                plan_path=plan_path,
+                steps=steps,
+                stopped_after="plan",
+            )
+    except Exception as e:
+        steps.append(WorkflowStepResult(
+            step="plan",
+            success=False,
+            error=str(e),
+        ))
+        return WorkflowResponse(
+            success=False,
+            spec_path=spec_path,
+            steps=steps,
+            error=f"Plan generation error: {str(e)}",
+        )
+
+    # Step 3: Generate Tasks
+    try:
+        tasks_result = service.run_tasks(
+            project.local_path,
+            plan_path,
+            project_id=request.project_id,
+        )
+        
+        if not tasks_result.success:
+            steps.append(WorkflowStepResult(
+                step="tasks",
+                success=False,
+                error=tasks_result.error,
+            ))
+            return WorkflowResponse(
+                success=False,
+                spec_path=spec_path,
+                plan_path=plan_path,
+                steps=steps,
+                error=f"Tasks generation failed: {tasks_result.error}",
+            )
+        
+        tasks_path = tasks_result.tasks_path
+        task_count = tasks_result.task_count
+        parallelizable_count = tasks_result.parallelizable_count
+        
+        steps.append(WorkflowStepResult(
+            step="tasks",
+            success=True,
+            path=tasks_path,
+        ))
+    except Exception as e:
+        steps.append(WorkflowStepResult(
+            step="tasks",
+            success=False,
+            error=str(e),
+        ))
+        return WorkflowResponse(
+            success=False,
+            spec_path=spec_path,
+            plan_path=plan_path,
+            steps=steps,
+            error=f"Tasks generation error: {str(e)}",
+        )
+
+    return WorkflowResponse(
+        success=True,
+        spec_path=spec_path,
+        plan_path=plan_path,
+        tasks_path=tasks_path,
+        task_count=task_count,
+        parallelizable_count=parallelizable_count,
+        steps=steps,
+    )
+

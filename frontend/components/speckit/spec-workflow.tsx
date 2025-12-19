@@ -1,0 +1,299 @@
+"use client"
+
+import * as React from "react"
+import Link from "next/link"
+import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+    FileText,
+    ClipboardList,
+    ListTodo,
+    Kanban,
+    CheckCircle2,
+    Circle,
+    ArrowRight,
+    Loader2,
+    Play,
+} from "lucide-react"
+
+export type WorkflowStep = "spec" | "plan" | "tasks" | "sprint"
+export type StepStatus = "pending" | "in-progress" | "completed"
+
+interface SpecWorkflowProps {
+    projectId: number
+    currentStep?: WorkflowStep
+    /** Status for each step */
+    stepStatus?: {
+        spec?: StepStatus
+        plan?: StepStatus
+        tasks?: StepStatus
+        sprint?: StepStatus
+    }
+    /** Show action buttons for next steps */
+    showActions?: boolean
+    /** Compact mode for inline display */
+    compact?: boolean
+    /** Optional spec path for linking */
+    specPath?: string
+    className?: string
+}
+
+const steps: { key: WorkflowStep; label: string; icon: React.ElementType; description: string }[] = [
+    {
+        key: "spec",
+        label: "Specification",
+        icon: FileText,
+        description: "Define feature requirements",
+    },
+    {
+        key: "plan",
+        label: "Implementation Plan",
+        icon: ClipboardList,
+        description: "Design architecture & approach",
+    },
+    {
+        key: "tasks",
+        label: "Task List",
+        icon: ListTodo,
+        description: "Break down into tasks",
+    },
+    {
+        key: "sprint",
+        label: "Sprint",
+        icon: Kanban,
+        description: "Assign to sprint for execution",
+    },
+]
+
+function getStepHref(step: WorkflowStep, projectId: number): string {
+    switch (step) {
+        case "spec":
+            return `/projects/${projectId}/generate-specs`
+        case "plan":
+            return `/projects/${projectId}/design-solution`
+        case "tasks":
+            return `/projects/${projectId}/implement-feature`
+        case "sprint":
+            return `/projects/${projectId}/sprint-board`
+        default:
+            return `/projects/${projectId}`
+    }
+}
+
+function getStatusIcon(status: StepStatus | undefined, isActive: boolean) {
+    switch (status) {
+        case "completed":
+            return <CheckCircle2 className="h-5 w-5 text-green-500" />
+        case "in-progress":
+            return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+        default:
+            return isActive ? (
+                <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center">
+                    <Play className="h-3 w-3 text-primary-foreground" />
+                </div>
+            ) : (
+                <Circle className="h-5 w-5 text-muted-foreground" />
+            )
+    }
+}
+
+function getStatusColor(status: StepStatus | undefined, isActive: boolean): string {
+    if (status === "completed") return "border-green-500 bg-green-500/10"
+    if (status === "in-progress") return "border-blue-500 bg-blue-500/10"
+    if (isActive) return "border-primary bg-primary/10"
+    return "border-muted"
+}
+
+/**
+ * SpecWorkflow - Visual stepper component showing the SpecKit workflow pipeline
+ * 
+ * Shows the 4-step workflow: Specification → Plan → Tasks → Sprint
+ * Each step shows its status and provides navigation to the relevant page.
+ */
+export function SpecWorkflow({
+    projectId,
+    currentStep,
+    stepStatus = {},
+    showActions = true,
+    compact = false,
+    specPath,
+    className,
+}: SpecWorkflowProps) {
+    if (compact) {
+        // Compact inline version for cards/headers
+        return (
+            <div className={cn("flex items-center gap-2", className)}>
+                {steps.map((step, index) => {
+                    const status = stepStatus[step.key]
+                    const isActive = currentStep === step.key
+                    const Icon = step.icon
+
+                    return (
+                        <React.Fragment key={step.key}>
+                            <Link
+                                href={getStepHref(step.key, projectId)}
+                                className={cn(
+                                    "flex items-center gap-1.5 px-2 py-1 rounded-md text-sm transition-colors",
+                                    status === "completed"
+                                        ? "text-green-600 hover:bg-green-500/10"
+                                        : status === "in-progress"
+                                            ? "text-blue-600 hover:bg-blue-500/10"
+                                            : isActive
+                                                ? "text-primary font-medium hover:bg-primary/10"
+                                                : "text-muted-foreground hover:bg-muted"
+                                )}
+                            >
+                                {status === "completed" ? (
+                                    <CheckCircle2 className="h-4 w-4" />
+                                ) : (
+                                    <Icon className="h-4 w-4" />
+                                )}
+                                <span className="hidden sm:inline">{step.label}</span>
+                            </Link>
+                            {index < steps.length - 1 && (
+                                <ArrowRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                            )}
+                        </React.Fragment>
+                    )
+                })}
+            </div>
+        )
+    }
+
+    // Full card version
+    return (
+        <Card className={className}>
+            <CardHeader className="pb-4">
+                <CardTitle className="text-lg">SpecKit Workflow</CardTitle>
+                <CardDescription>
+                    Generate specifications, plans, and tasks for your features
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <div className="grid gap-4 md:grid-cols-4">
+                    {steps.map((step, index) => {
+                        const status = stepStatus[step.key]
+                        const isActive = currentStep === step.key
+                        const Icon = step.icon
+                        const isNextStep =
+                            !currentStep &&
+                            index === 0 &&
+                            !status
+
+                        return (
+                            <div key={step.key} className="relative">
+                                {/* Connector line */}
+                                {index < steps.length - 1 && (
+                                    <div className="hidden md:block absolute top-8 left-[calc(100%_-_8px)] w-[calc(100%_-_16px)] h-0.5 bg-muted">
+                                        <div
+                                            className={cn(
+                                                "h-full transition-all",
+                                                status === "completed" ? "bg-green-500 w-full" : "w-0"
+                                            )}
+                                        />
+                                    </div>
+                                )}
+
+                                <Link href={getStepHref(step.key, projectId)}>
+                                    <div
+                                        className={cn(
+                                            "border-2 rounded-lg p-4 transition-all hover:shadow-md cursor-pointer",
+                                            getStatusColor(status, isActive)
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-3 mb-2">
+                                            {getStatusIcon(status, isActive)}
+                                            <span className="font-medium">{step.label}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mb-3">
+                                            {step.description}
+                                        </p>
+
+                                        {/* Status badge */}
+                                        <Badge
+                                            variant={
+                                                status === "completed"
+                                                    ? "default"
+                                                    : status === "in-progress"
+                                                        ? "secondary"
+                                                        : "outline"
+                                            }
+                                            className={cn(
+                                                "text-xs",
+                                                status === "completed" && "bg-green-500"
+                                            )}
+                                        >
+                                            {status === "completed"
+                                                ? "Complete"
+                                                : status === "in-progress"
+                                                    ? "In Progress"
+                                                    : isActive
+                                                        ? "Current"
+                                                        : "Pending"}
+                                        </Badge>
+                                    </div>
+                                </Link>
+
+                                {/* Action button for next step */}
+                                {showActions && isNextStep && (
+                                    <Button size="sm" className="w-full mt-2" asChild>
+                                        <Link href={getStepHref(step.key, projectId)}>
+                                            Start
+                                            <ArrowRight className="ml-2 h-4 w-4" />
+                                        </Link>
+                                    </Button>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
+/**
+ * Inline workflow status indicator for spec cards
+ */
+export function SpecWorkflowBadges({
+    hasSpec,
+    hasPlan,
+    hasTasks,
+    inSprint,
+}: {
+    hasSpec?: boolean
+    hasPlan?: boolean
+    hasTasks?: boolean
+    inSprint?: boolean
+}) {
+    return (
+        <div className="flex items-center gap-1">
+            {hasSpec && (
+                <Badge variant="outline" className="text-xs gap-1">
+                    <FileText className="h-3 w-3" />
+                    Spec
+                </Badge>
+            )}
+            {hasPlan && (
+                <Badge variant="secondary" className="text-xs gap-1">
+                    <ClipboardList className="h-3 w-3" />
+                    Plan
+                </Badge>
+            )}
+            {hasTasks && (
+                <Badge className="text-xs gap-1 bg-blue-500">
+                    <ListTodo className="h-3 w-3" />
+                    Tasks
+                </Badge>
+            )}
+            {inSprint && (
+                <Badge className="text-xs gap-1 bg-purple-500">
+                    <Kanban className="h-3 w-3" />
+                    Sprint
+                </Badge>
+            )}
+        </div>
+    )
+}

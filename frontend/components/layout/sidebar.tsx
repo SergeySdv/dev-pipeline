@@ -17,6 +17,9 @@ import {
   BarChart3,
   Bot,
   Kanban,
+  Sparkles,
+  Lightbulb,
+  Wand2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -28,7 +31,17 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Projects", href: "/projects", icon: FolderKanban },
   { name: "Sprints", href: "/sprints", icon: Kanban },
-  { name: "Specifications", href: "/specifications", icon: FileText },
+  {
+    name: "SpecKit",
+    href: "/specifications",
+    icon: Sparkles,
+    children: [
+      { name: "All Specifications", href: "/specifications" },
+      { name: "Generate Spec", href: "/projects?action=generate-spec" },
+      { name: "Design Solution", href: "/projects?action=design-solution" },
+      { name: "Generate Tasks", href: "/projects?action=implement" },
+    ],
+  },
   { name: "Runs", href: "/runs", icon: PlayCircle },
   { name: "Quality", href: "/quality", icon: BarChart3 },
   { name: "Agents", href: "/agents", icon: Bot },

@@ -89,8 +89,16 @@ export const queryKeys = {
   // Specifications
   specifications: {
     all: ["specifications"] as const,
-    list: (projectId?: number) => [...queryKeys.specifications.all, "list", { projectId }] as const,
+    list: (projectId?: number, filters?: Record<string, unknown>) => [...queryKeys.specifications.all, "list", { projectId, ...filters }] as const,
     detail: (id: number) => [...queryKeys.specifications.all, "detail", id] as const,
+    content: (id: number) => [...queryKeys.specifications.all, "content", id] as const,
+  },
+
+  // SpecKit
+  speckit: {
+    status: (projectId: number) => ["speckit", "status", projectId] as const,
+    constitution: (projectId: number) => ["speckit", "constitution", projectId] as const,
+    specs: (projectId: number) => ["speckit", "specs", projectId] as const,
   },
 
   // Quality
