@@ -188,6 +188,16 @@ Complete project setup: clone, analyze, and initialize SpecKit.
 
 ### spec_to_tasks
 Generate spec → plan → tasks from a feature request.
+optional: Sync generated tasks to a sprint if `sprint_id` is provided.
+
+### sprint_from_protocol
+Create a sprint from a protocol run and optionally sync steps as tasks.
+
+### sync_tasks_to_sprint
+Import SpecKit `tasks.md` into a sprint, optionally overwriting existing tasks.
+
+### complete_sprint
+Mark a sprint as completed and finalize metrics (actual velocity).
 
 ### execute_protocol
 Execute a step with QA checks.

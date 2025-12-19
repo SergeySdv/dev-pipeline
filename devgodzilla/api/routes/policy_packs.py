@@ -22,6 +22,18 @@ def list_policy_packs(
     return db.list_policy_packs(status=status, limit=limit)
 
 
+@router.get("/policy_packs/{key}", response_model=schemas.PolicyPackOut)
+def get_policy_pack_latest(
+    key: str,
+    db: Database = Depends(get_db),
+):
+    """Get the latest active version of a policy pack by key."""
+    try:
+        return db.get_policy_pack(key=key, version=None)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Policy pack {key} not found")
+
+
 @router.get("/policy_packs/{key}/{version}", response_model=schemas.PolicyPackOut)
 def get_policy_pack(
     key: str,

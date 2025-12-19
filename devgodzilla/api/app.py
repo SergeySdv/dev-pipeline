@@ -105,6 +105,16 @@ def bootstrap_database() -> None:
         pass
 
 
+@app.on_event("startup")
+def bootstrap_sprint_integration() -> None:
+    """Register sprint event handlers."""
+    try:
+        from devgodzilla.services.sprint_event_handlers import register_sprint_event_handlers
+        register_sprint_event_handlers()
+    except Exception as e:
+        logger.error(f"Failed to register sprint event handlers: {e}")
+
+
 @app.get("/health", response_model=schemas.Health)
 def health_check():
     """Health check endpoint."""

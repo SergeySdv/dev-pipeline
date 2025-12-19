@@ -1,0 +1,43 @@
+{
+    "summary": "Sync Tasks to Sprint",
+    "description": "Import SpecKit tasks.md into a sprint.",
+    "value": {
+        "modules": [
+            {
+                "id": "sync_tasks",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/sync_tasks_api"
+                },
+                "input_transforms": {
+                    "sprint_id": {
+                        "type": "javascript",
+                        "expr": "flow_input.sprint_id"
+                    },
+                    "spec_path": {
+                        "type": "javascript",
+                        "expr": "flow_input.spec_path"
+                    }
+                }
+            }
+        ]
+    },
+    "schema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "sprint_id": {
+                "type": "integer",
+                "description": "Sprint ID"
+            },
+            "spec_path": {
+                "type": "string",
+                "description": "Path to tasks.md file"
+            }
+        },
+        "required": [
+            "sprint_id",
+            "spec_path"
+        ]
+    }
+}

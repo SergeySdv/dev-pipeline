@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS protocol_runs (
     policy_effective_json TEXT,
     windmill_flow_id TEXT,
     speckit_metadata TEXT,
+    linked_sprint_id INTEGER REFERENCES sprints(id),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
     depends_on TEXT DEFAULT '[]',
     parallel_group TEXT,
     assigned_agent TEXT,
+    linked_task_id INTEGER REFERENCES tasks(id),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -270,6 +272,7 @@ CREATE TABLE IF NOT EXISTS protocol_runs (
     policy_effective_json JSONB,
     windmill_flow_id TEXT,
     speckit_metadata JSONB,
+    linked_sprint_id INTEGER REFERENCES sprints(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -290,6 +293,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
     depends_on JSONB DEFAULT '[]',
     parallel_group TEXT,
     assigned_agent TEXT,
+    linked_task_id INTEGER REFERENCES tasks(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -1377,14 +1377,23 @@ class SQLiteDatabase:
             updated_at=self._coerce_ts(row["updated_at"]),
         )
 
-    def get_policy_pack(self, *, key: str, version: str) -> PolicyPack:
-        """Get a policy pack by key and version."""
-        row = self._fetchone(
-            "SELECT * FROM policy_packs WHERE key = ? AND version = ?",
-            (key, version),
-        )
-        if row is None:
-            raise KeyError(f"PolicyPack {key}:{version} not found")
+    def get_policy_pack(self, *, key: str, version: Optional[str] = None) -> PolicyPack:
+        """Get a policy pack by key and version. If version is None, get the latest active version."""
+        if version:
+            row = self._fetchone(
+                "SELECT * FROM policy_packs WHERE key = ? AND version = ?",
+                (key, version),
+            )
+            if row is None:
+                raise KeyError(f"PolicyPack {key}:{version} not found")
+        else:
+            # Get latest active version (order by version desc, then created_at desc)
+            row = self._fetchone(
+                "SELECT * FROM policy_packs WHERE key = ? AND status = 'active' ORDER BY version DESC, created_at DESC LIMIT 1",
+                (key,),
+            )
+            if row is None:
+                raise KeyError(f"PolicyPack {key} not found or no active versions")
         return self._row_to_policy_pack(row)
 
     def upsert_policy_pack(
@@ -2265,14 +2274,23 @@ class PostgresDatabase:
             updated_at=self._coerce_ts(row.get("updated_at")),
         )
 
-    def get_policy_pack(self, *, key: str, version: str) -> PolicyPack:
-        """Get a policy pack by key and version."""
-        row = self._fetchone(
-            "SELECT * FROM policy_packs WHERE key = %s AND version = %s",
-            (key, version),
-        )
-        if row is None:
-            raise KeyError(f"PolicyPack {key}:{version} not found")
+    def get_policy_pack(self, *, key: str, version: Optional[str] = None) -> PolicyPack:
+        """Get a policy pack by key and version. If version is None, get the latest active version."""
+        if version:
+            row = self._fetchone(
+                "SELECT * FROM policy_packs WHERE key = %s AND version = %s",
+                (key, version),
+            )
+            if row is None:
+                raise KeyError(f"PolicyPack {key}:{version} not found")
+        else:
+            # Get latest active version (order by version desc, then created_at desc)
+            row = self._fetchone(
+                "SELECT * FROM policy_packs WHERE key = %s AND status = 'active' ORDER BY version DESC, created_at DESC LIMIT 1",
+                (key,),
+            )
+            if row is None:
+                raise KeyError(f"PolicyPack {key} not found or no active versions")
         return self._row_to_policy_pack(row)
 
     def list_policy_packs(

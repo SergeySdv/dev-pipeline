@@ -306,3 +306,546 @@ def test_effective_policy_hash_generation(monkeypatch: pytest.MonkeyPatch) -> No
             
             # Hashes should be different
             assert hash1 != hash2
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_list_policy_packs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /policy_packs returns list of policy packs."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create test policy packs
+        pack1 = db.upsert_policy_pack(
+            key="test1",
+            version="1.0",
+            name="Test Pack 1",
+            description="First test pack",
+            status="active",
+            pack={"test": "data1"}
+        )
+        
+        pack2 = db.upsert_policy_pack(
+            key="test2",
+            version="2.0",
+            name="Test Pack 2",
+            description="Second test pack",
+            status="active",
+            pack={"test": "data2"}
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get("/policy_packs")
+            assert response.status_code == 200
+            
+            packs = response.json()
+            assert isinstance(packs, list)
+            assert len(packs) >= 2  # At least our test packs plus any defaults
+            
+            # Find our test packs
+            test_pack_keys = {pack["key"] for pack in packs}
+            assert "test1" in test_pack_keys
+            assert "test2" in test_pack_keys
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_create_policy_pack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test POST /policy_packs creates a new policy pack."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            pack_data = {
+                "key": "new-pack",
+                "version": "1.0",
+                "name": "New Policy Pack",
+                "description": "A newly created pack",
+                "status": "active",
+                "pack": {
+                    "meta": {"key": "new-pack", "version": "1.0"},
+                    "enforcement": {"mode": "warn"}
+                }
+            }
+            
+            response = client.post("/policy_packs", json=pack_data)
+            assert response.status_code == 200
+            
+            created_pack = response.json()
+            assert created_pack["key"] == "new-pack"
+            assert created_pack["version"] == "1.0"
+            assert created_pack["name"] == "New Policy Pack"
+            assert created_pack["description"] == "A newly created pack"
+            assert created_pack["status"] == "active"
+            assert created_pack["pack"]["meta"]["key"] == "new-pack"
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_policy_pack_by_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /policy_packs/{key} returns latest active version."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create multiple versions of the same pack
+        pack_v1 = db.upsert_policy_pack(
+            key="versioned-pack",
+            version="1.0",
+            name="Versioned Pack v1",
+            status="active",
+            pack={"version": "1.0"}
+        )
+        
+        pack_v2 = db.upsert_policy_pack(
+            key="versioned-pack",
+            version="2.0",
+            name="Versioned Pack v2",
+            status="active",
+            pack={"version": "2.0"}
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            # Get latest version by key only
+            response = client.get("/policy_packs/versioned-pack")
+            assert response.status_code == 200
+            
+            pack = response.json()
+            assert pack["key"] == "versioned-pack"
+            # Should return the latest version (v2.0 was created after v1.0)
+            assert pack["version"] == "2.0"
+            assert pack["name"] == "Versioned Pack v2"
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_policy_pack_by_key_and_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /policy_packs/{key}/{version} returns specific version."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create multiple versions
+        pack_v1 = db.upsert_policy_pack(
+            key="versioned-pack",
+            version="1.0",
+            name="Versioned Pack v1",
+            status="active",
+            pack={"version": "1.0"}
+        )
+        
+        pack_v2 = db.upsert_policy_pack(
+            key="versioned-pack",
+            version="2.0",
+            name="Versioned Pack v2",
+            status="active",
+            pack={"version": "2.0"}
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            # Get specific version
+            response = client.get("/policy_packs/versioned-pack/1.0")
+            assert response.status_code == 200
+            
+            pack = response.json()
+            assert pack["key"] == "versioned-pack"
+            assert pack["version"] == "1.0"
+            assert pack["name"] == "Versioned Pack v1"
+            assert pack["pack"]["version"] == "1.0"
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_policy_pack_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test policy pack endpoints return 404 for non-existent packs."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            # Test GET by key only
+            response = client.get("/policy_packs/nonexistent")
+            assert response.status_code == 404
+            assert "not found" in response.json()["detail"]
+            
+            # Test GET by key and version
+            response = client.get("/policy_packs/nonexistent/1.0")
+            assert response.status_code == 404
+            assert "not found" in response.json()["detail"]
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_list_policy_packs_with_status_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /policy_packs with status filter."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create packs with different statuses
+        active_pack = db.upsert_policy_pack(
+            key="active-pack",
+            version="1.0",
+            name="Active Pack",
+            status="active",
+            pack={"test": "data"}
+        )
+        
+        inactive_pack = db.upsert_policy_pack(
+            key="inactive-pack",
+            version="1.0",
+            name="Inactive Pack",
+            status="inactive",
+            pack={"test": "data"}
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            # Test filter by active status
+            response = client.get("/policy_packs?status=active")
+            assert response.status_code == 200
+            
+            packs = response.json()
+            assert isinstance(packs, list)
+            
+            # All returned packs should be active
+            for pack in packs:
+                assert pack["status"] == "active"
+            
+            # Should include our active pack
+            active_keys = {pack["key"] for pack in packs}
+            assert "active-pack" in active_keys
+            assert "inactive-pack" not in active_keys
+
+
+# =============================================================================
+# Protocol Policy Endpoint Tests
+# =============================================================================
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_protocol_policy_findings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /protocols/{id}/policy/findings returns policy violations for protocol."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create a policy pack with required protocol files
+        db.upsert_policy_pack(
+            key="default",
+            version="1.0",
+            name="Default Policy",
+            status="active",
+            pack={
+                "meta": {"key": "default", "version": "1.0"},
+                "requirements": {
+                    "protocol_files": ["README.md", "DESIGN.md"]
+                }
+            }
+        )
+
+        # Create project with policy pack
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+            policy_pack_key="default",
+            policy_pack_version="1.0",
+        )
+
+        # Create protocol run
+        protocol = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="test-protocol",
+            status="pending",
+            base_branch="main",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get(f"/protocols/{protocol.id}/policy/findings")
+            assert response.status_code == 200
+            
+            findings = response.json()
+            assert isinstance(findings, list)
+            # Findings should be a list (may be empty if no violations)
+            for finding in findings:
+                assert "code" in finding
+                assert "severity" in finding
+                assert "message" in finding
+                assert "scope" in finding
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_protocol_policy_snapshot_with_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /protocols/{id}/policy/snapshot returns recorded policy audit."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create project
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        # Create protocol run
+        protocol = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="test-protocol",
+            status="pending",
+            base_branch="main",
+        )
+
+        # Record policy audit on the protocol
+        db.update_protocol_policy_audit(
+            protocol.id,
+            policy_pack_key="strict",
+            policy_pack_version="2.0",
+            policy_effective_hash="abc123def456",
+            policy_effective_json={"enforcement": {"mode": "block"}},
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get(f"/protocols/{protocol.id}/policy/snapshot")
+            assert response.status_code == 200
+            
+            data = response.json()
+            assert data["hash"] == "abc123def456"
+            assert data["pack_key"] == "strict"
+            assert data["pack_version"] == "2.0"
+            assert data["policy"]["enforcement"]["mode"] == "block"
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_protocol_policy_snapshot_without_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /protocols/{id}/policy/snapshot resolves current policy when no audit exists."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create a policy pack
+        db.upsert_policy_pack(
+            key="default",
+            version="1.0",
+            name="Default Policy",
+            status="active",
+            pack={
+                "meta": {"key": "default", "version": "1.0"},
+                "enforcement": {"mode": "warn"},
+            }
+        )
+
+        # Create project with policy pack
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+            policy_pack_key="default",
+            policy_pack_version="1.0",
+        )
+
+        # Create protocol run without policy audit
+        protocol = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="test-protocol",
+            status="pending",
+            base_branch="main",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get(f"/protocols/{protocol.id}/policy/snapshot")
+            assert response.status_code == 200
+            
+            data = response.json()
+            assert "hash" in data
+            assert len(data["hash"]) > 0
+            assert data["pack_key"] == "default"
+            assert data["pack_version"] == "1.0"
+            assert "policy" in data
+            assert isinstance(data["policy"], dict)
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_protocol_policy_endpoints_404_for_missing_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test protocol policy endpoints return 404 for non-existent protocols."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            # Test GET policy findings
+            response = client.get("/protocols/99999/policy/findings")
+            assert response.status_code == 404
+            assert "not found" in response.json()["detail"].lower()
+            
+            # Test GET policy snapshot
+            response = client.get("/protocols/99999/policy/snapshot")
+            assert response.status_code == 404
+            assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_protocol_policy_findings_with_missing_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that protocol policy findings include missing required files."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+        
+        # Create protocol directory without required files
+        protocol_dir = repo / ".protocols" / "test-protocol"
+        protocol_dir.mkdir(parents=True, exist_ok=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        # Create a policy pack with required protocol files
+        db.upsert_policy_pack(
+            key="strict",
+            version="1.0",
+            name="Strict Policy",
+            status="active",
+            pack={
+                "meta": {"key": "strict", "version": "1.0"},
+                "requirements": {
+                    "protocol_files": ["README.md", "DESIGN.md"]
+                }
+            }
+        )
+
+        # Create project with strict policy pack
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+            policy_pack_key="strict",
+            policy_pack_version="1.0",
+        )
+
+        # Create protocol run with protocol_root set
+        protocol = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="test-protocol",
+            status="pending",
+            base_branch="main",
+        )
+        
+        # Update protocol with protocol_root
+        db.update_protocol_paths(
+            protocol.id,
+            worktree_path=str(repo),
+            protocol_root=str(protocol_dir),
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get(f"/protocols/{protocol.id}/policy/findings")
+            assert response.status_code == 200
+            
+            findings = response.json()
+            assert isinstance(findings, list)
+            
+            # Should have findings about missing protocol files
+            missing_file_findings = [
+                f for f in findings 
+                if f["code"] == "policy.protocol.missing_file"
+            ]
+            # Should find at least one missing file (README.md or DESIGN.md)
+            assert len(missing_file_findings) >= 1
+            
+            # Check finding structure
+            for finding in missing_file_findings:
+                assert finding["severity"] == "warning"
+                assert finding["scope"] == "protocol"
+                assert "suggested_fix" in finding

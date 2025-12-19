@@ -1,0 +1,34 @@
+{
+    "summary": "Complete Sprint",
+    "description": "Mark a sprint as completed and finalize metrics.",
+    "value": {
+        "modules": [
+            {
+                "id": "complete_sprint",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/complete_sprint_api"
+                },
+                "input_transforms": {
+                    "sprint_id": {
+                        "type": "javascript",
+                        "expr": "flow_input.sprint_id"
+                    }
+                }
+            }
+        ]
+    },
+    "schema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "sprint_id": {
+                "type": "integer",
+                "description": "Sprint ID to complete"
+            }
+        },
+        "required": [
+            "sprint_id"
+        ]
+    }
+}

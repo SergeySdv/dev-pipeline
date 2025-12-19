@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 x-logging: &default-logging
   driver: "json-file"
@@ -14,6 +14,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
       - NODE_ENV=production
     expose:
@@ -21,7 +22,7 @@ services:
     depends_on:
       - devgodzilla-api
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/console"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/console"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -67,7 +68,13 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read(); print('ok')",
+        ]
       interval: 10s
       timeout: 3s
       retries: 5

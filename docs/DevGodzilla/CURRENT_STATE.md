@@ -111,6 +111,18 @@ Implementation references:
 - `devgodzilla/services/quality.py`
 - `devgodzilla/api/routes/steps.py`
 
+## Sprint Integration (SpecKit Tasks -> Agile Board)
+
+DevGodzilla supports bidirectional synchronization between SpecKit task definitions (markdown) and database-backed agile sprints.
+
+- **Task Import**: `.specify/tasks.md` can be imported into a sprint via `POST /sprints/{id}/actions/import-tasks` (or Windmill `sync_tasks_to_sprint` flow).
+- **Protocol Linkage**: Protocols are linked to sprints via `linked_sprint_id`.
+- **Status Updates**: Step execution events (`StepCompleted`, `StepFailed`) automatically update corresponding sprint tasks and recalculate velocity.
+
+Implementation reference:
+- Service: `devgodzilla/services/sprint_integration.py`, `devgodzilla/services/task_sync.py`
+- Event Handlers: `devgodzilla/services/sprint_event_handlers.py`
+
 ## Windmill Integration (Supported Pattern)
 
 ### Asset import

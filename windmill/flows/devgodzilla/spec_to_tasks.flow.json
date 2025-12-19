@@ -10,9 +10,18 @@
           "path": "u/devgodzilla/speckit_specify_api"
         },
         "input_transforms": {
-          "project_id": { "type": "javascript", "expr": "flow_input.project_id" },
-          "description": { "type": "javascript", "expr": "flow_input.feature_request" },
-          "feature_name": { "type": "javascript", "expr": "flow_input.feature_name || ''" }
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "description": {
+            "type": "javascript",
+            "expr": "flow_input.feature_request"
+          },
+          "feature_name": {
+            "type": "javascript",
+            "expr": "flow_input.feature_name || ''"
+          }
         }
       },
       {
@@ -22,7 +31,10 @@
           "path": "u/devgodzilla/speckit_plan_api"
         },
         "input_transforms": {
-          "project_id": { "type": "javascript", "expr": "flow_input.project_id" },
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
           "spec_path": {
             "type": "javascript",
             "expr": "results.speckit_specify.spec_path"
@@ -36,26 +48,59 @@
           "path": "u/devgodzilla/speckit_tasks_api"
         },
         "input_transforms": {
-          "project_id": { "type": "javascript", "expr": "flow_input.project_id" },
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
           "plan_path": {
             "type": "javascript",
             "expr": "results.speckit_plan.plan_path"
           }
         }
+      },
+      {
+        "id": "sync_to_sprint",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/sync_tasks_api"
+        },
+        "input_transforms": {
+          "sprint_id": {
+            "type": "javascript",
+            "expr": "flow_input.sprint_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_tasks.tasks_path"
+          }
+        },
+        "skip_failure": true
       }
     ]
   },
   "schema": {
-        "type": "object",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
-      "project_id": { "type": "integer", "description": "Project ID", "default": 1 },
+      "project_id": {
+        "type": "integer",
+        "description": "Project ID",
+        "default": 1
+      },
       "feature_request": {
         "type": "string",
         "description": "Description of the feature to implement",
         "default": ""
       },
-      "feature_name": { "type": "string", "description": "Optional feature slug/name", "default": "" }
+      "feature_name": {
+        "type": "string",
+        "description": "Optional feature slug/name",
+        "default": ""
+      },
+      "sprint_id": {
+        "type": "integer",
+        "description": "Optional sprint to sync tasks to"
+      }
     },
     "required": [
       "project_id",

@@ -349,6 +349,14 @@ class NextStepOut(BaseModel):
     step_run_id: Optional[int] = None
 
 
+class RetryStepOut(BaseModel):
+    """Response for retry_latest action."""
+    step_run_id: int
+    step_name: str
+    message: str
+    retries: int
+
+
 class GateFindingOut(BaseModel):
     code: str
     severity: str  # info|warning|error
@@ -434,13 +442,19 @@ class SprintOut(APIModel):
     created_at: Any
     updated_at: Any
 
-class SprintMetrics(BaseModel):
+class BurndownPointOut(BaseModel):
+    date: str
+    ideal: float
+    actual: float
+
+class SprintMetricsOut(BaseModel):
+    sprint_id: int
     total_tasks: int
     completed_tasks: int
     total_points: int
     completed_points: int
-    burndown: List[Dict[str, Any]] = Field(default_factory=list)
-    velocity: int
+    burndown: List[BurndownPointOut]
+    velocity_trend: List[int]
 
 class AgileTaskCreate(BaseModel):
     project_id: int
@@ -528,3 +542,42 @@ class PolicyPackOut(APIModel):
     pack: Dict[str, Any]
     created_at: Any
     updated_at: Optional[Any] = None
+
+# =============================================================================
+# Sprint-Protocol Integration Schemas
+# =============================================================================
+
+class LinkProtocolRequest(BaseModel):
+    protocol_run_id: int
+    auto_sync: bool = True
+
+class ImportTasksRequest(BaseModel):
+    spec_path: str
+    overwrite_existing: bool = False
+
+class CreateSprintFromProtocolRequest(BaseModel):
+    sprint_name: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    auto_sync: bool = True
+
+class SprintVelocityOut(BaseModel):
+    sprint_id: int
+    velocity_actual: int
+    total_points: int
+    completed_points: int
+    completion_rate: float
+
+class SyncResult(BaseModel):
+    sprint_id: int
+    protocol_run_id: int
+    tasks_synced: int
+    task_ids: List[int]
+
+class ExportTasksRequest(BaseModel):
+    output_path: str
+
+class ExportTasksResult(BaseModel):
+    sprint_id: int
+    output_path: str
+    content_length: int

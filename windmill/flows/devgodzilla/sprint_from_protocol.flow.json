@@ -1,0 +1,50 @@
+{
+    "summary": "Create Sprint from Protocol",
+    "description": "Creates a sprint from a protocol run and syncs steps as tasks.",
+    "value": {
+        "modules": [
+            {
+                "id": "create_sprint",
+                "value": {
+                    "type": "script",
+                    "path": "u/devgodzilla/sprint_from_protocol_api"
+                },
+                "input_transforms": {
+                    "protocol_id": {
+                        "type": "javascript",
+                        "expr": "flow_input.protocol_id"
+                    },
+                    "sprint_name": {
+                        "type": "javascript",
+                        "expr": "flow_input.sprint_name || null"
+                    },
+                    "auto_sync": {
+                        "type": "javascript",
+                        "expr": "flow_input.auto_sync !== false"
+                    }
+                }
+            }
+        ]
+    },
+    "schema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+            "protocol_id": {
+                "type": "integer",
+                "description": "Protocol run ID"
+            },
+            "sprint_name": {
+                "type": "string",
+                "description": "Optional sprint name"
+            },
+            "auto_sync": {
+                "type": "boolean",
+                "default": true
+            }
+        },
+        "required": [
+            "protocol_id"
+        ]
+    }
+}

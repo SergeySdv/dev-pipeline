@@ -10,9 +10,22 @@ from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
 from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
 from devgodzilla.services.planning import PlanningService
+from devgodzilla.services.policy import PolicyService
+from devgodzilla.services.sprint_integration import SprintIntegrationService
 from devgodzilla.windmill.client import WindmillClient
 
 router = APIRouter()
+
+
+def get_sprint_integration(db: Database = Depends(get_db)) -> SprintIntegrationService:
+    return SprintIntegrationService(db)
+
+
+def get_policy_service(
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
+) -> PolicyService:
+    return PolicyService(ctx, db)
 
 
 def _workspace_root(run, project) -> Path:
@@ -321,6 +334,63 @@ def cancel_protocol(
     return db.get_protocol_run(protocol_id)
 
 
+@router.post("/protocols/{protocol_id}/actions/retry_latest", response_model=schemas.RetryStepOut)
+def retry_latest_step(
+    protocol_id: int,
+    background_tasks: BackgroundTasks,
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
+):
+    """Retry the most recent failed or blocked step.
+    
+    Finds the last failed or blocked step in the protocol and retries it.
+    Updates the protocol status to running if it was paused or failed.
+    """
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    
+    if run.status in ["completed", "cancelled"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot retry steps in {run.status} protocol"
+        )
+    
+    # Find the most recent failed or blocked step
+    steps = db.list_step_runs(protocol_id)
+    target_step = None
+    for step in reversed(steps):
+        if step.status in ["failed", "blocked"]:
+            target_step = step
+            break
+    
+    if not target_step:
+        raise HTTPException(
+            status_code=404,
+            detail="No failed or blocked steps to retry"
+        )
+    
+    # Update step status to pending and increment retry count
+    new_retries = (target_step.retries or 0) + 1
+    db.update_step_status(
+        target_step.id,
+        "pending",
+        retries=new_retries,
+    )
+    
+    # Update protocol status to running if needed
+    if run.status in ["paused", "failed"]:
+        db.update_protocol_status(protocol_id, "running")
+    
+    return schemas.RetryStepOut(
+        step_run_id=target_step.id,
+        step_name=target_step.step_name,
+        message=f"Retrying step '{target_step.step_name}'",
+        retries=new_retries,
+    )
+
+
 @router.get("/protocols/{protocol_id}/artifacts", response_model=List[schemas.ProtocolArtifactOut])
 def list_protocol_artifacts(
     protocol_id: int,
@@ -556,6 +626,95 @@ def answer_protocol_clarification(
     return updated
 
 
+# =============================================================================
+# Protocol Policy Endpoints
+# =============================================================================
+
+@router.get("/protocols/{protocol_id}/policy/findings", response_model=List[schemas.PolicyFindingOut])
+def get_protocol_policy_findings(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+):
+    """Get policy violation findings for a protocol."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    
+    # Determine repo root for policy evaluation
+    project = db.get_project(run.project_id)
+    repo_root = None
+    if project.local_path:
+        try:
+            repo_root = Path(project.local_path).expanduser()
+        except Exception:
+            pass
+    
+    findings = policy_service.evaluate_protocol(protocol_id, repo_root=repo_root)
+    
+    return [
+        schemas.PolicyFindingOut(
+            code=f.code,
+            severity=f.severity,
+            message=f.message,
+            scope=f.scope,
+            suggested_fix=f.suggested_fix,
+            metadata=f.metadata,
+        )
+        for f in findings
+    ]
+
+
+@router.get("/protocols/{protocol_id}/policy/snapshot", response_model=schemas.EffectivePolicyOut)
+def get_protocol_policy_snapshot(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+    policy_service: PolicyService = Depends(get_policy_service),
+):
+    """Get policy snapshot with hash for a protocol.
+    
+    Returns the effective policy that was (or would be) used for this protocol.
+    If the protocol has a recorded policy audit, returns that snapshot.
+    Otherwise, resolves the current effective policy for the project.
+    """
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    
+    # If protocol has recorded policy audit, return that snapshot
+    if run.policy_effective_hash and run.policy_pack_key:
+        return schemas.EffectivePolicyOut(
+            hash=run.policy_effective_hash,
+            policy=run.policy_effective_json or {},
+            pack_key=run.policy_pack_key,
+            pack_version=run.policy_pack_version or "1.0",
+        )
+    
+    # Otherwise, resolve current effective policy for the project
+    project = db.get_project(run.project_id)
+    repo_root = None
+    if project.local_path:
+        try:
+            repo_root = Path(project.local_path).expanduser()
+        except Exception:
+            pass
+    
+    effective = policy_service.resolve_effective_policy(
+        run.project_id,
+        repo_root=repo_root,
+        include_repo_local=True,
+    )
+    
+    return schemas.EffectivePolicyOut(
+        hash=effective.effective_hash,
+        policy=effective.policy,
+        pack_key=effective.pack_key,
+        pack_version=effective.pack_version,
+    )
+
+
 @router.post("/protocols/{protocol_id}/feedback")
 def submit_protocol_feedback(
     protocol_id: int,
@@ -627,3 +786,77 @@ def submit_protocol_feedback(
             status_code=400,
             detail=f"Unknown action: {action}. Supported actions: clarify, approve, reject, retry"
         )
+
+
+# =============================================================================
+# Protocol-Sprint Integration Endpoints
+# =============================================================================
+
+@router.post("/protocols/{protocol_id}/actions/create-sprint", response_model=schemas.SprintOut)
+async def create_sprint_from_protocol(
+    protocol_id: int,
+    request: schemas.CreateSprintFromProtocolRequest,
+    service: SprintIntegrationService = Depends(get_sprint_integration),
+):
+    """Create a sprint from a protocol run."""
+    try:
+        return await service.create_sprint_from_protocol(
+            protocol_run_id=protocol_id,
+            sprint_name=request.sprint_name,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            auto_sync=request.auto_sync,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/protocols/{protocol_id}/sprint", response_model=Optional[schemas.SprintOut])
+def get_protocol_sprint(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Get the sprint linked to a protocol run."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol run not found")
+
+    if hasattr(run, "linked_sprint_id") and run.linked_sprint_id:
+        try:
+            return db.get_sprint(run.linked_sprint_id)
+        except KeyError:
+            return None
+
+    # Fallback: find sprint by tasks linked to this protocol
+    tasks = db.list_tasks(protocol_run_id=protocol_id, limit=1)
+    if tasks and tasks[0].sprint_id:
+        return db.get_sprint(tasks[0].sprint_id)
+    return None
+
+
+@router.post("/protocols/{protocol_id}/actions/sync-to-sprint", response_model=schemas.SyncResult)
+async def sync_protocol_to_sprint(
+    protocol_id: int,
+    sprint_id: int = Query(..., description="Target sprint ID"),
+    service: SprintIntegrationService = Depends(get_sprint_integration),
+):
+    """Sync protocol steps to an existing sprint as tasks."""
+    try:
+        tasks = await service.sync_protocol_to_sprint(
+            protocol_run_id=protocol_id,
+            sprint_id=sprint_id,
+            create_missing_tasks=True,
+        )
+        return schemas.SyncResult(
+            sprint_id=sprint_id,
+            protocol_run_id=protocol_id,
+            tasks_synced=len(tasks),
+            task_ids=[t.id for t in tasks],
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
