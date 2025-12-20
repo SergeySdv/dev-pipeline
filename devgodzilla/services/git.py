@@ -176,8 +176,8 @@ class GitService(Service):
     worktree creation, branch operations, PR/MR creation, and CI triggering.
     
     Worktree Strategy:
-    By default, uses a single shared worktree branch (DEVGODZILLA_SINGLE_WORKTREE=true)
-    to avoid creating many per-protocol branches. Set to false for per-protocol branches.
+    Uses a dedicated branch/worktree per protocol run. The legacy single-worktree
+    mode (DEVGODZILLA_SINGLE_WORKTREE) is deprecated.
     
     Example:
         git_service = GitService(context)
@@ -195,28 +195,157 @@ class GitService(Service):
 
     def __init__(self, context: ServiceContext) -> None:
         super().__init__(context)
-        self._single_worktree = os.environ.get(
-            "DEVGODZILLA_SINGLE_WORKTREE", "true"
-        ).lower() in ("1", "true", "yes", "on")
+        self._single_worktree = False
         self._default_branch = os.environ.get(
             "DEVGODZILLA_WORKTREE_BRANCH", "devgodzilla-worktree"
         )
+        if os.environ.get("DEVGODZILLA_SINGLE_WORKTREE") is not None:
+            self.logger.warning(
+                "single_worktree_deprecated",
+                extra=self.log_extra(),
+            )
 
     def get_branch_name(self, protocol_name: str) -> str:
         """
         Resolve the branch name to use for worktrees.
         
-        Uses a shared branch by default to avoid creating many per-protocol branches.
+        Returns the protocol name for per-run worktrees.
         """
-        if not self._single_worktree:
-            return protocol_name
-        return self._default_branch
+        return protocol_name
 
     def get_worktree_path(self, repo_root: Path, protocol_name: str) -> tuple[Path, str]:
         """Get the worktree path and branch name for a protocol."""
         branch_name = self.get_branch_name(protocol_name)
         worktrees_root = repo_root / "worktrees"
         return worktrees_root / branch_name, branch_name
+
+    def get_spec_worktree_path(self, repo_root: Path, branch_name: str) -> Path:
+        """Get the worktree path for a SpecKit run."""
+        return repo_root / "worktrees" / "specs" / branch_name
+
+    def local_branch_exists(self, repo_root: Path, branch: str) -> bool:
+        """Check if a local branch exists."""
+        result = run_process(
+            ["git", "show-ref", "--verify", f"refs/heads/{branch}"],
+            cwd=repo_root,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def create_spec_worktree(
+        self,
+        repo_root: Path,
+        branch_name: str,
+        base_branch: str,
+        *,
+        spec_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> Path:
+        """
+        Create a dedicated worktree for a SpecKit run.
+
+        Unlike protocol worktrees, spec runs always create a new branch/worktree.
+        """
+        config = get_config()
+
+        if not (repo_root / ".git").exists():
+            self.logger.info(
+                "spec_worktree_skipped_not_git_repo",
+                extra=self.log_extra(
+                    spec_run_id=spec_run_id,
+                    project_id=project_id,
+                    repo_root=str(repo_root),
+                ),
+            )
+            return repo_root
+
+        worktree = self.get_spec_worktree_path(repo_root, branch_name)
+        if worktree.exists():
+            raise GitCommandError(f"Spec worktree already exists at {worktree}")
+
+        worktree.parent.mkdir(parents=True, exist_ok=True)
+
+        self.logger.info(
+            "creating_spec_worktree",
+            extra=self.log_extra(
+                spec_run_id=spec_run_id,
+                project_id=project_id,
+                branch=branch_name,
+                base_branch=base_branch,
+            ),
+        )
+
+        def _create_worktree() -> None:
+            try:
+                run_process(
+                    [
+                        "git", "worktree", "add", "--checkout",
+                        "-b", branch_name, str(worktree),
+                        f"origin/{base_branch}",
+                    ],
+                    cwd=repo_root,
+                )
+            except Exception:
+                run_process(
+                    [
+                        "git", "worktree", "add", "--checkout",
+                        "-b", branch_name, str(worktree), "HEAD",
+                    ],
+                    cwd=repo_root,
+                )
+
+        with_git_lock_retry(
+            _create_worktree,
+            max_retries=config.git_lock_max_retries,
+            retry_delay=config.git_lock_retry_delay,
+            repo_root=repo_root,
+        )
+
+        return worktree
+
+    def remove_worktree(
+        self,
+        repo_root: Path,
+        worktree_path: Path,
+        *,
+        force: bool = True,
+        spec_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
+    ) -> None:
+        """Remove a worktree from a repository."""
+        if not worktree_path.exists():
+            return
+        args = ["git", "worktree", "remove"]
+        if force:
+            args.append("--force")
+        args.append(str(worktree_path))
+        run_process(args, cwd=repo_root, check=False)
+        self.logger.info(
+            "worktree_removed",
+            extra=self.log_extra(
+                spec_run_id=spec_run_id,
+                project_id=project_id,
+                worktree_path=str(worktree_path),
+            ),
+        )
+
+    def delete_local_branch(self, repo_root: Path, branch: str) -> None:
+        """Delete a local branch (best-effort)."""
+        run_process(["git", "branch", "-D", branch], cwd=repo_root, check=False)
+
+    def resolve_repo_root(self, worktree_path: Path) -> Path:
+        """Resolve the main repo root for a worktree path."""
+        result = run_process(
+            ["git", "-C", str(worktree_path), "rev-parse", "--git-common-dir"],
+            cwd=worktree_path,
+            check=False,
+        )
+        if result.returncode != 0:
+            return worktree_path
+        common_dir = Path(result.stdout.strip())
+        if not common_dir.is_absolute():
+            common_dir = (worktree_path / common_dir).resolve()
+        return common_dir.parent
 
     def resolve_repo_path(
         self,

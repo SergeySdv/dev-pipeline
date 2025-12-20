@@ -15,6 +15,8 @@ from typing import Any, Optional
 from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode, get_registry
 from devgodzilla.logging import get_logger
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.agent_config import AgentConfigService
+from devgodzilla.spec import resolve_spec_path
 
 logger = get_logger(__name__)
 
@@ -64,6 +66,7 @@ class DiscoveryAgentService(Service):
         stages: Optional[list[str]] = None,
         timeout_seconds: int = 900,
         strict_outputs: bool = True,
+        project_id: Optional[int] = None,
     ) -> DiscoveryResult:
         repo_root = repo_root.expanduser().resolve()
         log_path = repo_root / "opencode-discovery.log"
@@ -126,6 +129,26 @@ class DiscoveryAgentService(Service):
                 continue
 
             prompt_path = _resolve_prompt(repo_root, prompt_name=prompt_name)
+            try:
+                cfg = AgentConfigService(self.context)
+                assignment = cfg.resolve_prompt_assignment(f"discovery.{stage}", project_id=project_id)
+                if not assignment:
+                    assignment = cfg.resolve_prompt_assignment("discovery", project_id=project_id)
+                if assignment and assignment.get("path"):
+                    candidate = resolve_spec_path(str(assignment["path"]), repo_root, repo_root)
+                    if candidate.exists():
+                        prompt_path = candidate
+                    else:
+                        self.logger.warning(
+                            "discovery_prompt_assignment_missing",
+                            extra=self.log_extra(
+                                project_id=project_id,
+                                prompt_path=str(candidate),
+                                stage=stage,
+                            ),
+                        )
+            except Exception:
+                prompt_path = prompt_path
             if not prompt_path.is_file():
                 results.append(
                     DiscoveryStageResult(
@@ -220,4 +243,3 @@ def parse_discovery_summary(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("DISCOVERY_SUMMARY.json must be a JSON object")
     return data
-

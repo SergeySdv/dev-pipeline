@@ -32,6 +32,26 @@ def _policy_location(metadata: Optional[dict]) -> Optional[str]:
         return str(section)
     return None
 
+
+def _append_project_event(
+    db: Database,
+    *,
+    project_id: int,
+    event_type: str,
+    message: str,
+    metadata: Optional[dict] = None,
+) -> None:
+    try:
+        db.append_event(
+            protocol_run_id=None,
+            project_id=project_id,
+            event_type=event_type,
+            message=message,
+            metadata=metadata,
+        )
+    except Exception:
+        pass
+
 def _normalize_policy_enforcement_mode(mode: Optional[str]) -> Optional[str]:
     if mode is None:
         return None
@@ -220,11 +240,25 @@ def get_project_onboarding(
     else:
         overall_status = "completed" if (repo_status == "completed" and spec_status == "completed") else "pending"
 
+    recent_events = db.list_recent_events(
+        limit=50,
+        project_id=project_id,
+        categories=["onboarding", "discovery"],
+    )
+    events = [
+        schemas.OnboardingEvent(
+            event_type=event.event_type,
+            message=event.message,
+            created_at=event.created_at,
+        )
+        for event in reversed(recent_events)
+    ]
+
     return schemas.OnboardingSummary(
         project_id=project_id,
         status=overall_status,
         stages=stages,
-        events=[], 
+        events=events,
         blocking_clarifications=blocking_count
     )
 
@@ -254,6 +288,17 @@ def onboard_project(
 
     from devgodzilla.services.git import GitService, run_process
     from devgodzilla.services.specification import SpecificationService
+
+    _append_project_event(
+        db,
+        project_id=project_id,
+        event_type="onboarding_started",
+        message="Onboarding started",
+        metadata={
+            "branch": request.branch or project.base_branch,
+            "clone_if_missing": bool(request.clone_if_missing),
+        },
+    )
 
     git = GitService(ctx)
     try:
@@ -288,6 +333,14 @@ def onboard_project(
         except Exception:
             pass
 
+    _append_project_event(
+        db,
+        project_id=project_id,
+        event_type="onboarding_repo_ready",
+        message="Repository ready for onboarding",
+        metadata={"repo_path": str(repo_path), "branch": branch},
+    )
+
     constitution_content = request.constitution_content
     effective_policy = None
     if constitution_content is None:
@@ -310,6 +363,18 @@ def onboard_project(
         project_id=project_id,
     )
 
+    _append_project_event(
+        db,
+        project_id=project_id,
+        event_type="onboarding_speckit_initialized" if init_result.success else "onboarding_failed",
+        message="SpecKit initialized" if init_result.success else "SpecKit initialization failed",
+        metadata={
+            "warnings": init_result.warnings,
+            "error": init_result.error,
+            "spec_path": init_result.spec_path,
+        },
+    )
+
     if effective_policy is not None:
         try:
             clarifier = ClarifierService(ctx, db)
@@ -326,6 +391,17 @@ def onboard_project(
     discovery_missing_outputs: List[str] = []
     discovery_error: Optional[str] = None
     if request.run_discovery_agent:
+        _append_project_event(
+            db,
+            project_id=project_id,
+            event_type="discovery_started",
+            message="Discovery started",
+            metadata={
+                "engine_id": request.discovery_engine_id or "opencode",
+                "model": request.discovery_model,
+                "pipeline": bool(request.discovery_pipeline),
+            },
+        )
         try:
             from devgodzilla.services.discovery_agent import DiscoveryAgentService
 
@@ -338,6 +414,7 @@ def onboard_project(
                 stages=None,
                 timeout_seconds=int(os.environ.get("DEVGODZILLA_DISCOVERY_TIMEOUT_SECONDS", "900")),
                 strict_outputs=True,
+                project_id=project_id,
             )
             discovery_success = bool(disc.success)
             discovery_log_path = str(disc.log_path)
@@ -346,6 +423,18 @@ def onboard_project(
         except Exception as e:
             discovery_success = False
             discovery_error = str(e)
+        _append_project_event(
+            db,
+            project_id=project_id,
+            event_type="discovery_completed" if discovery_success else "discovery_failed",
+            message="Discovery completed" if discovery_success else "Discovery failed",
+            metadata={
+                "success": discovery_success,
+                "log_path": discovery_log_path,
+                "missing_outputs": discovery_missing_outputs,
+                "error": discovery_error,
+            },
+        )
     updated_project = db.get_project(project_id)
 
     return ProjectOnboardResponse(

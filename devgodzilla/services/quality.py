@@ -28,10 +28,17 @@ from devgodzilla.qa.gates import (
     TypeGate,
     ChecklistGate,
     SpecKitChecklistGate,
+    ConstitutionalGate,
+    PromptQAGate,
 )
 from devgodzilla.services.base import Service, ServiceContext
-from devgodzilla.services.events import get_event_bus
+from devgodzilla.services.constitution import ConstitutionService
+from devgodzilla.services.events import get_event_bus, QAStarted, QAPassed, QAFailed
 from devgodzilla.services.policy import PolicyService
+from devgodzilla.qa.feedback import FeedbackRouter, FeedbackAction
+from devgodzilla.engines import EngineNotFoundError, get_registry
+from devgodzilla.spec import resolve_spec_path
+from devgodzilla.services.agent_config import AgentConfigService
 
 logger = get_logger(__name__)
 
@@ -65,6 +72,8 @@ def _gate_ids_from_required_checks(checks: List[str]) -> List[str]:
             gate_ids.append("test")
         elif "checklist" in text:
             gate_ids.append("checklist")
+        elif "constitution" in text or "constitutional" in text:
+            gate_ids.append("constitutional")
     return list(dict.fromkeys(gate_ids))
 
 
@@ -135,10 +144,113 @@ class QualityService(Service):
     ) -> None:
         super().__init__(context)
         self.db = db
-        self.default_gates = default_gates or [
-            LintGate(),
-            TypeGate(),
-            TestGate(),
+        self.default_gates = default_gates or []
+
+    def _qa_prompt_path(self) -> Path:
+        repo_root = Path(__file__).resolve().parents[2]
+        return repo_root / "prompts" / "quality-validator.prompt.md"
+
+    def _resolve_qa_engine(self, *, project_id: Optional[int] = None):
+        registry = get_registry()
+        if not registry.list_ids():
+            try:
+                from devgodzilla.engines.bootstrap import bootstrap_default_engines
+
+                bootstrap_default_engines(replace=False)
+            except Exception:
+                pass
+        if not registry.has("dummy"):
+            try:
+                from devgodzilla.engines.bootstrap import bootstrap_default_engines
+
+                bootstrap_default_engines(replace=False)
+            except Exception:
+                pass
+        engine_id = None
+        model = None
+        try:
+            from devgodzilla.services.agent_config import AgentConfigService
+
+            cfg = AgentConfigService(self.context)
+            engine_id = cfg.get_default_engine_id(
+                "qa",
+                project_id=project_id,
+                fallback=self.context.config.engine_defaults.get("qa"),  # type: ignore[union-attr]
+            )
+            model = self.context.config.qa_model  # type: ignore[union-attr]
+        except Exception:
+            engine_id = None
+            model = None
+        if not engine_id:
+            engine_id = "opencode"
+        try:
+            engine = registry.get(engine_id)
+        except EngineNotFoundError:
+            if registry.has("dummy"):
+                engine = registry.get("dummy")
+            else:
+                raise RuntimeError(f"QA engine not registered: {engine_id}")
+        try:
+            available = engine.check_availability()
+        except Exception as exc:
+            available = False
+            availability_error = str(exc)
+        else:
+            availability_error = None
+        if not available:
+            if engine.metadata.id != "dummy" and registry.has("dummy"):
+                engine = registry.get("dummy")
+            else:
+                error = f"QA engine unavailable: {engine.metadata.id}"
+                if availability_error:
+                    error = f"{error} ({availability_error})"
+                raise RuntimeError(error)
+        if not model:
+            model = engine.metadata.default_model
+        return engine, model
+
+    def _build_prompt_gate(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        prompt_path: Optional[Path] = None,
+    ) -> PromptQAGate:
+        engine, model = self._resolve_qa_engine(project_id=project_id)
+        return PromptQAGate(
+            engine=engine,
+            prompt_path=prompt_path or self._qa_prompt_path(),
+            model=model,
+        )
+
+    @staticmethod
+    def _serialize_findings(findings: List[Finding]) -> List[Dict[str, Any]]:
+        return [
+            {
+                "gate_id": f.gate_id,
+                "severity": f.severity,
+                "message": f.message,
+                "file_path": f.file_path,
+                "line_number": f.line_number,
+                "rule_id": f.rule_id,
+                "suggestion": f.suggestion,
+                "metadata": f.metadata,
+            }
+            for f in findings
+        ]
+
+    @classmethod
+    def _serialize_gate_results(cls, gate_results: List[GateResult]) -> List[Dict[str, Any]]:
+        return [
+            {
+                "gate_id": r.gate_id,
+                "gate_name": r.gate_name,
+                "verdict": r.verdict.value if hasattr(r.verdict, "value") else str(r.verdict),
+                "duration_seconds": r.duration_seconds,
+                "metadata": r.metadata,
+                "error": r.error,
+                "findings": cls._serialize_findings(r.findings),
+            }
+            for r in gate_results
         ]
 
     def run_qa(
@@ -218,19 +330,52 @@ class QualityService(Service):
             qa_policy = "full"
 
         if qa_policy == "skip":
-            qa_result = QAResult(
-                step_run_id=step_run_id,
-                verdict=QAVerdict.SKIP,
-                gate_results=[],
-                duration_seconds=0.0,
-            )
-            self._update_step_status(step, run, qa_result)
-            return qa_result
+            qa_policy = "full"
 
         # Run gates
-        gates_to_run = gates or self.default_gates
+        skip_ids = set(skip_gates or [])
+        prompt_gate = None
+        prompt_gate_error = None
+        if "prompt_qa" not in skip_ids:
+            try:
+                prompt_path = self._qa_prompt_path()
+                assignment = None
+                try:
+                    cfg = AgentConfigService(self.context)
+                    assignment = cfg.resolve_prompt_assignment("qa", project_id=project.id)
+                except Exception:
+                    assignment = None
+
+                if assignment:
+                    prompt_path_value = assignment.get("path")
+                    if not isinstance(prompt_path_value, str) or not prompt_path_value.strip():
+                        raise ValueError("QA prompt assignment missing path")
+                    candidate = resolve_spec_path(
+                        str(prompt_path_value),
+                        protocol_root_path,
+                        workspace_root,
+                    )
+                    if not candidate.exists():
+                        raise FileNotFoundError(f"QA prompt not found: {candidate}")
+                    prompt_path = candidate
+
+                prompt_gate = self._build_prompt_gate(project_id=project.id, prompt_path=prompt_path)
+            except Exception as exc:
+                prompt_gate_error = str(exc)
+                self.logger.error(
+                    "qa_prompt_gate_failed",
+                    extra=self.log_extra(
+                        project_id=project.id,
+                        step_run_id=step_run_id,
+                        error=prompt_gate_error,
+                    ),
+                )
+        gates_to_run: List[Gate] = []
+        if prompt_gate is not None:
+            gates_to_run.append(prompt_gate)
         if gates is None:
             gate_ids = _gate_ids_from_required_checks(required_checks)
+            constitution_gate = None
             if gate_ids:
                 gate_map = {
                     "lint": LintGate(),
@@ -238,17 +383,59 @@ class QualityService(Service):
                     "test": TestGate(),
                     "checklist": ChecklistGate(),
                 }
-                gates_to_run = [gate_map[g] for g in gate_ids if g in gate_map]
+                if "constitutional" in gate_ids:
+                    constitution_gate = self._load_constitution_gate(project.id, workspace_root)
+                    if constitution_gate:
+                        gate_map["constitutional"] = constitution_gate
+                gates_to_run.extend([gate_map[g] for g in gate_ids if g in gate_map])
             elif qa_policy == "light":
-                gates_to_run = [LintGate()]
+                gates_to_run.append(LintGate())
+            else:
+                gates_to_run.extend(self.default_gates)
 
             # Add SpecKit checklist gate when a checklist exists.
             speckit_gate = SpecKitChecklistGate()
             if speckit_gate.has_checklist(context):
-                gates_to_run = [*gates_to_run, speckit_gate]
-        skip_ids = set(skip_gates or [])
+                if not any(g.gate_id == speckit_gate.gate_id for g in gates_to_run):
+                    gates_to_run.append(speckit_gate)
+
+            # Add constitutional gate when a constitution exists.
+            if constitution_gate is None:
+                constitution_gate = self._load_constitution_gate(project.id, workspace_root)
+            if constitution_gate and not any(g.gate_id == constitution_gate.gate_id for g in gates_to_run):
+                gates_to_run.append(constitution_gate)
+        else:
+            gates_to_run.extend(gates)
+
+        deduped: Dict[str, Gate] = {}
+        for gate in gates_to_run:
+            if gate.gate_id not in deduped:
+                deduped[gate.gate_id] = gate
+        gates_to_run = list(deduped.values())
+        try:
+            gate_ids = [g.gate_id for g in gates_to_run]
+            if prompt_gate_error and "prompt_qa" not in skip_ids:
+                gate_ids = ["prompt_qa", *gate_ids]
+            get_event_bus().publish(
+                QAStarted(
+                    step_run_id=step.id,
+                    protocol_run_id=run.id,
+                    gates=gate_ids,
+                )
+            )
+        except Exception:
+            pass
         
         gate_results = []
+        if prompt_gate_error and "prompt_qa" not in skip_ids:
+            gate_results.append(
+                GateResult(
+                    gate_id="prompt_qa",
+                    gate_name="Prompt QA",
+                    verdict=GateVerdict.ERROR,
+                    error=prompt_gate_error,
+                )
+            )
         for gate in gates_to_run:
             if gate.gate_id in skip_ids:
                 continue
@@ -273,10 +460,68 @@ class QualityService(Service):
             gate_results=gate_results,
             duration_seconds=duration,
         )
+
+        try:
+            if qa_result.verdict == QAVerdict.PASS:
+                get_event_bus().publish(
+                    QAPassed(step_run_id=step.id, protocol_run_id=run.id)
+                )
+            elif qa_result.verdict == QAVerdict.FAIL:
+                failures = [
+                    {"gate_id": f.gate_id, "message": f.message, "severity": f.severity}
+                    for f in qa_result.blocking_findings
+                ]
+                get_event_bus().publish(
+                    QAFailed(
+                        step_run_id=step.id,
+                        protocol_run_id=run.id,
+                        failures=failures,
+                        action="retry",
+                    )
+                )
+        except Exception:
+            pass
         
         # Update step status
         self._update_step_status(step, run, qa_result)
-        
+
+        # Feedback routing for failures (clarifications + events).
+        if qa_result.verdict == QAVerdict.FAIL:
+            try:
+                router = FeedbackRouter(max_auto_fix_attempts=self.context.config.qa_max_auto_fix_attempts)
+                routed = router.route_all(qa_result.all_findings)
+                for item in routed:
+                    try:
+                        self.db.append_feedback_event(
+                            protocol_run_id=run.id,
+                            step_run_id=step.id,
+                            error_type=item.route.category.value,
+                            action_taken=item.route.action.value,
+                            attempt_number=item.attempt + 1,
+                            context={
+                                "gate_id": item.finding.gate_id,
+                                "message": item.finding.message,
+                            },
+                        )
+                    except Exception:
+                        pass
+
+                    if item.route.action in (FeedbackAction.BLOCK, FeedbackAction.ESCALATE):
+                        key = f"qa:{item.finding.gate_id}:{abs(hash(item.finding.message))}"
+                        self.db.upsert_clarification(
+                            scope=f"step:{step.id}",
+                            project_id=project.id,
+                            protocol_run_id=run.id,
+                            step_run_id=step.id,
+                            key=key,
+                            question=f"Resolve QA finding: {item.finding.message}",
+                            recommended=item.finding.metadata or None,
+                            applies_to="qa",
+                            blocking=True,
+                        )
+            except Exception:
+                pass
+
         self.logger.info(
             "run_qa_completed",
             extra=self.log_extra(
@@ -301,7 +546,7 @@ class QualityService(Service):
         Uses a smaller set of gates for faster feedback.
         """
         inline_gates = gates or [LintGate()]
-        return self.run_qa(step_run_id, gates=inline_gates)
+        return self.run_qa(step_run_id, gates=inline_gates, skip_gates=["prompt_qa"])
 
     def _get_workspace(self, run: ProtocolRun, project) -> Path:
         """Get workspace root path."""
@@ -310,6 +555,23 @@ class QualityService(Service):
         elif project.local_path:
             return Path(project.local_path).expanduser()
         return Path.cwd()
+
+    def _load_constitution_gate(
+        self,
+        project_id: int,
+        workspace_root: Path,
+    ) -> Optional[ConstitutionalGate]:
+        try:
+            constitution_service = ConstitutionService(self.context, self.db)
+            constitution = constitution_service.load_from_repo(
+                project_id,
+                repo_root=workspace_root,
+            )
+        except Exception:
+            return None
+        if not constitution.articles:
+            return None
+        return ConstitutionalGate(constitution)
 
     def _aggregate_verdict(self, gate_results: List[GateResult]) -> QAVerdict:
         """Aggregate gate results into overall verdict."""
@@ -371,6 +633,7 @@ class QualityService(Service):
                 StepStatus.FAILED,
                 summary=f"QA error: {result.error}",
             )
+            self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
 
     def evaluate_step(
         self,
@@ -415,6 +678,8 @@ class QualityService(Service):
         self,
         qa_result: QAResult,
         step_run_id: int,
+        *,
+        report_path: Optional[Path] = None,
     ) -> None:
         """
         Persist QA verdict to database.
@@ -423,9 +688,42 @@ class QualityService(Service):
             qa_result: QA result to persist
             step_run_id: Step run ID
         """
+        if not self.db:
+            return
         try:
-            # Store verdict as JSON in step's runtime_state
+            gate_results = self._serialize_gate_results(qa_result.gate_results)
+            findings = self._serialize_findings(qa_result.all_findings)
+            summary = f"{qa_result.verdict.value.upper()}: {len(findings)} findings"
+
+            prompt_meta: Dict[str, Any] = {}
+            for gate in qa_result.gate_results:
+                if gate.gate_id == "prompt_qa":
+                    prompt_meta = gate.metadata or {}
+                    break
+
+            step = self.db.get_step_run(step_run_id)
+            run = self.db.get_protocol_run(step.protocol_run_id)
+            project = self.db.get_project(run.project_id)
+
+            record = self.db.create_qa_result(
+                project_id=project.id,
+                protocol_run_id=run.id,
+                step_run_id=step_run_id,
+                verdict=qa_result.verdict.value,
+                summary=summary,
+                gate_results=gate_results,
+                findings=findings,
+                prompt_path=prompt_meta.get("prompt_path"),
+                prompt_hash=prompt_meta.get("prompt_hash"),
+                engine_id=prompt_meta.get("engine_id"),
+                model=prompt_meta.get("model"),
+                report_path=str(report_path) if report_path else None,
+                report_text=prompt_meta.get("report_text"),
+                duration_seconds=qa_result.duration_seconds,
+            )
+
             verdict_data = {
+                "qa_result_id": record.id,
                 "verdict": qa_result.verdict.value,
                 "duration_seconds": qa_result.duration_seconds,
                 "gate_count": len(qa_result.gate_results),
@@ -439,13 +737,11 @@ class QualityService(Service):
                     for r in qa_result.gate_results
                 ],
             }
-            
-            step = self.db.get_step_run(step_run_id)
+
             runtime_state = step.runtime_state or {}
             runtime_state["qa_verdict"] = verdict_data
-            
             self.db.update_step_run(step_run_id, runtime_state=runtime_state)
-            
+
             self.logger.info(
                 "qa_verdict_persisted",
                 extra=self.log_extra(
@@ -514,6 +810,14 @@ class QualityService(Service):
                 lines.append(f"**Message:** {gate_result.message}")
             lines.append(f"**Findings:** {len(gate_result.findings)}")
             lines.append("")
+
+            if gate_result.gate_id == "prompt_qa":
+                report_text = (gate_result.metadata or {}).get("report_text")
+                if report_text:
+                    lines.append("**Prompt QA Report:**")
+                    lines.append("")
+                    lines.append(report_text.strip())
+                    lines.append("")
             
             if include_findings and gate_result.findings:
                 lines.append("| Severity | Message | File | Line |")

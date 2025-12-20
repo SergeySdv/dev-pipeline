@@ -82,8 +82,13 @@ export const queryKeys = {
   // Agents
   agents: {
     all: ["agents"] as const,
-    list: () => [...queryKeys.agents.all, "list"] as const,
+    list: (projectId?: number) => [...queryKeys.agents.all, "list", projectId ?? "global"] as const,
     detail: (id: string) => [...queryKeys.agents.all, "detail", id] as const,
+    defaults: (projectId?: number) => [...queryKeys.agents.all, "defaults", projectId ?? "global"] as const,
+    prompts: (projectId?: number) => [...queryKeys.agents.all, "prompts", projectId ?? "global"] as const,
+    health: (projectId?: number) => [...queryKeys.agents.all, "health", projectId ?? "global"] as const,
+    metrics: (projectId?: number) => [...queryKeys.agents.all, "metrics", projectId ?? "global"] as const,
+    project: (projectId: number) => [...queryKeys.agents.all, "project", projectId] as const,
   },
 
   // Clarifications

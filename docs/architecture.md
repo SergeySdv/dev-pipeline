@@ -153,17 +153,14 @@ flowchart TD
   B --> D[/POST /projects/{id}/protocols + start/]
   D --> E["plan_protocol_job\nemit ProtocolSpec\nsync StepRuns from spec"]
   E --> F{"Step pending/blocked?"}
-  F -->|run| G[/steps/{id}/actions/run → execute_step_job/]
+  F -->|execute| G[/steps/{id}/actions/execute → execute_step_job/]
   G --> H["Resolve prompt + outputs via spec\nengine registry dispatch"]
-  H --> I{"QA policy (spec)"}
-  I -->|full/light| J["run_quality_job\nQA prompt → verdict"]
-  I -->|skip| K["Step marked per policy\n(needs_qa or completed)"]
-  J --> L{"QA verdict"}
-  L -->|PASS| M["Step completed\ntrigger policies may enqueue other steps"]
-  L -->|FAIL| N{"Loop policy?"}
+  H --> I["Prompt QA auto-run"]
+  I --> J{"QA verdict"}
+  J -->|PASS| M["Step completed\ntrigger policies may enqueue other steps"]
+  J -->|FAIL| N{"Loop policy?"}
   N -->|apply| F
   N -->|none| O["Protocol blocked; retry_latest/run_next_step"]
-  K --> F
 ```
 
 ### CI feedback and completion
@@ -174,9 +171,7 @@ flowchart LR
   B --> C["report.sh or webhooks\n/webhooks/github|gitlab\n(branch or protocol_run_id)"]
   C --> D{"Normalized status"}
   D -->|running| E["Step status → running"]
-  D -->|success| F{"QA pending?\n(spec policy or TASKSGODZILLA_AUTO_QA_ON_CI)"}
-  F -->|yes| G["run_quality_job enqueued"]
-  F -->|no| H["Step completed (CI passed)"]
+  D -->|success| H["Step completed (CI passed)"]
   D -->|failure| I["Step failed; Protocol blocked\nloop/trigger policies may reset steps"]
   H --> J{"PR/MR merged?"}
   J -->|yes| K["Protocol → completed"]
@@ -186,7 +181,6 @@ flowchart LR
 - `TASKSGODZILLA_DB_URL` / `TASKSGODZILLA_DB_PATH` — Postgres URL or SQLite path (SQLite default).
 - `TASKSGODZILLA_REDIS_URL` — required Redis/RQ URL; e.g., `redis://localhost:6379/15` or `redis://localhost:6380/0` (docker-compose). Set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to run an inline worker in the API process for local dev/tests.
 - `TASKSGODZILLA_API_TOKEN` / `TASKSGODZILLA_WEBHOOK_TOKEN` — bearer auth + webhook HMAC/token validation.
-- `TASKSGODZILLA_AUTO_QA_AFTER_EXEC` / `TASKSGODZILLA_AUTO_QA_ON_CI` — enqueue QA after exec or on CI success.
 - `TASKSGODZILLA_MAX_TOKENS_PER_STEP` / `TASKSGODZILLA_MAX_TOKENS_PER_PROTOCOL` + `TASKSGODZILLA_TOKEN_BUDGET_MODE=strict|warn|off` — guardrails for Codex calls.
 - `TASKSGODZILLA_PROJECTS_ROOT` — base folder for auto-cloned repos (default `projects/<project_id>/<repo_name>`). `TASKSGODZILLA_AUTO_CLONE=false` leaves onboarding blocked until the repo exists locally.
 - `TASKSGODZILLA_GH_SSH` — prefer rewriting GitHub origins to SSH during onboarding; `TASKSGODZILLA_GIT_USER` / `TASKSGODZILLA_GIT_EMAIL` set git identity when provided.
@@ -197,8 +191,7 @@ flowchart LR
 ## Job types and workers
 - `project_setup_job` — ensure starter assets exist; emits setup events (no git mutation).
 - `plan_protocol_job` — create worktree, run planning + step decomposition via Codex, emit `ProtocolSpec`/`StepSpec`, write `.protocols/`, and sync StepRuns from the spec.
-- `execute_step_job` — resolve prompt and outputs from the StepSpec, dispatch via the engine registry (Codex/CodeMachine today), write outputs map, and mark status according to spec QA policy.
-- `run_quality_job` — use StepSpec QA config (engine/model/prompt/policy) to build QA, then mark completed/failed/blocked or loop per policy.
+- `execute_step_job` — resolve prompt and outputs from the StepSpec, dispatch via the engine registry (Codex/CodeMachine today), write outputs map, and auto-run prompt QA.
 - `open_pr_job` — push branch and open PR/MR via `gh`/`glab` if available.
 - `codemachine_import_job` — parse `.codemachine` config, emit `ProtocolSpec`/`StepSpec` (engines, QA, policies), persist template, and create steps from the spec.
 - Workers: RQ workers (`scripts/rq_worker.py`) for Redis; API can auto-start a background RQ worker thread when `TASKSGODZILLA_INLINE_RQ_WORKER=true` (dev/test convenience).
@@ -310,7 +303,7 @@ If you want consistent behavior across “beginner” through “enterprise” p
 - **CodeMachine import/runtime**  
   - `.codemachine` workspaces are parsed via `tasksgodzilla.codemachine.load_codemachine_config`, normalizing main/sub agents, module policies, placeholders, and templates into a `ProtocolSpec`.  
   - `codemachine_worker.import_codemachine_workspace` persists the spec to the protocol run and creates steps for main agents with engines, QA config, and loop/trigger policies.  
-  - Execution uses the shared prompt/output resolver plus engine registry; CodeMachine outputs land in `.protocols/<protocol>/` and aux `codemachine` paths, and QA follows the StepSpec `qa_policy` (skip/light/full).
+  - Execution uses the shared prompt/output resolver plus engine registry; CodeMachine outputs land in `.protocols/<protocol>/` and aux `codemachine` paths, with prompt QA auto-run and optional gates from policy.
 - **Dataset helper (`scripts/generate_dataset_report.py`)**  
   - Small utility that reads `dataset.csv` (category/value), aggregates metrics, and renders a PDF via reportlab. Current inputs are toy data; output path defaults to `docs/dataset_report.pdf`.
 - **TerraformManager workflow plan (`docs/terraformmanager-workflow-plan.md`)**  
@@ -331,7 +324,7 @@ If you want consistent behavior across “beginner” through “enterprise” p
 4. **Execute steps manually (outside auto-run)**  
    - Work from the protocol’s worktree. For each step: follow the step file, run stack checks (`lint/typecheck/test/build`), update `log.md` and `context.md`, commit with `type(scope): subject [protocol-NNNN/XX]`, push, and report per the contract in `prompts/protocol-new.prompt.md`.
 5. **QA gate a step**  
-   - Run `python3 scripts/quality_orchestrator.py --protocol-root <.protocols/...> --step-file XX-*.md [--model ...] [--sandbox ...]`. On FAIL, fix issues before continuing; reports land in `quality-report.md`. Or trigger QA via `/steps/{id}/actions/run_qa` (or auto via `TASKSGODZILLA_AUTO_QA_*` flags).
+   - Run `python3 scripts/quality_orchestrator.py --protocol-root <.protocols/...> --step-file XX-*.md [--model ...] [--sandbox ...]`. On FAIL, fix issues before continuing; reports land in `quality-report.md`. Or trigger QA via `/steps/{id}/actions/qa` (auto-runs after execution).
 6. **CI pipelines**  
    - Both GitHub Actions and GitLab CI invoke the same `scripts/ci/*.sh` hooks. Real work requires filling those scripts; missing scripts simply print skip messages to keep empty repos green. CI results can be mirrored back via `scripts/ci/report.sh` posting to orchestrator webhooks.
 7. **Optional: CI discovery**  

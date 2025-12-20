@@ -39,6 +39,31 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "speckit_specs",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("project_id", sa.Integer(), sa.ForeignKey("projects.id"), nullable=False),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("spec_number", sa.Integer(), nullable=True),
+        sa.Column("feature_name", sa.Text(), nullable=True),
+        sa.Column("spec_path", sa.Text(), nullable=True),
+        sa.Column("plan_path", sa.Text(), nullable=True),
+        sa.Column("tasks_path", sa.Text(), nullable=True),
+        sa.Column("checklist_path", sa.Text(), nullable=True),
+        sa.Column("analysis_path", sa.Text(), nullable=True),
+        sa.Column("implement_path", sa.Text(), nullable=True),
+        sa.Column("has_spec", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("has_plan", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("has_tasks", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("has_checklist", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("has_analysis", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("has_implement", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("constitution_hash", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
+        sa.UniqueConstraint("project_id", "name", name="uq_speckit_specs_project_name"),
+    )
+
+    op.create_table(
         "step_runs",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("protocol_run_id", sa.Integer(), sa.ForeignKey("protocol_runs.id"), nullable=False),
@@ -68,5 +93,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("events")
     op.drop_table("step_runs")
+    op.drop_table("speckit_specs")
     op.drop_table("protocol_runs")
     op.drop_table("projects")

@@ -1,7 +1,19 @@
 "use client"
 
-import { useState } from "react"
-import { useAgents } from "@/lib/api"
+import { useEffect, useMemo, useState } from "react"
+import {
+  useAgents,
+  useAgentDefaults,
+  useAgentHealth,
+  useAgentMetrics,
+  useAgentPrompts,
+  useProjects,
+  useProjectAgentOverrides,
+  useUpdateAgentConfig,
+  useUpdateAgentDefaults,
+  useUpdateAgentPrompt,
+  useUpdateProjectAgentOverrides,
+} from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -14,51 +26,173 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { LoadingState } from "@/components/ui/loading-state"
 import { EmptyState } from "@/components/ui/empty-state"
-import { Bot, Circle, Settings, Plus, Activity, TrendingUp, Zap } from "lucide-react"
-import type { Agent } from "@/lib/api/types"
+import { Bot, Circle, Settings, Plus, Activity, TrendingUp, Zap, RefreshCw, Layers, Info } from "lucide-react"
+import { toast } from "sonner"
+import type { Agent, AgentDefaults, AgentPromptTemplate, AgentUpdate } from "@/lib/api/types"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
-type AgentConfig = Agent & {
-  activeJobs?: number
-  completedJobs?: number
-  avgResponseTime?: string
-  maxConcurrency?: number
-  temperature?: number
-  maxTokens?: number
-  systemPrompt?: string
+type AgentCard = Agent & {
+  enabled: boolean
+  healthStatus: "available" | "unavailable" | "unknown" | "disabled"
+  healthDetail?: string
+  activeSteps: number
+  completedSteps: number
 }
 
-export default function AgentsPage() {
-  const { data: agentsData, isLoading } = useAgents()
-  const [selectedAgent, setSelectedAgent] = useState<AgentConfig | null>(null)
-  const [isConfigOpen, setIsConfigOpen] = useState(false)
+type AgentDraft = {
+  id: string
+  name: string
+  kind: string
+  enabled: boolean
+  default_model: string
+  command: string
+  command_dir: string
+  endpoint: string
+  sandbox: string
+  format: string
+  capabilities: string
+  timeout_seconds: string
+  max_retries: string
+}
 
-  // Transform API data to include display fields
-  const agents: AgentConfig[] = (agentsData || []).map((agent) => ({
-    ...agent,
-    status: agent.status || "available",
-    activeJobs: 0,
-    completedJobs: 0,
-    avgResponseTime: "-",
-    maxConcurrency: 5,
-    temperature: 0.7,
-    maxTokens: 4096,
-  }))
+type DefaultsDraft = {
+  code_gen: string
+  planning: string
+  exec: string
+  qa: string
+  discovery: string
+  prompts: Record<string, string>
+}
+
+type PromptDraft = {
+  id: string
+  name: string
+  path: string
+  kind: string
+  engine_id: string
+  model: string
+  tags: string
+  enabled: boolean
+  description: string
+}
+
+const defaultPromptAssignments = [
+  { key: "planning", label: "Planning", description: "Protocol generation prompt (creates plan and steps)." },
+  { key: "exec", label: "Execution", description: "Prepended to each step before execution." },
+  { key: "qa", label: "QA", description: "Quality gate prompt used for step review." },
+  { key: "discovery", label: "Discovery", description: "Repo discovery prompt for initial inventory." },
+  { key: "speckit.specify", label: "SpecKit: Specify", description: "Spec draft generation prompt." },
+  { key: "speckit.plan", label: "SpecKit: Plan", description: "Plan generation prompt from spec." },
+  { key: "speckit.tasks", label: "SpecKit: Tasks", description: "Tasks generation prompt from plan." },
+  { key: "speckit.checklist", label: "SpecKit: Checklist", description: "Checklist generation prompt." },
+  { key: "speckit.analyze", label: "SpecKit: Analyze", description: "Analysis prompt for specs." },
+]
+
+export default function AgentsPage() {
+  const { data: projects } = useProjects()
+  const [scopeProjectId, setScopeProjectId] = useState("global")
+  const projectId = scopeProjectId === "global" ? undefined : Number(scopeProjectId)
+
+  const { data: agentsData, isLoading: agentsLoading } = useAgents(projectId)
+  const { data: defaultsData } = useAgentDefaults(projectId)
+  const { data: promptsData } = useAgentPrompts(projectId)
+  const {
+    data: healthData,
+    refetch: refreshHealth,
+    isFetching: isRefreshingHealth,
+  } = useAgentHealth(projectId)
+  const { data: metricsData } = useAgentMetrics(projectId)
+  const { data: projectOverrides } = useProjectAgentOverrides(projectId)
+
+  const updateAgent = useUpdateAgentConfig()
+  const updateDefaults = useUpdateAgentDefaults()
+  const updatePrompt = useUpdateAgentPrompt()
+  const updateProjectOverrides = useUpdateProjectAgentOverrides()
+
+  const [selectedAgent, setSelectedAgent] = useState<AgentDraft | null>(null)
+  const [isConfigOpen, setIsConfigOpen] = useState(false)
+  const [selectedPrompt, setSelectedPrompt] = useState<PromptDraft | null>(null)
+  const [isPromptOpen, setIsPromptOpen] = useState(false)
+  const [defaultsDraft, setDefaultsDraft] = useState<DefaultsDraft | null>(null)
+
+  const healthById = useMemo(() => {
+    return new Map((healthData || []).map((health) => [health.agent_id, health]))
+  }, [healthData])
+
+  const metricsById = useMemo(() => {
+    return new Map((metricsData || []).map((metrics) => [metrics.agent_id, metrics]))
+  }, [metricsData])
+
+  const agents: AgentCard[] = useMemo(() => {
+    return (agentsData || []).map((agent) => {
+      const enabled = agent.enabled ?? agent.status !== "unavailable"
+      const health = healthById.get(agent.id)
+      let healthStatus: AgentCard["healthStatus"] = "unknown"
+      let healthDetail: string | undefined
+      if (!enabled) {
+        healthStatus = "disabled"
+      } else if (health) {
+        healthStatus = health.available ? "available" : "unavailable"
+        healthDetail = health.error || health.version || undefined
+      } else if (agent.status === "available") {
+        healthStatus = "available"
+      }
+      const metrics = metricsById.get(agent.id)
+      return {
+        ...agent,
+        enabled,
+        healthStatus,
+        healthDetail,
+        activeSteps: metrics?.active_steps || 0,
+        completedSteps: metrics?.completed_steps || 0,
+      }
+    })
+  }, [agentsData, healthById, metricsById])
+
+  useEffect(() => {
+    const defaults: DefaultsDraft = {
+      code_gen: defaultsData?.code_gen || "",
+      planning: defaultsData?.planning || "",
+      exec: defaultsData?.exec || "",
+      qa: defaultsData?.qa || "",
+      discovery: defaultsData?.discovery || "",
+      prompts: { ...(defaultsData?.prompts || {}) },
+    }
+    setDefaultsDraft(defaults)
+  }, [defaultsData])
 
   const statusColors = {
     available: { bg: "bg-green-500", text: "Available" },
-    busy: { bg: "bg-amber-500", text: "Busy" },
     unavailable: { bg: "bg-red-500", text: "Unavailable" },
+    disabled: { bg: "bg-slate-400", text: "Disabled" },
+    unknown: { bg: "bg-amber-500", text: "Unknown" },
   }
 
   const stats = {
     total: agents.length,
-    available: agents.filter((a) => a.status === "available").length,
-    busy: agents.filter((a) => a.status === "busy").length,
-    totalActiveJobs: agents.reduce((sum, a) => sum + (a.activeJobs || 0), 0),
-    totalCompleted: agents.reduce((sum, a) => sum + (a.completedJobs || 0), 0),
+    enabled: agents.filter((agent) => agent.enabled).length,
+    available: agents.filter((agent) => agent.healthStatus === "available").length,
+    activeSteps: agents.reduce((sum, agent) => sum + agent.activeSteps, 0),
+    completedSteps: agents.reduce((sum, agent) => sum + agent.completedSteps, 0),
   }
 
-  if (isLoading) {
+  const inheritEnabled = projectId ? projectOverrides?.inherit ?? true : true
+
+  const promptOptions = promptsData || []
+
+  const handleToggleInheritance = (value: boolean) => {
+    if (!projectId) return
+    updateProjectOverrides.mutate(
+      { projectId, overrides: { inherit: value } },
+      {
+        onError: (error) => {
+          toast.error(error instanceof Error ? error.message : "Failed to update inheritance")
+        },
+      },
+    )
+  }
+
+  if (agentsLoading) {
     return <LoadingState message="Loading agents..." />
   }
 
@@ -70,10 +204,14 @@ export default function AgentsPage() {
             <h1 className="text-3xl font-semibold tracking-tight">Agents</h1>
             <p className="text-sm text-muted-foreground">Manage AI agents and their configurations</p>
           </div>
-          <Button size="sm">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Agent
-          </Button>
+          <ScopeSelector
+            projects={projects || []}
+            value={scopeProjectId}
+            onChange={setScopeProjectId}
+            showInheritance={!!projectId}
+            inheritEnabled={inheritEnabled}
+            onToggleInheritance={handleToggleInheritance}
+          />
         </div>
         <EmptyState
           icon={Bot}
@@ -84,263 +222,834 @@ export default function AgentsPage() {
     )
   }
 
+  const openAgentConfig = (agent: AgentCard) => {
+    setSelectedAgent({
+      id: agent.id,
+      name: agent.name,
+      kind: agent.kind,
+      enabled: agent.enabled,
+      default_model: agent.default_model || "",
+      command: agent.command || "",
+      command_dir: agent.command_dir || "",
+      endpoint: agent.endpoint || "",
+      sandbox: agent.sandbox || "",
+      format: agent.format || "",
+      capabilities: agent.capabilities?.join(", ") || "",
+      timeout_seconds: agent.timeout_seconds ? String(agent.timeout_seconds) : "",
+      max_retries: agent.max_retries ? String(agent.max_retries) : "",
+    })
+    setIsConfigOpen(true)
+  }
+
+  const openPromptConfig = (prompt: AgentPromptTemplate) => {
+    setSelectedPrompt({
+      id: prompt.id,
+      name: prompt.name,
+      path: prompt.path,
+      kind: prompt.kind || "",
+      engine_id: prompt.engine_id || "",
+      model: prompt.model || "",
+      tags: prompt.tags?.join(", ") || "",
+      enabled: prompt.enabled ?? true,
+      description: prompt.description || "",
+    })
+    setIsPromptOpen(true)
+  }
+
+  const handleSaveAgent = async () => {
+    if (!selectedAgent) return
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null)
+    const toNumber = (value: string) => (value.trim().length > 0 ? Number(value) : null)
+
+    const payload: AgentUpdate = {
+      name: toNullable(selectedAgent.name),
+      kind: toNullable(selectedAgent.kind),
+      enabled: selectedAgent.enabled,
+      default_model: toNullable(selectedAgent.default_model),
+      command: toNullable(selectedAgent.command),
+      command_dir: toNullable(selectedAgent.command_dir),
+      endpoint: toNullable(selectedAgent.endpoint),
+      sandbox: toNullable(selectedAgent.sandbox),
+      format: toNullable(selectedAgent.format),
+      capabilities: selectedAgent.capabilities
+        .split(",")
+        .map((cap) => cap.trim())
+        .filter(Boolean),
+      timeout_seconds: toNumber(selectedAgent.timeout_seconds),
+      max_retries: toNumber(selectedAgent.max_retries),
+    }
+
+    try {
+      await updateAgent.mutateAsync({
+        agentId: selectedAgent.id,
+        data: payload,
+        projectId,
+      })
+      toast.success("Agent updated")
+      setIsConfigOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update agent")
+    }
+  }
+
+  const handleSaveDefaults = async () => {
+    if (!defaultsDraft) return
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null)
+    const cleanedPrompts = Object.fromEntries(
+      Object.entries(defaultsDraft.prompts).filter(([, value]) => value && value.trim().length > 0),
+    )
+    const payload: AgentDefaults = {
+      code_gen: toNullable(defaultsDraft.code_gen),
+      planning: toNullable(defaultsDraft.planning),
+      exec: toNullable(defaultsDraft.exec),
+      qa: toNullable(defaultsDraft.qa),
+      discovery: toNullable(defaultsDraft.discovery),
+      prompts: cleanedPrompts,
+    }
+
+    try {
+      await updateDefaults.mutateAsync({
+        projectId,
+        defaults: payload,
+      })
+      toast.success("Assignments updated")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update assignments")
+    }
+  }
+
+  const handleSavePrompt = async () => {
+    if (!selectedPrompt) return
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null)
+    const payload = {
+      name: toNullable(selectedPrompt.name),
+      path: toNullable(selectedPrompt.path),
+      kind: toNullable(selectedPrompt.kind),
+      engine_id: toNullable(selectedPrompt.engine_id),
+      model: toNullable(selectedPrompt.model),
+      tags: selectedPrompt.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      enabled: selectedPrompt.enabled,
+      description: toNullable(selectedPrompt.description),
+    }
+
+    try {
+      await updatePrompt.mutateAsync({
+        projectId,
+        promptId: selectedPrompt.id,
+        data: payload,
+      })
+      toast.success("Prompt template updated")
+      setIsPromptOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update prompt")
+    }
+  }
+
   return (
     <div className="flex h-full flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Agents</h1>
-          <p className="text-sm text-muted-foreground">Manage AI agents and their configurations</p>
+          <p className="text-sm text-muted-foreground">Manage AI agents, prompt templates, and assignments</p>
         </div>
-        <Button size="sm">
-          <Plus className="mr-2 h-4 w-4" />
-          Add Agent
-        </Button>
-      </div>
-
-      <div className="bg-muted/50 border rounded-lg p-4">
-        <div className="flex items-center justify-between gap-6">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md bg-blue-500/10 flex items-center justify-center">
-              <Bot className="h-4 w-4 text-blue-500" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-muted-foreground">Total Agents</div>
-              <div className="text-2xl font-bold">{stats.total}</div>
-            </div>
-          </div>
-
-          <div className="h-12 w-px bg-border" />
-
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md bg-green-500/10 flex items-center justify-center">
-              <Circle className="h-4 w-4 text-green-500 fill-green-500" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-muted-foreground">Available</div>
-              <div className="text-2xl font-bold">{stats.available}</div>
-            </div>
-          </div>
-
-          <div className="h-12 w-px bg-border" />
-
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md bg-amber-500/10 flex items-center justify-center">
-              <Activity className="h-4 w-4 text-amber-500" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-muted-foreground">Busy</div>
-              <div className="text-2xl font-bold">{stats.busy}</div>
-            </div>
-          </div>
-
-          <div className="h-12 w-px bg-border" />
-
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md bg-purple-500/10 flex items-center justify-center">
-              <Zap className="h-4 w-4 text-purple-500" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-muted-foreground">Active Jobs</div>
-              <div className="text-2xl font-bold">{stats.totalActiveJobs}</div>
-            </div>
-          </div>
-
-          <div className="h-12 w-px bg-border" />
-
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md bg-cyan-500/10 flex items-center justify-center">
-              <TrendingUp className="h-4 w-4 text-cyan-500" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-muted-foreground">Completed</div>
-              <div className="text-2xl font-bold">{stats.totalCompleted}</div>
-            </div>
-          </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <ScopeSelector
+            projects={projects || []}
+            value={scopeProjectId}
+            onChange={setScopeProjectId}
+            showInheritance={!!projectId}
+            inheritEnabled={inheritEnabled}
+            onToggleInheritance={handleToggleInheritance}
+          />
+          <Button variant="outline" size="sm" onClick={() => refreshHealth()} disabled={isRefreshingHealth}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            {isRefreshingHealth ? "Refreshing" : "Refresh Health"}
+          </Button>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {agents.map((agent) => (
-          <Card key={agent.id} className="relative overflow-hidden hover:shadow-lg transition-shadow">
-            <div className={`absolute left-0 top-0 h-full w-1 ${statusColors[agent.status].bg}`} />
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-2">
-                  <Bot className="h-5 w-5 text-blue-500" />
-                  <CardTitle className="text-base">{agent.name}</CardTitle>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Circle className={`h-2 w-2 fill-current ${statusColors[agent.status].bg.replace("bg-", "text-")}`} />
-                  <span className="text-xs text-muted-foreground">{statusColors[agent.status].text}</span>
-                </div>
-              </div>
-              <CardDescription className="text-xs">{agent.kind}</CardDescription>
+      <Tabs defaultValue="agents" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="agents">Agents</TabsTrigger>
+          <TabsTrigger value="assignments">Assignments</TabsTrigger>
+          <TabsTrigger value="prompts">Prompts</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="agents" className="space-y-6 mt-4">
+          <div className="bg-muted/50 border rounded-lg p-4">
+            <div className="flex flex-wrap items-center justify-between gap-6">
+              <StatBlock label="Total Agents" value={stats.total} icon={Bot} iconClass="text-blue-500" />
+              <Divider />
+              <StatBlock label="Enabled" value={stats.enabled} icon={Circle} iconClass="text-green-500" />
+              <Divider />
+              <StatBlock label="Available" value={stats.available} icon={Activity} iconClass="text-green-500" />
+              <Divider />
+              <StatBlock label="Active Steps" value={stats.activeSteps} icon={Zap} iconClass="text-amber-500" />
+              <Divider />
+              <StatBlock label="Completed" value={stats.completedSteps} icon={TrendingUp} iconClass="text-cyan-500" />
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {agents.map((agent) => (
+              <Card key={agent.id} className="relative overflow-hidden hover:shadow-lg transition-shadow">
+                <div className={`absolute left-0 top-0 h-full w-1 ${statusColors[agent.healthStatus].bg}`} />
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bot className="h-5 w-5 text-blue-500" />
+                      <CardTitle className="text-base">{agent.name}</CardTitle>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Circle
+                        className={`h-2 w-2 fill-current ${statusColors[agent.healthStatus].bg.replace("bg-", "text-")}`}
+                      />
+                      <span className="text-xs text-muted-foreground">{statusColors[agent.healthStatus].text}</span>
+                    </div>
+                  </div>
+                  <CardDescription className="text-xs">{agent.kind}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Model</span>
+                      <span className="font-mono text-xs truncate max-w-[140px]">{agent.default_model || "-"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Command / Endpoint</span>
+                      <span className="text-xs truncate max-w-[140px]">
+                        {agent.command || agent.endpoint || "-"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Active Steps</span>
+                      <Badge variant={agent.activeSteps > 0 ? "default" : "secondary"} className="text-xs">
+                        {agent.activeSteps}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Capabilities</span>
+                      <span className="text-xs">{agent.capabilities?.length || 0}</span>
+                    </div>
+                    {agent.healthDetail && (
+                      <p className="text-xs text-muted-foreground truncate">{agent.healthDetail}</p>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full bg-transparent"
+                    onClick={() => openAgentConfig(agent)}
+                  >
+                    <Settings className="mr-2 h-3 w-3" />
+                    Configure
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="assignments" className="space-y-6 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Default Agent Assignments</CardTitle>
+              <CardDescription>Set fallback agents for each workflow stage.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Model</span>
-                  <span className="font-mono text-xs truncate max-w-[140px]">{agent.default_model || "-"}</span>
+            <CardContent className="space-y-4">
+              {defaultsDraft && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <AssignmentSelect
+                    label="Planning"
+                    value={defaultsDraft.planning}
+                    agents={agents}
+                    onChange={(value) =>
+                      setDefaultsDraft((prev) => (prev ? { ...prev, planning: value } : prev))
+                    }
+                  />
+                  <AssignmentSelect
+                    label="Execution"
+                    value={defaultsDraft.exec || defaultsDraft.code_gen}
+                    agents={agents}
+                    onChange={(value) =>
+                      setDefaultsDraft((prev) =>
+                        prev ? { ...prev, exec: value, code_gen: prev.code_gen || value } : prev,
+                      )
+                    }
+                  />
+                  <AssignmentSelect
+                    label="QA"
+                    value={defaultsDraft.qa}
+                    agents={agents}
+                    onChange={(value) => setDefaultsDraft((prev) => (prev ? { ...prev, qa: value } : prev))}
+                  />
+                  <AssignmentSelect
+                    label="Discovery"
+                    value={defaultsDraft.discovery}
+                    agents={agents}
+                    onChange={(value) =>
+                      setDefaultsDraft((prev) => (prev ? { ...prev, discovery: value } : prev))
+                    }
+                  />
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Active Jobs</span>
-                  <Badge variant={(agent.activeJobs || 0) > 0 ? "default" : "secondary"} className="text-xs">
-                    {agent.activeJobs || 0}
-                  </Badge>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Capabilities</span>
-                  <span className="text-xs">{agent.capabilities?.length || 0}</span>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full bg-transparent"
-                onClick={() => {
-                  setSelectedAgent(agent)
-                  setIsConfigOpen(true)
-                }}
-              >
-                <Settings className="mr-2 h-3 w-3" />
-                Configure
-              </Button>
+              )}
             </CardContent>
           </Card>
-        ))}
-      </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Prompt Assignments</CardTitle>
+              <CardDescription>Map prompts to workflows or stages.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {defaultsDraft && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {defaultPromptAssignments.map((assignment) => (
+                    <PromptAssignmentSelect
+                      key={assignment.key}
+                      label={assignment.label}
+                      description={assignment.description}
+                      value={defaultsDraft.prompts[assignment.key] || ""}
+                      prompts={promptOptions}
+                      onChange={(value) =>
+                        setDefaultsDraft((prev) =>
+                          prev ? { ...prev, prompts: { ...prev.prompts, [assignment.key]: value } } : prev,
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-end">
+                <Button onClick={handleSaveDefaults} disabled={!defaultsDraft}>
+                  Save Assignments
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="prompts" className="space-y-6 mt-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Prompt Templates</h2>
+              <p className="text-sm text-muted-foreground">Edit reusable prompts and per-project overrides.</p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() =>
+                openPromptConfig({
+                  id: "new-prompt",
+                  name: "New Prompt",
+                  path: "prompts/",
+                  enabled: true,
+                } as AgentPromptTemplate)
+              }
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Prompt
+            </Button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {promptOptions.length === 0 ? (
+              <EmptyState
+                icon={Layers}
+                title="No prompt templates"
+                description="Create a prompt template to assign it to workflows."
+              />
+            ) : (
+              promptOptions.map((prompt) => (
+                <Card key={prompt.id} className="relative">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <CardTitle className="text-base">{prompt.name}</CardTitle>
+                        <CardDescription className="text-xs">{prompt.id}</CardDescription>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {prompt.source === "project" && <Badge variant="secondary">Project</Badge>}
+                        {prompt.enabled === false && <Badge variant="outline">Disabled</Badge>}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Path</span>
+                      <span className="text-xs truncate max-w-[180px]">{prompt.path}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Engine</span>
+                      <span className="text-xs">{prompt.engine_id || "-"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Model</span>
+                      <span className="text-xs">{prompt.model || "-"}</span>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => openPromptConfig(prompt)}>
+                      Edit Prompt
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent size="2xl" className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Bot className="h-5 w-5 text-blue-500" />
               Configure {selectedAgent?.name}
             </DialogTitle>
-            <DialogDescription>Adjust agent settings and parameters</DialogDescription>
+            <DialogDescription>
+              {projectId ? "Editing project-level overrides" : "Editing global agent configuration"}
+            </DialogDescription>
           </DialogHeader>
 
           {selectedAgent && (
-            <Tabs defaultValue="general" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="general">General</TabsTrigger>
-                <TabsTrigger value="model">Model</TabsTrigger>
-                <TabsTrigger value="performance">Performance</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="general" className="space-y-4 mt-4">
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="agent-name">Agent Name</Label>
-                  <Input id="agent-name" defaultValue={selectedAgent.name} />
+                  <Input
+                    id="agent-name"
+                    value={selectedAgent.name}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, name: event.target.value } : prev))
+                    }
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="agent-kind">Agent Kind</Label>
-                  <Input id="agent-kind" defaultValue={selectedAgent.kind} disabled />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="agent-status">Status</Label>
-                  <Select defaultValue={selectedAgent.status}>
-                    <SelectTrigger id="agent-status">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="available">Available</SelectItem>
-                      <SelectItem value="busy">Busy</SelectItem>
-                      <SelectItem value="unavailable">Unavailable</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Enable Auto-scaling</Label>
-                    <p className="text-xs text-muted-foreground">Automatically adjust capacity based on load</p>
-                  </div>
-                  <Switch />
-                </div>
-              </TabsContent>
-
-              <TabsContent value="model" className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="model">Model</Label>
-                  <Input id="model" defaultValue={selectedAgent.default_model || ""} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="temperature">Temperature: {selectedAgent.temperature}</Label>
                   <Input
-                    id="temperature"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    defaultValue={selectedAgent.temperature}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-muted-foreground">Controls randomness in responses</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="max-tokens">Max Tokens</Label>
-                  <Input id="max-tokens" type="number" defaultValue={selectedAgent.maxTokens} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="system-prompt">System Prompt</Label>
-                  <Textarea
-                    id="system-prompt"
-                    rows={4}
-                    defaultValue={selectedAgent.systemPrompt || ""}
-                    placeholder="Enter system prompt..."
+                    id="agent-kind"
+                    value={selectedAgent.kind}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, kind: event.target.value } : prev))
+                    }
                   />
                 </div>
-              </TabsContent>
+              </div>
 
-              <TabsContent value="performance" className="space-y-4 mt-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="max-concurrency">Max Concurrency</Label>
-                  <Input id="max-concurrency" type="number" defaultValue={selectedAgent.maxConcurrency} />
-                  <p className="text-xs text-muted-foreground">Maximum parallel job executions</p>
+                  <Label htmlFor="agent-command">Command</Label>
+                  <Input
+                    id="agent-command"
+                    value={selectedAgent.command}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, command: event.target.value } : prev))
+                    }
+                  />
                 </div>
-                <div className="space-y-4 rounded-lg border p-4 bg-muted/50">
-                  <h4 className="font-medium flex items-center gap-2">
-                    <Activity className="h-4 w-4" />
-                    Current Metrics
-                  </h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Active Jobs</p>
-                      <p className="text-2xl font-bold">{selectedAgent.activeJobs || 0}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Completed Jobs</p>
-                      <p className="text-2xl font-bold">{selectedAgent.completedJobs || 0}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Avg Response Time</p>
-                      <p className="text-2xl font-bold">{selectedAgent.avgResponseTime || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Success Rate</p>
-                      <p className="text-2xl font-bold">-</p>
-                    </div>
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="agent-endpoint">Endpoint</Label>
+                  <Input
+                    id="agent-endpoint"
+                    value={selectedAgent.endpoint}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, endpoint: event.target.value } : prev))
+                    }
+                  />
                 </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Enable Rate Limiting</Label>
-                    <p className="text-xs text-muted-foreground">Prevent API quota exhaustion</p>
-                  </div>
-                  <Switch defaultChecked />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="agent-default-model">Default Model</Label>
+                  <Input
+                    id="agent-default-model"
+                    value={selectedAgent.default_model}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, default_model: event.target.value } : prev))
+                    }
+                  />
                 </div>
-              </TabsContent>
-            </Tabs>
+                <div className="space-y-2">
+                  <Label htmlFor="agent-command-dir">Command Dir</Label>
+                  <Input
+                    id="agent-command-dir"
+                    value={selectedAgent.command_dir}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, command_dir: event.target.value } : prev))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="agent-sandbox">Sandbox</Label>
+                  <Input
+                    id="agent-sandbox"
+                    value={selectedAgent.sandbox}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, sandbox: event.target.value } : prev))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="agent-format">Format</Label>
+                  <Input
+                    id="agent-format"
+                    value={selectedAgent.format}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, format: event.target.value } : prev))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="agent-timeout">Timeout (seconds)</Label>
+                  <Input
+                    id="agent-timeout"
+                    type="number"
+                    value={selectedAgent.timeout_seconds}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, timeout_seconds: event.target.value } : prev))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="agent-retries">Max Retries</Label>
+                  <Input
+                    id="agent-retries"
+                    type="number"
+                    value={selectedAgent.max_retries}
+                    onChange={(event) =>
+                      setSelectedAgent((prev) => (prev ? { ...prev, max_retries: event.target.value } : prev))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="agent-capabilities">Capabilities</Label>
+                <Textarea
+                  id="agent-capabilities"
+                  rows={3}
+                  value={selectedAgent.capabilities}
+                  onChange={(event) =>
+                    setSelectedAgent((prev) => (prev ? { ...prev, capabilities: event.target.value } : prev))
+                  }
+                  placeholder="code_gen, code_review"
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label>Enabled</Label>
+                  <p className="text-xs text-muted-foreground">Disable to prevent assignment.</p>
+                </div>
+                <Switch
+                  checked={selectedAgent.enabled}
+                  onCheckedChange={(value) =>
+                    setSelectedAgent((prev) => (prev ? { ...prev, enabled: value } : prev))
+                  }
+                />
+              </div>
+            </div>
           )}
 
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => setIsConfigOpen(false)}>Save Changes</Button>
+            <Button onClick={handleSaveAgent} disabled={updateAgent.isPending}>
+              Save Changes
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={isPromptOpen} onOpenChange={setIsPromptOpen}>
+        <DialogContent size="2xl" className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5 text-blue-500" />
+              {selectedPrompt?.name || "Prompt"}
+            </DialogTitle>
+            <DialogDescription>
+              {projectId ? "Editing project-level prompt" : "Editing global prompt template"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPrompt && (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="prompt-id">Prompt ID</Label>
+                  <Input
+                    id="prompt-id"
+                    value={selectedPrompt.id}
+                    onChange={(event) =>
+                      setSelectedPrompt((prev) => (prev ? { ...prev, id: event.target.value } : prev))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="prompt-name">Prompt Name</Label>
+                  <Input
+                    id="prompt-name"
+                    value={selectedPrompt.name}
+                    onChange={(event) =>
+                      setSelectedPrompt((prev) => (prev ? { ...prev, name: event.target.value } : prev))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="prompt-path">Prompt Path</Label>
+                <Input
+                  id="prompt-path"
+                  value={selectedPrompt.path}
+                  onChange={(event) =>
+                    setSelectedPrompt((prev) => (prev ? { ...prev, path: event.target.value } : prev))
+                  }
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="prompt-kind">Kind</Label>
+                  <Input
+                    id="prompt-kind"
+                    value={selectedPrompt.kind}
+                    onChange={(event) =>
+                      setSelectedPrompt((prev) => (prev ? { ...prev, kind: event.target.value } : prev))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="prompt-engine">Engine</Label>
+                  <Input
+                    id="prompt-engine"
+                    value={selectedPrompt.engine_id}
+                    onChange={(event) =>
+                      setSelectedPrompt((prev) => (prev ? { ...prev, engine_id: event.target.value } : prev))
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="prompt-model">Model</Label>
+                  <Input
+                    id="prompt-model"
+                    value={selectedPrompt.model}
+                    onChange={(event) =>
+                      setSelectedPrompt((prev) => (prev ? { ...prev, model: event.target.value } : prev))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="prompt-tags">Tags</Label>
+                  <Input
+                    id="prompt-tags"
+                    value={selectedPrompt.tags}
+                    onChange={(event) =>
+                      setSelectedPrompt((prev) => (prev ? { ...prev, tags: event.target.value } : prev))
+                    }
+                    placeholder="planning, qa"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="prompt-description">Description</Label>
+                <Textarea
+                  id="prompt-description"
+                  rows={3}
+                  value={selectedPrompt.description}
+                  onChange={(event) =>
+                    setSelectedPrompt((prev) => (prev ? { ...prev, description: event.target.value } : prev))
+                  }
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label>Enabled</Label>
+                  <p className="text-xs text-muted-foreground">Disable to hide from assignments.</p>
+                </div>
+                <Switch
+                  checked={selectedPrompt.enabled}
+                  onCheckedChange={(value) =>
+                    setSelectedPrompt((prev) => (prev ? { ...prev, enabled: value } : prev))
+                  }
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setIsPromptOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSavePrompt} disabled={updatePrompt.isPending}>
+              Save Prompt
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function ScopeSelector({
+  projects,
+  value,
+  onChange,
+  showInheritance,
+  inheritEnabled,
+  onToggleInheritance,
+}: {
+  projects: Array<{ id: number; name: string }>
+  value: string
+  onChange: (value: string) => void
+  showInheritance: boolean
+  inheritEnabled: boolean
+  onToggleInheritance: (value: boolean) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="w-52">
+          <SelectValue placeholder="Scope" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="global">Global Defaults</SelectItem>
+          {projects.map((project) => (
+            <SelectItem key={project.id} value={String(project.id)}>
+              {project.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {showInheritance && (
+        <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+          <Label className="text-xs">Inherit Global</Label>
+          <Switch checked={inheritEnabled} onCheckedChange={onToggleInheritance} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatBlock({
+  label,
+  value,
+  icon: Icon,
+  iconClass,
+}: {
+  label: string
+  value: number
+  icon: typeof Bot
+  iconClass: string
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`h-8 w-8 rounded-md bg-muted flex items-center justify-center ${iconClass}`}>
+        <Icon className="h-4 w-4" />
+      </div>
+      <div>
+        <div className="text-sm font-medium text-muted-foreground">{label}</div>
+        <div className="text-2xl font-bold">{value}</div>
+      </div>
+    </div>
+  )
+}
+
+function Divider() {
+  return <div className="h-12 w-px bg-border hidden md:block" />
+}
+
+function AssignmentSelect({
+  label,
+  value,
+  agents,
+  onChange,
+}: {
+  label: string
+  value: string
+  agents: AgentCard[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <Select value={value || ""} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue placeholder="Select agent" />
+        </SelectTrigger>
+        <SelectContent>
+          {agents.map((agent) => (
+            <SelectItem key={agent.id} value={agent.id}>
+              {agent.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+function PromptAssignmentSelect({
+  label,
+  value,
+  prompts,
+  onChange,
+  description,
+}: {
+  label: string
+  value: string
+  prompts: AgentPromptTemplate[]
+  onChange: (value: string) => void
+  description?: string
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Label>{label}</Label>
+        {description && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground"
+                aria-label={`${label} help`}
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[240px]">
+              {description}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+      <Select value={value || ""} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue placeholder="Select prompt" />
+        </SelectTrigger>
+        <SelectContent>
+          {prompts.map((prompt) => (
+            <SelectItem key={prompt.id} value={prompt.id}>
+              {prompt.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }

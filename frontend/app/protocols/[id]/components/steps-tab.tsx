@@ -7,7 +7,7 @@ import { DataTable } from "@/components/ui/data-table"
 import { StatusPill } from "@/components/ui/status-pill"
 import { LoadingState } from "@/components/ui/loading-state"
 import { EmptyState } from "@/components/ui/empty-state"
-import { Play, ClipboardCheck, CheckCircle, ExternalLink, ListChecks } from "lucide-react"
+import { Play, ClipboardCheck, ExternalLink, ListChecks } from "lucide-react"
 import { toast } from "sonner"
 import type { ColumnDef } from "@tanstack/react-table"
 import type { StepRun } from "@/lib/api/types"
@@ -20,7 +20,7 @@ export function StepsTab({ protocolId }: StepsTabProps) {
   const { data: steps, isLoading } = useProtocolSteps(protocolId)
   const stepAction = useStepAction()
 
-  const handleAction = async (stepId: number, action: "run" | "run_qa" | "approve") => {
+  const handleAction = async (stepId: number, action: "execute" | "qa") => {
     try {
       const result = await stepAction.mutateAsync({ stepId, protocolId, action })
       toast.success(result.message || `Action ${action} executed`)
@@ -70,8 +70,7 @@ export function StepsTab({ protocolId }: StepsTabProps) {
       cell: ({ row }) => {
         const step = row.original
         const canRun = step.status === "pending"
-        const canRunQA = step.status === "completed" || step.status === "needs_qa"
-        const canApprove = step.status === "needs_qa"
+        const canRunQA = ["completed", "failed", "blocked", "needs_qa"].includes(step.status)
 
         return (
           <div className="flex gap-1">
@@ -81,7 +80,7 @@ export function StepsTab({ protocolId }: StepsTabProps) {
                 size="sm"
                 onClick={(e) => {
                   e.stopPropagation()
-                  handleAction(step.id, "run")
+                  handleAction(step.id, "execute")
                 }}
                 disabled={stepAction.isPending}
               >
@@ -94,24 +93,11 @@ export function StepsTab({ protocolId }: StepsTabProps) {
                 size="sm"
                 onClick={(e) => {
                   e.stopPropagation()
-                  handleAction(step.id, "run_qa")
+                  handleAction(step.id, "qa")
                 }}
                 disabled={stepAction.isPending}
               >
                 <ClipboardCheck className="h-4 w-4" />
-              </Button>
-            )}
-            {canApprove && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleAction(step.id, "approve")
-                }}
-                disabled={stepAction.isPending}
-              >
-                <CheckCircle className="h-4 w-4" />
               </Button>
             )}
             <Link href={`/steps/${step.id}`}>

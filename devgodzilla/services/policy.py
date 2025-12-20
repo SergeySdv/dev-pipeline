@@ -418,9 +418,7 @@ class PolicyService(Service):
             lines.append("")
         
         # QA policy
-        qa_config = defaults.get("qa", {})
-        qa_policy = qa_config.get("policy", "full")
-        lines.append(f"### QA Policy: {qa_policy}")
+        lines.append("### QA Policy: prompt-driven (auto-run after execution)")
         lines.append("")
         
         return "\n".join(lines)

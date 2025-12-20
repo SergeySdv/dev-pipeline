@@ -181,12 +181,81 @@ class AgentInfo(BaseModel):
     status: str = "available"
     default_model: Optional[str] = None
     command_dir: Optional[str] = None
+    enabled: Optional[bool] = None
+    command: Optional[str] = None
+    endpoint: Optional[str] = None
+    sandbox: Optional[str] = None
+    format: Optional[str] = None
+    timeout_seconds: Optional[int] = None
+    max_retries: Optional[int] = None
 
 class AgentConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    kind: Optional[str] = None
     enabled: Optional[bool] = None
     default_model: Optional[str] = None
     capabilities: Optional[List[str]] = None
     command_dir: Optional[str] = None
+    command: Optional[str] = None
+    endpoint: Optional[str] = None
+    sandbox: Optional[str] = None
+    format: Optional[str] = None
+    timeout_seconds: Optional[int] = None
+    max_retries: Optional[int] = None
+
+class AgentDefaults(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    code_gen: Optional[str] = None
+    planning: Optional[str] = None
+    exec: Optional[str] = None
+    qa: Optional[str] = None
+    discovery: Optional[str] = None
+    prompts: Optional[Dict[str, str]] = None
+
+class AgentPromptTemplate(BaseModel):
+    id: str
+    name: str
+    path: str
+    kind: Optional[str] = None
+    engine_id: Optional[str] = None
+    model: Optional[str] = None
+    tags: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+    description: Optional[str] = None
+    source: Optional[str] = None
+
+class AgentPromptUpdate(BaseModel):
+    name: Optional[str] = None
+    path: Optional[str] = None
+    kind: Optional[str] = None
+    engine_id: Optional[str] = None
+    model: Optional[str] = None
+    tags: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+    description: Optional[str] = None
+
+class AgentProjectOverrides(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    inherit: Optional[bool] = None
+    agents: Optional[Dict[str, Dict[str, Any]]] = None
+    defaults: Optional[Dict[str, Any]] = None
+    prompts: Optional[Dict[str, Dict[str, Any]]] = None
+    assignments: Optional[Dict[str, Any]] = None
+
+class AgentHealthOut(BaseModel):
+    agent_id: str
+    available: bool
+    version: Optional[str] = None
+    error: Optional[str] = None
+    response_time_ms: Optional[float] = None
+
+class AgentMetricsOut(BaseModel):
+    agent_id: str
+    active_steps: int = 0
+    completed_steps: int = 0
+    failed_steps: int = 0
+    total_steps: int = 0
+    last_activity_at: Optional[Any] = None
 
 # =============================================================================
 # Clarification Models
@@ -244,12 +313,16 @@ class QAResultOut(BaseModel):
 
 class EventOut(APIModel):
     id: int
-    protocol_run_id: int
+    protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
     event_type: str
     message: str
     metadata: Optional[Dict[str, Any]] = None
+    event_category: Optional[str] = None
     created_at: Any
+    protocol_name: Optional[str] = None
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
 
 # =============================================================================
 # Artifact Models

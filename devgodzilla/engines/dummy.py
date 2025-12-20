@@ -46,9 +46,10 @@ class DummyEngine(Engine):
         start = time.time()
         prompt = (req.prompt_text or "").strip()
         preview = (prompt[:300] + "…") if len(prompt) > 300 else prompt
+        verdict_line = "\nVerdict: PASS\n" if stage == "qa" else "\n"
         return EngineResult(
             success=True,
-            stdout=f"dummy:{stage}: step_run_id={req.step_run_id}\n\n{preview}\n",
+            stdout=f"dummy:{stage}: step_run_id={req.step_run_id}{verdict_line}{preview}\n",
             stderr="",
             duration_seconds=max(0.0, time.time() - start),
             metadata={
@@ -57,4 +58,3 @@ class DummyEngine(Engine):
                 "note": "No-op execution (testing mode)",
             },
         )
-

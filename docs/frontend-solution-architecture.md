@@ -56,7 +56,7 @@ The goal is to evolve from the current single-file static console into a maintai
 - Onboarding: summary, stages, start/inline, clarifications
 - Policy: pack selection, overrides, effective preview, findings, pack admin
 - Protocols: list, create, actions (start/pause/resume/cancel/run_next/retry/open_pr)
-- Steps: list table, actions (run_qa, approve)
+- Steps: list table, actions (execute, qa)
 - Runs: protocol runs table with links to logs/artifacts
 - Events: protocol events, recent events with filters
 - Queue: stats, jobs list
@@ -497,8 +497,8 @@ React Re-render
 - `GET /steps/{id}/policy/findings`
 
 **Actions**:
-- `POST /steps/{id}/actions/run`
-- `POST /steps/{id}/actions/run_qa`
+- `POST /steps/{id}/actions/execute`
+- `POST /steps/{id}/actions/qa`
 - `POST /steps/{id}/actions/approve`
 
 ### 5.4 Runs Module
@@ -662,7 +662,7 @@ React Re-render
 │ │ Job ID       │ Type          │ Status │ Enqueued           │ │
 │ ├──────────────┼───────────────┼────────┼────────────────────┤ │
 │ │ job-abc-123  │ execute_step  │ started│ 2m ago             │ │
-│ │ job-def-456  │ run_quality   │ queued │ 5m ago             │ │
+│ │ job-def-456  │ execute_step  │ queued │ 5m ago             │ │
 │ └──────────────┴───────────────┴────────┴────────────────────┘ │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -1258,8 +1258,8 @@ app.mount("/console", StaticFiles(directory="frontend_dist"), name="console")
 
 | Method | Endpoint | Feature |
 |--------|----------|---------|
-| POST | `/steps/{id}/actions/run` | Run Step |
-| POST | `/steps/{id}/actions/run_qa` | Run QA |
+| POST | `/steps/{id}/actions/execute` | Execute Step |
+| POST | `/steps/{id}/actions/qa` | Re-run QA |
 | POST | `/steps/{id}/actions/approve` | Approve Step |
 | GET | `/steps/{id}/runs` | Step Runs |
 | GET | `/steps/{id}/policy/findings` | Step Policy Findings |

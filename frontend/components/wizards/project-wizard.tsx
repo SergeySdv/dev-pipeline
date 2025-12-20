@@ -78,7 +78,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent size="3xl" className="max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
           <DialogDescription>Follow the steps to set up your project with TasksGodzilla.</DialogDescription>

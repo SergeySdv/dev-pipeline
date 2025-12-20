@@ -59,8 +59,8 @@ For the console (`frontend/`) the shortest path is to wire it to the **TasksGodz
 - Frontend `GET /steps/{id}/runs` → `tasksgodzilla/api/app.py` `GET /steps/{step_run_id}/runs`
 - Frontend `GET /steps/{id}/policy/findings` → `tasksgodzilla/api/app.py` `GET /steps/{step_id}/policy/findings`
 - Frontend actions:
-  - `POST /steps/{id}/actions/run` → implemented
-  - `POST /steps/{id}/actions/run_qa` → implemented
+  - `POST /steps/{id}/actions/execute` → implemented
+  - `POST /steps/{id}/actions/qa` → implemented
   - `POST /steps/{id}/actions/approve` → implemented
 
 ### Runs (Codex)

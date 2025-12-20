@@ -171,7 +171,7 @@ export function TaskModal({ open, onOpenChange, task, sprints, onSave, mode }: T
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] p-0">
+      <DialogContent size="3xl" className="max-h-[90vh] p-0">
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-lg bg-muted ${taskTypeConfig[formData.task_type || "task"].color}`}>

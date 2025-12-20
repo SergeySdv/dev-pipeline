@@ -47,7 +47,7 @@ service-oriented refactor. It complements `STATUS.md` (orchestrator track) and
   - Change `tasksgodzilla/worker_runtime.process_job` to call services:
     - [x] `plan_protocol_job` → `OrchestratorService.plan_protocol`
     - [x] `execute_step_job` → `ExecutionService.execute_step`
-    - [x] `run_quality_job` → `QualityService.run_for_step_run`
+    - [x] QA auto-runs after `execute_step_job`
     - [x] `project_setup_job` → `OnboardingService.run_project_setup_job`
     - [x] `open_pr_job` → `OrchestratorService.open_protocol_pr`
     - [x] `codemachine_import_job` → `CodeMachineService.import_workspace`

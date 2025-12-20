@@ -10,6 +10,7 @@ import {
   useAnalyzeSpec,
   useRunImplement,
   useCreateProtocolFromSpec,
+  useCleanupSpecRun,
   type SpecificationFilters,
   type Specification,
 } from "@/lib/api"
@@ -26,6 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar"
 import { Separator } from "@/components/ui/separator"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
 import {
   FileText,
   Search,
@@ -43,6 +45,7 @@ import {
   ClipboardCheck,
   FileSearch,
   PlayCircle,
+  Trash2,
 } from "lucide-react"
 import Link from "next/link"
 import { format } from "date-fns"
@@ -83,13 +86,21 @@ export default function SpecificationsPage() {
   const analyzeSpec = useAnalyzeSpec()
   const runImplement = useRunImplement()
   const createProtocolFromSpec = useCreateProtocolFromSpec()
+  const cleanupSpecRun = useCleanupSpecRun()
   const router = useRouter()
 
   const [clarifyOpen, setClarifyOpen] = useState(false)
-  const [clarifyTarget, setClarifyTarget] = useState<{ projectId: number; specPath: string } | null>(null)
+  const [clarifyTarget, setClarifyTarget] = useState<{
+    projectId: number
+    specPath: string
+    specRunId?: number
+  } | null>(null)
   const [clarifyQuestion, setClarifyQuestion] = useState("")
   const [clarifyAnswer, setClarifyAnswer] = useState("")
   const [clarifyNotes, setClarifyNotes] = useState("")
+  const [cleanupOpen, setCleanupOpen] = useState(false)
+  const [cleanupDeleteRemote, setCleanupDeleteRemote] = useState(false)
+  const [cleanupTarget, setCleanupTarget] = useState<Specification | null>(null)
 
   const specifications = specsData?.items || []
   const total = specsData?.total || 0
@@ -115,12 +126,16 @@ export default function SpecificationsPage() {
     draft: "bg-slate-500",
     "in-progress": "bg-blue-500",
     completed: "bg-green-500",
+    cleaned: "bg-zinc-500",
+    failed: "bg-red-500",
   }
 
   const statusLabels: Record<string, string> = {
     draft: "Draft",
     "in-progress": "In Progress",
     completed: "Completed",
+    cleaned: "Cleaned",
+    failed: "Failed",
   }
 
   const openClarify = (spec: Specification) => {
@@ -128,7 +143,11 @@ export default function SpecificationsPage() {
       toast.error("Spec file path not available")
       return
     }
-    setClarifyTarget({ projectId: spec.project_id, specPath: spec.spec_path })
+    setClarifyTarget({
+      projectId: spec.project_id,
+      specPath: spec.spec_path,
+      specRunId: spec.spec_run_id ?? undefined,
+    })
     setClarifyOpen(true)
   }
 
@@ -152,6 +171,7 @@ export default function SpecificationsPage() {
         spec_path: clarifyTarget.specPath,
         entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
+        spec_run_id: clarifyTarget.specRunId,
       })
       if (result.success) {
         toast.success(`Clarifications added (${result.clarifications_added})`)
@@ -176,6 +196,7 @@ export default function SpecificationsPage() {
       const result = await generateChecklist.mutateAsync({
         project_id: spec.project_id,
         spec_path: spec.spec_path,
+        spec_run_id: spec.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success(`Checklist generated (${result.item_count} items)`)
@@ -198,6 +219,7 @@ export default function SpecificationsPage() {
         spec_path: spec.spec_path,
         plan_path: spec.plan_path || undefined,
         tasks_path: spec.tasks_path || undefined,
+        spec_run_id: spec.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success("Analysis report generated")
@@ -218,6 +240,7 @@ export default function SpecificationsPage() {
       const result = await runImplement.mutateAsync({
         project_id: spec.project_id,
         spec_path: spec.spec_path,
+        spec_run_id: spec.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success("Implementation run initialized")
@@ -240,6 +263,7 @@ export default function SpecificationsPage() {
         spec_path: spec.spec_path || undefined,
         tasks_path: spec.tasks_path,
         protocol_name: spec.path?.split("/").pop() || undefined,
+        spec_run_id: spec.spec_run_id ?? undefined,
       })
       if (result.success && result.protocol) {
         toast.success(`Protocol created with ${result.step_count} steps`)
@@ -249,6 +273,37 @@ export default function SpecificationsPage() {
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Protocol creation failed")
+    }
+  }
+
+  const openCleanup = (spec: Specification) => {
+    if (!spec.spec_run_id) {
+      toast.error("SpecRun id not available")
+      return
+    }
+    setCleanupTarget(spec)
+    setCleanupDeleteRemote(false)
+    setCleanupOpen(true)
+  }
+
+  const handleCleanup = async () => {
+    if (!cleanupTarget?.spec_run_id) {
+      toast.error("SpecRun id not available")
+      return
+    }
+    try {
+      const result = await cleanupSpecRun.mutateAsync({
+        specRunId: cleanupTarget.spec_run_id,
+        payload: { delete_remote_branch: cleanupDeleteRemote },
+      })
+      if (result.success) {
+        toast.success("Spec run cleaned up")
+        setCleanupOpen(false)
+      } else {
+        toast.error(result.error || "Cleanup failed")
+      }
+    } catch {
+      toast.error("Cleanup failed")
     }
   }
 
@@ -472,7 +527,9 @@ export default function SpecificationsPage() {
 
       {/* Specifications List */}
       <div className="grid gap-4">
-        {specifications.map((spec) => (
+        {specifications.map((spec) => {
+          const isCleaned = spec.status === "cleaned"
+          return (
           <Card key={spec.id} className="transition-colors hover:bg-muted/50">
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between">
@@ -481,7 +538,13 @@ export default function SpecificationsPage() {
                   <div>
                     <CardTitle className="text-base">{spec.title}</CardTitle>
                     <CardDescription className="mt-1 font-mono text-xs">
-                      {spec.path}
+                      <span className="block">{spec.path}</span>
+                      {spec.branch_name && (
+                        <span className="block text-muted-foreground">branch: {spec.branch_name}</span>
+                      )}
+                      {spec.worktree_path && (
+                        <span className="block truncate text-muted-foreground">worktree: {spec.worktree_path}</span>
+                      )}
                     </CardDescription>
                   </div>
                 </div>
@@ -561,15 +624,30 @@ export default function SpecificationsPage() {
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => openClarify(spec)} disabled={!spec.spec_path}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openClarify(spec)}
+                  disabled={!spec.spec_path || isCleaned}
+                >
                   <MessageSquare className="mr-2 h-4 w-4" />
                   Clarify
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => handleChecklist(spec)} disabled={!spec.spec_path}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleChecklist(spec)}
+                  disabled={!spec.spec_path || isCleaned}
+                >
                   <ClipboardCheck className="mr-2 h-4 w-4" />
                   Checklist
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => handleAnalyze(spec)} disabled={!spec.spec_path}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleAnalyze(spec)}
+                  disabled={!spec.spec_path || isCleaned}
+                >
                   <FileSearch className="mr-2 h-4 w-4" />
                   Analyze
                 </Button>
@@ -577,23 +655,33 @@ export default function SpecificationsPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => handleCreateProtocol(spec)}
-                  disabled={!spec.tasks_path}
+                  disabled={!spec.tasks_path || isCleaned}
                 >
                   <ClipboardList className="mr-2 h-4 w-4" />
                   Create Protocol
                 </Button>
-                <Button size="sm" onClick={() => handleImplement(spec)} disabled={!spec.spec_path}>
+                <Button size="sm" onClick={() => handleImplement(spec)} disabled={!spec.spec_path || isCleaned}>
                   <PlayCircle className="mr-2 h-4 w-4" />
                   Implement
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openCleanup(spec)}
+                  disabled={!spec.spec_run_id || isCleaned}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Cleanup
                 </Button>
               </div>
             </CardContent>
           </Card>
-        ))}
+          )
+        })}
       </div>
 
       <Dialog open={clarifyOpen} onOpenChange={setClarifyOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent size="xl">
           <DialogHeader>
             <DialogTitle>Clarify Specification</DialogTitle>
             <DialogDescription>
@@ -635,6 +723,37 @@ export default function SpecificationsPage() {
               </Button>
               <Button onClick={handleClarify} disabled={clarifySpec.isPending}>
                 {clarifySpec.isPending ? "Saving..." : "Save Clarification"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cleanupOpen} onOpenChange={setCleanupOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cleanup Spec Run</DialogTitle>
+            <DialogDescription>
+              Remove the worktree and spec artifacts. Optionally delete the remote branch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Delete remote branch</p>
+                <p className="text-xs text-muted-foreground">Requires explicit opt-in.</p>
+              </div>
+              <Switch
+                checked={cleanupDeleteRemote}
+                onCheckedChange={(value) => setCleanupDeleteRemote(Boolean(value))}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setCleanupOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleCleanup} disabled={cleanupSpecRun.isPending}>
+                {cleanupSpecRun.isPending ? "Cleaning..." : "Confirm Cleanup"}
               </Button>
             </div>
           </div>

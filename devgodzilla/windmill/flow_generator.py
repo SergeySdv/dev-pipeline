@@ -181,17 +181,14 @@ class FlowGenerator:
     def __init__(
         self,
         script_path: str = "u/devgodzilla/step_execute_api",
-        qa_script_path: str = "u/devgodzilla/step_run_qa_api",
     ) -> None:
         self.script_path = script_path
-        self.qa_script_path = qa_script_path
 
     def generate(
         self,
         dag: DAG,
         protocol_run_id: int,
         *,
-        include_qa: bool = True,
         default_agent: str = "opencode",
     ) -> Dict[str, Any]:
         """
@@ -200,7 +197,6 @@ class FlowGenerator:
         Args:
             dag: Execution DAG
             protocol_run_id: Protocol run ID for context
-            include_qa: Whether to add QA step after each execution
             default_agent: Default agent for steps without assignment
             
         Returns:
@@ -222,7 +218,6 @@ class FlowGenerator:
                         node,
                         protocol_run_id,
                         default_agent,
-                        include_qa,
                     ))
             else:
                 # Multiple tasks - parallel branch
@@ -234,7 +229,6 @@ class FlowGenerator:
                             node,
                             protocol_run_id,
                             default_agent,
-                            include_qa,
                         )]
                         branches.append({"modules": branch_modules})
                 
@@ -264,10 +258,9 @@ class FlowGenerator:
         node: DAGNode,
         protocol_run_id: int,
         default_agent: str,
-        include_qa: bool,
     ) -> Dict[str, Any]:
         """Create a module for executing a step."""
-        step_module = {
+        return {
             "id": node.id,
             "value": {
                 "type": "script",
@@ -277,33 +270,6 @@ class FlowGenerator:
                 },
             },
         }
-        
-        if include_qa:
-            # Wrap in a branch with QA
-            return {
-                "id": f"{node.id}_with_qa",
-                "value": {
-                    "type": "branchone",
-                    "branches": [{
-                        "modules": [
-                            step_module,
-                            {
-                                "id": f"{node.id}_qa",
-                                "value": {
-                                    "type": "script",
-                                    "path": self.qa_script_path,
-                                    "input_transforms": {
-                                        "step_run_id": {"type": "static", "value": node.step_run_id},
-                                    },
-                                },
-                            },
-                        ],
-                    }],
-                    "default": [],
-                },
-            }
-        
-        return step_module
 
     def generate_simple_flow(
         self,

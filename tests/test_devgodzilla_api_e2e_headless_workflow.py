@@ -172,10 +172,6 @@ def test_api_e2e_headless_workflow_real_repo(tmp_path: Path, monkeypatch: pytest
             ex = client.post(f"/steps/{step_id}/actions/execute", json={})
             assert ex.status_code == 200
 
-            qa = client.post(f"/steps/{step_id}/actions/qa", json={"gates": []})
-            assert qa.status_code == 200
-            assert qa.json()["verdict"] in ("passed", "warning")
-
         assert step_ids, "Expected at least one planned step"
 
         final = client.get(f"/protocols/{protocol_id}")
@@ -186,4 +182,3 @@ def test_api_e2e_headless_workflow_real_repo(tmp_path: Path, monkeypatch: pytest
     tasksgodzilla_dir = cloned_repo / "tasksgodzilla"
     assert (tasksgodzilla_dir / "DISCOVERY.md").exists()
     assert (tasksgodzilla_dir / "DISCOVERY_SUMMARY.json").exists()
-

@@ -132,6 +132,7 @@ export interface ProtocolFromSpecRequest {
   spec_path?: string | null
   tasks_path?: string | null
   protocol_name?: string | null
+  spec_run_id?: number | null
   overwrite?: boolean
 }
 
@@ -220,6 +221,14 @@ export interface RunArtifact {
   }
 }
 
+export interface ArtifactContent {
+  id: string
+  name: string
+  type: string
+  content: string
+  truncated: boolean
+}
+
 export interface DiffHunk {
   old_start: number
   old_lines: number
@@ -256,6 +265,7 @@ export interface Event {
   event_type: string
   message: string
   metadata: Record<string, unknown> | null
+  event_category?: string | null
   created_at: string
   // Joined fields
   protocol_name?: string
@@ -266,8 +276,8 @@ export interface Event {
 export interface EventFilters {
   project_id?: number
   protocol_run_id?: number
-  kind?: string
-  spec_hash?: string
+  event_type?: string
+  categories?: string[]
   limit?: number
 }
 
@@ -498,6 +508,86 @@ export interface Agent {
   status: "available" | "busy" | "unavailable"
   default_model: string | null
   command_dir: string | null
+  enabled?: boolean | null
+  command?: string | null
+  endpoint?: string | null
+  sandbox?: string | null
+  format?: string | null
+  timeout_seconds?: number | null
+  max_retries?: number | null
+}
+
+export interface AgentUpdate {
+  name?: string | null
+  kind?: string | null
+  enabled?: boolean | null
+  default_model?: string | null
+  capabilities?: string[] | null
+  command_dir?: string | null
+  command?: string | null
+  endpoint?: string | null
+  sandbox?: string | null
+  format?: string | null
+  timeout_seconds?: number | null
+  max_retries?: number | null
+}
+
+export interface AgentDefaults {
+  code_gen?: string | null
+  planning?: string | null
+  exec?: string | null
+  qa?: string | null
+  discovery?: string | null
+  prompts?: Record<string, string> | null
+}
+
+export interface AgentPromptTemplate {
+  id: string
+  name: string
+  path: string
+  kind?: string | null
+  engine_id?: string | null
+  model?: string | null
+  tags?: string[] | null
+  enabled?: boolean | null
+  description?: string | null
+  source?: "global" | "project" | null
+}
+
+export interface AgentPromptUpdate {
+  name?: string | null
+  path?: string | null
+  kind?: string | null
+  engine_id?: string | null
+  model?: string | null
+  tags?: string[] | null
+  enabled?: boolean | null
+  description?: string | null
+}
+
+export interface AgentProjectOverrides {
+  inherit?: boolean
+  agents?: Record<string, Record<string, unknown>>
+  defaults?: Record<string, unknown>
+  prompts?: Record<string, Record<string, unknown>>
+  assignments?: Record<string, unknown>
+}
+
+export interface AgentHealth {
+  agent_id: string
+  available: boolean
+  version?: string | null
+  error?: string | null
+  response_time_ms?: number | null
+}
+
+export interface AgentMetrics {
+  agent_id: string
+  active_steps: number
+  completed_steps: number
+  failed_steps: number
+  total_steps: number
+  last_activity_at?: string | null
 }
 
 // =============================================================================
@@ -506,15 +596,22 @@ export interface Agent {
 
 export interface Specification {
   id: number
+  spec_run_id?: number | null
   path: string
   spec_path?: string | null
   plan_path?: string | null
   tasks_path?: string | null
+  checklist_path?: string | null
+  analysis_path?: string | null
+  implement_path?: string | null
   title: string
   project_id: number
   project_name: string
   status: string
   created_at: string | null
+  worktree_path?: string | null
+  branch_name?: string | null
+  base_branch?: string | null
   tasks_generated: boolean
   has_plan?: boolean
   has_tasks?: boolean

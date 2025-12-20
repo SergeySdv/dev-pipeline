@@ -294,44 +294,28 @@ def _to_windmill_flow(self, dag: DAG, task_list: TaskList) -> dict:
 | Job Type | Script Path | Description |
 |----------|-------------|-------------|
 | `project_setup_job` | `u/devgodzilla/project_setup` | Initialize project + .specify/ |
-| `plan_protocol_job` | `u/devgodzilla/plan_protocol` | Generate spec → plan → tasks |
-| `execute_step_job` | `u/devgodzilla/execute_step` | Execute single step with agent |
-| `run_quality_job` | `u/devgodzilla/run_quality` | Run QA checks on step output |
+| `plan_protocol_job` | `u/devgodzilla/protocol_plan_and_wait` | Plan a protocol and wait for stable status |
+| `execute_step_job` | `u/devgodzilla/step_execute_api` | Execute single step via API (QA auto-runs) |
 | `open_pr_job` | `u/devgodzilla/open_pr` | Create GitHub/GitLab PR |
 | `feedback_job` | `u/devgodzilla/handle_feedback` | Process feedback loop |
 
 ### Execute Step Script
 
 ```python
-# u/devgodzilla/execute_step.py
+# u/devgodzilla/step_execute_api.py
 
-import os
-from devgodzilla.services import ExecutionService, get_db
+from __future__ import annotations
 
-def main(
-    step_id: str,
-    agent_id: str,
-    protocol_run_id: int,
-    config_override: dict = None
-):
-    """Execute a single step using specified agent."""
-    
-    db = get_db()
-    execution_service = ExecutionService(db)
-    
-    result = execution_service.execute_step(
-        step_id=step_id,
-        agent_id=agent_id,
-        protocol_run_id=protocol_run_id,
-        config_override=config_override
-    )
-    
-    return {
-        "step_id": step_id,
-        "status": result.status,
-        "output": result.output,
-        "artifacts": result.artifacts
-    }
+from typing import Any, Dict, Optional
+
+from ._api import api_json
+
+
+def main(step_run_id: int, agent_id: Optional[str] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    if agent_id:
+        payload["agent_id"] = agent_id
+    return api_json("POST", f"/steps/{step_run_id}/actions/execute", body=payload)
 ```
 
 ---
@@ -626,9 +610,9 @@ windmill/
 ├── scripts/
 │   └── devgodzilla/
 │       ├── project_setup.py
-│       ├── plan_protocol.py
-│       ├── execute_step.py
-│       ├── run_quality.py
+│       ├── protocol_plan_and_wait.py
+│       ├── step_execute_api.py
+│       ├── step_run_qa_api.py
 │       ├── open_pr.py
 │       └── handle_feedback.py
 │
@@ -645,44 +629,30 @@ windmill/
 ### Script Template
 
 ```python
-# windmill/scripts/devgodzilla/execute_step.py
+# windmill/scripts/devgodzilla/step_execute_api.py
 
 """
-DevGodzilla Step Executor
+DevGodzilla Step Executor (API wrapper)
 
-Executes a single task step using the assigned AI agent.
+Executes a single step via the DevGodzilla API. QA auto-runs after execution.
 
 Args:
-    step_id: Task identifier (e.g., T001)
-    agent_id: Agent to use (e.g., opencode, claude-code)
-    protocol_run_id: Parent protocol run
-    config_override: Optional agent config overrides
-    
-Returns:
-    StepResult with status, output, and artifacts
+    step_run_id: Step run ID
+    agent_id: Optional agent override
 """
 
-import os
-from devgodzilla.services import ExecutionService
-from devgodzilla.db import get_database
+from __future__ import annotations
 
-def main(
-    step_id: str,
-    agent_id: str,
-    protocol_run_id: int,
-    config_override: dict | None = None
-) -> dict:
-    db = get_database()
-    service = ExecutionService(db)
-    
-    result = service.execute_step(
-        step_id=step_id,
-        agent_id=agent_id,
-        protocol_run_id=protocol_run_id,
-        config_override=config_override
-    )
-    
-    return result.to_dict()
+from typing import Any, Dict, Optional
+
+from ._api import api_json
+
+
+def main(step_run_id: int, agent_id: Optional[str] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    if agent_id:
+        payload["agent_id"] = agent_id
+    return api_json("POST", f"/steps/{step_run_id}/actions/execute", body=payload)
 ```
 
 ---

@@ -104,7 +104,8 @@ Implementation reference:
 
 ## QA Completion Semantics
 
-- `POST /steps/{id}/actions/qa` supports `"gates": []` to skip QA and still mark the step completed.
+- QA runs automatically after every successful step execution (prompt-driven).
+- `POST /steps/{id}/actions/qa` re-runs QA; `gates` selects extra deterministic gates (lint/type/test).
 - After QA, DevGodzilla best-effort checks whether all steps are terminal and updates the protocol status to `completed` / `failed`.
 
 Implementation references:
@@ -139,7 +140,7 @@ Implementation reference:
 Examples:
 - `u/devgodzilla/protocol_plan_and_wait` (calls `/protocols/{id}/actions/start` and polls)
 - `u/devgodzilla/step_execute_api` (calls `/steps/{id}/actions/execute`)
-- `u/devgodzilla/step_run_qa_api` (calls `/steps/{id}/actions/qa`)
+- `u/devgodzilla/step_run_qa_api` (calls `/steps/{id}/actions/qa` for manual re-runs)
 - `u/devgodzilla/onboard_to_tasks_api` (one-script pipeline alternative)
 
 This avoids requiring the Windmill worker runtime to import the `devgodzilla` Python package.

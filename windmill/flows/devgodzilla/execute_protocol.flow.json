@@ -1,6 +1,6 @@
 {
   "summary": "Execute Protocol Flow",
-  "description": "Execute a single step_run_id with QA by calling the DevGodzilla API (via API-wrapper scripts).",
+  "description": "Execute a single step_run_id by calling the DevGodzilla API (QA auto-run in DevGodzilla).",
   "value": {
     "modules": [
       {
@@ -12,17 +12,6 @@
         "input_transforms": {
           "step_run_id": { "type": "javascript", "expr": "flow_input.step_run_id" }
         }
-      },
-      {
-        "id": "run_qa",
-        "value": {
-          "type": "script",
-          "path": "u/devgodzilla/step_run_qa_api"
-        },
-        "input_transforms": {
-          "step_run_id": { "type": "javascript", "expr": "flow_input.step_run_id" },
-          "gates": { "type": "javascript", "expr": "flow_input.gates || null" }
-        }
       }
     ]
   },
@@ -30,13 +19,7 @@
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
-      "step_run_id": { "type": "integer", "description": "Step run ID", "default": 1 },
-      "gates": {
-        "type": [ "array", "null" ],
-        "items": { "type": "string" },
-        "description": "Optional QA gates list (lint, type, test)",
-        "default": null
-      }
+      "step_run_id": { "type": "integer", "description": "Step run ID", "default": 1 }
     },
     "required": [
       "step_run_id"

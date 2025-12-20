@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { apiClient } from "../client"
 import { queryKeys } from "../query-keys"
-import type { CodexRun, RunArtifact, RunFilters } from "../types"
+import type { ArtifactContent, CodexRun, RunArtifact, RunFilters } from "../types"
 
 const useConditionalRefetchInterval = (baseInterval: number) => {
   if (typeof document === "undefined") return false
@@ -25,7 +25,7 @@ export function useRuns(filters: RunFilters = {}) {
       if (filters.step_run_id) params.set("step_run_id", String(filters.step_run_id))
       if (filters.limit) params.set("limit", String(filters.limit))
       const queryString = params.toString()
-      return apiClient.get<CodexRun[]>(`/codex/runs${queryString ? `?${queryString}` : ""}`)
+      return apiClient.get<CodexRun[]>(`/runs${queryString ? `?${queryString}` : ""}`)
     },
     refetchInterval,
   })
@@ -36,7 +36,7 @@ export function useRun(runId: string | undefined) {
   const refetchInterval = useConditionalRefetchInterval(5000)
   return useQuery({
     queryKey: queryKeys.runs.detail(runId!),
-    queryFn: () => apiClient.get<CodexRun>(`/codex/runs/${runId}`),
+    queryFn: () => apiClient.get<CodexRun>(`/runs/${runId}`),
     enabled: !!runId,
     refetchInterval,
   })
@@ -48,7 +48,7 @@ export const useRunDetail = useRun
 export function useRunLogs(runId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.runs.logs(runId!),
-    queryFn: () => apiClient.get<{ content: string }>(`/codex/runs/${runId}/logs`),
+    queryFn: () => apiClient.get<ArtifactContent>(`/runs/${runId}/logs`),
     enabled: !!runId,
   })
 }
@@ -57,7 +57,7 @@ export function useRunLogs(runId: string | undefined) {
 export function useRunArtifacts(runId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.runs.artifacts(runId!),
-    queryFn: () => apiClient.get<RunArtifact[]>(`/codex/runs/${runId}/artifacts`),
+    queryFn: () => apiClient.get<RunArtifact[]>(`/runs/${runId}/artifacts`),
     enabled: !!runId,
   })
 }

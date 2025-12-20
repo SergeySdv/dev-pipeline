@@ -9,7 +9,7 @@ import hmac
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel
 
 from devgodzilla.api.dependencies import get_db
@@ -50,6 +50,57 @@ class GitLabWebhook(BaseModel):
     user: Dict[str, Any]
     # Pipeline specific
     object_attributes: Optional[Dict[str, Any]] = None
+
+
+def _normalize_repo_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    text = value.strip().lower()
+    if text.endswith(".git"):
+        text = text[:-4]
+    if text.startswith("git@"):
+        text = text.replace("git@", "", 1)
+        text = text.replace(":", "/", 1)
+    if text.startswith("https://"):
+        text = text[len("https://") :]
+    elif text.startswith("http://"):
+        text = text[len("http://") :]
+    return text.strip("/")
+
+
+def _resolve_project_id(db: Database, candidates: list[str]) -> Optional[int]:
+    normalized = {_normalize_repo_url(value) for value in candidates if value}
+    normalized.discard(None)
+    if not normalized:
+        return None
+    for project in db.list_projects():
+        project_url = _normalize_repo_url(project.git_url)
+        if project_url and project_url in normalized:
+            return project.id
+    return None
+
+
+def _emit_ci_event(
+    db: Database,
+    *,
+    event_type: str,
+    message: str,
+    project_id: Optional[int],
+    protocol_run_id: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    if project_id is None and protocol_run_id is None:
+        return
+    try:
+        db.append_event(
+            protocol_run_id=protocol_run_id,
+            project_id=project_id,
+            event_type=event_type,
+            message=message,
+            metadata=metadata,
+        )
+    except Exception:
+        pass
 
 
 # ==================== Windmill Webhooks ====================
@@ -138,6 +189,9 @@ async def github_webhook(
     request: Request,
     x_github_event: str = Header(None),
     x_hub_signature_256: str = Header(None),
+    project_id: Optional[int] = Query(None, description="Override project ID for logging"),
+    protocol_run_id: Optional[int] = Query(None, description="Override protocol run ID for logging"),
+    db: Database = Depends(get_db),
 ):
     """
     Handle GitHub webhooks.
@@ -160,6 +214,34 @@ async def github_webhook(
         },
     )
     
+    repo = payload.get("repository", {})
+    candidate_urls = [
+        repo.get("clone_url"),
+        repo.get("ssh_url"),
+        repo.get("html_url"),
+        repo.get("git_url"),
+    ]
+    if repo.get("full_name"):
+        candidate_urls.append(f"github.com/{repo['full_name']}")
+    resolved_project_id = project_id or _resolve_project_id(db, candidate_urls)
+
+    event_type = f"ci_webhook_github_{x_github_event}" if x_github_event else "ci_webhook_github"
+    _emit_ci_event(
+        db,
+        event_type=event_type,
+        message=f"GitHub webhook {x_github_event or 'event'} received",
+        project_id=resolved_project_id,
+        protocol_run_id=protocol_run_id,
+        metadata={
+            "event": x_github_event,
+            "action": payload.get("action"),
+            "repository": repo.get("full_name") or repo.get("name"),
+            "branch": payload.get("workflow_run", {}).get("head_branch")
+            or payload.get("check_run", {}).get("check_suite", {}).get("head_branch")
+            or payload.get("pull_request", {}).get("base", {}).get("ref"),
+        },
+    )
+
     if x_github_event == "workflow_run":
         return await _handle_workflow_run(payload)
     elif x_github_event == "check_run":
@@ -217,6 +299,9 @@ async def _handle_pull_request(payload: dict):
 async def gitlab_webhook(
     request: Request,
     x_gitlab_token: str = Header(None),
+    project_id: Optional[int] = Query(None, description="Override project ID for logging"),
+    protocol_run_id: Optional[int] = Query(None, description="Override protocol run ID for logging"),
+    db: Database = Depends(get_db),
 ):
     """
     Handle GitLab webhooks.
@@ -237,6 +322,33 @@ async def gitlab_webhook(
         extra={"object_kind": object_kind},
     )
     
+    project = payload.get("project", {})
+    candidate_urls = [
+        project.get("web_url"),
+        project.get("git_ssh_url"),
+        project.get("git_http_url"),
+        project.get("http_url"),
+        project.get("ssh_url"),
+    ]
+    resolved_project_id = project_id or _resolve_project_id(db, candidate_urls)
+
+    event_type = f"ci_webhook_gitlab_{object_kind}" if object_kind else "ci_webhook_gitlab"
+    attrs = payload.get("object_attributes", {}) or {}
+    _emit_ci_event(
+        db,
+        event_type=event_type,
+        message=f"GitLab webhook {object_kind or 'event'} received",
+        project_id=resolved_project_id,
+        protocol_run_id=protocol_run_id,
+        metadata={
+            "event": object_kind,
+            "status": attrs.get("status"),
+            "action": attrs.get("action"),
+            "ref": attrs.get("ref"),
+            "repository": project.get("path_with_namespace") or project.get("name"),
+        },
+    )
+
     if object_kind == "pipeline":
         return await _handle_gitlab_pipeline(payload)
     elif object_kind == "merge_request":

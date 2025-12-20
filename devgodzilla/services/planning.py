@@ -21,6 +21,7 @@ from devgodzilla.spec import (
     build_spec_from_protocol_files,
     create_steps_from_spec,
     protocol_spec_hash,
+    resolve_spec_path,
     validate_protocol_spec,
 )
 
@@ -244,12 +245,18 @@ class PlanningService(Service):
             if not step_files:
                 try:
                     from devgodzilla.services.protocol_generation import ProtocolGenerationService
+                    from devgodzilla.services.agent_config import AgentConfigService
 
-                    engine_id = (
-                        self.context.config.engine_defaults.get("planning")  # type: ignore[union-attr]
-                        if getattr(self.context, "config", None)
-                        else None
-                    )
+                    engine_id = None
+                    try:
+                        cfg = AgentConfigService(self.context)
+                        engine_id = cfg.get_default_engine_id(
+                            "planning",
+                            project_id=project.id,
+                            fallback=self.context.config.engine_defaults.get("planning"),  # type: ignore[union-attr]
+                        )
+                    except Exception:
+                        engine_id = None
                     if not isinstance(engine_id, str) or not engine_id.strip():
                         engine_id = "opencode"
 
@@ -259,6 +266,29 @@ class PlanningService(Service):
                     except Exception:
                         model = None
 
+                    prompt_path = None
+                    try:
+                        assignment = cfg.resolve_prompt_assignment("planning", project_id=project.id)
+                        if assignment and assignment.get("path"):
+                            candidate = resolve_spec_path(
+                                str(assignment["path"]),
+                                Path(__file__).resolve().parents[2],
+                                workspace,
+                            )
+                            if candidate.exists():
+                                prompt_path = candidate
+                            else:
+                                self.logger.warning(
+                                    "planning_prompt_assignment_missing",
+                                    extra=self.log_extra(
+                                        project_id=project.id,
+                                        protocol_run_id=protocol_run_id,
+                                        prompt_path=str(candidate),
+                                    ),
+                                )
+                    except Exception:
+                        prompt_path = None
+
                     gen = ProtocolGenerationService(self.context)
                     gen_result = gen.generate(
                         worktree_root=workspace,
@@ -267,6 +297,7 @@ class PlanningService(Service):
                         step_count=3,
                         engine_id=engine_id,
                         model=model,
+                        prompt_path=prompt_path,
                         timeout_seconds=int(os.environ.get("DEVGODZILLA_PROTOCOL_GENERATE_TIMEOUT_SECONDS", "900")),
                         strict_outputs=True,
                     )
@@ -434,13 +465,50 @@ class PlanningService(Service):
         
         # Build spec from protocol files
         default_engine_id: Optional[str] = None
+        default_qa_prompt: Optional[str] = None
         try:
-            candidate = self.context.config.engine_defaults.get("exec")  # type: ignore[union-attr]
+            candidate = None
+            try:
+                from devgodzilla.services.agent_config import AgentConfigService
+
+                cfg = AgentConfigService(self.context)
+                candidate = cfg.get_default_engine_id(
+                    "exec",
+                    project_id=run.project_id,
+                    fallback=self.context.config.engine_defaults.get("exec"),  # type: ignore[union-attr]
+                )
+                qa_assignment = cfg.resolve_prompt_assignment(
+                    "qa",
+                    project_id=run.project_id,
+                )
+                if qa_assignment and qa_assignment.get("path"):
+                    candidate = resolve_spec_path(
+                        str(qa_assignment["path"]),
+                        protocol_root,
+                        workspace,
+                    )
+                    if candidate.exists():
+                        default_qa_prompt = str(qa_assignment["path"])
+                    else:
+                        self.logger.warning(
+                            "qa_prompt_assignment_missing",
+                            extra=self.log_extra(
+                                project_id=run.project_id,
+                                protocol_run_id=run.id,
+                                prompt_path=str(candidate),
+                            ),
+                        )
+            except Exception:
+                candidate = self.context.config.engine_defaults.get("exec")  # type: ignore[union-attr]
             if isinstance(candidate, str) and candidate.strip():
                 default_engine_id = candidate.strip()
         except Exception:
             default_engine_id = None
-        return build_spec_from_protocol_files(protocol_root, default_engine_id=default_engine_id)
+        return build_spec_from_protocol_files(
+            protocol_root,
+            default_engine_id=default_engine_id,
+            default_qa_prompt=default_qa_prompt or "prompts/quality-validator.prompt.md",
+        )
 
     def build_repo_snapshot(
         self,

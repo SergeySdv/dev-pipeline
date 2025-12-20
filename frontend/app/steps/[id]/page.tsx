@@ -11,7 +11,7 @@ import { StatusPill } from "@/components/ui/status-pill"
 import { LoadingState } from "@/components/ui/loading-state"
 import { EmptyState } from "@/components/ui/empty-state"
 import { CodeBlock } from "@/components/ui/code-block"
-import { ArrowLeft, Play, ClipboardCheck, CheckCircle, ExternalLink, PlayCircle, AlertTriangle } from "lucide-react"
+import { ArrowLeft, Play, ClipboardCheck, ExternalLink, PlayCircle, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 import { formatRelativeTime, truncateHash } from "@/lib/format"
 import type { ColumnDef } from "@tanstack/react-table"
@@ -50,7 +50,7 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
       protocol_run_id: protocolRunId || 0,
     } as StepRun)
 
-  const handleAction = async (action: "run" | "run_qa" | "approve") => {
+  const handleAction = async (action: "execute" | "qa") => {
     if (!protocolRunId) return
     try {
       const result = await stepAction.mutateAsync({
@@ -65,8 +65,7 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   const canRun = displayStep.status === "pending"
-  const canRunQA = displayStep.status === "completed" || displayStep.status === "needs_qa"
-  const canApprove = displayStep.status === "needs_qa"
+  const canRunQA = ["completed", "failed", "blocked", "needs_qa"].includes(displayStep.status)
 
   return (
     <div className="container py-8">
@@ -102,21 +101,15 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
 
           <div className="flex gap-2">
             {canRun && (
-              <Button onClick={() => handleAction("run")} disabled={stepAction.isPending}>
+              <Button onClick={() => handleAction("execute")} disabled={stepAction.isPending}>
                 <Play className="mr-2 h-4 w-4" />
-                Run
+                Execute
               </Button>
             )}
             {canRunQA && (
-              <Button variant="secondary" onClick={() => handleAction("run_qa")} disabled={stepAction.isPending}>
+              <Button variant="secondary" onClick={() => handleAction("qa")} disabled={stepAction.isPending}>
                 <ClipboardCheck className="mr-2 h-4 w-4" />
-                Run QA
-              </Button>
-            )}
-            {canApprove && (
-              <Button variant="default" onClick={() => handleAction("approve")} disabled={stepAction.isPending}>
-                <CheckCircle className="mr-2 h-4 w-4" />
-                Approve
+                Re-run QA
               </Button>
             )}
           </div>

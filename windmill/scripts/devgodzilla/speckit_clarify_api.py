@@ -16,10 +16,13 @@ def main(
     spec_path: str,
     entries: Optional[List[Dict[str, str]]] = None,
     notes: Optional[str] = None,
+    spec_run_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     body: Dict[str, Any] = {"spec_path": spec_path}
     if entries is not None:
         body["entries"] = entries
     if notes:
         body["notes"] = notes
+    if spec_run_id is not None:
+        body["spec_run_id"] = spec_run_id
     return api_json("POST", f"/projects/{project_id}/speckit/clarify", body=body)

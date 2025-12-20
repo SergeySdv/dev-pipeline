@@ -141,8 +141,8 @@ No physical move required immediately; just change dependencies to use services.
 **`tasksgodzilla/services/quality.py`**
 - Responsibilities:
   - Provide a high-level `evaluate_step(step_run_id)` API.
-  - Read QA policy (`skip`, `full`, `light`, etc.) from spec.
-  - Build and run QA requests via `run_qa_unified` / engines registry.
+  - Read QA config (prompt/engine/model, optional gates) from spec/policy.
+  - Build and run prompt-driven QA via the engines registry.
   - Store verdict/report paths and emit consistent events.
 - Depends on:
   - `tasksgodzilla/qa.py` (implementation details)

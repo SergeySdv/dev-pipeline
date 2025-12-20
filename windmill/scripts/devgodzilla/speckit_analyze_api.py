@@ -16,10 +16,13 @@ def main(
     spec_path: str,
     plan_path: Optional[str] = None,
     tasks_path: Optional[str] = None,
+    spec_run_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     body: Dict[str, Any] = {"spec_path": spec_path}
     if plan_path:
         body["plan_path"] = plan_path
     if tasks_path:
         body["tasks_path"] = tasks_path
+    if spec_run_id is not None:
+        body["spec_run_id"] = spec_run_id
     return api_json("POST", f"/projects/{project_id}/speckit/analyze", body=body)

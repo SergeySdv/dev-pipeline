@@ -26,6 +26,21 @@ class ProtocolStatus:
     COMPLETED = "completed"
 
 
+class SpecRunStatus:
+    """Spec run status values."""
+    SPECIFYING = "specifying"
+    SPECIFIED = "specified"
+    PLANNING = "planning"
+    PLANNED = "planned"
+    TASKS = "tasks"
+    CLARIFIED = "clarified"
+    CHECKLISTED = "checklisted"
+    ANALYZED = "analyzed"
+    IMPLEMENTED = "implemented"
+    FAILED = "failed"
+    CLEANED = "cleaned"
+
+
 class StepStatus:
     """Step run status values."""
     PENDING = "pending"
@@ -108,6 +123,55 @@ class ProtocolRun:
 
 
 @dataclass
+class SpeckitSpec:
+    """Persisted SpecKit spec metadata."""
+    id: int
+    project_id: int
+    name: str
+    created_at: str
+    updated_at: str
+    spec_number: Optional[int] = None
+    feature_name: Optional[str] = None
+    spec_path: Optional[str] = None
+    plan_path: Optional[str] = None
+    tasks_path: Optional[str] = None
+    checklist_path: Optional[str] = None
+    analysis_path: Optional[str] = None
+    implement_path: Optional[str] = None
+    has_spec: bool = False
+    has_plan: bool = False
+    has_tasks: bool = False
+    has_checklist: bool = False
+    has_analysis: bool = False
+    has_implement: bool = False
+    constitution_hash: Optional[str] = None
+
+
+@dataclass
+class SpecRun:
+    """Represents a single SpecKit run with worktree and artifact tracking."""
+    id: int
+    project_id: int
+    spec_name: str
+    status: str
+    base_branch: str
+    created_at: str
+    updated_at: str
+    branch_name: Optional[str] = None
+    worktree_path: Optional[str] = None
+    spec_root: Optional[str] = None
+    spec_number: Optional[int] = None
+    feature_name: Optional[str] = None
+    spec_path: Optional[str] = None
+    plan_path: Optional[str] = None
+    tasks_path: Optional[str] = None
+    checklist_path: Optional[str] = None
+    analysis_path: Optional[str] = None
+    implement_path: Optional[str] = None
+    protocol_run_id: Optional[int] = None
+
+
+@dataclass
 class StepRun:
     """
     A step represents a single task within a protocol run.
@@ -115,7 +179,7 @@ class StepRun:
     Extended with DAG support for Windmill execution.
     """
     id: int
-    protocol_run_id: int
+    protocol_run_id: Optional[int]
     step_index: int
     step_name: str
     step_type: str
@@ -136,6 +200,28 @@ class StepRun:
 
 
 @dataclass
+class QAResultRecord:
+    """Persisted QA result for a step."""
+    id: int
+    project_id: int
+    protocol_run_id: int
+    step_run_id: int
+    verdict: str
+    summary: Optional[str] = None
+    gate_results: Optional[List[Dict[str, Any]]] = None
+    findings: Optional[List[Dict[str, Any]]] = None
+    prompt_path: Optional[str] = None
+    prompt_hash: Optional[str] = None
+    engine_id: Optional[str] = None
+    model: Optional[str] = None
+    report_path: Optional[str] = None
+    report_text: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
 class Event:
     """An event represents a significant occurrence during protocol execution."""
     id: int
@@ -145,6 +231,7 @@ class Event:
     created_at: str
     step_run_id: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
+    event_category: Optional[str] = None
     # Enrichment fields (populated by queries)
     protocol_name: Optional[str] = None
     project_id: Optional[int] = None

@@ -151,7 +151,7 @@ function CreatePolicyPackDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <DialogContent className="max-w-2xl">
+    <DialogContent size="2xl">
       <DialogHeader>
         <DialogTitle>Create Policy Pack</DialogTitle>
         <DialogDescription>Create a new policy pack for protocol governance.</DialogDescription>

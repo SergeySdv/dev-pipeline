@@ -51,10 +51,28 @@ def test_events_persist_and_recent(monkeypatch: pytest.MonkeyPatch) -> None:
             payload = recent.json()
             assert payload["events"]
             assert any(e["protocol_run_id"] == run.id for e in payload["events"])
+            assert "T" in payload["events"][0]["created_at"]
 
             prot_events = client.get(f"/protocols/{run.id}/events")
             assert prot_events.status_code == 200
-            assert any(e["event_type"] == "ProtocolStarted" for e in prot_events.json())
+            payload_events = prot_events.json()
+            assert any(e["event_type"] == "protocol_started" for e in payload_events)
+            assert any(e["event_category"] == "planning" for e in payload_events)
+
+            filtered_recent = client.get("/events/recent", params={"protocol_id": run.id, "category": "planning"})
+            assert filtered_recent.status_code == 200
+            filtered_payload = filtered_recent.json()
+            assert filtered_payload["events"]
+            assert all(e["event_category"] == "planning" for e in filtered_payload["events"])
+
+            filtered_type = client.get(
+                "/events/recent",
+                params={"protocol_id": run.id, "event_type": "protocol_started"},
+            )
+            assert filtered_type.status_code == 200
+            type_payload = filtered_type.json()
+            assert type_payload["events"]
+            assert all(e["event_type"] == "protocol_started" for e in type_payload["events"])
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
@@ -87,4 +105,3 @@ def test_api_token_protects_routes(monkeypatch: pytest.MonkeyPatch) -> None:
             authed = client.get("/projects", headers={"Authorization": "Bearer secret"})
             assert authed.status_code == 200
             assert authed.json()
-

@@ -35,7 +35,7 @@ This plan turns the target architecture into executable work. Phases can run seq
 **Goal:** Single API surface for projects, protocols, and steps.
 
 - 2.1 API skeleton: FastAPI app with health, auth middleware, and dependency injection for config/DB.
-- 2.2 Endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/branches` (list/delete), `/projects/{id}/protocols`, `/protocols/{id}`, `/protocols/{id}/steps`, `/steps/{id}` plus action endpoints (`start`, `run`, `run_qa`, `approve`, `pause/resume`, `cancel`).
+- 2.2 Endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/branches` (list/delete), `/projects/{id}/protocols`, `/protocols/{id}`, `/protocols/{id}/steps`, `/steps/{id}` plus action endpoints (`start`, `execute`, `qa`, `pause/resume`, `cancel`).
 - 2.3 Workflows: handlers validate input, update DB state, and enqueue jobs (Phase 3). Include optimistic concurrency to avoid double-runs.
 - 2.4 Auth and tenancy: API tokens or basic auth; project/org scoping for multi-tenant readiness.
 - 2.5 Docs: OpenAPI/Swagger exposed; examples for common flows; smoke tests for happy paths.
@@ -44,20 +44,20 @@ This plan turns the target architecture into executable work. Phases can run seq
 **Goal:** Offload long-running and LLM-heavy work with retries/backoff.
 
 - 3.1 Queue selection: Redis-backed (RQ/Celery) or DB-backed queue; configure serialization, visibility timeouts, and backoff policies.
-- 3.2 Job contracts: define payloads keyed by IDs (`project_id`, `protocol_run_id`, `step_run_id`). Job types: `project_setup_job`, `plan_protocol_job`, `execute_step_job`, `run_quality_job`, `open_pr_job`.
+- 3.2 Job contracts: define payloads keyed by IDs (`project_id`, `protocol_run_id`, `step_run_id`). Job types: `project_setup_job`, `plan_protocol_job`, `execute_step_job`, `open_pr_job`.
 - 3.3 Codex Worker: consume planning/execution/QA jobs; assemble context; call Codex via the library; write artifacts under `.protocols/NNNN-[task]/`; update DB status/events.
 - 3.4 Git/CI Worker: handle clones (persist resolved repo path back to Project), worktrees, branch pushes, PR/MR creation, remote branch listing/deletion, and CI webhook side effects. Reuse `scripts/ci_trigger.py` patterns where possible.
 - 3.5 Retry/error policies: per-job max attempts, exponential backoff caps, and terminal vs. recoverable failures mapped to StepRun/ProtocolRun statuses.
-- 3.6 Scheduler: periodic scan for pending/needs_qa steps to enqueue work; consider cron inside orchestrator or external scheduler.
+- 3.6 Scheduler: periodic scan for pending steps to enqueue execution; consider cron inside orchestrator or external scheduler.
 
 ## Phase 4 – Console and onboarding
 **Goal:** First-class UI to onboard projects and manage runs.
 
 - 4.1 UX flows: define onboarding (register project, run setup, pick models/QA strictness) and operations (project list, protocol table, step timeline).
-- 4.2 TUI console (fast path): implement with Rich/Textual consuming only the API; screens for projects, protocol runs, step details, recent events; controls to start/run/rerun/QA/approve.
+- 4.2 TUI console (fast path): implement with Rich/Textual consuming only the API; screens for projects, protocol runs, step details, recent events; controls to start/execute/rerun QA/open PR.
 - 4.3 Web console (next): simple web frontend (React/Next.js or server-rendered) with auth; reuse the same API contracts and views.
 - 4.4 Onboarding integration: frontend calls `/projects` to register and shows job/event progress; orchestrator enqueues `project_setup_job`, records the resolved `local_path`, configures git origin/identity when enabled, emits `setup_clarifications` with recommended CI/model/branch policies, and can block on responses when configured.
-- 4.5 Status/actions: surface buttons/shortcuts for “new protocol”, “run next step”, “retry step”, “run QA”, “open PR/MR now”, “manual approve”.
+- 4.5 Status/actions: surface buttons/shortcuts for “new protocol”, “run next step”, “retry step”, “re-run QA”, “open PR/MR now”.
 
 ## Phase 4.6 – Policy packs (project classifications and governance)
 **Goal:** Let each project select a policy pack in the UI; apply policies as warnings by default, central-first with optional repo-local overrides.

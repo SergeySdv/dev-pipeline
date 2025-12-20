@@ -78,8 +78,8 @@ export default function MetricsPage() {
             <div className="space-y-4">
               {[
                 { type: "execute_step_job", count: 342, avgTime: "45s" },
-                { type: "run_quality_job", count: 198, avgTime: "23s" },
-                { type: "run_approval_job", count: 87, avgTime: "12s" },
+                { type: "plan_protocol_job", count: 118, avgTime: "38s" },
+                { type: "open_pr_job", count: 52, avgTime: "12s" },
               ].map((metric) => (
                 <div key={metric.type} className="flex items-center justify-between">
                   <span className="font-mono text-sm">{metric.type}</span>
@@ -140,7 +140,7 @@ export default function MetricsPage() {
         <CardContent>
           <div className="space-y-3">
             {[
-              { path: "GET /codex/runs", calls: 2534, avg: "45ms" },
+              { path: "GET /runs", calls: 2534, avg: "45ms" },
               { path: "POST /protocols/{id}/actions/run_next_step", calls: 1872, avg: "120ms" },
               { path: "GET /projects", calls: 1243, avg: "23ms" },
               { path: "GET /protocols/{id}/steps", calls: 987, avg: "56ms" },

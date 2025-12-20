@@ -131,9 +131,10 @@ def show_constitution(ctx, directory, edit):
 @click.argument("description")
 @click.option("--directory", "-d", default=".", help="Project directory")
 @click.option("--name", "-n", help="Feature name (auto-generated if not provided)")
+@click.option("--base-branch", help="Base branch for the spec worktree")
 @click.option("--project-id", "-p", type=int, help="Project ID in database")
 @click.pass_context
-def specify(ctx, description, directory, name, project_id):
+def specify(ctx, description, directory, name, base_branch, project_id):
     """Generate a feature specification from a description.
 
     Creates a new spec directory with spec.md file based on the
@@ -149,6 +150,7 @@ def specify(ctx, description, directory, name, project_id):
         directory,
         description,
         feature_name=name,
+        base_branch=base_branch,
         project_id=project_id,
     )
 
@@ -158,6 +160,11 @@ def specify(ctx, description, directory, name, project_id):
             "spec_path": result.spec_path,
             "spec_number": result.spec_number,
             "feature_name": result.feature_name,
+            "spec_run_id": result.spec_run_id,
+            "worktree_path": result.worktree_path,
+            "branch_name": result.branch_name,
+            "base_branch": result.base_branch,
+            "spec_root": result.spec_root,
             "error": result.error,
         }))
     else:
@@ -165,6 +172,10 @@ def specify(ctx, description, directory, name, project_id):
             console.print(f"[green]✓ Created specification #{result.spec_number}[/green]")
             console.print(f"  Feature: {result.feature_name}")
             console.print(f"  Path: {result.spec_path}")
+            if result.spec_run_id:
+                console.print(f"  SpecRun: {result.spec_run_id}")
+            if result.worktree_path:
+                console.print(f"  Worktree: {result.worktree_path}")
             console.print("\n[dim]Next: Edit the spec, then run 'devgodzilla spec plan'[/dim]")
         else:
             console.print(f"[red]✗ Failed: {result.error}[/red]")
@@ -333,6 +344,42 @@ def status(ctx, directory):
                     status_parts.append("tasks")
                 status_str = " → ".join(status_parts) if status_parts else "empty"
                 console.print(f"  • {spec['name']} [{status_str}]")
+
+
+@spec_cli.command(name="cleanup")
+@click.argument("spec_run_id", type=int)
+@click.option("--delete-remote-branch", is_flag=True, help="Also delete the remote branch.")
+@click.pass_context
+def cleanup(ctx, spec_run_id, delete_remote_branch):
+    """Cleanup a SpecRun worktree and artifacts."""
+    db = get_db()
+    service = get_specification_service(db)
+
+    result = service.cleanup_spec_run(
+        spec_run_id=spec_run_id,
+        delete_remote_branch=delete_remote_branch,
+    )
+
+    payload = {
+        "success": result.success,
+        "spec_run_id": result.spec_run_id,
+        "worktree_path": result.worktree_path,
+        "deleted_remote_branch": result.deleted_remote_branch,
+        "error": result.error,
+    }
+
+    if ctx.obj and ctx.obj.get("JSON"):
+        click.echo(json.dumps(payload))
+    else:
+        if result.success:
+            console.print("[green]✓ SpecRun cleaned up[/green]")
+            if result.worktree_path:
+                console.print(f"  Worktree: {result.worktree_path}")
+            if result.deleted_remote_branch:
+                console.print("  Remote branch deleted")
+        else:
+            console.print(f"[red]✗ Cleanup failed: {result.error}[/red]")
+            sys.exit(1)
 
 
 @spec_cli.command(name="show")

@@ -15,8 +15,9 @@ graph TB
     subgraph Flows["Windmill Flows"]
         OnboardFlow[project_onboarding]
         SpecFlow[spec_to_tasks]
+        SpecProtoFlow[spec_to_protocol]
         ExecFlow[execute_protocol]
-        FullFlow[full_protocol]
+        NextStep[run_next_step]
     end
     
     subgraph Scripts["Windmill Scripts"]
@@ -25,27 +26,23 @@ graph TB
         Init[initialize_speckit]
         Setup[project_setup]
         
-        GenSpec[generate_spec]
-        GenPlan[generate_plan]
-        GenTasks[generate_tasks]
-        PlanProto[plan_protocol]
-        
-        ExecStep[execute_step]
-        RunQA[run_qa]
-        RunQuality[run_quality]
+        SpeckitSpec[speckit_specify_api]
+        SpeckitPlan[speckit_plan_api]
+        SpeckitTasks[speckit_tasks_api]
+        ProtoFromSpec[protocol_from_spec_api]
+        ProtoStart[protocol_plan_and_wait]
+
+        ExecStep[step_execute_api]
+        StepQA[step_run_qa_api]
         Feedback[handle_feedback]
         OpenPR[open_pr]
     end
     
     OnboardFlow --> Clone & Analyze & Init
-    SpecFlow --> GenSpec & GenPlan & GenTasks
-    ExecFlow --> ExecStep & RunQA & Feedback
-    
-    FullFlow --> PlanProto
-    FullFlow --> ExecStep
-    FullFlow --> RunQuality
-    FullFlow --> OpenPR
-    FullFlow --> Feedback
+    SpecFlow --> SpeckitSpec & SpeckitPlan & SpeckitTasks
+    SpecProtoFlow --> ProtoFromSpec & ProtoStart
+    ExecFlow --> ExecStep
+    NextStep --> ExecStep
 ```
 
 ## Where these live (in this repo)
@@ -101,32 +98,19 @@ Initialize the `.specify/` directory structure with constitution and templates.
 
 ### Planning Scripts
 
-#### generate_spec
-Generate a feature specification from a user request.
+#### speckit_specify_api / speckit_plan_api / speckit_tasks_api
+API-wrapper scripts that call DevGodzilla SpecKit endpoints for spec/plan/tasks.
 
-#### generate_plan
-Generate an implementation plan from a feature specification.
-
-#### generate_tasks
-Generate a task breakdown with dependencies from the plan.
-
-#### plan_protocol
-**[NEW]** Complete planning workflow: Spec → Plan → Tasks + DAG generation + Flow creation.
-- **Args**: `project_id`, `feature_request`, `protocol_name`, `branch_name`
-- **Output**: Protocol run ID, task DAG, created Windmill flow ID
+#### protocol_from_spec_api
+Create a protocol run from SpecKit tasks via `/protocols/from-spec`.
 
 ### Execution Scripts
 
-#### execute_step
-Execute a single task step using an AI agent (Codex, Claude, OpenCode, Gemini).
+#### step_execute_api
+Execute a single step via DevGodzilla API. QA auto-runs after execution.
 
-#### run_qa
-Basic QA checks.
-
-#### run_quality
-**[NEW]** Enhanced QA with constitutional gates, checklist validation, and code analysis.
-- **Args**: `step_run_id`, `step_output`, `constitution_path`
-- **Output**: Verdict (pass/fail/warn), gate results, score
+#### step_run_qa_api
+Manually re-run QA for a single step via DevGodzilla API.
 
 #### handle_feedback
 Handle feedback loop actions when QA fails (clarify, re-plan, retry).
@@ -146,9 +130,16 @@ All flows are located at `f/devgodzilla/` in Windmill.
 
 These flows are intended to work in the default Docker Compose stack, without requiring Windmill workers to import the `devgodzilla` Python package (they rely on API-wrapper scripts):
 - `onboard_to_tasks`
+- `project_onboarding`
 - `protocol_start`
-- `step_execute_with_qa`
 - `run_next_step` (selection only; execution is separate)
+- `step_execute_with_qa`
+- `execute_protocol`
+- `spec_to_tasks`
+- `spec_to_protocol`
+- `sprint_from_protocol`
+- `sync_tasks_to_sprint`
+- `complete_sprint`
 
 Notes:
 - `onboard_to_tasks` can optionally run headless repo discovery during onboarding (writes `tasksgodzilla/*`).
@@ -161,8 +152,8 @@ The default `docker-compose.yml` build enables `deno_core` (see `WINDMILL_FEATUR
 - `u/devgodzilla/protocol_plan_and_wait`
 - `u/devgodzilla/protocol_select_next_step`
 - `u/devgodzilla/step_execute_api`
-- `u/devgodzilla/step_run_qa_api`
 - For onboarding + SpecKit generation without JS transforms: `u/devgodzilla/onboard_to_tasks_api`
+- For SpecKit -> protocol creation: `u/devgodzilla/protocol_from_spec_api`
 
 ### protocol_start
 Plan a protocol in DevGodzilla (via API) and wait until it reaches a stable status (`planned`, `running`, `blocked`, etc).
@@ -177,11 +168,7 @@ Select the next runnable step for a protocol (via API).
 This flow/script is selection-only and returns a `step_run_id`; execution is performed separately (e.g., `step_execute_with_qa`).
 
 ### step_execute_with_qa
-Execute a specific `step_run_id` (via API) and run QA.
-
-Notes:
-- QA supports `"gates": []` to skip QA and still complete the step (useful for E2E/system tests).
-- Step execution/QA writes artifacts under `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`.
+Execute a specific `step_run_id` (via API). QA auto-runs after execution.
 
 ### project_onboarding
 Complete project setup: clone, analyze, and initialize SpecKit.
@@ -189,6 +176,9 @@ Complete project setup: clone, analyze, and initialize SpecKit.
 ### spec_to_tasks
 Generate spec → plan → tasks from a feature request.
 optional: Sync generated tasks to a sprint if `sprint_id` is provided.
+
+### spec_to_protocol
+Generate spec → plan → tasks, create a protocol from SpecKit tasks, and start planning.
 
 ### sprint_from_protocol
 Create a sprint from a protocol run and optionally sync steps as tasks.
@@ -200,37 +190,7 @@ Import SpecKit `tasks.md` into a sprint, optionally overwriting existing tasks.
 Mark a sprint as completed and finalize metrics (actual velocity).
 
 ### execute_protocol
-Execute a step with QA checks.
-
-### full_protocol
-**[NEW]** Complete protocol execution with DAG-based parallel tasks, QA checks, and feedback loops.
-
-> Note: `full_protocol` is not imported by default in the current repo state; see `docs/DevGodzilla/CURRENT_STATE.md`.
-
-```mermaid
-graph TB
-    Start[plan_protocol] --> Tasks{Parallel Tasks}
-    Tasks -->|T001| QA1[run_quality]
-    Tasks -->|T002| QA2[run_quality]
-    
-    QA1 --> Verdict{Verdict?}
-    Verdict -->|Pass| PR[open_pr]
-    Verdict -->|Fail| Feedback[handle_feedback]
-    
-    Feedback -->|Retry| Tasks
-    Feedback -->|Clarify| Block[Wait for User]
-```
-
-**Inputs:**
-```json
-{
-  "project_id": 1,
-  "feature_request": "Add feature X",
-  "protocol_name": "Protocol 1",
-  "branch_name": "feature-x",
-  "agent_id": "opencode"
-}
-```
+Execute a step via DevGodzilla API. QA auto-runs after execution.
 
 ---
 
@@ -273,16 +233,23 @@ python3 windmill/import_to_windmill.py \
 
 ```
 windmill/
-├── scripts/devgodzilla/           # 13 Scripts
+├── scripts/devgodzilla/           # API adapters + helpers
 │   ├── project_setup.py
-│   ├── plan_protocol.py
-│   ├── run_quality.py
+│   ├── protocol_from_spec_api.py
+│   ├── protocol_plan_and_wait.py
+│   ├── protocol_select_next_step.py
+│   ├── step_execute_api.py
+│   ├── step_run_qa_api.py
 │   ├── open_pr.py
-│   └── ... (9 others)
+│   └── ... (other scripts)
 │
-├── flows/devgodzilla/             # 4 Flows
-│   ├── full_protocol.flow.json
-│   └── ... (3 others)
+├── flows/devgodzilla/             # Flow exports
+│   ├── execute_protocol.flow.json
+│   ├── protocol_start.flow.json
+│   ├── step_execute_with_qa.flow.json
+│   ├── spec_to_protocol.flow.json
+│   ├── run_next_step.flow.json
+│   └── ... (other flows, plus _deprecated/)
 │
 └── resources/devgodzilla/         # 2 Resources
     ├── database.resource.yaml

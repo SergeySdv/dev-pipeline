@@ -177,7 +177,6 @@ queue_service = QueueService(queue=redis_queue)
 # Enqueue jobs
 job = queue_service.enqueue_plan_protocol(protocol_run_id=1)
 job = queue_service.enqueue_execute_step(step_run_id=5)
-job = queue_service.enqueue_run_quality(step_run_id=5)
 job = queue_service.enqueue_project_setup(project_id=1)
 job = queue_service.enqueue_open_pr(protocol_run_id=1)
 ```
@@ -215,10 +214,6 @@ def process_job(job: Job, db: BaseDatabase) -> None:
     if job.job_type == "execute_step_job":
         executor = ExecutionService(db=db)
         executor.execute_step(job.payload["step_run_id"], job_id=job.job_id)
-    
-    elif job.job_type == "run_quality_job":
-        qa_service = QualityService(db=db)
-        qa_service.run_for_step_run(job.payload["step_run_id"], job_id=job.job_id)
     
     # ... etc
 ```

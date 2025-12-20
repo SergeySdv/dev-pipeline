@@ -46,7 +46,7 @@ High-level flow:
 3. **Plan protocol**: ensure a git worktree, then read `.protocols/<protocol_name>/step-*.md` to create `StepRun` rows.
    - If protocol files are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL=true` (default), generate `.protocols/<protocol_name>/plan.md` + `step-*.md` via headless agent.
 4. **Execute step**: engine runs inside the protocol worktree; DevGodzilla writes execution artifacts (“git report”) under `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`.
-5. **QA**: QA gates run on step output; `"gates": []` skips QA and still completes the step (useful for E2E/system tests). After QA, DevGodzilla best-effort updates protocol status to `completed` / `failed` when all steps are terminal.
+5. **QA**: QA runs automatically after every successful step execution (prompt-driven; optional deterministic gates via policy or manual re-run). After QA, DevGodzilla best-effort updates protocol status to `completed` / `failed` when all steps are terminal.
 
 Default engine/model for headless workflows:
 - Engine: `opencode` (`DEVGODZILLA_DEFAULT_ENGINE_ID`)
@@ -300,7 +300,6 @@ graph TB
             JobTypes{{"Job Types"}}
             plan_job["plan_protocol_job"]
             exec_job["execute_step_job"]
-            qa_job["run_quality_job"]
             setup_job["project_setup_job"]
             pr_job["open_pr_job"]
         end
@@ -323,7 +322,6 @@ graph TB
 
     JobTypes --> plan_job
     JobTypes --> exec_job
-    JobTypes --> qa_job
     JobTypes --> setup_job
     JobTypes --> pr_job
 

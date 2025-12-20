@@ -76,7 +76,7 @@ export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent
                 Fullscreen
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-7xl h-[90vh]">
+            <DialogContent size="7xl" className="h-[90vh]">
               <DialogHeader>
                 <DialogTitle>Pipeline Workflow - {protocol.protocol_name}</DialogTitle>
                 <DialogDescription>Full workflow visualization with agent assignments</DialogDescription>

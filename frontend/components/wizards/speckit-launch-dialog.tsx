@@ -86,7 +86,7 @@ export function SpecKitLaunchDialog({ open, onOpenChange, action }: SpecKitLaunc
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent size="2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Icon className="h-5 w-5 text-primary" />

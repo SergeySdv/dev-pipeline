@@ -43,6 +43,10 @@
             "type": "javascript",
             "expr": "flow_input.clarification_entries || []"
           },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          },
           "notes": {
             "type": "javascript",
             "expr": "flow_input.clarification_notes || ''"
@@ -63,6 +67,10 @@
           "spec_path": {
             "type": "javascript",
             "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
           }
         }
       },
@@ -80,6 +88,10 @@
           "spec_path": {
             "type": "javascript",
             "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
           }
         }
       },
@@ -97,6 +109,10 @@
           "plan_path": {
             "type": "javascript",
             "expr": "results.speckit_plan.plan_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
           }
         }
       },
@@ -114,6 +130,10 @@
           "spec_path": {
             "type": "javascript",
             "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
           },
           "plan_path": {
             "type": "javascript",
@@ -139,6 +159,10 @@
           "spec_path": {
             "type": "javascript",
             "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
           }
         }
       },

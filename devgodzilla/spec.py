@@ -103,7 +103,7 @@ def build_spec_from_protocol_files(
     Args:
         protocol_root: Protocol directory containing step files
         default_engine_id: Default engine ID for steps
-        default_qa_policy: Default QA policy ('full', 'basic', 'skip')
+        default_qa_policy: QA policy label to embed in the spec (prompt QA always runs)
         default_qa_prompt: Default QA prompt path
         
     Returns:

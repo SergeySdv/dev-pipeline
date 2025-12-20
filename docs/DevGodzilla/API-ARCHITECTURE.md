@@ -293,13 +293,18 @@ Content-Type: application/json
 
 | Endpoint | Method | Description | Service |
 |----------|--------|-------------|---------|
-| `/projects/{id}/speckit/init` | POST | Initialize .specify/ | `PlanningService.init_speckit()` |
-| `/projects/{id}/speckit/specify` | POST | Generate specification | `PlanningService.generate_spec()` |
-| `/projects/{id}/speckit/plan` | POST | Generate plan | `PlanningService.generate_plan()` |
-| `/projects/{id}/speckit/tasks` | POST | Generate tasks | `PlanningService.generate_tasks()` |
-| `/projects/{id}/speckit/constitution` | GET | Get constitution | `PolicyService.get_constitution()` |
-| `/projects/{id}/speckit/constitution` | PUT | Update constitution | `PolicyService.update_constitution()` |
-| `/speckit/*` | Various | Legacy SpecKit endpoints | Back-compat |
+| `/projects/{id}/speckit/init` | POST | Initialize .specify/ | `SpecificationService.init_project()` |
+| `/projects/{id}/speckit/specify` | POST | Generate specification | `SpecificationService.run_specify()` |
+| `/projects/{id}/speckit/plan` | POST | Generate plan | `SpecificationService.run_plan()` |
+| `/projects/{id}/speckit/tasks` | POST | Generate tasks | `SpecificationService.run_tasks()` |
+| `/projects/{id}/speckit/clarify` | POST | Append clarifications | `SpecificationService.run_clarify()` |
+| `/projects/{id}/speckit/checklist` | POST | Generate checklist | `SpecificationService.run_checklist()` |
+| `/projects/{id}/speckit/analyze` | POST | Generate analysis report | `SpecificationService.run_analyze()` |
+| `/projects/{id}/speckit/implement` | POST | Initialize implement run | `SpecificationService.run_implement()` |
+| `/projects/{id}/speckit/constitution` | GET | Get constitution | `SpecificationService.get_constitution()` |
+| `/projects/{id}/speckit/constitution` | PUT | Update constitution | `SpecificationService.save_constitution()` |
+| `/projects/{id}/speckit/constitution/sync` | POST | Sync from policy | `PolicyService.render_constitution()` |
+| `/speckit/*` | Various | SpecKit endpoints (non-project) | API parity |
 
 #### Generate Specification
 
@@ -491,7 +496,7 @@ GET /agents
 | `/protocols/{id}/flow` | GET | Get protocol flow | `OrchestratorService.get_windmill_flow()` |
 | `/protocols/{id}/flow` | POST | Create flow from tasks | `OrchestratorService.create_windmill_flow()` |
 
-`flow_path` is the full Windmill flow path (e.g. `f/devgodzilla/full_protocol`) and is treated as a “path” parameter, so it may contain slashes.
+`flow_path` is the full Windmill flow path (e.g. `f/devgodzilla/execute_protocol`) and is treated as a “path” parameter, so it may contain slashes.
 
 #### Create Windmill Flow from Tasks
 

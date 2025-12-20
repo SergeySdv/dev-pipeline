@@ -144,7 +144,7 @@ BudgetService, DecompositionService, PromptService
 |------|----|---------|
 | ExecutionService | OrchestratorService | Completion handling, trigger policies |
 | QualityService | OrchestratorService | QA verdict reporting |
-| ExecutionService | QualityService | Inline QA (when qa_policy == "light") |
+| ExecutionService | QualityService | Prompt QA auto-run after execution |
 | SpecService | OrchestratorService | Spec syncing |
 | ExecutionService | PolicyService | Blocking findings check |
 | OnboardingService | PolicyService | Policy-driven setup |

@@ -1,0 +1,270 @@
+{
+  "summary": "Spec to Protocol Flow",
+  "description": "Generate spec/plan/tasks, create a protocol from SpecKit tasks, and start planning (QA auto-runs during execution).",
+  "value": {
+    "modules": [
+      {
+        "id": "speckit_specify",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_specify_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "description": {
+            "type": "javascript",
+            "expr": "flow_input.feature_request"
+          },
+          "feature_name": {
+            "type": "javascript",
+            "expr": "flow_input.feature_name || ''"
+          }
+        }
+      },
+      {
+        "id": "speckit_clarify",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_clarify_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_path"
+          },
+          "entries": {
+            "type": "javascript",
+            "expr": "flow_input.clarification_entries || []"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          },
+          "notes": {
+            "type": "javascript",
+            "expr": "flow_input.clarification_notes || ''"
+          }
+        }
+      },
+      {
+        "id": "speckit_plan",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_plan_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          }
+        }
+      },
+      {
+        "id": "speckit_checklist",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_checklist_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          }
+        }
+      },
+      {
+        "id": "speckit_tasks",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_tasks_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "plan_path": {
+            "type": "javascript",
+            "expr": "results.speckit_plan.plan_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          }
+        }
+      },
+      {
+        "id": "speckit_analyze",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_analyze_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          },
+          "plan_path": {
+            "type": "javascript",
+            "expr": "results.speckit_plan.plan_path"
+          },
+          "tasks_path": {
+            "type": "javascript",
+            "expr": "results.speckit_tasks.tasks_path"
+          }
+        }
+      },
+      {
+        "id": "speckit_implement",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/speckit_implement_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          }
+        }
+      },
+      {
+        "id": "create_protocol",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/protocol_from_spec_api"
+        },
+        "input_transforms": {
+          "project_id": {
+            "type": "javascript",
+            "expr": "flow_input.project_id"
+          },
+          "spec_path": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_path"
+          },
+          "tasks_path": {
+            "type": "javascript",
+            "expr": "results.speckit_tasks.tasks_path"
+          },
+          "spec_run_id": {
+            "type": "javascript",
+            "expr": "results.speckit_specify.spec_run_id"
+          },
+          "protocol_name": {
+            "type": "javascript",
+            "expr": "flow_input.protocol_name || ''"
+          },
+          "overwrite": {
+            "type": "javascript",
+            "expr": "flow_input.overwrite || false"
+          }
+        }
+      },
+      {
+        "id": "protocol_start",
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/protocol_plan_and_wait"
+        },
+        "input_transforms": {
+          "protocol_run_id": {
+            "type": "javascript",
+            "expr": "results.create_protocol.protocol.id"
+          }
+        }
+      }
+    ]
+  },
+  "schema": {
+    "type": "object",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "project_id": {
+        "type": "integer",
+        "description": "Project ID",
+        "default": 1
+      },
+      "feature_request": {
+        "type": "string",
+        "description": "Description of the feature to implement",
+        "default": ""
+      },
+      "feature_name": {
+        "type": "string",
+        "description": "Optional feature slug/name",
+        "default": ""
+      },
+      "protocol_name": {
+        "type": "string",
+        "description": "Optional protocol name override",
+        "default": ""
+      },
+      "overwrite": {
+        "type": "boolean",
+        "description": "Overwrite existing runtime steps if present",
+        "default": false
+      },
+      "clarification_entries": {
+        "type": "array",
+        "description": "Optional clarification Q/A entries to append",
+        "default": [],
+        "items": {
+          "type": "object",
+          "properties": {
+            "question": { "type": "string" },
+            "answer": { "type": "string" }
+          },
+          "required": ["question", "answer"]
+        }
+      },
+      "clarification_notes": {
+        "type": "string",
+        "description": "Optional clarification notes",
+        "default": ""
+      }
+    },
+    "required": [
+      "project_id",
+      "feature_request"
+    ]
+  }
+}

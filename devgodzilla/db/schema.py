@@ -65,6 +65,53 @@ CREATE TABLE IF NOT EXISTS protocol_runs (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS speckit_specs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    spec_number INTEGER,
+    feature_name TEXT,
+    spec_path TEXT,
+    plan_path TEXT,
+    tasks_path TEXT,
+    checklist_path TEXT,
+    analysis_path TEXT,
+    implement_path TEXT,
+    has_spec INTEGER DEFAULT 0,
+    has_plan INTEGER DEFAULT 0,
+    has_tasks INTEGER DEFAULT 0,
+    has_checklist INTEGER DEFAULT 0,
+    has_analysis INTEGER DEFAULT 0,
+    has_implement INTEGER DEFAULT 0,
+    constitution_hash TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS spec_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    spec_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    branch_name TEXT,
+    worktree_path TEXT,
+    spec_root TEXT,
+    spec_number INTEGER,
+    feature_name TEXT,
+    spec_path TEXT,
+    plan_path TEXT,
+    tasks_path TEXT,
+    checklist_path TEXT,
+    analysis_path TEXT,
+    implement_path TEXT,
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_spec_runs_project ON spec_runs(project_id, created_at);
+
 CREATE TABLE IF NOT EXISTS step_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
@@ -88,13 +135,17 @@ CREATE TABLE IF NOT EXISTS step_runs (
 
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    project_id INTEGER REFERENCES projects(id),
     step_run_id INTEGER REFERENCES step_runs(id),
     event_type TEXT NOT NULL,
     message TEXT NOT NULL,
     metadata TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_protocol ON events(protocol_run_id, created_at);
 
 CREATE TABLE IF NOT EXISTS job_runs (
     run_id TEXT PRIMARY KEY,
@@ -174,6 +225,29 @@ CREATE TABLE IF NOT EXISTS feedback_events (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_events_protocol ON feedback_events(protocol_run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS qa_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
+    step_run_id INTEGER NOT NULL REFERENCES step_runs(id),
+    verdict TEXT NOT NULL,
+    summary TEXT,
+    gate_results TEXT,
+    findings TEXT,
+    prompt_path TEXT,
+    prompt_hash TEXT,
+    engine_id TEXT,
+    model TEXT,
+    report_path TEXT,
+    report_text TEXT,
+    duration_seconds REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_qa_results_project ON qa_results(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_results_protocol ON qa_results(protocol_run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_results_step ON qa_results(step_run_id, created_at);
 
 CREATE TABLE IF NOT EXISTS sprints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -277,6 +351,53 @@ CREATE TABLE IF NOT EXISTS protocol_runs (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS speckit_specs (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    spec_number INTEGER,
+    feature_name TEXT,
+    spec_path TEXT,
+    plan_path TEXT,
+    tasks_path TEXT,
+    checklist_path TEXT,
+    analysis_path TEXT,
+    implement_path TEXT,
+    has_spec BOOLEAN DEFAULT FALSE,
+    has_plan BOOLEAN DEFAULT FALSE,
+    has_tasks BOOLEAN DEFAULT FALSE,
+    has_checklist BOOLEAN DEFAULT FALSE,
+    has_analysis BOOLEAN DEFAULT FALSE,
+    has_implement BOOLEAN DEFAULT FALSE,
+    constitution_hash TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS spec_runs (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    spec_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    branch_name TEXT,
+    worktree_path TEXT,
+    spec_root TEXT,
+    spec_number INTEGER,
+    feature_name TEXT,
+    spec_path TEXT,
+    plan_path TEXT,
+    tasks_path TEXT,
+    checklist_path TEXT,
+    analysis_path TEXT,
+    implement_path TEXT,
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_spec_runs_project ON spec_runs(project_id, created_at);
+
 CREATE TABLE IF NOT EXISTS step_runs (
     id SERIAL PRIMARY KEY,
     protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
@@ -300,13 +421,17 @@ CREATE TABLE IF NOT EXISTS step_runs (
 
 CREATE TABLE IF NOT EXISTS events (
     id SERIAL PRIMARY KEY,
-    protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
+    protocol_run_id INTEGER REFERENCES protocol_runs(id),
+    project_id INTEGER REFERENCES projects(id),
     step_run_id INTEGER REFERENCES step_runs(id),
     event_type TEXT NOT NULL,
     message TEXT NOT NULL,
     metadata JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_protocol ON events(protocol_run_id, created_at);
 
 CREATE TABLE IF NOT EXISTS job_runs (
     run_id TEXT PRIMARY KEY,
@@ -386,6 +511,29 @@ CREATE TABLE IF NOT EXISTS feedback_events (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_events_protocol ON feedback_events(protocol_run_id, created_at);
+
+CREATE TABLE IF NOT EXISTS qa_results (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
+    step_run_id INTEGER NOT NULL REFERENCES step_runs(id),
+    verdict TEXT NOT NULL,
+    summary TEXT,
+    gate_results JSONB,
+    findings JSONB,
+    prompt_path TEXT,
+    prompt_hash TEXT,
+    engine_id TEXT,
+    model TEXT,
+    report_path TEXT,
+    report_text TEXT,
+    duration_seconds DOUBLE PRECISION,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_qa_results_project ON qa_results(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_results_protocol ON qa_results(protocol_run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_results_step ON qa_results(step_run_id, created_at);
 
 CREATE TABLE IF NOT EXISTS sprints (
     id SERIAL PRIMARY KEY,

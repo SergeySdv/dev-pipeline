@@ -100,13 +100,9 @@ def _get_protocol_info(protocol_run_id: int) -> dict | None:
             protocol = db.get_protocol_run(protocol_run_id)
             project = db.get_project(protocol.project_id)
 
-            single_worktree = os.environ.get("DEVGODZILLA_SINGLE_WORKTREE", "true").lower() in ("1", "true", "yes", "on")
-            shared_branch = os.environ.get("DEVGODZILLA_WORKTREE_BRANCH", "devgodzilla-worktree")
-            branch_name = shared_branch if single_worktree else protocol.protocol_name
-
             return {
                 "protocol_name": protocol.protocol_name,
-                "branch_name": branch_name,
+                "branch_name": protocol.protocol_name,
                 "base_branch": protocol.base_branch or "main",
                 "local_path": project.local_path,
                 "worktree_path": protocol.worktree_path,

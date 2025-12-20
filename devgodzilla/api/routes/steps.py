@@ -177,8 +177,26 @@ def get_step_quality(
     except KeyError:
         raise HTTPException(status_code=404, detail="Step not found")
 
-    qa = (step.runtime_state or {}).get("qa_verdict") or {}
-    verdict = qa.get("verdict")
+    qa_record = db.get_latest_qa_result(step_run_id=step_id)
+    if not qa_record:
+        checklist_items = [
+            schemas.ChecklistItemOut(id="qa_ran", description="QA executed", passed=False, required=False),
+        ]
+        return schemas.QualitySummaryOut(
+            protocol_run_id=step.protocol_run_id,
+            score=0.0,
+            gates=[],
+            checklist=schemas.ChecklistResultOut(
+                passed=0,
+                total=len(checklist_items),
+                items=checklist_items,
+            ),
+            overall_status="skipped",
+            blocking_issues=0,
+            warnings=0,
+        )
+
+    verdict = qa_record.verdict
 
     def to_status(v: str | None) -> str:
         if v in ("pass", "skip"):
@@ -189,10 +207,27 @@ def get_step_quality(
             return "failed"
         return "skipped"
 
-    gates = [
-        schemas.GateResultOut(article=g.get("gate_id", ""), name=str(g.get("gate_id", "")).upper(), status=to_status(g.get("verdict")), findings=[])
-        for g in (qa.get("gates") or [])
-    ]
+    gates = []
+    for g in qa_record.gate_results or []:
+        findings = [
+            schemas.QAFindingOut(
+                severity=f.get("severity", ""),
+                message=f.get("message", ""),
+                file=f.get("file_path"),
+                line=f.get("line_number"),
+                rule_id=f.get("rule_id"),
+                suggestion=f.get("suggestion"),
+            )
+            for f in (g.get("findings") or [])
+        ]
+        gates.append(
+            schemas.GateResultOut(
+                article=g.get("gate_id", ""),
+                name=str(g.get("gate_name", g.get("gate_id", ""))).upper(),
+                status=to_status(g.get("verdict")),
+                findings=findings,
+            )
+        )
 
     blocking = 1 if verdict in ("fail", "error") else 0
     warnings = 1 if verdict == "warn" else 0
@@ -305,9 +340,6 @@ def qa_step(
 
     qa = quality.run_qa(step_id, gates=gates_to_run)
 
-    # Persist a compact verdict in runtime_state for later UI
-    quality.persist_verdict(qa, step_id)
-
     # Best-effort: if all steps are terminal, update protocol status to completed/failed.
     try:
         from devgodzilla.services.orchestrator import OrchestratorService
@@ -318,15 +350,19 @@ def qa_step(
         pass
 
     # Generate human-readable report as an artifact (best-effort)
+    report_path = None
     try:
         artifacts_dir = _step_artifacts_dir(db, step_id)
-        quality.generate_quality_report(
+        report_path = quality.generate_quality_report(
             qa,
             artifacts_dir,
             step_name=db.get_step_run(step_id).step_name,
         )
     except Exception:
-        pass
+        report_path = None
+
+    # Persist QA verdict + report metadata
+    quality.persist_verdict(qa, step_id, report_path=report_path)
 
     def map_gate_status(v: str) -> str:
         if v == "pass":

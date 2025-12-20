@@ -13,6 +13,7 @@ import { toast } from "sonner"
 import { formatRelativeTime, truncateHash } from "@/lib/format"
 import { StepsTab } from "./components/steps-tab"
 import { EventsTab } from "./components/events-tab"
+import { LogsTab } from "./components/logs-tab"
 import { RunsTab } from "./components/runs-tab"
 import { SpecTab } from "./components/spec-tab"
 import { PolicyTab } from "./components/policy-tab"
@@ -184,6 +185,7 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
         <TabsList>
           <TabsTrigger value="steps">Steps</TabsTrigger>
           <TabsTrigger value="events">Events</TabsTrigger>
+          <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="runs">Runs</TabsTrigger>
           <TabsTrigger value="spec">Spec</TabsTrigger>
           <TabsTrigger value="policy">Policy</TabsTrigger>
@@ -195,6 +197,9 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
         </TabsContent>
         <TabsContent value="events">
           <EventsTab protocolId={protocolId} />
+        </TabsContent>
+        <TabsContent value="logs">
+          <LogsTab protocolId={protocolId} />
         </TabsContent>
         <TabsContent value="runs">
           <RunsTab protocolId={protocolId} />

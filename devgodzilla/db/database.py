@@ -8,9 +8,11 @@ Uses the Protocol pattern to define the database contract.
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Union
 
+from devgodzilla.events_catalog import event_type_variants, infer_event_category, normalize_event_type
 from devgodzilla.logging import get_logger
 from devgodzilla.models.domain import (
     AgileTask,
@@ -21,7 +23,10 @@ from devgodzilla.models.domain import (
     PolicyPack,
     Project,
     ProtocolRun,
+    QAResultRecord,
     RunArtifact,
+    SpeckitSpec,
+    SpecRun,
     Sprint,
     StepRun,
 )
@@ -83,6 +88,57 @@ class DatabaseProtocol(Protocol):
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]: ...
     def list_all_protocol_runs(self, *, limit: int = 200) -> List[ProtocolRun]: ...
     def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun: ...
+
+    # SpecKit specs
+    def upsert_speckit_spec(
+        self,
+        *,
+        project_id: int,
+        name: str,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+        checklist_path: Optional[str] = None,
+        analysis_path: Optional[str] = None,
+        implement_path: Optional[str] = None,
+        has_spec: Optional[bool] = None,
+        has_plan: Optional[bool] = None,
+        has_tasks: Optional[bool] = None,
+        has_checklist: Optional[bool] = None,
+        has_analysis: Optional[bool] = None,
+        has_implement: Optional[bool] = None,
+        constitution_hash: Optional[str] = None,
+    ) -> SpeckitSpec: ...
+
+    def list_speckit_specs(self, project_id: int) -> List[SpeckitSpec]: ...
+
+    # Spec runs
+    def create_spec_run(
+        self,
+        *,
+        project_id: int,
+        spec_name: str,
+        status: str,
+        base_branch: str,
+        branch_name: Optional[str] = None,
+        worktree_path: Optional[str] = None,
+        spec_root: Optional[str] = None,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+        checklist_path: Optional[str] = None,
+        analysis_path: Optional[str] = None,
+        implement_path: Optional[str] = None,
+        protocol_run_id: Optional[int] = None,
+    ) -> SpecRun: ...
+
+    def get_spec_run(self, spec_run_id: int) -> SpecRun: ...
+    def list_spec_runs(self, project_id: int) -> List[SpecRun]: ...
+    def update_spec_run(self, spec_run_id: int, **updates) -> SpecRun: ...
     
     # Step runs
     def create_step_run(
@@ -106,20 +162,64 @@ class DatabaseProtocol(Protocol):
     # Events
     def append_event(
         self,
-        protocol_run_id: int,
+        protocol_run_id: Optional[int],
         event_type: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
         step_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
     ) -> Event: ...
+
+    # QA results
+    def create_qa_result(
+        self,
+        *,
+        project_id: int,
+        protocol_run_id: int,
+        step_run_id: int,
+        verdict: str,
+        summary: Optional[str] = None,
+        gate_results: Optional[List[Dict[str, Any]]] = None,
+        findings: Optional[List[Dict[str, Any]]] = None,
+        prompt_path: Optional[str] = None,
+        prompt_hash: Optional[str] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+        report_path: Optional[str] = None,
+        report_text: Optional[str] = None,
+        duration_seconds: Optional[float] = None,
+    ) -> QAResultRecord: ...
+
+    def list_qa_results(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        limit: int = 200,
+    ) -> List[QAResultRecord]: ...
+
+    def get_latest_qa_result(
+        self,
+        *,
+        step_run_id: int,
+    ) -> Optional[QAResultRecord]: ...
     
-    def list_events(self, protocol_run_id: int) -> List[Event]: ...
+    def list_events(
+        self,
+        protocol_run_id: int,
+        *,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
+    ) -> List[Event]: ...
     def list_recent_events(
         self,
         *,
         limit: int = 50,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
     ) -> List[Event]: ...
     def list_events_since_id(
         self,
@@ -128,6 +228,8 @@ class DatabaseProtocol(Protocol):
         limit: int = 200,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
     ) -> List[Event]: ...
 
     # Job runs + artifacts
@@ -302,6 +404,21 @@ class SQLiteDatabase:
 
     @staticmethod
     def _coerce_ts(value: Any) -> str:
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.isoformat()
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return ""
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.isoformat()
+            except Exception:
+                return text
         if hasattr(value, "isoformat"):
             try:
                 return value.isoformat()
@@ -359,6 +476,55 @@ class SQLiteDatabase:
             updated_at=self._coerce_ts(row["updated_at"]),
         )
 
+    def _row_to_speckit_spec(self, row: sqlite3.Row) -> SpeckitSpec:
+        keys = set(row.keys())
+        return SpeckitSpec(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            spec_number=row["spec_number"] if "spec_number" in keys else None,
+            feature_name=row["feature_name"] if "feature_name" in keys else None,
+            spec_path=row["spec_path"] if "spec_path" in keys else None,
+            plan_path=row["plan_path"] if "plan_path" in keys else None,
+            tasks_path=row["tasks_path"] if "tasks_path" in keys else None,
+            checklist_path=row["checklist_path"] if "checklist_path" in keys else None,
+            analysis_path=row["analysis_path"] if "analysis_path" in keys else None,
+            implement_path=row["implement_path"] if "implement_path" in keys else None,
+            has_spec=bool(row["has_spec"]) if "has_spec" in keys and row["has_spec"] is not None else False,
+            has_plan=bool(row["has_plan"]) if "has_plan" in keys and row["has_plan"] is not None else False,
+            has_tasks=bool(row["has_tasks"]) if "has_tasks" in keys and row["has_tasks"] is not None else False,
+            has_checklist=bool(row["has_checklist"]) if "has_checklist" in keys and row["has_checklist"] is not None else False,
+            has_analysis=bool(row["has_analysis"]) if "has_analysis" in keys and row["has_analysis"] is not None else False,
+            has_implement=bool(row["has_implement"]) if "has_implement" in keys and row["has_implement"] is not None else False,
+            constitution_hash=row["constitution_hash"] if "constitution_hash" in keys else None,
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    def _row_to_spec_run(self, row: sqlite3.Row) -> SpecRun:
+        keys = set(row.keys())
+        return SpecRun(
+            id=row["id"],
+            project_id=row["project_id"],
+            spec_name=row["spec_name"],
+            status=row["status"],
+            base_branch=row["base_branch"],
+            branch_name=row["branch_name"] if "branch_name" in keys else None,
+            worktree_path=row["worktree_path"] if "worktree_path" in keys else None,
+            spec_root=row["spec_root"] if "spec_root" in keys else None,
+            spec_number=row["spec_number"] if "spec_number" in keys else None,
+            feature_name=row["feature_name"] if "feature_name" in keys else None,
+            spec_path=row["spec_path"] if "spec_path" in keys else None,
+            plan_path=row["plan_path"] if "plan_path" in keys else None,
+            tasks_path=row["tasks_path"] if "tasks_path" in keys else None,
+            checklist_path=row["checklist_path"] if "checklist_path" in keys else None,
+            analysis_path=row["analysis_path"] if "analysis_path" in keys else None,
+            implement_path=row["implement_path"] if "implement_path" in keys else None,
+            protocol_run_id=row["protocol_run_id"] if "protocol_run_id" in keys else None,
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
     def _row_to_step_run(self, row: sqlite3.Row) -> StepRun:
         keys = set(row.keys())
         depends_on = self._parse_json(row["depends_on"] if "depends_on" in keys else "[]") or []
@@ -382,16 +548,43 @@ class SQLiteDatabase:
             updated_at=self._coerce_ts(row["updated_at"]),
         )
 
+    def _row_to_qa_result(self, row: sqlite3.Row) -> QAResultRecord:
+        keys = set(row.keys())
+        return QAResultRecord(
+            id=row["id"],
+            project_id=row["project_id"],
+            protocol_run_id=row["protocol_run_id"],
+            step_run_id=row["step_run_id"],
+            verdict=row["verdict"],
+            summary=row["summary"] if "summary" in keys else None,
+            gate_results=self._parse_json(row["gate_results"] if "gate_results" in keys else None),
+            findings=self._parse_json(row["findings"] if "findings" in keys else None),
+            prompt_path=row["prompt_path"] if "prompt_path" in keys else None,
+            prompt_hash=row["prompt_hash"] if "prompt_hash" in keys else None,
+            engine_id=row["engine_id"] if "engine_id" in keys else None,
+            model=row["model"] if "model" in keys else None,
+            report_path=row["report_path"] if "report_path" in keys else None,
+            report_text=row["report_text"] if "report_text" in keys else None,
+            duration_seconds=row["duration_seconds"] if "duration_seconds" in keys else None,
+            created_at=self._coerce_ts(row["created_at"] if "created_at" in keys else None),
+            updated_at=self._coerce_ts(row["updated_at"] if "updated_at" in keys else None),
+        )
+
     def _row_to_event(self, row: sqlite3.Row) -> Event:
         keys = set(row.keys())
+        event_type = normalize_event_type(row["event_type"])
         return Event(
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
             step_run_id=row["step_run_id"],
-            event_type=row["event_type"],
+            event_type=event_type,
             message=row["message"],
             metadata=self._parse_json(row["metadata"] if "metadata" in keys else None),
             created_at=self._coerce_ts(row["created_at"]),
+            event_category=infer_event_category(event_type),
+            protocol_name=row["protocol_name"] if "protocol_name" in keys else None,
+            project_id=row["project_id"] if "project_id" in keys else None,
+            project_name=row["project_name"] if "project_name" in keys else None,
         )
 
     def _row_to_job_run(self, row: sqlite3.Row) -> JobRun:
@@ -588,11 +781,13 @@ class SQLiteDatabase:
     def delete_project(self, project_id: int) -> None:
         """Delete a project and all associated data."""
         with self._transaction() as conn:
+            conn.execute("DELETE FROM qa_results WHERE project_id = ?", (project_id,))
             # Delete in order respecting foreign keys
             conn.execute("DELETE FROM feedback_events WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)", (project_id,))
             conn.execute("DELETE FROM events WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)", (project_id,))
             conn.execute("DELETE FROM step_runs WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)", (project_id,))
             conn.execute("DELETE FROM clarifications WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM speckit_specs WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM protocol_runs WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
 
@@ -702,6 +897,208 @@ class SQLiteDatabase:
                 tuple(params),
             )
         return self.get_protocol_run(run_id)
+
+    # SpecKit spec operations
+    def upsert_speckit_spec(
+        self,
+        *,
+        project_id: int,
+        name: str,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+        checklist_path: Optional[str] = None,
+        analysis_path: Optional[str] = None,
+        implement_path: Optional[str] = None,
+        has_spec: Optional[bool] = None,
+        has_plan: Optional[bool] = None,
+        has_tasks: Optional[bool] = None,
+        has_checklist: Optional[bool] = None,
+        has_analysis: Optional[bool] = None,
+        has_implement: Optional[bool] = None,
+        constitution_hash: Optional[str] = None,
+    ) -> SpeckitSpec:
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO speckit_specs (
+                    project_id, name, spec_number, feature_name,
+                    spec_path, plan_path, tasks_path, checklist_path,
+                    analysis_path, implement_path,
+                    has_spec, has_plan, has_tasks, has_checklist, has_analysis, has_implement,
+                    constitution_hash, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(project_id, name) DO UPDATE SET
+                    spec_number=COALESCE(excluded.spec_number, speckit_specs.spec_number),
+                    feature_name=COALESCE(excluded.feature_name, speckit_specs.feature_name),
+                    spec_path=COALESCE(excluded.spec_path, speckit_specs.spec_path),
+                    plan_path=COALESCE(excluded.plan_path, speckit_specs.plan_path),
+                    tasks_path=COALESCE(excluded.tasks_path, speckit_specs.tasks_path),
+                    checklist_path=COALESCE(excluded.checklist_path, speckit_specs.checklist_path),
+                    analysis_path=COALESCE(excluded.analysis_path, speckit_specs.analysis_path),
+                    implement_path=COALESCE(excluded.implement_path, speckit_specs.implement_path),
+                    has_spec=COALESCE(excluded.has_spec, speckit_specs.has_spec),
+                    has_plan=COALESCE(excluded.has_plan, speckit_specs.has_plan),
+                    has_tasks=COALESCE(excluded.has_tasks, speckit_specs.has_tasks),
+                    has_checklist=COALESCE(excluded.has_checklist, speckit_specs.has_checklist),
+                    has_analysis=COALESCE(excluded.has_analysis, speckit_specs.has_analysis),
+                    has_implement=COALESCE(excluded.has_implement, speckit_specs.has_implement),
+                    constitution_hash=COALESCE(excluded.constitution_hash, speckit_specs.constitution_hash),
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    project_id,
+                    name,
+                    spec_number,
+                    feature_name,
+                    spec_path,
+                    plan_path,
+                    tasks_path,
+                    checklist_path,
+                    analysis_path,
+                    implement_path,
+                    1 if has_spec is True else 0 if has_spec is False else None,
+                    1 if has_plan is True else 0 if has_plan is False else None,
+                    1 if has_tasks is True else 0 if has_tasks is False else None,
+                    1 if has_checklist is True else 0 if has_checklist is False else None,
+                    1 if has_analysis is True else 0 if has_analysis is False else None,
+                    1 if has_implement is True else 0 if has_implement is False else None,
+                    constitution_hash,
+                ),
+            )
+        row = self._fetchone(
+            "SELECT * FROM speckit_specs WHERE project_id = ? AND name = ? LIMIT 1",
+            (project_id, name),
+        )
+        if row is None:
+            raise KeyError("Speckit spec not found after upsert")
+        return self._row_to_speckit_spec(row)
+
+    def list_speckit_specs(self, project_id: int) -> List[SpeckitSpec]:
+        rows = self._fetchall(
+            "SELECT * FROM speckit_specs WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        )
+        return [self._row_to_speckit_spec(row) for row in rows]
+
+    # Spec run operations
+    def create_spec_run(
+        self,
+        *,
+        project_id: int,
+        spec_name: str,
+        status: str,
+        base_branch: str,
+        branch_name: Optional[str] = None,
+        worktree_path: Optional[str] = None,
+        spec_root: Optional[str] = None,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+        checklist_path: Optional[str] = None,
+        analysis_path: Optional[str] = None,
+        implement_path: Optional[str] = None,
+        protocol_run_id: Optional[int] = None,
+    ) -> SpecRun:
+        with self._transaction() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO spec_runs (
+                    project_id,
+                    spec_name,
+                    status,
+                    base_branch,
+                    branch_name,
+                    worktree_path,
+                    spec_root,
+                    spec_number,
+                    feature_name,
+                    spec_path,
+                    plan_path,
+                    tasks_path,
+                    checklist_path,
+                    analysis_path,
+                    implement_path,
+                    protocol_run_id,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    project_id,
+                    spec_name,
+                    status,
+                    base_branch,
+                    branch_name,
+                    worktree_path,
+                    spec_root,
+                    spec_number,
+                    feature_name,
+                    spec_path,
+                    plan_path,
+                    tasks_path,
+                    checklist_path,
+                    analysis_path,
+                    implement_path,
+                    protocol_run_id,
+                ),
+            )
+            spec_run_id = cur.lastrowid
+        return self.get_spec_run(spec_run_id)
+
+    def get_spec_run(self, spec_run_id: int) -> SpecRun:
+        row = self._fetchone("SELECT * FROM spec_runs WHERE id = ?", (spec_run_id,))
+        if row is None:
+            raise KeyError(f"SpecRun {spec_run_id} not found")
+        return self._row_to_spec_run(row)
+
+    def list_spec_runs(self, project_id: int) -> List[SpecRun]:
+        rows = self._fetchall(
+            "SELECT * FROM spec_runs WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        )
+        return [self._row_to_spec_run(row) for row in rows]
+
+    def update_spec_run(self, spec_run_id: int, **updates) -> SpecRun:
+        allowed = {
+            "spec_name",
+            "status",
+            "base_branch",
+            "branch_name",
+            "worktree_path",
+            "spec_root",
+            "spec_number",
+            "feature_name",
+            "spec_path",
+            "plan_path",
+            "tasks_path",
+            "checklist_path",
+            "analysis_path",
+            "implement_path",
+            "protocol_run_id",
+        }
+        fields = []
+        params: List[Any] = []
+        for key, value in updates.items():
+            if key not in allowed or value is None:
+                continue
+            fields.append(f"{key} = ?")
+            params.append(value)
+        if not fields:
+            return self.get_spec_run(spec_run_id)
+        fields.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(spec_run_id)
+        with self._transaction() as conn:
+            conn.execute(
+                f"UPDATE spec_runs SET {', '.join(fields)} WHERE id = ?",
+                tuple(params),
+            )
+        return self.get_spec_run(spec_run_id)
 
     # Step run operations
     def create_step_run(
@@ -822,32 +1219,81 @@ class SQLiteDatabase:
     # Event operations
     def append_event(
         self,
-        protocol_run_id: int,
+        protocol_run_id: Optional[int],
         event_type: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
         step_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
     ) -> Event:
+        event_type = normalize_event_type(event_type)
+        if protocol_run_id is None and project_id is None:
+            raise ValueError("append_event requires protocol_run_id or project_id")
+        if project_id is None and protocol_run_id is not None:
+            try:
+                project_id = self.get_protocol_run(protocol_run_id).project_id
+            except Exception:
+                project_id = None
         with self._transaction() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO events (
-                    protocol_run_id, step_run_id, event_type, message, metadata
+                    protocol_run_id, project_id, step_run_id, event_type, message, metadata
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (protocol_run_id, step_run_id, event_type, message, json.dumps(metadata) if metadata else None),
+                (
+                    protocol_run_id,
+                    project_id,
+                    step_run_id,
+                    event_type,
+                    message,
+                    json.dumps(metadata) if metadata else None,
+                ),
             )
             event_id = cur.lastrowid
         row = self._fetchone("SELECT * FROM events WHERE id = ?", (event_id,))
         return self._row_to_event(row)
 
-    def list_events(self, protocol_run_id: int) -> List[Event]:
-        rows = self._fetchall(
-            "SELECT * FROM events WHERE protocol_run_id = ? ORDER BY created_at ASC",
-            (protocol_run_id,),
-        )
-        return [self._row_to_event(row) for row in rows]
+    def list_events(
+        self,
+        protocol_run_id: int,
+        *,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
+    ) -> List[Event]:
+        where = ["e.protocol_run_id = ?"]
+        params: list[Any] = [protocol_run_id]
+        if event_types:
+            variants: list[str] = []
+            for event_type in event_types:
+                variants.extend(event_type_variants(event_type))
+            unique_variants = sorted(set(variants))
+            if unique_variants:
+                where.append(f"e.event_type IN ({', '.join(['?'] * len(unique_variants))})")
+                params.extend(unique_variants)
+
+        sql = """
+            SELECT
+                e.*,
+                pr.protocol_name,
+                COALESCE(e.project_id, pr.project_id) AS project_id,
+                p.name AS project_name
+            FROM events e
+            LEFT JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN projects p ON p.id = COALESCE(e.project_id, pr.project_id)
+            WHERE
+        """
+        sql += " AND ".join(where)
+        sql += " ORDER BY e.created_at ASC"
+
+        rows = self._fetchall(sql, params)
+        events = [self._row_to_event(row) for row in rows]
+        if categories:
+            category_set = {normalize_event_type(c) for c in categories if c}
+            if category_set:
+                events = [event for event in events if (event.event_category or "other") in category_set]
+        return events
 
     def list_recent_events(
         self,
@@ -855,6 +1301,8 @@ class SQLiteDatabase:
         limit: int = 50,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
     ) -> List[Event]:
         limit = max(1, min(int(limit), 500))
         where: list[str] = []
@@ -863,13 +1311,26 @@ class SQLiteDatabase:
             where.append("e.protocol_run_id = ?")
             params.append(protocol_run_id)
         if project_id is not None:
-            where.append("pr.project_id = ?")
+            where.append("COALESCE(e.project_id, pr.project_id) = ?")
             params.append(project_id)
+        if event_types:
+            variants: list[str] = []
+            for event_type in event_types:
+                variants.extend(event_type_variants(event_type))
+            unique_variants = sorted(set(variants))
+            if unique_variants:
+                where.append(f"e.event_type IN ({', '.join(['?'] * len(unique_variants))})")
+                params.extend(unique_variants)
 
         sql = """
-            SELECT e.*
+            SELECT
+                e.*,
+                pr.protocol_name,
+                COALESCE(e.project_id, pr.project_id) AS project_id,
+                p.name AS project_name
             FROM events e
-            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN projects p ON p.id = COALESCE(e.project_id, pr.project_id)
         """
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -877,7 +1338,12 @@ class SQLiteDatabase:
         params.append(limit)
 
         rows = self._fetchall(sql, params)
-        return [self._row_to_event(row) for row in rows]
+        events = [self._row_to_event(row) for row in rows]
+        if categories:
+            category_set = {normalize_event_type(c) for c in categories if c}
+            if category_set:
+                events = [event for event in events if (event.event_category or "other") in category_set]
+        return events
 
     def list_events_since_id(
         self,
@@ -886,6 +1352,8 @@ class SQLiteDatabase:
         limit: int = 200,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
     ) -> List[Event]:
         limit = max(1, min(int(limit), 500))
         where: list[str] = ["e.id > ?"]
@@ -894,13 +1362,26 @@ class SQLiteDatabase:
             where.append("e.protocol_run_id = ?")
             params.append(protocol_run_id)
         if project_id is not None:
-            where.append("pr.project_id = ?")
+            where.append("COALESCE(e.project_id, pr.project_id) = ?")
             params.append(project_id)
+        if event_types:
+            variants: list[str] = []
+            for event_type in event_types:
+                variants.extend(event_type_variants(event_type))
+            unique_variants = sorted(set(variants))
+            if unique_variants:
+                where.append(f"e.event_type IN ({', '.join(['?'] * len(unique_variants))})")
+                params.extend(unique_variants)
 
         sql = """
-            SELECT e.*
+            SELECT
+                e.*,
+                pr.protocol_name,
+                COALESCE(e.project_id, pr.project_id) AS project_id,
+                p.name AS project_name
             FROM events e
-            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN projects p ON p.id = COALESCE(e.project_id, pr.project_id)
             WHERE
         """
         sql += " AND ".join(where)
@@ -908,7 +1389,196 @@ class SQLiteDatabase:
         params.append(limit)
 
         rows = self._fetchall(sql, params)
-        return [self._row_to_event(row) for row in rows]
+        events = [self._row_to_event(row) for row in rows]
+        if categories:
+            category_set = {normalize_event_type(c) for c in categories if c}
+            if category_set:
+                events = [event for event in events if (event.event_category or "other") in category_set]
+        return events
+
+    # QA results
+    def create_qa_result(
+        self,
+        *,
+        project_id: int,
+        protocol_run_id: int,
+        step_run_id: int,
+        verdict: str,
+        summary: Optional[str] = None,
+        gate_results: Optional[List[Dict[str, Any]]] = None,
+        findings: Optional[List[Dict[str, Any]]] = None,
+        prompt_path: Optional[str] = None,
+        prompt_hash: Optional[str] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+        report_path: Optional[str] = None,
+        report_text: Optional[str] = None,
+        duration_seconds: Optional[float] = None,
+    ) -> QAResultRecord:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO qa_results (
+                        project_id, protocol_run_id, step_run_id,
+                        verdict, summary, gate_results, findings,
+                        prompt_path, prompt_hash, engine_id, model,
+                        report_path, report_text, duration_seconds
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        project_id,
+                        protocol_run_id,
+                        step_run_id,
+                        verdict,
+                        summary,
+                        json.dumps(gate_results) if gate_results is not None else None,
+                        json.dumps(findings) if findings is not None else None,
+                        prompt_path,
+                        prompt_hash,
+                        engine_id,
+                        model,
+                        report_path,
+                        report_text,
+                        duration_seconds,
+                    ),
+                )
+                result_id = cur.fetchone()["id"]
+        row = self._fetchone("SELECT * FROM qa_results WHERE id = %s", (result_id,))
+        return self._row_to_qa_result(row)
+
+    def list_qa_results(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        limit: int = 200,
+    ) -> List[QAResultRecord]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = %s")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            params.append(step_run_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM qa_results {clause} ORDER BY id DESC LIMIT %s",
+            (*params, limit),
+        )
+        return [self._row_to_qa_result(row) for row in rows]
+
+    def get_latest_qa_result(
+        self,
+        *,
+        step_run_id: int,
+    ) -> Optional[QAResultRecord]:
+        row = self._fetchone(
+            "SELECT * FROM qa_results WHERE step_run_id = %s ORDER BY id DESC LIMIT 1",
+            (step_run_id,),
+        )
+        if row is None:
+            return None
+        return self._row_to_qa_result(row)
+
+    # QA results
+    def create_qa_result(
+        self,
+        *,
+        project_id: int,
+        protocol_run_id: int,
+        step_run_id: int,
+        verdict: str,
+        summary: Optional[str] = None,
+        gate_results: Optional[List[Dict[str, Any]]] = None,
+        findings: Optional[List[Dict[str, Any]]] = None,
+        prompt_path: Optional[str] = None,
+        prompt_hash: Optional[str] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+        report_path: Optional[str] = None,
+        report_text: Optional[str] = None,
+        duration_seconds: Optional[float] = None,
+    ) -> QAResultRecord:
+        with self._transaction() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO qa_results (
+                    project_id, protocol_run_id, step_run_id,
+                    verdict, summary, gate_results, findings,
+                    prompt_path, prompt_hash, engine_id, model,
+                    report_path, report_text, duration_seconds
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    protocol_run_id,
+                    step_run_id,
+                    verdict,
+                    summary,
+                    json.dumps(gate_results) if gate_results is not None else None,
+                    json.dumps(findings) if findings is not None else None,
+                    prompt_path,
+                    prompt_hash,
+                    engine_id,
+                    model,
+                    report_path,
+                    report_text,
+                    duration_seconds,
+                ),
+            )
+            result_id = cur.lastrowid
+        row = self._fetchone("SELECT * FROM qa_results WHERE id = ?", (result_id,))
+        return self._row_to_qa_result(row)
+
+    def list_qa_results(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        limit: int = 200,
+    ) -> List[QAResultRecord]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = ?")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = ?")
+            params.append(step_run_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM qa_results {clause} ORDER BY id DESC LIMIT ?",
+            (*params, limit),
+        )
+        return [self._row_to_qa_result(row) for row in rows]
+
+    def get_latest_qa_result(
+        self,
+        *,
+        step_run_id: int,
+    ) -> Optional[QAResultRecord]:
+        row = self._fetchone(
+            "SELECT * FROM qa_results WHERE step_run_id = ? ORDER BY id DESC LIMIT 1",
+            (step_run_id,),
+        )
+        if row is None:
+            return None
+        return self._row_to_qa_result(row)
 
     # Job runs + artifacts
     def create_job_run(
@@ -1897,6 +2567,53 @@ class PostgresDatabase:
             updated_at=self._coerce_ts(row["updated_at"]),
         )
 
+    def _row_to_speckit_spec(self, row: Dict[str, Any]) -> SpeckitSpec:
+        return SpeckitSpec(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            spec_number=row.get("spec_number"),
+            feature_name=row.get("feature_name"),
+            spec_path=row.get("spec_path"),
+            plan_path=row.get("plan_path"),
+            tasks_path=row.get("tasks_path"),
+            checklist_path=row.get("checklist_path"),
+            analysis_path=row.get("analysis_path"),
+            implement_path=row.get("implement_path"),
+            has_spec=bool(row.get("has_spec")) if row.get("has_spec") is not None else False,
+            has_plan=bool(row.get("has_plan")) if row.get("has_plan") is not None else False,
+            has_tasks=bool(row.get("has_tasks")) if row.get("has_tasks") is not None else False,
+            has_checklist=bool(row.get("has_checklist")) if row.get("has_checklist") is not None else False,
+            has_analysis=bool(row.get("has_analysis")) if row.get("has_analysis") is not None else False,
+            has_implement=bool(row.get("has_implement")) if row.get("has_implement") is not None else False,
+            constitution_hash=row.get("constitution_hash"),
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
+    def _row_to_spec_run(self, row: Dict[str, Any]) -> SpecRun:
+        return SpecRun(
+            id=row["id"],
+            project_id=row["project_id"],
+            spec_name=row["spec_name"],
+            status=row["status"],
+            base_branch=row["base_branch"],
+            branch_name=row.get("branch_name"),
+            worktree_path=row.get("worktree_path"),
+            spec_root=row.get("spec_root"),
+            spec_number=row.get("spec_number"),
+            feature_name=row.get("feature_name"),
+            spec_path=row.get("spec_path"),
+            plan_path=row.get("plan_path"),
+            tasks_path=row.get("tasks_path"),
+            checklist_path=row.get("checklist_path"),
+            analysis_path=row.get("analysis_path"),
+            implement_path=row.get("implement_path"),
+            protocol_run_id=row.get("protocol_run_id"),
+            created_at=self._coerce_ts(row["created_at"]),
+            updated_at=self._coerce_ts(row["updated_at"]),
+        )
+
     def _row_to_step_run(self, row: Dict[str, Any]) -> StepRun:
         depends_on = row.get("depends_on", []) or []
         return StepRun(
@@ -1920,14 +2637,40 @@ class PostgresDatabase:
         )
 
     def _row_to_event(self, row: Dict[str, Any]) -> Event:
+        event_type = normalize_event_type(row["event_type"])
         return Event(
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
             step_run_id=row.get("step_run_id"),
-            event_type=row["event_type"],
+            event_type=event_type,
             message=row["message"],
             metadata=row.get("metadata"),
             created_at=self._coerce_ts(row["created_at"]),
+            event_category=infer_event_category(event_type),
+            protocol_name=row.get("protocol_name"),
+            project_id=row.get("project_id"),
+            project_name=row.get("project_name"),
+        )
+
+    def _row_to_qa_result(self, row: Dict[str, Any]) -> QAResultRecord:
+        return QAResultRecord(
+            id=row["id"],
+            project_id=row["project_id"],
+            protocol_run_id=row["protocol_run_id"],
+            step_run_id=row["step_run_id"],
+            verdict=row["verdict"],
+            summary=row.get("summary"),
+            gate_results=row.get("gate_results"),
+            findings=row.get("findings"),
+            prompt_path=row.get("prompt_path"),
+            prompt_hash=row.get("prompt_hash"),
+            engine_id=row.get("engine_id"),
+            model=row.get("model"),
+            report_path=row.get("report_path"),
+            report_text=row.get("report_text"),
+            duration_seconds=row.get("duration_seconds"),
+            created_at=self._coerce_ts(row["created_at"]) if row.get("created_at") else None,
+            updated_at=self._coerce_ts(row["updated_at"]) if row.get("updated_at") else None,
         )
 
     def _row_to_job_run(self, row: Dict[str, Any]) -> JobRun:
@@ -2651,6 +3394,210 @@ class PostgresDatabase:
                 )
         return self.get_protocol_run(run_id)
 
+    # SpecKit spec operations
+    def upsert_speckit_spec(
+        self,
+        *,
+        project_id: int,
+        name: str,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+        checklist_path: Optional[str] = None,
+        analysis_path: Optional[str] = None,
+        implement_path: Optional[str] = None,
+        has_spec: Optional[bool] = None,
+        has_plan: Optional[bool] = None,
+        has_tasks: Optional[bool] = None,
+        has_checklist: Optional[bool] = None,
+        has_analysis: Optional[bool] = None,
+        has_implement: Optional[bool] = None,
+        constitution_hash: Optional[str] = None,
+    ) -> SpeckitSpec:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO speckit_specs (
+                        project_id, name, spec_number, feature_name,
+                        spec_path, plan_path, tasks_path, checklist_path,
+                        analysis_path, implement_path,
+                        has_spec, has_plan, has_tasks, has_checklist, has_analysis, has_implement,
+                        constitution_hash, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (project_id, name) DO UPDATE SET
+                        spec_number=COALESCE(EXCLUDED.spec_number, speckit_specs.spec_number),
+                        feature_name=COALESCE(EXCLUDED.feature_name, speckit_specs.feature_name),
+                        spec_path=COALESCE(EXCLUDED.spec_path, speckit_specs.spec_path),
+                        plan_path=COALESCE(EXCLUDED.plan_path, speckit_specs.plan_path),
+                        tasks_path=COALESCE(EXCLUDED.tasks_path, speckit_specs.tasks_path),
+                        checklist_path=COALESCE(EXCLUDED.checklist_path, speckit_specs.checklist_path),
+                        analysis_path=COALESCE(EXCLUDED.analysis_path, speckit_specs.analysis_path),
+                        implement_path=COALESCE(EXCLUDED.implement_path, speckit_specs.implement_path),
+                        has_spec=COALESCE(EXCLUDED.has_spec, speckit_specs.has_spec),
+                        has_plan=COALESCE(EXCLUDED.has_plan, speckit_specs.has_plan),
+                        has_tasks=COALESCE(EXCLUDED.has_tasks, speckit_specs.has_tasks),
+                        has_checklist=COALESCE(EXCLUDED.has_checklist, speckit_specs.has_checklist),
+                        has_analysis=COALESCE(EXCLUDED.has_analysis, speckit_specs.has_analysis),
+                        has_implement=COALESCE(EXCLUDED.has_implement, speckit_specs.has_implement),
+                        constitution_hash=COALESCE(EXCLUDED.constitution_hash, speckit_specs.constitution_hash),
+                        updated_at=CURRENT_TIMESTAMP
+                    RETURNING *
+                    """,
+                    (
+                        project_id,
+                        name,
+                        spec_number,
+                        feature_name,
+                        spec_path,
+                        plan_path,
+                        tasks_path,
+                        checklist_path,
+                        analysis_path,
+                        implement_path,
+                        has_spec,
+                        has_plan,
+                        has_tasks,
+                        has_checklist,
+                        has_analysis,
+                        has_implement,
+                        constitution_hash,
+                    ),
+                )
+                row = cur.fetchone()
+        if row is None:
+            raise KeyError("Speckit spec not found after upsert")
+        return self._row_to_speckit_spec(row)
+
+    def list_speckit_specs(self, project_id: int) -> List[SpeckitSpec]:
+        rows = self._fetchall(
+            "SELECT * FROM speckit_specs WHERE project_id = %s ORDER BY created_at DESC",
+            (project_id,),
+        )
+        return [self._row_to_speckit_spec(row) for row in rows]
+
+    # Spec run operations
+    def create_spec_run(
+        self,
+        *,
+        project_id: int,
+        spec_name: str,
+        status: str,
+        base_branch: str,
+        branch_name: Optional[str] = None,
+        worktree_path: Optional[str] = None,
+        spec_root: Optional[str] = None,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+        checklist_path: Optional[str] = None,
+        analysis_path: Optional[str] = None,
+        implement_path: Optional[str] = None,
+        protocol_run_id: Optional[int] = None,
+    ) -> SpecRun:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO spec_runs (
+                        project_id,
+                        spec_name,
+                        status,
+                        base_branch,
+                        branch_name,
+                        worktree_path,
+                        spec_root,
+                        spec_number,
+                        feature_name,
+                        spec_path,
+                        plan_path,
+                        tasks_path,
+                        checklist_path,
+                        analysis_path,
+                        implement_path,
+                        protocol_run_id,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    RETURNING id
+                    """,
+                    (
+                        project_id,
+                        spec_name,
+                        status,
+                        base_branch,
+                        branch_name,
+                        worktree_path,
+                        spec_root,
+                        spec_number,
+                        feature_name,
+                        spec_path,
+                        plan_path,
+                        tasks_path,
+                        checklist_path,
+                        analysis_path,
+                        implement_path,
+                        protocol_run_id,
+                    ),
+                )
+                spec_run_id = cur.fetchone()["id"]
+        return self.get_spec_run(spec_run_id)
+
+    def get_spec_run(self, spec_run_id: int) -> SpecRun:
+        row = self._fetchone("SELECT * FROM spec_runs WHERE id = %s", (spec_run_id,))
+        if row is None:
+            raise KeyError(f"SpecRun {spec_run_id} not found")
+        return self._row_to_spec_run(row)
+
+    def list_spec_runs(self, project_id: int) -> List[SpecRun]:
+        rows = self._fetchall(
+            "SELECT * FROM spec_runs WHERE project_id = %s ORDER BY created_at DESC",
+            (project_id,),
+        )
+        return [self._row_to_spec_run(row) for row in rows]
+
+    def update_spec_run(self, spec_run_id: int, **updates) -> SpecRun:
+        allowed = {
+            "spec_name",
+            "status",
+            "base_branch",
+            "branch_name",
+            "worktree_path",
+            "spec_root",
+            "spec_number",
+            "feature_name",
+            "spec_path",
+            "plan_path",
+            "tasks_path",
+            "checklist_path",
+            "analysis_path",
+            "implement_path",
+            "protocol_run_id",
+        }
+        fields = []
+        params: List[Any] = []
+        for key, value in updates.items():
+            if key not in allowed or value is None:
+                continue
+            fields.append(f"{key} = %s")
+            params.append(value)
+        if not fields:
+            return self.get_spec_run(spec_run_id)
+        fields.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(spec_run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE spec_runs SET {', '.join(fields)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_spec_run(spec_run_id)
+
     # Step run operations
     def create_step_run(
         self,
@@ -2774,34 +3721,83 @@ class PostgresDatabase:
     # Event operations
     def append_event(
         self,
-        protocol_run_id: int,
+        protocol_run_id: Optional[int],
         event_type: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
         step_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
     ) -> Event:
+        event_type = normalize_event_type(event_type)
+        if protocol_run_id is None and project_id is None:
+            raise ValueError("append_event requires protocol_run_id or project_id")
+        if project_id is None and protocol_run_id is not None:
+            try:
+                project_id = self.get_protocol_run(protocol_run_id).project_id
+            except Exception:
+                project_id = None
         with self._transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO events (
-                        protocol_run_id, step_run_id, event_type, message, metadata
+                        protocol_run_id, project_id, step_run_id, event_type, message, metadata
                     )
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (protocol_run_id, step_run_id, event_type, message, json.dumps(metadata) if metadata else None),
+                    (
+                        protocol_run_id,
+                        project_id,
+                        step_run_id,
+                        event_type,
+                        message,
+                        json.dumps(metadata) if metadata else None,
+                    ),
                 )
                 event_id = cur.fetchone()["id"]
         row = self._fetchone("SELECT * FROM events WHERE id = %s", (event_id,))
         return self._row_to_event(row)
 
-    def list_events(self, protocol_run_id: int) -> List[Event]:
-        rows = self._fetchall(
-            "SELECT * FROM events WHERE protocol_run_id = %s ORDER BY created_at ASC",
-            (protocol_run_id,),
-        )
-        return [self._row_to_event(row) for row in rows]
+    def list_events(
+        self,
+        protocol_run_id: int,
+        *,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
+    ) -> List[Event]:
+        where = ["e.protocol_run_id = %s"]
+        params: list[Any] = [protocol_run_id]
+        if event_types:
+            variants: list[str] = []
+            for event_type in event_types:
+                variants.extend(event_type_variants(event_type))
+            unique_variants = sorted(set(variants))
+            if unique_variants:
+                where.append(f"e.event_type IN ({', '.join(['%s'] * len(unique_variants))})")
+                params.extend(unique_variants)
+
+        sql = """
+            SELECT
+                e.*,
+                pr.protocol_name,
+                COALESCE(e.project_id, pr.project_id) AS project_id,
+                p.name AS project_name
+            FROM events e
+            LEFT JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN projects p ON p.id = COALESCE(e.project_id, pr.project_id)
+            WHERE
+        """
+        sql += " AND ".join(where)
+        sql += " ORDER BY e.created_at ASC"
+
+        rows = self._fetchall(sql, params)
+        events = [self._row_to_event(row) for row in rows]
+        if categories:
+            category_set = {normalize_event_type(c) for c in categories if c}
+            if category_set:
+                events = [event for event in events if (event.event_category or "other") in category_set]
+        return events
 
     def list_recent_events(
         self,
@@ -2809,6 +3805,8 @@ class PostgresDatabase:
         limit: int = 50,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
     ) -> List[Event]:
         limit = max(1, min(int(limit), 500))
         where: list[str] = []
@@ -2817,13 +3815,26 @@ class PostgresDatabase:
             where.append("e.protocol_run_id = %s")
             params.append(protocol_run_id)
         if project_id is not None:
-            where.append("pr.project_id = %s")
+            where.append("COALESCE(e.project_id, pr.project_id) = %s")
             params.append(project_id)
+        if event_types:
+            variants: list[str] = []
+            for event_type in event_types:
+                variants.extend(event_type_variants(event_type))
+            unique_variants = sorted(set(variants))
+            if unique_variants:
+                where.append(f"e.event_type IN ({', '.join(['%s'] * len(unique_variants))})")
+                params.extend(unique_variants)
 
         sql = """
-            SELECT e.*
+            SELECT
+                e.*,
+                pr.protocol_name,
+                COALESCE(e.project_id, pr.project_id) AS project_id,
+                p.name AS project_name
             FROM events e
-            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN projects p ON p.id = COALESCE(e.project_id, pr.project_id)
         """
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -2831,7 +3842,12 @@ class PostgresDatabase:
         params.append(limit)
 
         rows = self._fetchall(sql, params)
-        return [self._row_to_event(row) for row in rows]
+        events = [self._row_to_event(row) for row in rows]
+        if categories:
+            category_set = {normalize_event_type(c) for c in categories if c}
+            if category_set:
+                events = [event for event in events if (event.event_category or "other") in category_set]
+        return events
 
     def list_events_since_id(
         self,
@@ -2840,6 +3856,8 @@ class PostgresDatabase:
         limit: int = 200,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        event_types: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
     ) -> List[Event]:
         limit = max(1, min(int(limit), 500))
         where: list[str] = ["e.id > %s"]
@@ -2848,13 +3866,26 @@ class PostgresDatabase:
             where.append("e.protocol_run_id = %s")
             params.append(protocol_run_id)
         if project_id is not None:
-            where.append("pr.project_id = %s")
+            where.append("COALESCE(e.project_id, pr.project_id) = %s")
             params.append(project_id)
+        if event_types:
+            variants: list[str] = []
+            for event_type in event_types:
+                variants.extend(event_type_variants(event_type))
+            unique_variants = sorted(set(variants))
+            if unique_variants:
+                where.append(f"e.event_type IN ({', '.join(['%s'] * len(unique_variants))})")
+                params.extend(unique_variants)
 
         sql = """
-            SELECT e.*
+            SELECT
+                e.*,
+                pr.protocol_name,
+                COALESCE(e.project_id, pr.project_id) AS project_id,
+                p.name AS project_name
             FROM events e
-            JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN protocol_runs pr ON pr.id = e.protocol_run_id
+            LEFT JOIN projects p ON p.id = COALESCE(e.project_id, pr.project_id)
             WHERE
         """
         sql += " AND ".join(where)
@@ -2862,7 +3893,12 @@ class PostgresDatabase:
         params.append(limit)
 
         rows = self._fetchall(sql, params)
-        return [self._row_to_event(row) for row in rows]
+        events = [self._row_to_event(row) for row in rows]
+        if categories:
+            category_set = {normalize_event_type(c) for c in categories if c}
+            if category_set:
+                events = [event for event in events if (event.event_category or "other") in category_set]
+        return events
 
     # Job runs + artifacts
     def create_job_run(

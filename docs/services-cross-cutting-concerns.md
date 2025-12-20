@@ -243,8 +243,7 @@ db.append_event(protocol_run_id, "step_completed", "Step finished", step_run_id=
 
 **Job Types**:
 - `plan_protocol_job`: Plan a protocol
-- `execute_step_job`: Execute a step
-- `run_quality_job`: Run QA
+- `execute_step_job`: Execute a step (QA auto-runs)
 - `project_setup_job`: Setup project
 - `open_pr_job`: Open PR/MR
 

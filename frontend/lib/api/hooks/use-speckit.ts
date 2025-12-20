@@ -17,14 +17,25 @@ export interface SpecKitStatus {
 }
 
 export interface SpecListItem {
+    id?: number
     name: string
     path: string
     spec_path?: string | null
     plan_path?: string | null
     tasks_path?: string | null
+    checklist_path?: string | null
+    analysis_path?: string | null
+    implement_path?: string | null
     has_spec: boolean
     has_plan: boolean
     has_tasks: boolean
+    status?: string | null
+    spec_run_id?: number | null
+    worktree_path?: string | null
+    branch_name?: string | null
+    base_branch?: string | null
+    spec_number?: number | null
+    feature_name?: string | null
 }
 
 export interface SpecKitInitRequest {
@@ -44,6 +55,7 @@ export interface SpecifyRequest {
     project_id: number
     description: string
     feature_name?: string
+    base_branch?: string
 }
 
 export interface SpecifyResponse {
@@ -51,12 +63,18 @@ export interface SpecifyResponse {
     spec_path: string | null
     spec_number: number | null
     feature_name: string | null
+    spec_run_id?: number | null
+    worktree_path?: string | null
+    branch_name?: string | null
+    base_branch?: string | null
+    spec_root?: string | null
     error: string | null
 }
 
 export interface PlanRequest {
     project_id: number
     spec_path: string
+    spec_run_id?: number
 }
 
 export interface PlanResponse {
@@ -64,12 +82,15 @@ export interface PlanResponse {
     plan_path: string | null
     data_model_path: string | null
     contracts_path: string | null
+    spec_run_id?: number | null
+    worktree_path?: string | null
     error: string | null
 }
 
 export interface TasksRequest {
     project_id: number
     plan_path: string
+    spec_run_id?: number
 }
 
 export interface TasksResponse {
@@ -77,6 +98,8 @@ export interface TasksResponse {
     tasks_path: string | null
     task_count: number
     parallelizable_count: number
+    spec_run_id?: number | null
+    worktree_path?: string | null
     error: string | null
 }
 
@@ -90,24 +113,30 @@ export interface ClarifyRequest {
     spec_path: string
     entries?: ClarificationEntry[]
     notes?: string
+    spec_run_id?: number
 }
 
 export interface ClarifyResponse {
     success: boolean
     spec_path: string | null
     clarifications_added: number
+    spec_run_id?: number | null
+    worktree_path?: string | null
     error: string | null
 }
 
 export interface ChecklistRequest {
     project_id: number
     spec_path: string
+    spec_run_id?: number
 }
 
 export interface ChecklistResponse {
     success: boolean
     checklist_path: string | null
     item_count: number
+    spec_run_id?: number | null
+    worktree_path?: string | null
     error: string | null
 }
 
@@ -116,24 +145,42 @@ export interface AnalyzeRequest {
     spec_path: string
     plan_path?: string
     tasks_path?: string
+    spec_run_id?: number
 }
 
 export interface AnalyzeResponse {
     success: boolean
     report_path: string | null
+    spec_run_id?: number | null
+    worktree_path?: string | null
     error: string | null
 }
 
 export interface ImplementRequest {
     project_id: number
     spec_path: string
+    spec_run_id?: number
 }
 
 export interface ImplementResponse {
     success: boolean
     run_path: string | null
     metadata_path: string | null
+    spec_run_id?: number | null
+    worktree_path?: string | null
     error: string | null
+}
+
+export interface SpecRunCleanupRequest {
+    delete_remote_branch?: boolean
+}
+
+export interface SpecRunCleanupResponse {
+    success: boolean
+    spec_run_id?: number | null
+    worktree_path?: string | null
+    deleted_remote_branch: boolean
+    error?: string | null
 }
 
 export interface ConstitutionResponse {
@@ -333,6 +380,7 @@ export interface WorkflowRequest {
     project_id: number
     description: string
     feature_name?: string
+    base_branch?: string
     stop_after?: "spec" | "plan" | null
 }
 
@@ -351,9 +399,28 @@ export interface WorkflowResponse {
     tasks_path: string | null
     task_count: number
     parallelizable_count: number
+    spec_run_id?: number | null
+    worktree_path?: string | null
     steps: WorkflowStepResult[]
     stopped_after: string | null
     error: string | null
+}
+
+/**
+ * Cleanup a SpecRun worktree and artifacts
+ */
+export function useCleanupSpecRun() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: ({ specRunId, payload }: { specRunId: number; payload?: SpecRunCleanupRequest }) =>
+            apiClient.post<SpecRunCleanupResponse>(`/speckit/spec-runs/${specRunId}/cleanup`, payload ?? {}),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["speckit", "status"] })
+            queryClient.invalidateQueries({ queryKey: ["speckit", "specs"] })
+            queryClient.invalidateQueries({ queryKey: queryKeys.specifications.all })
+        },
+    })
 }
 
 /**

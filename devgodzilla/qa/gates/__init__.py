@@ -24,6 +24,9 @@ from devgodzilla.qa.gates.constitutional import (
 from devgodzilla.qa.gates.speckit import (
     SpecKitChecklistGate,
 )
+from devgodzilla.qa.gates.prompt import (
+    PromptQAGate,
+)
 
 __all__ = [
     # Interface
@@ -38,6 +41,7 @@ __all__ = [
     "TypeGate",
     "ChecklistGate",
     "SpecKitChecklistGate",
+    "PromptQAGate",
     # Constitutional gates
     "ConstitutionalGate",
     "ConstitutionalSummaryGate",

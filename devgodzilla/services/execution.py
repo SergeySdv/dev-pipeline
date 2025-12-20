@@ -25,11 +25,13 @@ from devgodzilla.engines import (
     get_registry,
 )
 from devgodzilla.engines.artifacts import ArtifactWriter
-from devgodzilla.spec import get_step_spec as get_step_spec_from_template
+from devgodzilla.spec import get_step_spec as get_step_spec_from_template, resolve_spec_path
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.events import get_event_bus, StepStarted, StepCompleted, StepFailed
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.policy import PolicyService
+from devgodzilla.services.quality import QualityService
 
 logger = get_logger(__name__)
 
@@ -240,30 +242,35 @@ class ExecutionService(Service):
             try:
                 engine = registry.get(resolution.engine_id)
             except EngineNotFoundError:
-                self.logger.warning(
-                    "engine_not_registered_falling_back",
+                error = f"Engine not registered: {resolution.engine_id}"
+                self.logger.error(
+                    "engine_not_registered",
                     extra=self.log_extra(
                         step_run_id=step_run_id,
                         requested_engine_id=resolution.engine_id,
-                        fallback_engine_id=registry.get_default().metadata.id,
                     ),
                 )
-                engine = registry.get_default()
-                resolution.engine_id = engine.metadata.id
+                return self._fail_step_pre_execution(step, run, error=error, engine_id=resolution.engine_id)
 
-            if not engine.check_availability():
-                fallback = registry.get_default()
-                if fallback.metadata.id != engine.metadata.id:
-                    self.logger.warning(
-                        "engine_unavailable_falling_back",
-                        extra=self.log_extra(
-                            step_run_id=step_run_id,
-                            requested_engine_id=engine.metadata.id,
-                            fallback_engine_id=fallback.metadata.id,
-                        ),
-                    )
-                    engine = fallback
-                    resolution.engine_id = engine.metadata.id
+            availability_error = None
+            try:
+                available = engine.check_availability()
+            except Exception as exc:
+                available = False
+                availability_error = str(exc)
+
+            if not available:
+                error = f"Engine unavailable: {engine.metadata.id}"
+                if availability_error:
+                    error = f"{error} ({availability_error})"
+                self.logger.error(
+                    "engine_unavailable",
+                    extra=self.log_extra(
+                        step_run_id=step_run_id,
+                        requested_engine_id=engine.metadata.id,
+                    ),
+                )
+                return self._fail_step_pre_execution(step, run, error=error, engine_id=engine.metadata.id)
 
             # Persist the model choice deterministically: if the step didn't specify a model,
             # use the engine default so downstream audits/tests can validate engine+model.
@@ -354,11 +361,22 @@ class ExecutionService(Service):
         step_spec = get_step_spec_from_template(run.template_config, step.step_name)
         
         # Resolve engine and model
+        default_engine = None
+        try:
+            cfg = AgentConfigService(self.context)
+            default_engine = cfg.get_default_engine_id(
+                "exec",
+                project_id=project.id,
+                fallback=self.context.config.engine_defaults.get("exec"),
+            )
+        except Exception:
+            default_engine = self.context.config.engine_defaults.get("exec")
+
         resolved_engine = (
             engine_id
             or (step_spec.get("engine_id") if step_spec else None)
             or step.assigned_agent
-            or self.context.config.engine_defaults.get("exec")
+            or default_engine
             or "codex"
         )
         
@@ -369,9 +387,45 @@ class ExecutionService(Service):
             or None
         )
         
+        prompt_template_path = None
+        prompt_assignment = None
+        try:
+            cfg = AgentConfigService(self.context)
+            prompt_assignment = cfg.resolve_prompt_assignment("exec", project_id=project.id)
+        except Exception:
+            prompt_assignment = None
+
+        if prompt_assignment:
+            prompt_path_value = prompt_assignment.get("path")
+            if not isinstance(prompt_path_value, str) or not prompt_path_value.strip():
+                raise ValueError("Exec prompt assignment missing path")
+            prompt_template_path = resolve_spec_path(
+                str(prompt_path_value),
+                protocol_root,
+                workspace_root,
+            )
+            if not prompt_template_path.exists():
+                raise FileNotFoundError(f"Exec prompt not found: {prompt_template_path}")
+
+        step_prompt_path = None
+        if step_spec and step_spec.get("prompt_ref"):
+            step_prompt_path = resolve_spec_path(
+                str(step_spec["prompt_ref"]),
+                protocol_root,
+                workspace_root,
+            )
+        else:
+            step_prompt_path = protocol_root / f"{step.step_name}.md"
+
         # Build prompt
-        prompt_text = self._build_prompt(step, protocol_root, workspace_root)
-        prompt_path = protocol_root / f"{step.step_name}.md"
+        prompt_text = self._build_prompt(
+            step,
+            protocol_root,
+            workspace_root,
+            step_prompt_path=step_prompt_path,
+            prompt_template_path=prompt_template_path,
+        )
+        prompt_path = step_prompt_path
         
         # Determine timeout
         timeout = None
@@ -409,23 +463,58 @@ class ExecutionService(Service):
         step: StepRun,
         protocol_root: Path,
         workspace_root: Path,
+        *,
+        step_prompt_path: Optional[Path] = None,
+        prompt_template_path: Optional[Path] = None,
     ) -> str:
         """Build execution prompt for step."""
         parts = []
         
+        # Include prompt template if assigned
+        if prompt_template_path and prompt_template_path.exists():
+            parts.append(prompt_template_path.read_text(encoding="utf-8"))
+
         # Include plan if available
         plan_path = protocol_root / "plan.md"
         if plan_path.exists():
             parts.append(f"# Plan\n\n{plan_path.read_text(encoding='utf-8')}")
         
         # Include step file if available
-        step_path = protocol_root / f"{step.step_name}.md"
+        step_path = step_prompt_path or (protocol_root / f"{step.step_name}.md")
         if step_path.exists():
             parts.append(f"# Task\n\n{step_path.read_text(encoding='utf-8')}")
         elif step.summary:
             parts.append(f"# Task\n\n{step.summary}")
         
         return "\n\n---\n\n".join(parts) if parts else f"Execute step: {step.step_name}"
+
+    def _fail_step_pre_execution(
+        self,
+        step: StepRun,
+        run: ProtocolRun,
+        *,
+        error: str,
+        engine_id: str,
+    ) -> ExecutionResult:
+        self.db.update_step_status(step.id, StepStatus.FAILED, summary=error)
+        self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+        try:
+            get_event_bus().publish(
+                StepFailed(
+                    step_run_id=step.id,
+                    protocol_run_id=run.id,
+                    step_name=step.step_name,
+                    error=error,
+                )
+            )
+        except Exception:
+            pass
+        return ExecutionResult(
+            success=False,
+            step_run_id=step.id,
+            engine_id=engine_id or "unknown",
+            error=error,
+        )
 
     def _handle_result(
         self,
@@ -483,6 +572,33 @@ class ExecutionService(Service):
                     tokens_used=engine_result.tokens_used,
                 ),
             )
+
+            # Auto-run QA after execution (prompt-driven).
+            qa_service = self.quality_service or QualityService(self.context, self.db)
+            qa_report_path = None
+            try:
+                qa_result = qa_service.run_qa(step.id)
+                try:
+                    qa_report_path = qa_service.generate_quality_report(
+                        qa_result,
+                        resolution.protocol_root / ".devgodzilla" / "steps" / str(step.id) / "artifacts",
+                        step_name=step.step_name,
+                    )
+                except Exception:
+                    qa_report_path = None
+                qa_service.persist_verdict(qa_result, step.id, report_path=qa_report_path)
+                try:
+                    from devgodzilla.services.orchestrator import OrchestratorService
+
+                    orchestrator = OrchestratorService(context=self.context, db=self.db)
+                    orchestrator.check_and_complete_protocol(step.protocol_run_id)
+                except Exception:
+                    pass
+            except Exception as exc:
+                self.logger.error(
+                    "auto_qa_failed",
+                    extra=self.log_extra(step_run_id=step.id, error=str(exc)),
+                )
         else:
             # Determine if this was a timeout
             is_timeout = (

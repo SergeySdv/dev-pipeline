@@ -26,6 +26,9 @@ from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.speckit_adapter import SpecKitAdapter
+from devgodzilla.services.git import GitService
+from devgodzilla.models.domain import SpecRun, SpecRunStatus
+from devgodzilla.spec import resolve_spec_path
 
 
 @dataclass
@@ -47,6 +50,11 @@ class SpecifyResult:
     spec_path: Optional[str] = None
     spec_number: Optional[int] = None
     feature_name: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    branch_name: Optional[str] = None
+    base_branch: Optional[str] = None
+    spec_root: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -57,6 +65,8 @@ class PlanResult:
     plan_path: Optional[str] = None
     data_model_path: Optional[str] = None
     contracts_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -67,6 +77,8 @@ class TasksResult:
     tasks_path: Optional[str] = None
     task_count: int = 0
     parallelizable_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -76,6 +88,8 @@ class ClarifyResult:
     success: bool
     spec_path: Optional[str] = None
     clarifications_added: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -85,6 +99,8 @@ class ChecklistResult:
     success: bool
     checklist_path: Optional[str] = None
     item_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -93,6 +109,8 @@ class AnalyzeResult:
     """Result from analysis generation."""
     success: bool
     report_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -102,6 +120,18 @@ class ImplementResult:
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class CleanupResult:
+    """Result from a SpecRun cleanup."""
+    success: bool
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    deleted_remote_branch: bool = False
     error: Optional[str] = None
 
 
@@ -188,6 +218,22 @@ class SpecificationService(Service):
             specs_dir.mkdir(parents=True, exist_ok=True)
 
             speckit_source = self._resolve_speckit_source()
+            if not speckit_source or not speckit_source.exists():
+                return SpecKitResult(
+                    success=False,
+                    project_id=project_id,
+                    error="SpecKit source not found; ensure Origins/spec-kit is present.",
+                )
+            missing_assets = []
+            for required in ("templates", "scripts"):
+                if not (speckit_source / required).exists():
+                    missing_assets.append(required)
+            if missing_assets:
+                return SpecKitResult(
+                    success=False,
+                    project_id=project_id,
+                    error=f"SpecKit source missing assets: {', '.join(missing_assets)}",
+                )
 
             constitution_path = specify_path / self.MEMORY_DIR / "constitution.md"
             if constitution_content:
@@ -198,21 +244,21 @@ class SpecificationService(Service):
                     constitution_path,
                 )
             else:
-                self._create_default_constitution(constitution_path)
-
-            if speckit_source and (speckit_source / "templates").exists():
-                self._copy_dir_contents(
-                    speckit_source / "templates",
-                    specify_path / self.TEMPLATES_DIR,
+                return SpecKitResult(
+                    success=False,
+                    project_id=project_id,
+                    error="SpecKit constitution template not found in source.",
                 )
-            else:
-                self._create_default_templates(specify_path / self.TEMPLATES_DIR)
 
-            if speckit_source and (speckit_source / "scripts").exists():
-                self._copy_dir_contents(
-                    speckit_source / "scripts",
-                    specify_path / "scripts",
-                )
+            self._copy_dir_contents(
+                speckit_source / "templates",
+                specify_path / self.TEMPLATES_DIR,
+            )
+
+            self._copy_dir_contents(
+                speckit_source / "scripts",
+                specify_path / "scripts",
+            )
 
             constitution_hash = self._compute_constitution_hash(specify_path)
 
@@ -306,6 +352,7 @@ class SpecificationService(Service):
         project_path: str,
         description: str,
         feature_name: Optional[str] = None,
+        base_branch: Optional[str] = None,
         project_id: Optional[int] = None,
     ) -> SpecifyResult:
         """
@@ -315,17 +362,98 @@ class SpecificationService(Service):
             project_path: Path to the project root
             description: Feature description in natural language
             feature_name: Optional feature name (auto-generated if not provided)
+            base_branch: Optional base branch for the spec run
             project_id: Optional project ID for logging
 
         Returns:
             SpecifyResult with spec path and metadata
         """
         log_extra = self.log_extra(project_id=project_id, path=project_path)
+        spec_run_id: Optional[int] = None
 
         try:
-            policy_guidelines = self._policy_guidelines_text(project_path, project_id)
-            adapter = self._get_speckit_adapter(project_path)
-            if adapter and adapter.supports("specify"):
+            repo_root = Path(project_path).expanduser()
+            base_branch_value = base_branch or "main"
+            if self.db and project_id:
+                try:
+                    project = self.db.get_project(project_id)
+                except Exception:
+                    project = None
+                if project and project.local_path:
+                    repo_root = Path(project.local_path).expanduser()
+                if not base_branch and project and project.base_branch:
+                    base_branch_value = project.base_branch
+
+            spec_number = self._get_next_spec_number(str(repo_root), project_id)
+            resolved_feature_name = feature_name or self._sanitize_feature_name(description[:50])
+            spec_name = f"{spec_number:03d}-{resolved_feature_name}"
+
+            spec_run_id = None
+            if self.db and project_id:
+                try:
+                    spec_run = self.db.create_spec_run(
+                        project_id=project_id,
+                        spec_name=spec_name,
+                        status=SpecRunStatus.SPECIFYING,
+                        base_branch=base_branch_value,
+                        branch_name=spec_name,
+                        spec_number=spec_number,
+                        feature_name=resolved_feature_name,
+                    )
+                    spec_run_id = spec_run.id
+                except Exception:
+                    spec_run_id = None
+
+            git_service = GitService(self.context)
+            try:
+                worktree_root = git_service.create_spec_worktree(
+                    repo_root,
+                    spec_name,
+                    base_branch_value,
+                    spec_run_id=spec_run_id,
+                    project_id=project_id,
+                )
+            except Exception as exc:
+                self._record_spec_run(
+                    spec_run_id=spec_run_id,
+                    status=SpecRunStatus.FAILED,
+                    branch_name=spec_name,
+                    spec_number=spec_number,
+                    feature_name=resolved_feature_name,
+                )
+                return SpecifyResult(
+                    success=False,
+                    error=f"Spec worktree creation failed: {exc}",
+                    spec_run_id=spec_run_id,
+                    branch_name=spec_name,
+                    base_branch=base_branch_value,
+                )
+
+            self._record_spec_run(
+                spec_run_id=spec_run_id,
+                branch_name=spec_name,
+                worktree_path=worktree_root,
+                spec_number=spec_number,
+                feature_name=resolved_feature_name,
+            )
+
+            if not (worktree_root / self.DOT_SPECIFY).exists():
+                init_result = self.init_project(str(worktree_root), project_id=project_id)
+                if not init_result.success:
+                    self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
+                    return SpecifyResult(
+                        success=False,
+                        error=init_result.error or "SpecKit init failed",
+                        spec_run_id=spec_run_id,
+                        worktree_path=str(worktree_root),
+                        branch_name=spec_name,
+                        base_branch=base_branch_value,
+                    )
+
+            policy_guidelines = self._policy_guidelines_text(str(worktree_root), project_id)
+            adapter = self._get_speckit_adapter(str(worktree_root))
+            use_adapter = adapter and adapter.supports("specify") and worktree_root == repo_root and spec_run_id is None
+            if use_adapter:
                 script_result = adapter.create_feature(
                     description,
                     short_name=feature_name,
@@ -339,7 +467,7 @@ class SpecificationService(Service):
                         spec_path = Path(spec_path_str)
                         self._ensure_runtime_dir(spec_path.parent, resolved_feature_name)
                     else:
-                        spec_path = self._resolve_specs_dir(project_path) / f"{spec_number:03d}-{resolved_feature_name}" / "spec.md"
+                        spec_path = self._resolve_specs_dir(str(worktree_root)) / f"{spec_number:03d}-{resolved_feature_name}" / "spec.md"
 
                     self._ensure_runtime_dir(spec_path.parent, resolved_feature_name)
 
@@ -358,7 +486,7 @@ class SpecificationService(Service):
                         self._append_policy_guidelines(spec_path, policy_guidelines)
                     else:
                         spec_path.parent.mkdir(parents=True, exist_ok=True)
-                        template = self._load_template(project_path, "spec-template.md")
+                        template = self._load_template(str(worktree_root), "spec-template.md")
                         spec_content = self._fill_template(template, {
                             "title": resolved_feature_name,
                             "description": description,
@@ -374,18 +502,18 @@ class SpecificationService(Service):
                     prompt_context = self._format_prompt_context(
                         "SpecKit specification context",
                         [
-                            f"Repo root: {Path(project_path).expanduser()}",
+                            f"Repo root: {Path(worktree_root).expanduser()}",
                             f"Feature name: {resolved_feature_name}",
                             f"Feature description: {description}",
                             f"Spec directory: {spec_dir}",
                             f"Spec file: {spec_path}",
-                            f"Spec template: {Path(project_path) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'spec-template.md'}",
-                            f"Constitution: {Path(project_path) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
+                            f"Spec template: {Path(worktree_root) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'spec-template.md'}",
+                            f"Constitution: {Path(worktree_root) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
                         ],
                         policy_guidelines,
                     )
                     agent_result = self._run_speckit_agent(
-                        project_path,
+                        str(worktree_root),
                         prompt_name=self.SPECIFY_PROMPT,
                         prompt_context=prompt_context,
                         job_id="speckit_specify",
@@ -403,30 +531,49 @@ class SpecificationService(Service):
                         "spec_number": spec_number,
                         "feature_name": resolved_feature_name,
                     })
-                    self._append_policy_clarifications(project_path, str(spec_path), project_id)
-                    self._persist_policy_clarifications(project_path, project_id, applies_to="specify")
+                    self._append_policy_clarifications(str(worktree_root), str(spec_path), project_id)
+                    self._persist_policy_clarifications(str(worktree_root), project_id, applies_to="specify")
+                    self._record_speckit_spec(
+                        str(worktree_root),
+                        project_id,
+                        spec_dir,
+                        spec_number=spec_number or None,
+                        feature_name=resolved_feature_name,
+                        spec_path=spec_path,
+                    )
+                    self._record_spec_run(
+                        spec_run_id=spec_run_id,
+                        status=SpecRunStatus.SPECIFIED,
+                        branch_name=spec_name,
+                        worktree_path=worktree_root,
+                        spec_root=spec_dir,
+                        spec_number=spec_number or None,
+                        feature_name=resolved_feature_name,
+                        spec_path=spec_path,
+                    )
                     return SpecifyResult(
                         success=True,
                         spec_path=str(spec_path),
                         spec_number=spec_number or None,
                         feature_name=resolved_feature_name,
+                        spec_run_id=spec_run_id,
+                        worktree_path=str(worktree_root),
+                        branch_name=spec_name,
+                        base_branch=base_branch_value,
+                        spec_root=str(spec_dir),
                     )
 
-            spec_number = self._get_next_spec_number(project_path)
-            if not feature_name:
-                feature_name = self._sanitize_feature_name(description[:50])
-
-            spec_dir = self._resolve_specs_dir(project_path) / f"{spec_number:03d}-{feature_name}"
+            spec_dir = self._resolve_specs_dir(str(worktree_root)) / f"{spec_number:03d}-{resolved_feature_name}"
             spec_dir.mkdir(parents=True, exist_ok=True)
 
             spec_path = spec_dir / "spec.md"
 
-            self._ensure_runtime_dir(spec_dir, feature_name)
+            self._ensure_runtime_dir(spec_dir, resolved_feature_name)
 
-            template = self._load_template(project_path, "spec-template.md")
+            template = self._load_template(str(worktree_root), "spec-template.md")
             branch_name = spec_dir.name
             spec_content = self._fill_template(template, {
-                "title": feature_name,
+                "title": resolved_feature_name,
                 "description": description,
                 "spec_number": spec_number,
                 "branch_name": branch_name,
@@ -439,18 +586,18 @@ class SpecificationService(Service):
             prompt_context = self._format_prompt_context(
                 "SpecKit specification context",
                 [
-                    f"Repo root: {Path(project_path).expanduser()}",
-                    f"Feature name: {feature_name}",
+                    f"Repo root: {Path(worktree_root).expanduser()}",
+                    f"Feature name: {resolved_feature_name}",
                     f"Feature description: {description}",
                     f"Spec directory: {spec_dir}",
                     f"Spec file: {spec_path}",
-                    f"Spec template: {Path(project_path) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'spec-template.md'}",
-                    f"Constitution: {Path(project_path) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
+                    f"Spec template: {Path(worktree_root) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'spec-template.md'}",
+                    f"Constitution: {Path(worktree_root) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
                 ],
                 policy_guidelines,
             )
             agent_result = self._run_speckit_agent(
-                project_path,
+                str(worktree_root),
                 prompt_name=self.SPECIFY_PROMPT,
                 prompt_context=prompt_context,
                 job_id="speckit_specify",
@@ -466,30 +613,56 @@ class SpecificationService(Service):
             self.logger.info("spec_generated", extra={
                 **log_extra,
                 "spec_number": spec_number,
-                "feature_name": feature_name,
+                "feature_name": resolved_feature_name,
             })
 
-            self._append_policy_clarifications(project_path, str(spec_path), project_id)
-            self._persist_policy_clarifications(project_path, project_id, applies_to="specify")
+            self._append_policy_clarifications(str(worktree_root), str(spec_path), project_id)
+            self._persist_policy_clarifications(str(worktree_root), project_id, applies_to="specify")
+            self._record_speckit_spec(
+                str(worktree_root),
+                project_id,
+                spec_dir,
+                spec_number=spec_number,
+                feature_name=resolved_feature_name,
+                spec_path=spec_path,
+            )
+            self._record_spec_run(
+                spec_run_id=spec_run_id,
+                status=SpecRunStatus.SPECIFIED,
+                branch_name=spec_name,
+                worktree_path=worktree_root,
+                spec_root=spec_dir,
+                spec_number=spec_number,
+                feature_name=resolved_feature_name,
+                spec_path=spec_path,
+            )
 
             return SpecifyResult(
                 success=True,
                 spec_path=str(spec_path),
                 spec_number=spec_number,
-                feature_name=feature_name,
+                feature_name=resolved_feature_name,
+                spec_run_id=spec_run_id,
+                worktree_path=str(worktree_root),
+                branch_name=spec_name,
+                base_branch=base_branch_value,
+                spec_root=str(spec_dir),
             )
 
         except Exception as e:
             self.logger.error("spec_generation_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return SpecifyResult(
                 success=False,
                 error=f"Spec generation failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
     def run_plan(
         self,
         project_path: str,
         spec_path: str,
+        spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
     ) -> PlanResult:
         """
@@ -506,12 +679,26 @@ class SpecificationService(Service):
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
         try:
-            policy_guidelines = self._policy_guidelines_text(project_path, project_id)
-            spec_dir = Path(spec_path).parent
+            spec_run, workspace_root = self._resolve_spec_run_context(
+                project_path,
+                project_id,
+                spec_run_id=spec_run_id,
+                spec_path=spec_path,
+            )
+            if spec_run or spec_run_id:
+                self._record_spec_run(
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    status=SpecRunStatus.PLANNING,
+                )
+            policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
+            spec_file = Path(spec_path)
+            if not spec_file.is_absolute():
+                spec_file = workspace_root / spec_file
+            spec_dir = spec_file.parent
             plan_path: Path
-            adapter = self._get_speckit_adapter(project_path)
+            adapter = self._get_speckit_adapter(str(workspace_root))
 
-            if adapter and adapter.supports("plan"):
+            if adapter and adapter.supports("plan") and workspace_root == Path(project_path).expanduser():
                 script_result = adapter.setup_plan(feature_name=spec_dir.name)
                 if script_result.success:
                     plan_path = Path(script_result.data.get("IMPL_PLAN", spec_dir / "plan.md"))
@@ -521,10 +708,10 @@ class SpecificationService(Service):
                 plan_path = spec_dir / "plan.md"
 
             if not plan_path.exists():
-                template = self._load_template(project_path, "plan-template.md")
+                template = self._load_template(str(workspace_root), "plan-template.md")
                 plan_path.write_text(template)
 
-            spec_content = Path(spec_path).read_text()
+            spec_content = spec_file.read_text()
             title = self._extract_title(spec_content)
 
             branch_name = spec_dir.name
@@ -535,7 +722,7 @@ class SpecificationService(Service):
                     "description": f"Implementation plan for {title}",
                     "branch_name": branch_name,
                     "date": datetime.utcnow().date().isoformat(),
-                    "spec_path": spec_path,
+                    "spec_path": str(spec_file),
                     "policy_guidelines": policy_guidelines,
                 },
             )
@@ -559,20 +746,20 @@ class SpecificationService(Service):
             prompt_context = self._format_prompt_context(
                 "SpecKit planning context",
                 [
-                    f"Repo root: {Path(project_path).expanduser()}",
-                    f"Spec file: {spec_path}",
+                    f"Repo root: {Path(workspace_root).expanduser()}",
+                    f"Spec file: {spec_file}",
                     f"Plan file: {plan_path}",
                     f"Data model file: {data_model_path}",
                     f"Research file: {research_path}",
                     f"Quickstart file: {quickstart_path}",
                     f"Contracts directory: {contracts_dir}",
-                    f"Plan template: {Path(project_path) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'plan-template.md'}",
-                    f"Constitution: {Path(project_path) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
+                    f"Plan template: {Path(workspace_root) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'plan-template.md'}",
+                    f"Constitution: {Path(workspace_root) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
                 ],
                 policy_guidelines,
             )
             agent_result = self._run_speckit_agent(
-                project_path,
+                str(workspace_root),
                 prompt_name=self.PLAN_PROMPT,
                 prompt_context=prompt_context,
                 job_id="speckit_plan",
@@ -584,7 +771,19 @@ class SpecificationService(Service):
                     error=agent_result.error or "Plan generation failed",
                 )
             self._append_policy_guidelines(plan_path, policy_guidelines)
-            self._persist_policy_clarifications(project_path, project_id, applies_to="planning")
+            self._persist_policy_clarifications(str(workspace_root), project_id, applies_to="planning")
+            self._record_speckit_spec(
+                str(workspace_root),
+                project_id,
+                spec_dir,
+                spec_path=Path(spec_path),
+                plan_path=plan_path,
+            )
+            self._record_spec_run(
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                status=SpecRunStatus.PLANNED,
+                plan_path=plan_path,
+            )
 
             self.logger.info("plan_generated", extra={**log_extra, "plan_path": str(plan_path)})
 
@@ -593,19 +792,24 @@ class SpecificationService(Service):
                 plan_path=str(plan_path),
                 data_model_path=str(data_model_path),
                 contracts_path=str(contracts_dir),
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                worktree_path=str(workspace_root),
             )
 
         except Exception as e:
             self.logger.error("plan_generation_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return PlanResult(
                 success=False,
                 error=f"Plan generation failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
     def run_tasks(
         self,
         project_path: str,
         plan_path: str,
+        spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
     ) -> TasksResult:
         """
@@ -622,13 +826,22 @@ class SpecificationService(Service):
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
         try:
-            policy_guidelines = self._policy_guidelines_text(project_path, project_id)
-            plan_dir = Path(plan_path).parent
+            spec_run, workspace_root = self._resolve_spec_run_context(
+                project_path,
+                project_id,
+                spec_run_id=spec_run_id,
+                plan_path=plan_path,
+            )
+            policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
+            plan_file = Path(plan_path)
+            if not plan_file.is_absolute():
+                plan_file = workspace_root / plan_file
+            plan_dir = plan_file.parent
 
             tasks_path = plan_dir / "tasks.md"
-            template = self._load_template(project_path, "tasks-template.md")
+            template = self._load_template(str(workspace_root), "tasks-template.md")
 
-            plan_content = Path(plan_path).read_text()
+            plan_content = plan_file.read_text()
             title = self._extract_title(plan_content)
 
             branch_name = plan_dir.name
@@ -642,16 +855,16 @@ class SpecificationService(Service):
             prompt_context = self._format_prompt_context(
                 "SpecKit task generation context",
                 [
-                    f"Repo root: {Path(project_path).expanduser()}",
-                    f"Plan file: {plan_path}",
+                    f"Repo root: {Path(workspace_root).expanduser()}",
+                    f"Plan file: {plan_file}",
                     f"Tasks file: {tasks_path}",
-                    f"Tasks template: {Path(project_path) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'tasks-template.md'}",
-                    f"Constitution: {Path(project_path) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
+                    f"Tasks template: {Path(workspace_root) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'tasks-template.md'}",
+                    f"Constitution: {Path(workspace_root) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
                 ],
                 policy_guidelines,
             )
             agent_result = self._run_speckit_agent(
-                project_path,
+                str(workspace_root),
                 prompt_name=self.TASKS_PROMPT,
                 prompt_context=prompt_context,
                 job_id="speckit_tasks",
@@ -667,6 +880,23 @@ class SpecificationService(Service):
             task_count = tasks_content.count("- [ ]")
             parallelizable_count = tasks_content.count("[P]")
 
+            spec_path = plan_dir / "spec.md"
+            self._record_speckit_spec(
+                str(workspace_root),
+                project_id,
+                plan_dir,
+                spec_path=spec_path if spec_path.exists() else None,
+                plan_path=plan_file,
+                tasks_path=tasks_path,
+            )
+            self._record_spec_run(
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                status=SpecRunStatus.TASKS,
+                tasks_path=tasks_path,
+                plan_path=plan_file,
+                spec_path=spec_path if spec_path.exists() else None,
+            )
+
             self.logger.info("tasks_generated", extra={
                 **log_extra,
                 "tasks_path": str(tasks_path),
@@ -678,13 +908,17 @@ class SpecificationService(Service):
                 tasks_path=str(tasks_path),
                 task_count=task_count,
                 parallelizable_count=parallelizable_count,
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                worktree_path=str(workspace_root),
             )
 
         except Exception as e:
             self.logger.error("tasks_generation_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return TasksResult(
                 success=False,
                 error=f"Tasks generation failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
     def run_clarify(
@@ -693,6 +927,7 @@ class SpecificationService(Service):
         spec_path: str,
         entries: Optional[List[Dict[str, str]]] = None,
         notes: Optional[str] = None,
+        spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
     ) -> ClarifyResult:
         """
@@ -701,7 +936,15 @@ class SpecificationService(Service):
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
         try:
+            spec_run, workspace_root = self._resolve_spec_run_context(
+                project_path,
+                project_id,
+                spec_run_id=spec_run_id,
+                spec_path=spec_path,
+            )
             spec_file = Path(spec_path)
+            if not spec_file.is_absolute():
+                spec_file = workspace_root / spec_file
             if not spec_file.exists():
                 return ClarifyResult(success=False, error="Spec file not found.")
 
@@ -714,22 +957,32 @@ class SpecificationService(Service):
             spec_file.write_text(updated)
 
             self.logger.info("spec_clarified", extra={**log_extra, "clarifications": added})
+            self._record_spec_run(
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                status=SpecRunStatus.CLARIFIED,
+                spec_path=spec_file,
+            )
             return ClarifyResult(
                 success=True,
                 spec_path=str(spec_file),
                 clarifications_added=added,
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                worktree_path=str(workspace_root),
             )
         except Exception as e:
             self.logger.error("spec_clarify_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return ClarifyResult(
                 success=False,
                 error=f"Clarify failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
     def run_checklist(
         self,
         project_path: str,
         spec_path: str,
+        spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
     ) -> ChecklistResult:
         """
@@ -738,13 +991,22 @@ class SpecificationService(Service):
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
         try:
-            policy_guidelines = self._policy_guidelines_text(project_path, project_id)
-            spec_dir = Path(spec_path).parent
+            spec_run, workspace_root = self._resolve_spec_run_context(
+                project_path,
+                project_id,
+                spec_run_id=spec_run_id,
+                spec_path=spec_path,
+            )
+            policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
+            spec_file = Path(spec_path)
+            if not spec_file.is_absolute():
+                spec_file = workspace_root / spec_file
+            spec_dir = spec_file.parent
             checklist_path = spec_dir / "checklist.md"
-            template = self._load_template(project_path, "checklist-template.md")
+            template = self._load_template(str(workspace_root), "checklist-template.md")
             checklist_path.write_text(template)
 
-            title = self._extract_title(Path(spec_path).read_text())
+            title = self._extract_title(spec_file.read_text())
             self._apply_template_values(
                 checklist_path,
                 {
@@ -757,16 +1019,16 @@ class SpecificationService(Service):
             prompt_context = self._format_prompt_context(
                 "SpecKit checklist context",
                 [
-                    f"Repo root: {Path(project_path).expanduser()}",
-                    f"Spec file: {spec_path}",
+                    f"Repo root: {Path(workspace_root).expanduser()}",
+                    f"Spec file: {spec_file}",
                     f"Checklist file: {checklist_path}",
-                    f"Checklist template: {Path(project_path) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'checklist-template.md'}",
-                    f"Constitution: {Path(project_path) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
+                    f"Checklist template: {Path(workspace_root) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'checklist-template.md'}",
+                    f"Constitution: {Path(workspace_root) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
                 ],
                 policy_guidelines,
             )
             agent_result = self._run_speckit_agent(
-                project_path,
+                str(workspace_root),
                 prompt_name=self.CHECKLIST_PROMPT,
                 prompt_context=prompt_context,
                 job_id="speckit_checklist",
@@ -779,17 +1041,34 @@ class SpecificationService(Service):
                 )
 
             item_count = checklist_path.read_text().count("- [ ]")
+            self._record_speckit_spec(
+                str(workspace_root),
+                project_id,
+                spec_dir,
+                spec_path=spec_file,
+                checklist_path=checklist_path,
+            )
             self.logger.info("checklist_generated", extra={**log_extra, "checklist_path": str(checklist_path)})
+            self._record_spec_run(
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                status=SpecRunStatus.CHECKLISTED,
+                checklist_path=checklist_path,
+                spec_path=spec_file,
+            )
             return ChecklistResult(
                 success=True,
                 checklist_path=str(checklist_path),
                 item_count=item_count,
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                worktree_path=str(workspace_root),
             )
         except Exception as e:
             self.logger.error("checklist_generation_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return ChecklistResult(
                 success=False,
                 error=f"Checklist generation failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
     def run_analyze(
@@ -798,6 +1077,7 @@ class SpecificationService(Service):
         spec_path: str,
         plan_path: Optional[str] = None,
         tasks_path: Optional[str] = None,
+        spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
     ) -> AnalyzeResult:
         """
@@ -806,15 +1086,32 @@ class SpecificationService(Service):
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
         try:
-            policy_guidelines = self._policy_guidelines_text(project_path, project_id)
-            spec_dir = Path(spec_path).parent
+            spec_run, workspace_root = self._resolve_spec_run_context(
+                project_path,
+                project_id,
+                spec_run_id=spec_run_id,
+                spec_path=spec_path,
+                plan_path=plan_path,
+                tasks_path=tasks_path,
+            )
+            policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
+            spec_file = Path(spec_path)
+            if not spec_file.is_absolute():
+                spec_file = workspace_root / spec_file
+            spec_dir = spec_file.parent
+            plan_file = Path(plan_path) if plan_path else None
+            tasks_file = Path(tasks_path) if tasks_path else None
+            if plan_file and not plan_file.is_absolute():
+                plan_file = workspace_root / plan_file
+            if tasks_file and not tasks_file.is_absolute():
+                tasks_file = workspace_root / tasks_file
             report_path = spec_dir / "analysis.md"
             report_content = [
                 "# SpecKit Analysis Report",
                 "",
-                f"- Spec: {spec_path}",
-                f"- Plan: {plan_path or 'N/A'}",
-                f"- Tasks: {tasks_path or 'N/A'}",
+                f"- Spec: {spec_file}",
+                f"- Plan: {plan_file or 'N/A'}",
+                f"- Tasks: {tasks_file or 'N/A'}",
                 "",
                 "## Findings",
                 "- (To be generated)",
@@ -824,17 +1121,17 @@ class SpecificationService(Service):
             prompt_context = self._format_prompt_context(
                 "SpecKit analysis context",
                 [
-                    f"Repo root: {Path(project_path).expanduser()}",
-                    f"Spec file: {spec_path}",
-                    f"Plan file: {plan_path or 'N/A'}",
-                    f"Tasks file: {tasks_path or 'N/A'}",
+                    f"Repo root: {Path(workspace_root).expanduser()}",
+                    f"Spec file: {spec_file}",
+                    f"Plan file: {plan_file or 'N/A'}",
+                    f"Tasks file: {tasks_file or 'N/A'}",
                     f"Analysis file: {report_path}",
-                    f"Constitution: {Path(project_path) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
+                    f"Constitution: {Path(workspace_root) / self.DOT_SPECIFY / self.MEMORY_DIR / 'constitution.md'}",
                 ],
                 policy_guidelines,
             )
             agent_result = self._run_speckit_agent(
-                project_path,
+                str(workspace_root),
                 prompt_name=self.ANALYZE_PROMPT,
                 prompt_context=prompt_context,
                 job_id="speckit_analyze",
@@ -846,22 +1143,44 @@ class SpecificationService(Service):
                     error=agent_result.error or "Analyze failed",
                 )
 
+            self._record_speckit_spec(
+                str(workspace_root),
+                project_id,
+                spec_dir,
+                spec_path=spec_file,
+                plan_path=plan_file,
+                tasks_path=tasks_file,
+                analysis_path=report_path,
+            )
             self.logger.info("analysis_generated", extra={**log_extra, "report_path": str(report_path)})
+            self._record_spec_run(
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                status=SpecRunStatus.ANALYZED,
+                analysis_path=report_path,
+                spec_path=spec_file,
+                plan_path=plan_file,
+                tasks_path=tasks_file,
+            )
             return AnalyzeResult(
                 success=True,
                 report_path=str(report_path),
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                worktree_path=str(workspace_root),
             )
         except Exception as e:
             self.logger.error("analysis_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return AnalyzeResult(
                 success=False,
                 error=f"Analyze failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
     def run_implement(
         self,
         project_path: str,
         spec_path: str,
+        spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
     ) -> ImplementResult:
         """
@@ -870,7 +1189,16 @@ class SpecificationService(Service):
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
         try:
-            spec_dir = Path(spec_path).parent
+            spec_run, workspace_root = self._resolve_spec_run_context(
+                project_path,
+                project_id,
+                spec_run_id=spec_run_id,
+                spec_path=spec_path,
+            )
+            spec_file = Path(spec_path)
+            if not spec_file.is_absolute():
+                spec_file = workspace_root / spec_file
+            spec_dir = spec_file.parent
             runtime_dir = spec_dir / "_runtime" / "runs"
             runtime_dir.mkdir(parents=True, exist_ok=True)
             run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
@@ -881,25 +1209,42 @@ class SpecificationService(Service):
             metadata = {
                 "run_id": run_id,
                 "status": "initialized",
-                "spec_path": str(spec_path),
+                "spec_path": str(spec_file),
                 "created_at": datetime.utcnow().isoformat(),
             }
             metadata_path.write_text(json.dumps(metadata, indent=2))
 
+            self._record_speckit_spec(
+                str(workspace_root),
+                project_id,
+                spec_dir,
+                spec_path=spec_file,
+                implement_path=run_path,
+            )
             self.logger.info("implement_run_initialized", extra={**log_extra, "run_path": str(run_path)})
+            self._record_spec_run(
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                status=SpecRunStatus.IMPLEMENTED,
+                implement_path=run_path,
+                spec_path=spec_file,
+            )
             return ImplementResult(
                 success=True,
                 run_path=str(run_path),
                 metadata_path=str(metadata_path),
+                spec_run_id=spec_run.id if spec_run else spec_run_id,
+                worktree_path=str(workspace_root),
             )
         except Exception as e:
             self.logger.error("implement_failed", extra={**log_extra, "error": str(e)})
+            self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
             return ImplementResult(
                 success=False,
                 error=f"Implement failed: {e}",
+                spec_run_id=spec_run_id,
             )
 
-    def list_specs(self, project_path: str) -> List[Dict[str, Any]]:
+    def list_specs(self, project_path: str, *, project_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         List all specs in a project.
 
@@ -909,6 +1254,39 @@ class SpecificationService(Service):
         Returns:
             List of spec metadata dictionaries
         """
+        if self.db and project_id:
+            try:
+                runs = self.db.list_spec_runs(project_id)
+            except Exception:
+                runs = []
+            if runs:
+                specs: List[Dict[str, Any]] = []
+                for run in runs:
+                    specs.append(
+                        {
+                            "id": run.id,
+                            "name": run.spec_name,
+                            "path": run.spec_root or "",
+                            "spec_path": run.spec_path,
+                            "plan_path": run.plan_path,
+                            "tasks_path": run.tasks_path,
+                            "checklist_path": run.checklist_path,
+                            "analysis_path": run.analysis_path,
+                            "implement_path": run.implement_path,
+                            "has_spec": bool(run.spec_path),
+                            "has_plan": bool(run.plan_path),
+                            "has_tasks": bool(run.tasks_path),
+                            "status": run.status,
+                            "spec_run_id": run.id,
+                            "worktree_path": run.worktree_path,
+                            "branch_name": run.branch_name,
+                            "base_branch": run.base_branch,
+                            "spec_number": run.spec_number,
+                            "feature_name": run.feature_name,
+                        }
+                    )
+                return specs
+
         specs = []
         seen = set()
         for specs_dir in self._list_specs_dirs(project_path):
@@ -937,6 +1315,84 @@ class SpecificationService(Service):
                 })
 
         return specs
+
+    def cleanup_spec_run(
+        self,
+        *,
+        spec_run_id: int,
+        delete_remote_branch: bool = False,
+    ) -> CleanupResult:
+        """Remove worktree and artifacts for a SpecRun."""
+        if not self.db:
+            return CleanupResult(success=False, spec_run_id=spec_run_id, error="Database unavailable")
+        try:
+            spec_run = self.db.get_spec_run(spec_run_id)
+        except Exception as exc:
+            return CleanupResult(success=False, spec_run_id=spec_run_id, error=str(exc))
+
+        if spec_run.status in (SpecRunStatus.SPECIFYING, SpecRunStatus.PLANNING):
+            return CleanupResult(
+                success=False,
+                spec_run_id=spec_run_id,
+                error=f"SpecRun {spec_run_id} is active; stop it before cleanup",
+            )
+
+        worktree_path = Path(spec_run.worktree_path).expanduser() if spec_run.worktree_path else None
+        if not worktree_path:
+            return CleanupResult(success=False, spec_run_id=spec_run_id, error="SpecRun has no worktree")
+
+        git_service = GitService(self.context)
+        repo_root = git_service.resolve_repo_root(worktree_path)
+
+        try:
+            git_service.remove_worktree(
+                repo_root,
+                worktree_path,
+                spec_run_id=spec_run_id,
+                project_id=spec_run.project_id,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "spec_worktree_remove_failed",
+                extra=self.log_extra(spec_run_id=spec_run_id, error=str(exc)),
+            )
+
+        spec_root = Path(spec_run.spec_root).expanduser() if spec_run.spec_root else None
+        if spec_root and spec_root.exists():
+            try:
+                if worktree_path not in spec_root.parents and spec_root != worktree_path:
+                    shutil.rmtree(spec_root, ignore_errors=True)
+            except Exception as exc:
+                self.logger.warning(
+                    "spec_artifacts_remove_failed",
+                    extra=self.log_extra(spec_run_id=spec_run_id, error=str(exc)),
+                )
+
+        if spec_run.branch_name:
+            try:
+                git_service.delete_local_branch(repo_root, spec_run.branch_name)
+            except Exception:
+                pass
+
+        deleted_remote = False
+        if delete_remote_branch and spec_run.branch_name:
+            try:
+                git_service.delete_remote_branch(repo_root, spec_run.branch_name)
+                deleted_remote = True
+            except Exception:
+                deleted_remote = False
+
+        try:
+            self.db.update_spec_run(spec_run_id, status=SpecRunStatus.CLEANED)
+        except Exception:
+            pass
+
+        return CleanupResult(
+            success=True,
+            spec_run_id=spec_run_id,
+            worktree_path=str(worktree_path),
+            deleted_remote_branch=deleted_remote,
+        )
 
     def _create_default_constitution(self, path: Path) -> None:
         """Create default constitution file."""
@@ -1092,9 +1548,17 @@ Legend:
             except Exception as e:
                 self.logger.warning("constitution_db_update_failed", extra={"error": str(e)})
 
-    def _get_next_spec_number(self, project_path: str) -> int:
+    def _get_next_spec_number(self, project_path: str, project_id: Optional[int] = None) -> int:
         """Get the next spec number."""
         numbers = []
+        if self.db and project_id:
+            try:
+                runs = self.db.list_spec_runs(project_id)
+                for run in runs:
+                    if run.spec_number:
+                        numbers.append(run.spec_number)
+            except Exception:
+                pass
         for specs_dir in self._list_specs_dirs(project_path):
             if not specs_dir.exists():
                 continue
@@ -1164,16 +1628,59 @@ Legend:
         adapter = SpecKitAdapter(Path(project_path))
         return adapter if adapter.has_scripts() else None
 
-    def _prompt_path(self, prompt_name: str) -> Path:
+    def _prompt_assignment_key(self, prompt_name: str) -> Optional[str]:
+        mapping = {
+            self.SPECIFY_PROMPT: "speckit.specify",
+            self.PLAN_PROMPT: "speckit.plan",
+            self.TASKS_PROMPT: "speckit.tasks",
+            self.CHECKLIST_PROMPT: "speckit.checklist",
+            self.ANALYZE_PROMPT: "speckit.analyze",
+        }
+        return mapping.get(prompt_name)
+
+    def _prompt_path(
+        self,
+        prompt_name: str,
+        *,
+        project_path: Optional[str] = None,
+        project_id: Optional[int] = None,
+    ) -> Path:
         repo_root = Path(__file__).resolve().parents[2]
+        assignment_key = self._prompt_assignment_key(prompt_name)
+        try:
+            from devgodzilla.services.agent_config import AgentConfigService
+
+            cfg = AgentConfigService(self.context)
+            for key in [assignment_key, prompt_name]:
+                if not key:
+                    continue
+                assignment = cfg.resolve_prompt_assignment(key, project_id=project_id)
+                if assignment and assignment.get("path"):
+                    candidate = resolve_spec_path(
+                        str(assignment["path"]),
+                        repo_root,
+                        Path(project_path) if project_path else None,
+                    )
+                    if candidate.exists():
+                        return candidate
+        except Exception:
+            pass
+
         return repo_root / "prompts" / prompt_name
 
-    def _default_speckit_engine_id(self) -> str:
+    def _default_speckit_engine_id(self, project_id: Optional[int]) -> str:
         env_override = os.environ.get("DEVGODZILLA_SPECKIT_ENGINE_ID")
         if env_override and env_override.strip():
             return env_override.strip()
         try:
-            engine_id = self.context.config.engine_defaults.get("planning")  # type: ignore[union-attr]
+            from devgodzilla.services.agent_config import AgentConfigService
+
+            cfg = AgentConfigService(self.context)
+            engine_id = cfg.get_default_engine_id(
+                "planning",
+                project_id=project_id,
+                fallback=self.context.config.engine_defaults.get("planning"),  # type: ignore[union-attr]
+            )
         except Exception:
             engine_id = None
         if not isinstance(engine_id, str) or not engine_id.strip():
@@ -1207,26 +1714,29 @@ Legend:
                 bootstrap_default_engines(replace=False)
             except Exception:
                 pass
-        resolved_engine_id = engine_id.strip() if engine_id and engine_id.strip() else self._default_speckit_engine_id()
+        resolved_engine_id = (
+            engine_id.strip()
+            if engine_id and engine_id.strip()
+            else self._default_speckit_engine_id(project_id)
+        )
         try:
             engine = registry.get(resolved_engine_id)
-        except EngineNotFoundError:
-            engine = registry.get_default()
-            resolved_engine_id = engine.metadata.id
+        except EngineNotFoundError as exc:
+            raise RuntimeError(f"SpecKit engine not registered: {resolved_engine_id}") from exc
 
-        if not engine.check_availability():
-            fallback = registry.get_default()
-            if fallback.metadata.id != engine.metadata.id:
-                self.logger.warning(
-                    "speckit_engine_unavailable_fallback",
-                    extra=self.log_extra(
-                        project_id=project_id,
-                        requested_engine_id=engine.metadata.id,
-                        fallback_engine_id=fallback.metadata.id,
-                    ),
-                )
-                engine = fallback
-                resolved_engine_id = engine.metadata.id
+        try:
+            available = engine.check_availability()
+        except Exception as exc:
+            available = False
+            availability_error = str(exc)
+        else:
+            availability_error = None
+
+        if not available:
+            error = f"SpecKit engine unavailable: {engine.metadata.id}"
+            if availability_error:
+                error = f"{error} ({availability_error})"
+            raise RuntimeError(error)
 
         resolved_model = None
         if isinstance(model, str) and model.strip():
@@ -1259,7 +1769,7 @@ Legend:
         model: Optional[str] = None,
         timeout_seconds: int = 900,
     ):
-        prompt_path = self._prompt_path(prompt_name)
+        prompt_path = self._prompt_path(prompt_name, project_path=project_path, project_id=project_id)
         if not prompt_path.is_file():
             raise FileNotFoundError(f"Prompt not found: {prompt_path}")
 
@@ -1409,6 +1919,120 @@ Legend:
                 extra=self.log_extra(project_id=project_id, path=project_path, error=str(exc)),
             )
 
+    def _record_speckit_spec(
+        self,
+        project_path: str,
+        project_id: Optional[int],
+        spec_dir: Path,
+        *,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[Path] = None,
+        plan_path: Optional[Path] = None,
+        tasks_path: Optional[Path] = None,
+        checklist_path: Optional[Path] = None,
+        analysis_path: Optional[Path] = None,
+        implement_path: Optional[Path] = None,
+    ) -> None:
+        if not self.db or not project_id:
+            return
+
+        repo_root = Path(project_path).expanduser()
+
+        def _rel(path: Optional[Path]) -> Optional[str]:
+            if not path:
+                return None
+            try:
+                return str(path.relative_to(repo_root))
+            except Exception:
+                return str(path)
+
+        def _exists(path: Optional[Path]) -> Optional[bool]:
+            if path is None:
+                return None
+            return path.exists()
+
+        constitution_hash = None
+        try:
+            constitution_hash = self._compute_constitution_hash(repo_root / self.DOT_SPECIFY)
+        except Exception:
+            constitution_hash = None
+
+        try:
+            self.db.upsert_speckit_spec(
+                project_id=project_id,
+                name=spec_dir.name,
+                spec_number=spec_number,
+                feature_name=feature_name,
+                spec_path=_rel(spec_path),
+                plan_path=_rel(plan_path),
+                tasks_path=_rel(tasks_path),
+                checklist_path=_rel(checklist_path),
+                analysis_path=_rel(analysis_path),
+                implement_path=_rel(implement_path),
+                has_spec=_exists(spec_path),
+                has_plan=_exists(plan_path),
+                has_tasks=_exists(tasks_path),
+                has_checklist=_exists(checklist_path),
+                has_analysis=_exists(analysis_path),
+                has_implement=_exists(implement_path),
+                constitution_hash=constitution_hash,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "speckit_metadata_persist_failed",
+                extra=self.log_extra(project_id=project_id, path=project_path, error=str(exc)),
+            )
+
+    def _record_spec_run(
+        self,
+        *,
+        spec_run_id: Optional[int],
+        status: Optional[str] = None,
+        branch_name: Optional[str] = None,
+        worktree_path: Optional[Path] = None,
+        spec_root: Optional[Path] = None,
+        spec_number: Optional[int] = None,
+        feature_name: Optional[str] = None,
+        spec_path: Optional[Path] = None,
+        plan_path: Optional[Path] = None,
+        tasks_path: Optional[Path] = None,
+        checklist_path: Optional[Path] = None,
+        analysis_path: Optional[Path] = None,
+        implement_path: Optional[Path] = None,
+        protocol_run_id: Optional[int] = None,
+    ) -> None:
+        if not self.db or not spec_run_id:
+            return
+
+        def _stringify(path: Optional[Path]) -> Optional[str]:
+            if path is None:
+                return None
+            return str(path)
+
+        try:
+            self.db.update_spec_run(
+                spec_run_id,
+                status=status,
+                branch_name=branch_name,
+                worktree_path=_stringify(worktree_path),
+                spec_root=_stringify(spec_root),
+                spec_number=spec_number,
+                feature_name=feature_name,
+                spec_path=_stringify(spec_path),
+                plan_path=_stringify(plan_path),
+                tasks_path=_stringify(tasks_path),
+                checklist_path=_stringify(checklist_path),
+                analysis_path=_stringify(analysis_path),
+                implement_path=_stringify(implement_path),
+                protocol_run_id=protocol_run_id,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "spec_run_update_failed",
+                extra=self.log_extra(spec_run_id=spec_run_id, error=str(exc)),
+            )
+
     def _persist_policy_clarifications(
         self,
         project_path: str,
@@ -1481,6 +2105,59 @@ Legend:
 
         return updated + "\n", added
 
+    def _resolve_spec_run_context(
+        self,
+        project_path: str,
+        project_id: Optional[int],
+        *,
+        spec_run_id: Optional[int] = None,
+        spec_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
+        tasks_path: Optional[str] = None,
+    ) -> tuple[Optional[SpecRun], Path]:
+        if not self.db or not project_id:
+            return None, Path(project_path).expanduser()
+
+        run = None
+        if spec_run_id:
+            try:
+                run = self.db.get_spec_run(spec_run_id)
+            except Exception:
+                run = None
+        if run is None:
+            candidates = []
+            for path_value in (spec_path, plan_path, tasks_path):
+                if not path_value:
+                    continue
+                try:
+                    candidates.append(str(Path(path_value).expanduser()))
+                except Exception:
+                    candidates.append(path_value)
+            try:
+                for candidate in candidates:
+                    for spec_run in self.db.list_spec_runs(project_id):
+                        for stored in (
+                            spec_run.spec_path,
+                            spec_run.plan_path,
+                            spec_run.tasks_path,
+                            spec_run.checklist_path,
+                            spec_run.analysis_path,
+                            spec_run.implement_path,
+                        ):
+                            if stored and candidate == str(Path(stored).expanduser()):
+                                run = spec_run
+                                break
+                        if run:
+                            break
+                    if run:
+                        break
+            except Exception:
+                run = None
+
+        if run and run.worktree_path:
+            return run, Path(run.worktree_path).expanduser()
+        return run, Path(project_path).expanduser()
+
     def _resolve_speckit_source(self) -> Optional[Path]:
         """Resolve upstream SpecKit source directory if vendored."""
         if self.speckit_source_path and self.speckit_source_path.exists():
@@ -1528,6 +2205,17 @@ Legend:
         return root / "specs"
 
     def _list_specs_dirs(self, project_path: str) -> List[Path]:
-        """Return spec directories using the canonical location only."""
+        """Return spec directories from repo root and spec worktrees."""
         root = Path(project_path)
-        return [root / "specs"]
+        specs_dirs = [root / "specs"]
+
+        worktrees_root = root / "worktrees" / "specs"
+        if worktrees_root.exists():
+            for worktree in sorted(worktrees_root.iterdir()):
+                if not worktree.is_dir():
+                    continue
+                specs_dir = worktree / "specs"
+                if specs_dir.exists():
+                    specs_dirs.append(specs_dir)
+
+        return specs_dirs

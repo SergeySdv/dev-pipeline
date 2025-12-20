@@ -26,7 +26,7 @@ from devgodzilla.qa.gates.interface import (
 from devgodzilla.qa.gates.common import TestGate, LintGate
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.services.policy import EffectivePolicy
-from devgodzilla.models.domain import StepStatus
+from devgodzilla.models.domain import ProtocolStatus, StepStatus
 
 
 # =============================================================================
@@ -157,6 +157,34 @@ class WarningGate(Gate):
                 )
             ],
         )
+
+
+class PromptGateStub(Gate):
+    """Prompt QA stub gate that always passes."""
+
+    @property
+    def gate_id(self):
+        return "prompt_qa"
+
+    @property
+    def gate_name(self):
+        return "Prompt QA"
+
+    def run(self, context: GateContext) -> GateResult:
+        return GateResult(
+            gate_id=self.gate_id,
+            gate_name=self.gate_name,
+            verdict=GateVerdict.PASS,
+        )
+
+
+@pytest.fixture(autouse=True)
+def patch_prompt_gate(monkeypatch):
+    """Ensure prompt QA gate does not depend on real engines in tests."""
+    monkeypatch.setattr(
+        "devgodzilla.services.quality.QualityService._build_prompt_gate",
+        lambda self: PromptGateStub(),
+    )
 
 
 # =============================================================================
@@ -478,12 +506,13 @@ class TestRunQA:
             skip_gates=["failing"],
         )
         
-        # Should only have one gate result (the passing one)
+        # Should include prompt gate and skip the failing one
         gate_ids = [g.gate_id for g in result.gate_results]
         assert "failing" not in gate_ids
+        assert "prompt_qa" in gate_ids
 
-    def test_run_qa_skips_when_policy_skip(self, service_context, mock_db, workspace, monkeypatch):
-        """Test run_qa short-circuits when policy QA is skip."""
+    def test_run_qa_ignores_policy_skip(self, service_context, mock_db, workspace, monkeypatch):
+        """Test run_qa ignores policy skip and still runs QA."""
         mock_db.get_project.return_value.local_path = str(workspace)
 
         effective = EffectivePolicy(
@@ -504,12 +533,7 @@ class TestRunQA:
 
         result = service.run_qa(step_run_id=1000)
 
-        assert result.verdict == QAVerdict.SKIP
-        mock_db.update_step_status.assert_called_with(
-            1000,
-            StepStatus.COMPLETED,
-            summary="QA skipped",
-        )
+        assert result.verdict != QAVerdict.SKIP
 
     def test_run_qa_uses_required_checks(self, service_context, mock_db, workspace, monkeypatch):
         """Test run_qa selects gates based on required checks."""
@@ -543,7 +567,101 @@ class TestRunQA:
         result = service.run_qa(step_run_id=1000)
 
         gate_ids = [g.gate_id for g in result.gate_results]
-        assert gate_ids == ["lint"]
+        assert gate_ids == ["prompt_qa", "lint"]
+
+    def test_run_qa_blocks_protocol_on_failures(self, service_context, mock_db, workspace, monkeypatch):
+        """Test run_qa marks protocol blocked when gates fail."""
+        mock_db.get_project.return_value.local_path = str(workspace)
+
+        effective = EffectivePolicy(
+            policy={},
+            effective_hash="hash",
+            pack_key="default",
+            pack_version="1.0",
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.quality.PolicyService.resolve_effective_policy",
+            lambda *args, **kwargs: effective,
+        )
+
+        service = QualityService(
+            context=service_context,
+            db=mock_db,
+            default_gates=[FailingGate()],
+        )
+
+        result = service.run_qa(step_run_id=1000)
+
+        assert result.verdict == QAVerdict.FAIL
+        mock_db.update_step_status.assert_called_with(
+            1000,
+            StepStatus.FAILED,
+            summary="QA failed: 1 errors",
+        )
+        mock_db.update_protocol_status.assert_called_with(100, ProtocolStatus.BLOCKED)
+
+    def test_run_qa_adds_constitution_gate(self, service_context, mock_db, workspace, monkeypatch):
+        """Test run_qa adds constitution gate when constitution exists."""
+        mock_db.get_project.return_value.local_path = str(workspace)
+
+        constitution_path = workspace / ".specify" / "memory"
+        constitution_path.mkdir(parents=True, exist_ok=True)
+        (constitution_path / "constitution.md").write_text(
+            "# Project Constitution\n\n## Article I: Scope\nStay focused.\n"
+        )
+
+        effective = EffectivePolicy(
+            policy={},
+            effective_hash="hash",
+            pack_key="default",
+            pack_version="1.0",
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.quality.PolicyService.resolve_effective_policy",
+            lambda *args, **kwargs: effective,
+        )
+
+        service = QualityService(
+            context=service_context,
+            db=mock_db,
+            default_gates=[PassingGate()],
+        )
+
+        result = service.run_qa(step_run_id=1000)
+
+        gate_ids = [g.gate_id for g in result.gate_results]
+        assert "constitutional" in gate_ids
+
+    def test_run_qa_required_checks_include_constitution(self, service_context, mock_db, workspace, monkeypatch):
+        """Test run_qa honors constitution required check."""
+        mock_db.get_project.return_value.local_path = str(workspace)
+
+        constitution_path = workspace / ".specify" / "memory"
+        constitution_path.mkdir(parents=True, exist_ok=True)
+        (constitution_path / "constitution.md").write_text(
+            "# Project Constitution\n\n## Article I: Scope\nStay focused.\n"
+        )
+
+        effective = EffectivePolicy(
+            policy={"defaults": {"ci": {"required_checks": ["constitutional"]}}},
+            effective_hash="hash",
+            pack_key="default",
+            pack_version="1.0",
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.quality.PolicyService.resolve_effective_policy",
+            lambda *args, **kwargs: effective,
+        )
+
+        service = QualityService(
+            context=service_context,
+            db=mock_db,
+        )
+
+        result = service.run_qa(step_run_id=1000)
+
+        gate_ids = [g.gate_id for g in result.gate_results]
+        assert gate_ids == ["prompt_qa", "constitutional"]
 
 
 # =============================================================================

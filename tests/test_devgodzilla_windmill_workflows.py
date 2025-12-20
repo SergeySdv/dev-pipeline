@@ -149,13 +149,11 @@ def test_orchestrator_dispatches_to_windmill(service_context: ServiceContext, de
     # Ensure flow definition uses expected Windmill scripts
     flow_def = windmill.create_flow_calls[0].definition
     modules = flow_def["modules"]
-    assert modules[0]["id"] == f"{step1.id}_with_qa"
-    assert modules[1]["id"] == f"{step2.id}_with_qa"
+    assert modules[0]["id"] == str(step1.id)
+    assert modules[1]["id"] == str(step2.id)
 
-    exec_module = modules[0]["value"]["branches"][0]["modules"][0]
-    qa_module = modules[0]["value"]["branches"][0]["modules"][1]
+    exec_module = modules[0]
     assert exec_module["value"]["path"] == "u/devgodzilla/step_execute_api"
-    assert qa_module["value"]["path"] == "u/devgodzilla/step_run_qa_api"
     assert exec_module["value"]["input_transforms"]["step_run_id"]["value"] == step1.id
 
     # Run flow -> running status + Windmill job
@@ -214,7 +212,7 @@ def test_windmill_worker_entrypoints_plan_and_update_status(
 
     executed = windmill_worker.execute_step(steps[0].id, agent_id="codex")
     assert executed["success"] is True
-    assert devgodzilla_db.get_step_run(steps[0].id).status == StepStatus.NEEDS_QA
+    assert devgodzilla_db.get_step_run(steps[0].id).status == StepStatus.COMPLETED
 
     qa = windmill_worker.run_qa(steps[1].id)
     assert qa["success"] is True

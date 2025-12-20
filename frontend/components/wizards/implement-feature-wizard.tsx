@@ -78,14 +78,16 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
   const isLoading = projectLoading || statusLoading || specsLoading || sprintsLoading
   const isInitialized = specKitStatus?.initialized ?? false
 
-  const availableSpecs = specs?.filter((spec) => spec.has_plan && !!spec.plan_path && !spec.has_tasks) || []
-  const specsWithTasks = specs?.filter((spec) => spec.has_tasks) || []
+  const availableSpecs =
+    specs?.filter((spec) => spec.status !== "cleaned" && spec.has_plan && !!spec.plan_path && !spec.has_tasks) || []
+  const specsWithTasks = specs?.filter((spec) => spec.status !== "cleaned" && spec.has_tasks) || []
   const activeSprints = sprints?.filter((sprint) => sprint.status === "active" || sprint.status === "planning") || []
   const defaultSpec = availableSpecs[0]?.plan_path || ""
   const effectiveSpec = selectedSpec || defaultSpec
   const selectedSpecMeta = specs?.find((spec) => spec.plan_path === effectiveSpec) || null
   const selectedSpecPath = selectedSpecMeta?.spec_path || ""
   const selectedTasksPath = selectedSpecMeta?.tasks_path || generatedTasksPath || null
+  const selectedSpecRunId = selectedSpecMeta?.spec_run_id ?? null
 
   const handleGenerate = async () => {
     if (!effectiveSpec) {
@@ -97,6 +99,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
       const result = await generateTasks.mutateAsync({
         project_id: projectId,
         plan_path: effectiveSpec,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
 
       if (result.success) {
@@ -152,6 +155,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         spec_path: selectedSpecPath,
         entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success(`Clarifications added (${result.clarifications_added})`)
@@ -177,6 +181,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
       const result = await generateChecklist.mutateAsync({
         project_id: projectId,
         spec_path: selectedSpecPath,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success(`Checklist generated (${result.item_count} items)`)
@@ -200,6 +205,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         spec_path: selectedSpecPath,
         plan_path: effectiveSpec || undefined,
         tasks_path: selectedTasksPath || undefined,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success("Analysis report generated")
@@ -221,6 +227,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
       const result = await runImplement.mutateAsync({
         project_id: projectId,
         spec_path: selectedSpecPath,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success("Implementation run initialized")
@@ -242,6 +249,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         project_id: projectId,
         spec_path: selectedSpecPath || undefined,
         tasks_path: selectedTasksPath,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success && result.protocol) {
         toast.success(`Protocol created with ${result.step_count} steps`)
@@ -256,7 +264,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl h-[90vh] p-0 overflow-hidden">
+      <DialogContent size="6xl" className="h-[90vh] p-0 overflow-hidden">
         <div className="flex h-full flex-col">
           <DialogHeader className="border-b px-6 py-4">
             <DialogTitle className="flex items-center gap-2">
@@ -541,7 +549,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         </div>
 
         <Dialog open={clarifyOpen} onOpenChange={setClarifyOpen}>
-          <DialogContent className="max-w-xl">
+          <DialogContent size="xl">
             <DialogHeader>
               <DialogTitle>Clarify Specification</DialogTitle>
               <DialogDescription>

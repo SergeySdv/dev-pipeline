@@ -30,6 +30,7 @@ class ConstitutionRequest(BaseModel):
 class SpecifyRequest(BaseModel):
     description: str = Field(..., min_length=10)
     feature_name: Optional[str] = None
+    base_branch: Optional[str] = None
 
 
 class SpecifyResponse(BaseModel):
@@ -37,11 +38,17 @@ class SpecifyResponse(BaseModel):
     spec_path: Optional[str] = None
     spec_number: Optional[int] = None
     feature_name: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    branch_name: Optional[str] = None
+    base_branch: Optional[str] = None
+    spec_root: Optional[str] = None
     error: Optional[str] = None
 
 
 class PlanRequest(BaseModel):
     spec_path: str
+    spec_run_id: Optional[int] = None
 
 
 class PlanResponse(BaseModel):
@@ -49,11 +56,14 @@ class PlanResponse(BaseModel):
     plan_path: Optional[str] = None
     data_model_path: Optional[str] = None
     contracts_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
 class TasksRequest(BaseModel):
     plan_path: str
+    spec_run_id: Optional[int] = None
 
 
 class TasksResponse(BaseModel):
@@ -61,6 +71,8 @@ class TasksResponse(BaseModel):
     tasks_path: Optional[str] = None
     task_count: int = 0
     parallelizable_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -73,23 +85,29 @@ class ClarifyRequest(BaseModel):
     spec_path: str
     entries: List[ClarificationEntry] = Field(default_factory=list)
     notes: Optional[str] = None
+    spec_run_id: Optional[int] = None
 
 
 class ClarifyResponse(BaseModel):
     success: bool
     spec_path: Optional[str] = None
     clarifications_added: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
 class ChecklistRequest(BaseModel):
     spec_path: str
+    spec_run_id: Optional[int] = None
 
 
 class ChecklistResponse(BaseModel):
     success: bool
     checklist_path: Optional[str] = None
     item_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -97,22 +115,28 @@ class AnalyzeRequest(BaseModel):
     spec_path: str
     plan_path: Optional[str] = None
     tasks_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
 
 
 class AnalyzeResponse(BaseModel):
     success: bool
     report_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
 class ImplementRequest(BaseModel):
     spec_path: str
+    spec_run_id: Optional[int] = None
 
 
 class ImplementResponse(BaseModel):
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -240,12 +264,23 @@ def project_speckit_specify(
     project = db.get_project(project_id)
     if not project.local_path:
         raise HTTPException(status_code=400, detail="Project has no local path")
-    result = service.run_specify(project.local_path, request.description, feature_name=request.feature_name, project_id=project_id)
+    result = service.run_specify(
+        project.local_path,
+        request.description,
+        feature_name=request.feature_name,
+        base_branch=request.base_branch,
+        project_id=project_id,
+    )
     return SpecifyResponse(
         success=result.success,
         spec_path=result.spec_path,
         spec_number=result.spec_number,
         feature_name=result.feature_name,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
+        branch_name=result.branch_name,
+        base_branch=result.base_branch,
+        spec_root=result.spec_root,
         error=result.error,
     )
 
@@ -260,12 +295,19 @@ def project_speckit_plan(
     project = db.get_project(project_id)
     if not project.local_path:
         raise HTTPException(status_code=400, detail="Project has no local path")
-    result = service.run_plan(project.local_path, request.spec_path, project_id=project_id)
+    result = service.run_plan(
+        project.local_path,
+        request.spec_path,
+        spec_run_id=request.spec_run_id,
+        project_id=project_id,
+    )
     return PlanResponse(
         success=result.success,
         plan_path=result.plan_path,
         data_model_path=result.data_model_path,
         contracts_path=result.contracts_path,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -280,12 +322,19 @@ def project_speckit_tasks(
     project = db.get_project(project_id)
     if not project.local_path:
         raise HTTPException(status_code=400, detail="Project has no local path")
-    result = service.run_tasks(project.local_path, request.plan_path, project_id=project_id)
+    result = service.run_tasks(
+        project.local_path,
+        request.plan_path,
+        spec_run_id=request.spec_run_id,
+        project_id=project_id,
+    )
     return TasksResponse(
         success=result.success,
         tasks_path=result.tasks_path,
         task_count=result.task_count,
         parallelizable_count=result.parallelizable_count,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -305,12 +354,15 @@ def project_speckit_clarify(
         request.spec_path,
         entries=[entry.dict() for entry in request.entries],
         notes=request.notes,
+        spec_run_id=request.spec_run_id,
         project_id=project_id,
     )
     return ClarifyResponse(
         success=result.success,
         spec_path=result.spec_path,
         clarifications_added=result.clarifications_added,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -328,12 +380,15 @@ def project_speckit_checklist(
     result = service.run_checklist(
         project.local_path,
         request.spec_path,
+        spec_run_id=request.spec_run_id,
         project_id=project_id,
     )
     return ChecklistResponse(
         success=result.success,
         checklist_path=result.checklist_path,
         item_count=result.item_count,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -353,11 +408,14 @@ def project_speckit_analyze(
         request.spec_path,
         plan_path=request.plan_path,
         tasks_path=request.tasks_path,
+        spec_run_id=request.spec_run_id,
         project_id=project_id,
     )
     return AnalyzeResponse(
         success=result.success,
         report_path=result.report_path,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -375,11 +433,14 @@ def project_speckit_implement(
     result = service.run_implement(
         project.local_path,
         request.spec_path,
+        spec_run_id=request.spec_run_id,
         project_id=project_id,
     )
     return ImplementResponse(
         success=result.success,
         run_path=result.run_path,
         metadata_path=result.metadata_path,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )

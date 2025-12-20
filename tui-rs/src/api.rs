@@ -215,7 +215,7 @@ impl ApiClient {
     }
 
     pub async fn step_run_qa(&self, step_id: i64) -> Result<Value, ApiError> {
-        self.post_json(&format!("/steps/{step_id}/actions/run_qa"), Value::Null)
+        self.post_json(&format!("/steps/{step_id}/actions/qa"), Value::Null)
             .await
     }
 

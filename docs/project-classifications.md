@@ -45,7 +45,7 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
         "decompose": "zai-coding-plan/glm-4.6",
         "exec": "zai-coding-plan/glm-4.6",
         "qa": "zai-coding-plan/glm-4.6"
-      },
+      }
       "qa": {
         "policy": "full",
         "auto_after_exec": false,
@@ -75,18 +75,6 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
         "blocking": false,
         "applies_to": "onboarding"
       },
-      {
-        "key": "qa_policy",
-        "question": "Default QA policy for steps?",
-        "options": [
-          "skip",
-          "light",
-          "full"
-        ],
-        "recommended": "full",
-        "blocking": false,
-        "applies_to": "onboarding"
-      }
     ],
     "enforcement": {
       "mode": "warn",
@@ -545,4 +533,3 @@ Each payload below matches `tasksgodzilla/api/schemas.py:PolicyPackCreate` and c
   }
 }
 ```
-

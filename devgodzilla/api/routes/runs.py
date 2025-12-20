@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from devgodzilla.api import schemas
 from devgodzilla.api.dependencies import get_db
@@ -25,6 +28,52 @@ def _artifact_type_from_name(name: str) -> str:
     if lower.endswith(".txt") or lower.endswith(".md"):
         return "text"
     return "file"
+
+
+def _log_chunk_to_sse(payload: dict, event_id: Optional[int] = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}event: log\ndata: {json.dumps(payload)}\n\n"
+
+
+async def _log_stream(
+    path: Optional[Path],
+    *,
+    since_bytes: int = 0,
+    poll_interval_seconds: float = 0.5,
+    max_chunk_bytes: int = 65536,
+) -> AsyncGenerator[str, None]:
+    offset = max(0, int(since_bytes))
+    yield "event: connected\ndata: {}\n\n"
+
+    idle_ticks = 0
+    while True:
+        if not path or not path.exists() or not path.is_file():
+            idle_ticks += 1
+        else:
+            try:
+                size = path.stat().st_size
+                if size < offset:
+                    offset = 0
+                if size > offset:
+                    idle_ticks = 0
+                    with path.open("rb") as handle:
+                        handle.seek(offset)
+                        chunk = handle.read(max_chunk_bytes)
+                    offset += len(chunk)
+                    if chunk:
+                        text = chunk.decode("utf-8", errors="replace")
+                        payload = {"offset": offset, "chunk": text}
+                        yield _log_chunk_to_sse(payload, event_id=offset)
+                else:
+                    idle_ticks += 1
+            except Exception:
+                idle_ticks += 1
+
+        if idle_ticks >= int(30 / max(poll_interval_seconds, 0.1)):
+            idle_ticks = 0
+            yield ": heartbeat\n\n"
+
+        await asyncio.sleep(poll_interval_seconds)
 
 
 @router.get("/runs", response_model=List[schemas.JobRunOut])
@@ -106,6 +155,43 @@ def get_run_logs(
     )
 
 
+@router.get("/runs/{run_id}/logs/stream")
+async def stream_run_logs(
+    run_id: str,
+    since_bytes: int = Query(0, ge=0, description="Only stream bytes after this offset"),
+    last_event_id: Optional[str] = Header(None, alias="Last-Event-ID"),
+    poll_interval_seconds: float = Query(0.5, ge=0.1, le=5),
+    max_chunk_bytes: int = Query(65536, ge=1024, le=200000),
+    db: Database = Depends(get_db),
+):
+    try:
+        run = db.get_job_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    path = Path(run.log_path).expanduser() if run.log_path else None
+    if path and not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+
+    effective_since = since_bytes
+    if last_event_id and last_event_id.isdigit():
+        effective_since = max(effective_since, int(last_event_id))
+
+    return StreamingResponse(
+        _log_stream(
+            path,
+            since_bytes=effective_since,
+            poll_interval_seconds=poll_interval_seconds,
+            max_chunk_bytes=max_chunk_bytes,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.get("/runs/{run_id}/artifacts", response_model=List[schemas.RunArtifactOut])
 def list_run_artifacts(
     run_id: str,
@@ -175,4 +261,3 @@ def get_run_artifact_content(
         content=content,
         truncated=truncated,
     )
-

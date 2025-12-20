@@ -68,8 +68,9 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
 
   const isLoading = projectLoading || statusLoading || specsLoading
   const isInitialized = specKitStatus?.initialized ?? false
-  const availableSpecs = specs?.filter((s) => s.has_spec && !!s.spec_path && !s.has_plan) || []
-  const specsWithPlans = specs?.filter((s) => s.has_plan) || []
+  const availableSpecs =
+    specs?.filter((s) => s.status !== "cleaned" && s.has_spec && !!s.spec_path && !s.has_plan) || []
+  const specsWithPlans = specs?.filter((s) => s.status !== "cleaned" && s.has_plan) || []
   const selectedSpecMeta = useMemo(
     () => specs?.find((spec) => spec.spec_path === selectedSpec) || null,
     [specs, selectedSpec],
@@ -77,6 +78,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
   const selectedSpecPath = selectedSpec || selectedSpecMeta?.spec_path || ""
   const selectedPlanPath = selectedSpecMeta?.plan_path || generatedPlanPath || null
   const selectedTasksPath = selectedSpecMeta?.tasks_path || null
+  const selectedSpecRunId = selectedSpecMeta?.spec_run_id ?? null
 
   const handleGenerate = async () => {
     if (!selectedSpec) {
@@ -89,6 +91,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
         project_id: projectId,
         spec_path: selectedSpec,
         context: additionalContext || undefined,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
 
       if (result.success) {
@@ -126,6 +129,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
         spec_path: selectedSpecPath,
         entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success(`Clarifications added (${result.clarifications_added})`)
@@ -151,6 +155,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
       const result = await generateChecklist.mutateAsync({
         project_id: projectId,
         spec_path: selectedSpecPath,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success(`Checklist generated (${result.item_count} items)`)
@@ -174,6 +179,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
         spec_path: selectedSpecPath,
         plan_path: selectedPlanPath || undefined,
         tasks_path: selectedTasksPath || undefined,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success("Analysis report generated")
@@ -195,6 +201,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
       const result = await runImplement.mutateAsync({
         project_id: projectId,
         spec_path: selectedSpecPath,
+        spec_run_id: selectedSpecRunId ?? undefined,
       })
       if (result.success) {
         toast.success("Implementation run initialized")
@@ -208,7 +215,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl h-[90vh] p-0 overflow-hidden">
+      <DialogContent size="5xl" className="h-[90vh] p-0 overflow-hidden">
         <div className="flex h-full flex-col">
           <DialogHeader className="border-b px-6 py-4">
             <DialogTitle className="flex items-center gap-2">
@@ -474,7 +481,7 @@ export function DesignSolutionWizardModal({ projectId, open, onOpenChange }: Des
         </div>
 
         <Dialog open={clarifyOpen} onOpenChange={setClarifyOpen}>
-          <DialogContent className="max-w-xl">
+          <DialogContent size="xl">
             <DialogHeader>
               <DialogTitle>Clarify Specification</DialogTitle>
               <DialogDescription>Add a clarification entry or notes to the selected spec.</DialogDescription>

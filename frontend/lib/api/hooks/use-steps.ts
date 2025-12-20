@@ -33,7 +33,7 @@ export function useStepAction() {
     }: {
       stepId: number
       protocolId: number
-      action: "run" | "run_qa" | "approve"
+      action: "execute" | "qa"
     }) => apiClient.post<ActionResponse>(`/steps/${stepId}/actions/${action}`),
     onSuccess: (_, { stepId, protocolId }) => {
       queryClient.invalidateQueries({

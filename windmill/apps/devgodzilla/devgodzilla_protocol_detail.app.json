@@ -231,11 +231,11 @@
                             {
                                 "id": "btn_run_qa",
                                 "type": "button",
-                                "label": "🔍 Run QA",
+                                "label": "🔍 Re-run QA",
                                 "color": "dark",
                                 "onClick": {
                                     "type": "runnableByName",
-                                    "name": "u/devgodzilla/run_qa"
+                                    "name": "u/devgodzilla/step_run_qa_api"
                                 }
                             }
                         ]
@@ -265,22 +265,9 @@
                             {
                                 "id": "qa_info",
                                 "type": "text",
-                                "value": "Run QA checks on steps to validate code quality, tests, and constitution compliance.\n\nSelect a step and click **Run QA** to see gate results.",
+                                "value": "QA runs automatically after every step execution. Use **Re-run QA** on a selected step if you want to refresh gate results.",
                                 "style": {
                                     "marginTop": "0.5rem"
-                                }
-                            },
-                            {
-                                "id": "btn_run_qa_full",
-                                "type": "button",
-                                "label": "🔍 Run Full QA",
-                                "color": "blue",
-                                "style": {
-                                    "marginTop": "1rem"
-                                },
-                                "onClick": {
-                                    "type": "runnableByName",
-                                    "name": "u/devgodzilla/run_quality"
                                 }
                             }
                         ]

@@ -19,16 +19,23 @@ router = APIRouter(tags=["specifications"])
 
 class SpecificationOut(BaseModel):
     id: int
+    spec_run_id: Optional[int] = None
     path: str
     spec_path: Optional[str] = None
     plan_path: Optional[str] = None
     tasks_path: Optional[str] = None
+    checklist_path: Optional[str] = None
+    analysis_path: Optional[str] = None
+    implement_path: Optional[str] = None
     title: str
     project_id: int
     project_name: str
     status: str
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    worktree_path: Optional[str] = None
+    branch_name: Optional[str] = None
+    base_branch: Optional[str] = None
     tasks_generated: bool = False
     protocol_id: Optional[int] = None
     sprint_id: Optional[int] = None
@@ -162,7 +169,7 @@ def list_specifications(
             continue
             
         try:
-            specs = service.list_specs(project.local_path)
+            specs = service.list_specs(project.local_path, project_id=project.id)
             project_tasks = db.list_tasks(project_id=project.id, limit=500)
             project_sprints = {sprint.id: sprint for sprint in db.list_sprints(project_id=project.id)}
             spec_task_map: Dict[str, List[Any]] = {}
@@ -174,20 +181,25 @@ def list_specifications(
                 spec_task_map.setdefault(spec_slug, []).append(task)
             for spec in specs:
                 spec_id += 1
+                resolved_spec_id = _spec_value(spec, "spec_run_id", None) or _spec_value(spec, "id", None) or spec_id
                 
                 # Determine status based on what exists
                 has_tasks_value = bool(_spec_value(spec, "has_tasks", False))
                 has_plan_value = bool(_spec_value(spec, "has_plan", False))
                 has_spec_value = bool(_spec_value(spec, "has_spec", False))
 
-                if has_tasks_value:
-                    spec_status = "completed"
-                elif has_plan_value:
-                    spec_status = "in-progress"
-                elif has_spec_value:
-                    spec_status = "draft"
+                status_override = _spec_value(spec, "status", None)
+                if status_override in ("cleaned", "failed"):
+                    spec_status = status_override
                 else:
-                    continue  # Skip if no spec file
+                    if has_tasks_value:
+                        spec_status = "completed"
+                    elif has_plan_value:
+                        spec_status = "in-progress"
+                    elif has_spec_value:
+                        spec_status = "draft"
+                    else:
+                        continue  # Skip if no spec file
                 
                 # Apply status filter
                 if status and spec_status != status:
@@ -217,7 +229,9 @@ def list_specifications(
                 # Get spec file modification time for date filtering
                 spec_created_at = None
                 try:
-                    spec_dir = Path(project.local_path) / _spec_value(spec, "path", "")
+                    spec_dir = Path(_spec_value(spec, "path", ""))
+                    if not spec_dir.is_absolute():
+                        spec_dir = Path(project.local_path) / spec_dir
                     spec_file = spec_dir / "spec.md"
                     if spec_file.exists():
                         stat = spec_file.stat()
@@ -268,16 +282,23 @@ def list_specifications(
                     spec_sprint_name = sprint.name if sprint else spec_sprint_name
                 
                 all_specifications.append(SpecificationOut(
-                    id=spec_id,
+                    id=resolved_spec_id,
+                    spec_run_id=_spec_value(spec, "spec_run_id", None) or _spec_value(spec, "id", None),
                     path=_spec_value(spec, "path", ""),
                     spec_path=_spec_value(spec, "spec_path"),
                     plan_path=_spec_value(spec, "plan_path"),
                     tasks_path=_spec_value(spec, "tasks_path"),
+                    checklist_path=_spec_value(spec, "checklist_path"),
+                    analysis_path=_spec_value(spec, "analysis_path"),
+                    implement_path=_spec_value(spec, "implement_path"),
                     title=title,
                     project_id=project.id,
                     project_name=project.name,
                     status=spec_status,
                     created_at=spec_created_at,
+                    worktree_path=_spec_value(spec, "worktree_path"),
+                    branch_name=_spec_value(spec, "branch_name"),
+                    base_branch=_spec_value(spec, "base_branch"),
                     tasks_generated=has_tasks_value,
                     linked_tasks=linked_tasks,
                     completed_tasks=completed_tasks,
@@ -342,7 +363,9 @@ def get_specification_content(
     if not project.local_path:
         raise HTTPException(status_code=400, detail="Project has no local path")
     
-    spec_dir = Path(project.local_path) / spec.path
+    spec_dir = Path(spec.path)
+    if not spec_dir.is_absolute():
+        spec_dir = Path(project.local_path) / spec.path
     
     spec_content = None
     plan_content = None

@@ -55,6 +55,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
     constraints: "",
   })
   const [lastSpecPath, setLastSpecPath] = useState<string | null>(null)
+  const [lastSpecRunId, setLastSpecRunId] = useState<number | null>(null)
   const [clarifyOpen, setClarifyOpen] = useState(false)
   const [clarifyQuestion, setClarifyQuestion] = useState("")
   const [clarifyAnswer, setClarifyAnswer] = useState("")
@@ -72,9 +73,16 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
 
   const isLoading = projectLoading || statusLoading
   const isInitialized = specKitStatus?.initialized ?? false
-  const availableSpecs = useMemo(() => specKitStatus?.specs ?? [], [specKitStatus])
+  const availableSpecs = useMemo(
+    () => (specKitStatus?.specs ?? []).filter((spec) => spec.status !== "cleaned"),
+    [specKitStatus],
+  )
 
   const activeSpec = useMemo(() => {
+    if (lastSpecRunId) {
+      const match = availableSpecs.find((spec) => spec.spec_run_id === lastSpecRunId)
+      if (match) return match
+    }
     if (lastSpecPath) {
       return availableSpecs.find((spec) => spec.spec_path === lastSpecPath || spec.path === lastSpecPath) || null
     }
@@ -85,7 +93,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
       return bNum - aNum
     })
     return sorted[0]
-  }, [availableSpecs, lastSpecPath])
+  }, [availableSpecs, lastSpecPath, lastSpecRunId])
 
   const activeSpecPath = activeSpec?.spec_path || null
 
@@ -138,6 +146,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         toast.success(`Specification generated: ${result.feature_name || "Feature"}`)
         if (result.spec_path) {
           setLastSpecPath(result.spec_path)
+          setLastSpecRunId(result.spec_run_id ?? null)
           router.push(`/projects/${projectId}?tab=spec&spec=${result.spec_path}`)
         }
         onOpenChange(false)
@@ -169,6 +178,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         spec_path: activeSpecPath,
         entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
+        spec_run_id: activeSpec?.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success(`Clarifications added (${result.clarifications_added})`)
@@ -193,6 +203,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
       const result = await generateChecklist.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
+        spec_run_id: activeSpec?.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success(`Checklist generated (${result.item_count} items)`)
@@ -215,6 +226,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         spec_path: activeSpecPath,
         plan_path: activeSpec?.plan_path || undefined,
         tasks_path: activeSpec?.tasks_path || undefined,
+        spec_run_id: activeSpec?.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success("Analysis report generated")
@@ -235,6 +247,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
       const result = await runImplement.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
+        spec_run_id: activeSpec?.spec_run_id ?? undefined,
       })
       if (result.success) {
         toast.success("Implementation run initialized")
@@ -248,9 +261,9 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl h-[90vh] p-0 overflow-hidden">
-        <div className="flex h-full flex-col">
-          <DialogHeader className="border-b px-6 py-4">
+      <DialogContent size="5xl" className="h-[90vh] max-h-[90vh] p-0 overflow-hidden">
+        <div className="flex h-full flex-col min-h-0">
+          <DialogHeader className="border-b px-6 py-4 flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-blue-500" />
               Generate Specification
@@ -260,7 +273,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 space-y-6">
             {isLoading ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -538,7 +551,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
             )}
           </div>
 
-          <div className="border-t px-6 py-4 flex justify-between">
+          <div className="border-t px-6 py-4 flex justify-between flex-shrink-0">
             <Button variant="outline" onClick={handleBack}>
               {step === 1 ? "Cancel" : "Back"}
             </Button>
@@ -566,7 +579,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         </div>
 
         <Dialog open={clarifyOpen} onOpenChange={setClarifyOpen}>
-          <DialogContent className="max-w-xl">
+          <DialogContent size="xl">
             <DialogHeader>
               <DialogTitle>Clarify Specification</DialogTitle>
               <DialogDescription>Add a clarification entry or notes to the latest spec.</DialogDescription>

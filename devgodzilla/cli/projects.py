@@ -164,6 +164,7 @@ def discover_project(
             stages=list(stages) if stages else None,
             timeout_seconds=timeout_seconds,
             strict_outputs=True,
+            project_id=project_id,
         )
         payload = {
             "success": result.success,

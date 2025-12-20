@@ -5,6 +5,12 @@ import { apiClient } from "../client"
 import { queryKeys } from "../query-keys"
 import type { QueueStats, QueueJob, Event, EventFilters, HealthResponse } from "../types"
 
+const useConditionalRefetchInterval = (baseInterval: number) => {
+  if (typeof document === "undefined") return false
+  if (baseInterval <= 0) return false
+  return document.hidden ? false : baseInterval
+}
+
 // Health Check
 export function useHealth() {
   return useQuery({
@@ -33,20 +39,25 @@ export function useQueueJobs(status?: string) {
 }
 
 // Recent Events
-export function useRecentEvents(filters: EventFilters = {}) {
+export function useRecentEvents(filters: EventFilters = {}, options?: { refetchIntervalMs?: number }) {
+  const refetchInterval = useConditionalRefetchInterval(options?.refetchIntervalMs ?? 10000)
   return useQuery({
     queryKey: queryKeys.ops.recentEvents(filters),
     queryFn: async () => {
       const params = new URLSearchParams()
       if (filters.project_id) params.set("project_id", String(filters.project_id))
       if (filters.protocol_run_id) params.set("protocol_id", String(filters.protocol_run_id))
-      if (filters.kind) params.set("kind", filters.kind)
-      if (filters.spec_hash) params.set("spec_hash", filters.spec_hash)
+      if (filters.event_type) params.set("event_type", filters.event_type)
+      if (filters.categories) {
+        filters.categories.forEach((category) => {
+          params.append("category", category)
+        })
+      }
       if (filters.limit) params.set("limit", String(filters.limit))
       const queryString = params.toString()
       const response = await apiClient.get<{ events: Event[] }>(`/events/recent${queryString ? `?${queryString}` : ""}`)
       return response.events
     },
-    refetchInterval: 10000,
+    refetchInterval,
   })
 }

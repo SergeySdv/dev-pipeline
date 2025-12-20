@@ -26,7 +26,7 @@ This document captures the current redundancy between Codex- and CodeMachine-dri
    - Introduce `resolve_prompt_and_outputs(step_spec, run)` that handles prompt resolution (Codex or CodeMachine) and returns output destinations (protocol + aux).
    - Refactor `handle_execute_step` to call the resolver, pick the engine from the registry, and execute through a single code path.
 3) QA Normalization
-   - Add QA config to CodeMachine imports; extend spec to carry `qa_policy: skip|light|full`, engine/model/prompt.
+   - Add QA config to CodeMachine imports; extend spec to carry QA engine/model/prompt (prompt-driven, no skip).
    - Refactor `handle_quality` to use the spec QA settings and remove the implicit CodeMachine QA skip.
 4) Policy Unification
    - Keep loop/trigger policies in one module; ensure both exec and QA phases apply them uniformly.

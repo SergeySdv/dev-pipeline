@@ -330,7 +330,7 @@ Run QA on a step.
 
 Notes:
 - Omit `gates` (or set it to `null`) to run the default QA gate set.
-- Set `"gates": []` to **skip QA** and still mark the step completed (useful for E2E/system tests).
+- `gates` selects additional deterministic gates (lint/type/test); prompt-driven QA always runs.
 
 ### `POST /steps/{id}/actions/assign_agent`
 

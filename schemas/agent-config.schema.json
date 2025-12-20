@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentConfig",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Optional version string for the agent config format."
+    },
+    "agents": {
+      "type": "object",
+      "description": "Global agent definitions keyed by agent id.",
+      "additionalProperties": {
+        "$ref": "#/definitions/Agent"
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default agent and prompt assignments by stage.",
+      "properties": {
+        "code_gen": { "type": "string" },
+        "planning": { "type": "string" },
+        "qa": { "type": "string" },
+        "discovery": { "type": "string" },
+        "exec": { "type": "string" },
+        "prompts": { "$ref": "#/definitions/PromptAssignments" }
+      },
+      "additionalProperties": true
+    },
+    "prompts": {
+      "type": "object",
+      "description": "Global prompt templates keyed by prompt id.",
+      "additionalProperties": {
+        "$ref": "#/definitions/PromptTemplate"
+      }
+    },
+    "projects": {
+      "type": "object",
+      "description": "Per-project overrides keyed by project id or slug.",
+      "additionalProperties": {
+        "$ref": "#/definitions/ProjectOverrides"
+      }
+    },
+    "health_check": {
+      "type": "object",
+      "description": "Health check defaults for agents.",
+      "properties": {
+        "timeout_seconds": { "type": "integer" },
+        "retry_count": { "type": "integer" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "Agent": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": ["cli", "api", "ide"] },
+        "command": { "type": ["string", "null"] },
+        "cli_tool": { "type": ["string", "null"] },
+        "command_dir": { "type": ["string", "null"] },
+        "endpoint": { "type": ["string", "null"] },
+        "default_model": { "type": ["string", "null"] },
+        "sandbox": { "type": "string" },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "enabled": { "type": "boolean" },
+        "format": { "type": "string" },
+        "timeout_seconds": { "type": "integer" },
+        "max_retries": { "type": "integer" }
+      },
+      "required": ["name", "kind"],
+      "additionalProperties": true
+    },
+    "PromptTemplate": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "kind": { "type": "string" },
+        "engine_id": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "enabled": { "type": "boolean" },
+        "description": { "type": ["string", "null"] }
+      },
+      "required": ["name", "path"],
+      "additionalProperties": true
+    },
+    "PromptAssignments": {
+      "type": "object",
+      "description": "Prompt assignment map keyed by stage or workflow.",
+      "additionalProperties": { "type": "string" }
+    },
+    "ProjectOverrides": {
+      "type": "object",
+      "properties": {
+        "inherit": { "type": "boolean" },
+        "agents": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/Agent" }
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "prompts": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/PromptTemplate" }
+        },
+        "assignments": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

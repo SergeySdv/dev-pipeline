@@ -98,6 +98,7 @@ class ProtocolFromSpecRequest(BaseModel):
     spec_path: Optional[str] = None
     tasks_path: Optional[str] = None
     protocol_name: Optional[str] = None
+    spec_run_id: Optional[int] = None
     overwrite: bool = False
 
 
@@ -194,6 +195,7 @@ def create_protocol_from_spec(
         spec_path=request.spec_path,
         tasks_path=request.tasks_path,
         protocol_name=request.protocol_name,
+        spec_run_id=request.spec_run_id,
         overwrite=request.overwrite,
     )
     if not result.success:
@@ -245,13 +247,19 @@ def get_protocol(
 @router.get("/protocols/{protocol_id}/events", response_model=List[schemas.EventOut])
 def list_protocol_events(
     protocol_id: int,
+    event_type: Optional[str] = Query(None, description="Filter by event type"),
+    category: Optional[List[str]] = Query(None, description="Filter by event category"),
     db: Database = Depends(get_db),
 ):
     try:
         db.get_protocol_run(protocol_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Protocol not found")
-    return [schemas.EventOut.model_validate(e) for e in db.list_events(protocol_id)]
+    event_types = [event_type] if event_type else None
+    return [
+        schemas.EventOut.model_validate(e)
+        for e in db.list_events(protocol_id, event_types=event_types, categories=category)
+    ]
 
 
 @router.get("/protocols/{protocol_id}/flow")
@@ -522,7 +530,7 @@ def get_protocol_quality(
     """
     Lightweight protocol quality summary for the Windmill React app.
 
-    Aggregates per-step QA verdicts (persisted in step.runtime_state["qa_verdict"]).
+    Aggregates per-step QA verdicts from qa_results.
     """
     try:
         db.get_protocol_run(protocol_id)
@@ -530,14 +538,11 @@ def get_protocol_quality(
         raise HTTPException(status_code=404, detail="Protocol not found")
 
     steps = db.list_step_runs(protocol_id)
-    qa_verdicts = []
-    for s in steps:
-        state = s.runtime_state or {}
-        verdict = (state.get("qa_verdict") or {}).get("verdict")
-        qa_verdicts.append((s, verdict))
+    qa_results = db.list_qa_results(protocol_run_id=protocol_id, limit=1000)
+    qa_by_step = {r.step_run_id: r for r in qa_results}
 
-    blocking_issues = sum(1 for _, v in qa_verdicts if v in ("fail", "error"))
-    warnings = sum(1 for _, v in qa_verdicts if v == "warn")
+    blocking_issues = sum(1 for r in qa_results if r.verdict in ("fail", "error"))
+    warnings = sum(1 for r in qa_results if r.verdict == "warn")
 
     def to_gate_status(verdict: str | None) -> str:
         if verdict in ("pass", "skip"):
@@ -548,34 +553,55 @@ def get_protocol_quality(
             return "failed"
         return "skipped"
 
-    # Aggregate gate statuses across all steps (lint/type/test in current implementation).
-    gate_ids = ["lint", "type", "test"]
-    gate_statuses: dict[str, str] = {gid: "skipped" for gid in gate_ids}
-    for step, _ in qa_verdicts:
-        qa = (step.runtime_state or {}).get("qa_verdict") or {}
-        for g in qa.get("gates", []) or []:
-            gid = g.get("gate_id")
-            if gid not in gate_statuses:
-                continue
-            v = g.get("verdict")
-            current = gate_statuses[gid]
-            next_status = to_gate_status(v)
-            # Worst status wins: failed > warning > passed > skipped
-            order = {"failed": 3, "warning": 2, "passed": 1, "skipped": 0}
-            if order[next_status] > order[current]:
-                gate_statuses[gid] = next_status
+    gate_statuses: dict[str, str] = {}
+    article_statuses: dict[str, dict[str, str]] = {}
+
+    for qa in qa_results:
+        for gate in qa.gate_results or []:
+            gate_id = gate.get("gate_id") or ""
+            verdict = gate.get("verdict")
+            if gate_id:
+                current = gate_statuses.get(gate_id, "skipped")
+                next_status = to_gate_status(verdict)
+                order = {"failed": 3, "warning": 2, "passed": 1, "skipped": 0}
+                if order[next_status] > order[current]:
+                    gate_statuses[gate_id] = next_status
+
+            if gate_id == "constitutional":
+                meta = gate.get("metadata") or {}
+                for article in meta.get("article_statuses", []) or []:
+                    article_id = str(article.get("article") or "")
+                    if not article_id:
+                        continue
+                    current = article_statuses.get(article_id, {}).get("status", "skipped")
+                    next_status = str(article.get("status") or "skipped")
+                    order = {"failed": 3, "warning": 2, "passed": 1, "skipped": 0}
+                    if order.get(next_status, 0) > order.get(current, 0):
+                        article_statuses[article_id] = {
+                            "status": next_status,
+                            "name": str(article.get("name") or article_id),
+                        }
 
     gates = [
-        schemas.GateResultOut(article=gid, name=gid.upper(), status=gate_statuses[gid], findings=[])
-        for gid in gate_ids
+        schemas.GateResultOut(article=gid, name=gid.upper(), status=status, findings=[])
+        for gid, status in sorted(gate_statuses.items())
     ]
+    for article_id, meta in sorted(article_statuses.items()):
+        gates.append(
+            schemas.GateResultOut(
+                article=article_id,
+                name=str(meta.get("name") or article_id),
+                status=meta.get("status", "skipped"),
+                findings=[],
+            )
+        )
 
     # Minimal checklist for now.
     checklist_items = [
         schemas.ChecklistItemOut(
             id="all_steps_qa",
             description="All executed steps have QA verdicts",
-            passed=all(v is not None for _, v in qa_verdicts) if steps else True,
+            passed=all(s.id in qa_by_step for s in steps) if steps else True,
             required=False,
         ),
         schemas.ChecklistItemOut(
@@ -587,7 +613,10 @@ def get_protocol_quality(
         schemas.ChecklistItemOut(
             id="tests_run",
             description="Test gate executed at least once",
-            passed=any((s.runtime_state or {}).get("qa_verdict") for s, _ in qa_verdicts),
+            passed=any(
+                any(g.get("gate_id") == "test" for g in (qa.gate_results or []))
+                for qa in qa_results
+            ),
             required=False,
         ),
     ]

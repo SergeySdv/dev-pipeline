@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next"
 
 import { Providers } from "@/components/providers"
 import { AppShell } from "@/components/layout/app-shell"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -27,9 +28,10 @@ export default function RootLayout({
     <html lang="en">
       <body className="font-sans antialiased">
         <Providers>
-          <AppShell>{children}</AppShell>
+          <TooltipProvider delayDuration={200} skipDelayDuration={200}>
+            <AppShell>{children}</AppShell>
+          </TooltipProvider>
         </Providers>
-
       </body>
     </html>
   )

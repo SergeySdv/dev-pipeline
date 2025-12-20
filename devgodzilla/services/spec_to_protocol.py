@@ -41,6 +41,7 @@ class SpecToProtocolService(Service):
         spec_path: Optional[str] = None,
         tasks_path: Optional[str] = None,
         protocol_name: Optional[str] = None,
+        spec_run_id: Optional[int] = None,
         overwrite: bool = False,
     ) -> SpecToProtocolResult:
         project = self.db.get_project(project_id)
@@ -48,6 +49,14 @@ class SpecToProtocolService(Service):
             return SpecToProtocolResult(success=False, error="Project has no local_path")
 
         repo_root = Path(project.local_path).expanduser()
+        spec_run = None
+        if spec_run_id:
+            try:
+                spec_run = self.db.get_spec_run(spec_run_id)
+            except Exception:
+                spec_run = None
+        if spec_run and spec_run.worktree_path:
+            repo_root = Path(spec_run.worktree_path).expanduser()
         resolved_spec_path, resolved_tasks_path, spec_dir = self._resolve_paths(
             repo_root,
             spec_path=spec_path,
@@ -59,7 +68,7 @@ class SpecToProtocolService(Service):
                 error=f"Tasks file not found: {resolved_tasks_path or tasks_path}",
             )
 
-        protocol_name = protocol_name or spec_dir.name
+        protocol_name = protocol_name or (spec_run.spec_name if spec_run else spec_dir.name)
         protocol_root = spec_dir / "_runtime"
         protocol_root.mkdir(parents=True, exist_ok=True)
 
@@ -94,24 +103,56 @@ class SpecToProtocolService(Service):
             status="planned",
             base_branch=project.base_branch or "main",
             description=f"SpecKit protocol for {protocol_name}",
+            worktree_path=str(repo_root),
         )
         try:
             protocol_root_value = str(protocol_root.relative_to(repo_root))
         except Exception:
             protocol_root_value = str(protocol_root)
         self.db.update_protocol_paths(run.id, protocol_root=protocol_root_value)
+        if spec_run_id:
+            try:
+                self.db.update_spec_run(spec_run_id, protocol_run_id=run.id)
+            except Exception:
+                pass
 
         default_engine_id = None
         try:
-            candidate = self.context.config.engine_defaults.get("exec")  # type: ignore[union-attr]
+            from devgodzilla.services.agent_config import AgentConfigService
+
+            cfg = AgentConfigService(self.context)
+            candidate = cfg.get_default_engine_id(
+                "exec",
+                project_id=project_id,
+                fallback=self.context.config.engine_defaults.get("exec"),  # type: ignore[union-attr]
+            )
             if isinstance(candidate, str) and candidate.strip():
                 default_engine_id = candidate.strip()
         except Exception:
             default_engine_id = None
 
+        default_qa_prompt = None
+        try:
+            from devgodzilla.services.agent_config import AgentConfigService
+            from devgodzilla.spec import resolve_spec_path
+
+            cfg = AgentConfigService(self.context)
+            assignment = cfg.resolve_prompt_assignment("qa", project_id=project_id)
+            if assignment and assignment.get("path"):
+                candidate = resolve_spec_path(
+                    str(assignment["path"]),
+                    repo_root,
+                    repo_root,
+                )
+                if candidate.exists():
+                    default_qa_prompt = str(assignment["path"])
+        except Exception:
+            default_qa_prompt = None
+
         protocol_spec = build_spec_from_protocol_files(
             protocol_root,
             default_engine_id=default_engine_id,
+            default_qa_prompt=default_qa_prompt or "prompts/quality-validator.prompt.md",
         )
         template_config = {PROTOCOL_SPEC_KEY: protocol_spec}
         self.db.update_protocol_template(run.id, template_config=template_config)
@@ -174,8 +215,8 @@ class SpecToProtocolService(Service):
         current_title = "Tasks"
         current_tasks: List[str] = []
 
-        heading_re = re.compile(r"^#{2,6}\\s+(.*)$")
-        task_re = re.compile(r"^\\s*-\\s*\\[[ xX]\\]\\s+(.+)$")
+        heading_re = re.compile(r"^#{2,6}\s+(.*)$")
+        task_re = re.compile(r"^\s*-\s*\[[ xX]\]\s+(.+)$")
 
         for raw_line in content.splitlines():
             line = raw_line.rstrip()

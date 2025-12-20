@@ -11,6 +11,7 @@ import dataclasses
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Protocol, cast
 
+from devgodzilla.events_catalog import normalize_event_type
 from devgodzilla.logging import get_logger
 from devgodzilla.services.events import Event as BusEvent
 from devgodzilla.services.events import get_event_bus
@@ -21,11 +22,12 @@ logger = get_logger(__name__)
 class _EventDB(Protocol):
     def append_event(
         self,
-        protocol_run_id: int,
+        protocol_run_id: Optional[int],
         event_type: str,
         message: str,
         metadata: Optional[Dict[str, Any]] = None,
         step_run_id: Optional[int] = None,
+        project_id: Optional[int] = None,
     ) -> Any: ...
 
 
@@ -42,7 +44,7 @@ def _json_safe(value: Any) -> Any:
 
 
 def _default_message(event: BusEvent) -> str:
-    pieces: list[str] = [event.event_type]
+    pieces: list[str] = [normalize_event_type(event.event_type)]
     step_name = getattr(event, "step_name", None)
     protocol_name = getattr(event, "protocol_name", None)
     if step_name:
@@ -75,10 +77,11 @@ def install_db_event_sink(
         try:
             db = db_provider()
             payload = _json_safe(event)
+            normalized_type = normalize_event_type(event.event_type)
             db.append_event(
                 protocol_run_id=protocol_run_id,
                 step_run_id=step_run_id,
-                event_type=event.event_type,
+                event_type=normalized_type,
                 message=_default_message(event),
                 metadata=cast(Dict[str, Any], payload) if isinstance(payload, dict) else {"event": payload},
             )

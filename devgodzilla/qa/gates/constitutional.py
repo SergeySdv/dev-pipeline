@@ -54,6 +54,7 @@ class ConstitutionalGate(Gate):
         """Validate against constitution."""
         findings = []
         workspace = Path(context.workspace_root)
+        article_statuses = []
         
         articles_to_check = self.constitution.articles
         if self.check_blocking_only:
@@ -62,6 +63,19 @@ class ConstitutionalGate(Gate):
         for article in articles_to_check:
             article_findings = self._check_article(article, workspace, context)
             findings.extend(article_findings)
+            status = "passed"
+            if any(f.severity == "error" for f in article_findings):
+                status = "failed"
+            elif any(f.severity == "warning" for f in article_findings):
+                status = "warning"
+            article_statuses.append(
+                {
+                    "article": article.number,
+                    "name": article.title,
+                    "status": status,
+                    "blocking": article.blocking,
+                }
+            )
         
         # Determine verdict
         blocking_findings = [f for f in findings if f.severity == "error"]
@@ -82,6 +96,7 @@ class ConstitutionalGate(Gate):
             metadata={
                 "constitution_version": self.constitution.version,
                 "articles_checked": len(articles_to_check),
+                "article_statuses": article_statuses,
             },
         )
 
@@ -111,6 +126,7 @@ class ConstitutionalGate(Gate):
                     message=f"Article {article_num}: No test directory found",
                     rule_id=f"article-{article_num}",
                     suggestion="Create a tests/ directory with test files",
+                    metadata={"article": article.number, "article_title": article.title},
                 ))
         
         # Article IV: Security Requirements
@@ -130,6 +146,7 @@ class ConstitutionalGate(Gate):
                                 message=f"Article {article_num}: {pattern} not in .gitignore",
                                 rule_id=f"article-{article_num}",
                                 file_path=pattern,
+                                metadata={"article": article.number, "article_title": article.title},
                             ))
         
         # Article IX: Integration Testing
@@ -144,6 +161,7 @@ class ConstitutionalGate(Gate):
                     message=f"Article {article_num}: No integration test directory found",
                     rule_id=f"article-{article_num}",
                     suggestion="Create tests/integration/ directory",
+                    metadata={"article": article.number, "article_title": article.title},
                 ))
         
         return findings

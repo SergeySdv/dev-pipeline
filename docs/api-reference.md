@@ -95,15 +95,12 @@ Status conflicts return 409 (e.g., starting an already-running protocol).
 
 ### Step actions
 All step actions use services for business logic:
-- `POST /steps/{id}/actions/run`
+- `POST /steps/{id}/actions/execute`
   - **Service**: `ExecutionService.execute_step()` via `QueueService.enqueue_execute_step()`
-  - Sets to running, enqueues `execute_step_job`
-- `POST /steps/{id}/actions/run_qa`
-  - **Service**: `QualityService.run_for_step_run()` via `QueueService.enqueue_run_quality()`
-  - Sets to `needs_qa`, enqueues `run_quality_job`
-- `POST /steps/{id}/actions/approve`
-  - **Service**: `OrchestratorService.handle_step_completion()`
-  - Marks completed, may complete protocol
+  - Sets to running, enqueues `execute_step_job` (QA auto-runs after execution)
+- `POST /steps/{id}/actions/qa`
+  - **Service**: `QualityService.run_qa()` (prompt-driven; optional deterministic gates)
+  - Re-runs QA and updates step/protocol status
 
 ## Events & queues
 - `GET /protocols/{id}/events` → events for a protocol.
@@ -158,7 +155,7 @@ The orchestrator records each job attempt as a **run** in `codex_runs` (despite 
 ## Queue/runtime notes
 - Backend: Redis/RQ; set `TASKSGODZILLA_INLINE_RQ_WORKER=true` to have the API start a background RQ worker thread for inline job processing during local development.
 - **Service Integration**: All jobs are enqueued via `QueueService` and processed by workers that delegate to services
-- Jobs: `project_setup_job`, `plan_protocol_job`, `execute_step_job`, `run_quality_job`, `open_pr_job`, `codemachine_import_job`.
+- Jobs: `project_setup_job`, `plan_protocol_job`, `execute_step_job`, `open_pr_job`, `codemachine_import_job`.
   - Workers are thin adapters: deserialize payload → call service method → return
   - Business logic lives in services, not workers
 - CodeMachine policies: loop/trigger policies on steps may reset statuses or inline-trigger other steps (depth-limited) with events and `runtime_state` recorded. Handled by `OrchestratorService.apply_trigger_policy()` and `OrchestratorService.apply_loop_policy()`.
@@ -200,7 +197,7 @@ curl -X POST http://localhost:8011/protocols/1/actions/start \
 
 Run QA for a step:
 ```bash
-curl -X POST http://localhost:8011/steps/10/actions/run_qa \
+curl -X POST http://localhost:8011/steps/10/actions/qa \
   -H "Authorization: Bearer $TASKSGODZILLA_API_TOKEN"
 ```
 

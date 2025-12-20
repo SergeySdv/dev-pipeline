@@ -89,8 +89,8 @@ Resolved: current SpecKit implementation is agent-assisted (prompt-driven) and d
 
 ### 2) Windmill flow generation vs Windmill exported flows diverge
 
-- Exported flows typically call API-wrapper scripts (`u/devgodzilla/step_execute_api`, `u/devgodzilla/step_run_qa_api`, etc.).
-- DevGodzilla’s internal flow generator defaults to scripts that may import DevGodzilla directly (e.g. `u/devgodzilla/execute_step`, `u/devgodzilla/run_qa`).
+- Exported flows typically call API-wrapper scripts (`u/devgodzilla/step_execute_api`, `u/devgodzilla/step_run_qa_api` for manual re-runs).
+- DevGodzilla’s internal flow generator defaults to `u/devgodzilla/step_execute_api` with QA auto-run in the API.
 - Orchestrator service queues `u/devgodzilla/plan_protocol` on Windmill, while planning is also available via DevGodzilla API background tasks.
 
 **Why it matters**

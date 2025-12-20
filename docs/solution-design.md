@@ -29,7 +29,7 @@ This document captures the current state of the system, the risks that block ful
 - Events and metrics are emitted throughout to enable observability and cost controls.
 
 ### 2.2 Core components
-- **Orchestrator API service**: Stateless FastAPI app exposing REST/GraphQL endpoints for project/protocol/step CRUD and actions (`start`, `run`, `run_qa`, `approve`, `pause/resume`). Auth via API tokens initially; multi-tenancy via project/org tags.
+- **Orchestrator API service**: Stateless FastAPI app exposing REST/GraphQL endpoints for project/protocol/step CRUD and actions (`start`, `execute`, `qa`, `approve`, `pause/resume`). Auth via API tokens initially; multi-tenancy via project/org tags.
 - **Persistence layer**: Projects, ProtocolRuns, StepRuns, Events stored in Postgres/SQLite with migrations (Alembic). Fields include git metadata, model selection, retries, timestamps, and summaries. Prompt versions/config are recorded for auditability.
 - **Job queue**: Redis/RQ/Celery or a DB-backed queue. Payloads carry only IDs; workers fetch context from the database. Per-job retry limits and exponential backoff govern behavior.
 - **Workers**:
@@ -72,8 +72,8 @@ projects/
     worktrees/<protocol>/   # protocol worktrees created from origin/<base_branch>
 ```
 - **Open a protocol**: `/projects/{id}/protocols` creates a ProtocolRun; orchestrator enqueues `plan_protocol` to run planning/decomposition; artifacts live under `.protocols/NNNN-[task]/`.
-- **Execute steps**: `/steps/{id}/actions/run` dispatches execution; the execution worker resolves prompts/outputs from the StepSpec and dispatches via the engine registry; status and summaries recorded; optional auto-PR/MR via Git/CI Worker.
-- **QA loop**: `/steps/{id}/actions/run_qa` builds the QA context and runs the validator prompt; verdict updates StepRun and may block/unblock the protocol.
+- **Execute steps**: `/steps/{id}/actions/execute` dispatches execution; the execution worker resolves prompts/outputs from the StepSpec and dispatches via the engine registry; status and summaries recorded; optional auto-PR/MR via Git/CI Worker.
+- **QA loop**: QA auto-runs after every successful execution; `/steps/{id}/actions/qa` re-runs the validator prompt and updates StepRun/protocol status.
 - **CI integration**: GitHub/GitLab webhooks mapped by branch name update StepRun/ProtocolRun status (`ci_passed`, `ci_failed`); automation policies can trigger follow-up protocols (e.g., fix CI).
 - **Console controls**: Start/resume protocol, run next step, rerun with a different model, run QA only, mark manually approved, open PR/MR, view events/metrics.
 
@@ -102,7 +102,7 @@ projects/
 - Storage and migrations: SQLite default with Postgres available via `TASKSGODZILLA_DB_URL`; Alembic scaffolding plus initial migration under `alembic/`.
 - API and console: FastAPI app exposes projects/protocols/steps/events, queue stats (`/queues*`), Prometheus metrics (`/metrics`), and webhook endpoints for GitHub/GitLab; a lightweight console at `/console` surfaces projects/runs/steps/events/queues.
 - Queue and workers: Redis/RQ with job types wired for planning, execution, QA, project setup, and PR open; optionally run an inline worker in the API via `TASKSGODZILLA_INLINE_RQ_WORKER=true`. Request/step IDs, retries, and backoff are captured as events.
-- Spec-driven execution: `ProtocolSpec`/`StepSpec` schema is validated and stored on runs; steps sync from the spec; execution/QA use spec-defined engines/models/prompt_refs/output maps and `qa_policy` via the shared resolver/engine registry; spec audit/backfill exists for older runs.
+- Spec-driven execution: `ProtocolSpec`/`StepSpec` schema is validated and stored on runs; steps sync from the spec; execution/QA use spec-defined engines/models/prompt_refs/output maps with prompt-driven QA and optional gates from policy; spec audit/backfill exists for older runs.
 - CodeMachine integration: `.codemachine` workspaces can be imported via API to persist templates into ProtocolSpec/StepSpecs; execution uses the shared resolver/engine registry with placeholders/specifications, writes outputs to `.protocols/<run>/` (including `aux/codemachine/**`), applies loop/trigger policies (depth-limited), and honors StepSpec QA policy (skip/light/full) with events.
 - Automation flags and budgets: `TASKSGODZILLA_AUTO_QA_AFTER_EXEC` and `TASKSGODZILLA_AUTO_QA_ON_CI` drive QA scheduling; token budgets (`TASKSGODZILLA_MAX_TOKENS_*` with `strict|warn|off`) gate Codex calls.
 - CI callbacks: `scripts/ci/report.sh` posts GitHub/GitLab-shaped payloads to `/webhooks/*`, mapping by branch or explicit `TASKSGODZILLA_PROTOCOL_RUN_ID`. Webhook tokens and API tokens guard external access.

@@ -37,6 +37,7 @@ class SpecifyRequest(BaseModel):
     project_id: int
     description: str = Field(..., min_length=10, description="Feature description")
     feature_name: Optional[str] = Field(None, description="Optional feature name")
+    base_branch: Optional[str] = Field(None, description="Optional base branch for the spec run")
 
 
 class SpecifyResponse(BaseModel):
@@ -44,12 +45,18 @@ class SpecifyResponse(BaseModel):
     spec_path: Optional[str] = None
     spec_number: Optional[int] = None
     feature_name: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    branch_name: Optional[str] = None
+    base_branch: Optional[str] = None
+    spec_root: Optional[str] = None
     error: Optional[str] = None
 
 
 class PlanRequest(BaseModel):
     project_id: int
     spec_path: str = Field(..., description="Path to spec.md file")
+    spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
 
 
 class PlanResponse(BaseModel):
@@ -57,12 +64,15 @@ class PlanResponse(BaseModel):
     plan_path: Optional[str] = None
     data_model_path: Optional[str] = None
     contracts_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
 class TasksRequest(BaseModel):
     project_id: int
     plan_path: str = Field(..., description="Path to plan.md file")
+    spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
 
 
 class TasksResponse(BaseModel):
@@ -70,6 +80,8 @@ class TasksResponse(BaseModel):
     tasks_path: Optional[str] = None
     task_count: int = 0
     parallelizable_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -83,24 +95,30 @@ class ClarifyRequest(BaseModel):
     spec_path: str = Field(..., description="Path to spec file")
     entries: List[ClarificationEntry] = Field(default_factory=list)
     notes: Optional[str] = None
+    spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
 
 
 class ClarifyResponse(BaseModel):
     success: bool
     spec_path: Optional[str] = None
     clarifications_added: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
 class ChecklistRequest(BaseModel):
     project_id: int
     spec_path: str = Field(..., description="Path to spec file")
+    spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
 
 
 class ChecklistResponse(BaseModel):
     success: bool
     checklist_path: Optional[str] = None
     item_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -109,23 +127,41 @@ class AnalyzeRequest(BaseModel):
     spec_path: str = Field(..., description="Path to spec file")
     plan_path: Optional[str] = None
     tasks_path: Optional[str] = None
+    spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
 
 
 class AnalyzeResponse(BaseModel):
     success: bool
     report_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     error: Optional[str] = None
 
 
 class ImplementRequest(BaseModel):
     project_id: int
     spec_path: str = Field(..., description="Path to spec file")
+    spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
 
 
 class ImplementResponse(BaseModel):
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    error: Optional[str] = None
+
+
+class SpecRunCleanupRequest(BaseModel):
+    delete_remote_branch: bool = False
+
+
+class SpecRunCleanupResponse(BaseModel):
+    success: bool
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    deleted_remote_branch: bool = False
     error: Optional[str] = None
 
 
@@ -134,14 +170,25 @@ class ConstitutionRequest(BaseModel):
 
 
 class SpecListItem(BaseModel):
+    id: Optional[int] = None
     name: str
     path: str
     spec_path: Optional[str] = None
     plan_path: Optional[str] = None
     tasks_path: Optional[str] = None
+    checklist_path: Optional[str] = None
+    analysis_path: Optional[str] = None
+    implement_path: Optional[str] = None
     has_spec: bool
     has_plan: bool
     has_tasks: bool
+    status: Optional[str] = None
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
+    branch_name: Optional[str] = None
+    base_branch: Optional[str] = None
+    spec_number: Optional[int] = None
+    feature_name: Optional[str] = None
 
 
 def get_specification_service(
@@ -263,6 +310,7 @@ def run_specify(
         project.local_path,
         request.description,
         feature_name=request.feature_name,
+        base_branch=request.base_branch,
         project_id=request.project_id,
     )
 
@@ -271,6 +319,11 @@ def run_specify(
         spec_path=result.spec_path,
         spec_number=result.spec_number,
         feature_name=result.feature_name,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
+        branch_name=result.branch_name,
+        base_branch=result.base_branch,
+        spec_root=result.spec_root,
         error=result.error,
     )
 
@@ -289,6 +342,7 @@ def run_plan(
     result = service.run_plan(
         project.local_path,
         request.spec_path,
+        spec_run_id=request.spec_run_id,
         project_id=request.project_id,
     )
 
@@ -297,6 +351,8 @@ def run_plan(
         plan_path=result.plan_path,
         data_model_path=result.data_model_path,
         contracts_path=result.contracts_path,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -315,6 +371,7 @@ def run_tasks(
     result = service.run_tasks(
         project.local_path,
         request.plan_path,
+        spec_run_id=request.spec_run_id,
         project_id=request.project_id,
     )
 
@@ -323,6 +380,8 @@ def run_tasks(
         tasks_path=result.tasks_path,
         task_count=result.task_count,
         parallelizable_count=result.parallelizable_count,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -343,6 +402,7 @@ def run_clarify(
         request.spec_path,
         entries=[entry.dict() for entry in request.entries],
         notes=request.notes,
+        spec_run_id=request.spec_run_id,
         project_id=request.project_id,
     )
 
@@ -350,6 +410,8 @@ def run_clarify(
         success=result.success,
         spec_path=result.spec_path,
         clarifications_added=result.clarifications_added,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -368,6 +430,7 @@ def run_checklist(
     result = service.run_checklist(
         project.local_path,
         request.spec_path,
+        spec_run_id=request.spec_run_id,
         project_id=request.project_id,
     )
 
@@ -375,6 +438,8 @@ def run_checklist(
         success=result.success,
         checklist_path=result.checklist_path,
         item_count=result.item_count,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -395,12 +460,15 @@ def run_analyze(
         request.spec_path,
         plan_path=request.plan_path,
         tasks_path=request.tasks_path,
+        spec_run_id=request.spec_run_id,
         project_id=request.project_id,
     )
 
     return AnalyzeResponse(
         success=result.success,
         report_path=result.report_path,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -419,6 +487,7 @@ def run_implement(
     result = service.run_implement(
         project.local_path,
         request.spec_path,
+        spec_run_id=request.spec_run_id,
         project_id=request.project_id,
     )
 
@@ -426,6 +495,8 @@ def run_implement(
         success=result.success,
         run_path=result.run_path,
         metadata_path=result.metadata_path,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
         error=result.error,
     )
 
@@ -441,7 +512,7 @@ def list_specs(
     if not project or not project.local_path:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    specs = service.list_specs(project.local_path)
+    specs = service.list_specs(project.local_path, project_id=project_id)
     return [SpecListItem(**spec) for spec in specs]
 
 
@@ -468,7 +539,7 @@ def get_speckit_status(
     specify_path = Path(project.local_path) / ".specify"
     initialized = specify_path.exists()
 
-    specs = service.list_specs(project.local_path) if initialized else []
+    specs = service.list_specs(project.local_path, project_id=project_id) if initialized else []
 
     return {
         "initialized": initialized,
@@ -477,6 +548,32 @@ def get_speckit_status(
         "spec_count": len(specs),
         "specs": specs,
     }
+
+
+@router.post("/spec-runs/{spec_run_id}/cleanup", response_model=SpecRunCleanupResponse)
+def cleanup_spec_run(
+    spec_run_id: int,
+    request: SpecRunCleanupRequest = SpecRunCleanupRequest(),
+    db: Database = Depends(get_db),
+    service: SpecificationService = Depends(get_specification_service),
+):
+    """Cleanup a SpecRun worktree and artifacts."""
+    try:
+        db.get_spec_run(spec_run_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="SpecRun not found")
+
+    result = service.cleanup_spec_run(
+        spec_run_id=spec_run_id,
+        delete_remote_branch=bool(request.delete_remote_branch),
+    )
+    return SpecRunCleanupResponse(
+        success=result.success,
+        spec_run_id=result.spec_run_id,
+        worktree_path=result.worktree_path,
+        deleted_remote_branch=result.deleted_remote_branch,
+        error=result.error,
+    )
 
 
 # =============================================================================
@@ -488,6 +585,7 @@ class WorkflowRequest(BaseModel):
     project_id: int
     description: str = Field(..., min_length=10, description="Feature description")
     feature_name: Optional[str] = Field(None, description="Optional feature name")
+    base_branch: Optional[str] = Field(None, description="Optional base branch for the spec run")
     stop_after: Optional[str] = Field(
         None,
         description="Stop workflow after step: 'spec', 'plan', or run full pipeline (None)"
@@ -515,6 +613,8 @@ class WorkflowResponse(BaseModel):
     tasks_path: Optional[str] = None
     task_count: int = 0
     parallelizable_count: int = 0
+    spec_run_id: Optional[int] = None
+    worktree_path: Optional[str] = None
     steps: List[WorkflowStepResult] = Field(default_factory=list)
     stopped_after: Optional[str] = None
     error: Optional[str] = None
@@ -549,6 +649,8 @@ def run_workflow(
     tasks_path = None
     task_count = 0
     parallelizable_count = 0
+    spec_run_id = None
+    worktree_path = None
 
     # Step 1: Generate Specification
     try:
@@ -556,6 +658,7 @@ def run_workflow(
             project.local_path,
             request.description,
             feature_name=request.feature_name,
+            base_branch=request.base_branch,
             project_id=request.project_id,
         )
         
@@ -572,6 +675,8 @@ def run_workflow(
             )
         
         spec_path = spec_result.spec_path
+        spec_run_id = spec_result.spec_run_id
+        worktree_path = spec_result.worktree_path
         steps.append(WorkflowStepResult(
             step="spec",
             success=True,
@@ -582,6 +687,8 @@ def run_workflow(
             return WorkflowResponse(
                 success=True,
                 spec_path=spec_path,
+                spec_run_id=spec_run_id,
+                worktree_path=worktree_path,
                 steps=steps,
                 stopped_after="spec",
             )
@@ -602,6 +709,7 @@ def run_workflow(
         plan_result = service.run_plan(
             project.local_path,
             spec_path,
+            spec_run_id=spec_run_id,
             project_id=request.project_id,
         )
         
@@ -630,6 +738,8 @@ def run_workflow(
                 success=True,
                 spec_path=spec_path,
                 plan_path=plan_path,
+                spec_run_id=spec_run_id,
+                worktree_path=worktree_path,
                 steps=steps,
                 stopped_after="plan",
             )
@@ -651,6 +761,7 @@ def run_workflow(
         tasks_result = service.run_tasks(
             project.local_path,
             plan_path,
+            spec_run_id=spec_run_id,
             project_id=request.project_id,
         )
         
@@ -698,5 +809,7 @@ def run_workflow(
         tasks_path=tasks_path,
         task_count=task_count,
         parallelizable_count=parallelizable_count,
+        spec_run_id=spec_run_id,
+        worktree_path=worktree_path,
         steps=steps,
     )

@@ -17,6 +17,7 @@ from devgodzilla.qa.gates import (
     ChecklistGate,
     ConstitutionalGate,
     ConstitutionalSummaryGate,
+    PromptQAGate,
 )
 from devgodzilla.qa.feedback import (
     FeedbackRouter,
@@ -42,6 +43,7 @@ __all__ = [
     # Constitutional gates
     "ConstitutionalGate",
     "ConstitutionalSummaryGate",
+    "PromptQAGate",
     # Feedback routing
     "FeedbackRouter",
     "FeedbackAction",

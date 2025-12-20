@@ -44,18 +44,15 @@ This plan turns the P0 items from `docs/DevGodzilla/ARCHITECTURE_REVIEW.md` into
 
 Changes:
 - Update DevGodzilla flow generator defaults to use API-wrapper scripts:
-  - `u/devgodzilla/step_execute_api`
-  - `u/devgodzilla/step_run_qa_api`
+  - `u/devgodzilla/step_execute_api` (QA auto-run in the API)
 - Update `devgodzilla/services/orchestrator.py` Windmill dispatch to use API-wrapper scripts:
   - planning: `u/devgodzilla/protocol_plan_and_wait`
   - step exec: `u/devgodzilla/step_execute_api`
-  - QA: `u/devgodzilla/step_run_qa_api`
+  - QA re-run: `u/devgodzilla/step_run_qa_api` (manual only)
 - Fix or deprecate broken/demo exported flows:
   - Update `windmill/flows/devgodzilla/execute_protocol.flow.json` to use step-run IDs + API scripts.
   - Update `windmill/flows/devgodzilla/spec_to_tasks.flow.json` to use `speckit_*_api` scripts and `project_id` (not `project_path`).
-  - Move `windmill/flows/devgodzilla/full_protocol.flow.json` out of the default import set (it is currently inconsistent/dummy).
-    - Repo path after move: `windmill/flows/devgodzilla/_deprecated/full_protocol.flow.json`
-    - Note: `windmill/import_to_windmill.py` only imports `windmill/flows/devgodzilla/*.flow.json` (non-recursive), so `_deprecated/` is excluded.
+  - Remove deprecated `full_protocol` flow from the default import set (kept under `_deprecated/`).
 
 ### D) Tests / validation
 

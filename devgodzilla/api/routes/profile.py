@@ -41,7 +41,7 @@ def get_user_profile(
     Returns activity based on recent events.
     """
     # Get recent events for activity
-    events = db.list_events(limit=10)
+    events = db.list_recent_events(limit=10)
     
     activity = []
     for i, event in enumerate(events[:4]):
@@ -49,7 +49,7 @@ def get_user_profile(
             id=str(i + 1),
             action=event.event_type.replace("_", " ").title(),
             target=event.message[:50] if event.message else event.event_type,
-            time=event.created_at.strftime("%Y-%m-%d %H:%M") if event.created_at else "recently",
+            time=event.created_at or "recently",
             icon="activity",
         ))
     
