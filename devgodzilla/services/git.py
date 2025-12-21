@@ -401,7 +401,7 @@ class GitService(Service):
         default_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             run_process(
-                ["git", "clone", git_url, str(default_path)],
+                ["git", "clone", git_url, default_path.name],
                 cwd=default_path.parent,
             )
         except Exception as exc:
