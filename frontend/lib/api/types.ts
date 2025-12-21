@@ -74,6 +74,8 @@ export interface DiscoveryRetryResponse {
   discovery_log_path?: string | null
   discovery_missing_outputs: string[]
   discovery_error?: string | null
+  discovery_warning?: string | null
+  fallback_engine_id?: string | null
   engine_id?: string | null
   model?: string | null
   pipeline?: boolean | null

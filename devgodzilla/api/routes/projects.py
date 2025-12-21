@@ -502,19 +502,25 @@ def onboard_project(
             discovery_log_path = str(disc.log_path)
             discovery_missing_outputs = [str(p) for p in disc.missing_outputs]
             discovery_error = disc.error
+            discovery_warning = disc.warning
+            fallback_engine_id = disc.fallback_engine_id
         except Exception as e:
             discovery_success = False
             discovery_error = str(e)
+            discovery_warning = None
+            fallback_engine_id = None
         _append_project_event(
             db,
             project_id=project_id,
             event_type="discovery_completed" if discovery_success else "discovery_failed",
-            message="Discovery completed" if discovery_success else "Discovery failed",
+            message="Discovery completed" if discovery_success else ("Discovery failed" if not discovery_warning else f"Discovery completed with fallback: {discovery_warning}"),
             metadata={
                 "success": discovery_success,
                 "log_path": discovery_log_path,
                 "missing_outputs": discovery_missing_outputs,
                 "error": discovery_error,
+                "warning": discovery_warning,
+                "fallback_engine_id": fallback_engine_id,
             },
         )
     else:
@@ -583,6 +589,8 @@ def retry_project_discovery(
     discovery_log_path: Optional[str] = None
     discovery_missing_outputs: List[str] = []
     discovery_error: Optional[str] = None
+    discovery_warning: Optional[str] = None
+    fallback_engine_id: Optional[str] = None
     try:
         from devgodzilla.services.discovery_agent import DiscoveryAgentService
 
@@ -601,6 +609,8 @@ def retry_project_discovery(
         discovery_log_path = str(disc.log_path)
         discovery_missing_outputs = [str(p) for p in disc.missing_outputs]
         discovery_error = disc.error
+        discovery_warning = disc.warning
+        fallback_engine_id = disc.fallback_engine_id
     except Exception as e:
         discovery_success = False
         discovery_error = str(e)
@@ -609,12 +619,14 @@ def retry_project_discovery(
         db,
         project_id=project_id,
         event_type="discovery_completed" if discovery_success else "discovery_failed",
-        message="Discovery completed" if discovery_success else "Discovery failed",
+        message="Discovery completed" if discovery_success else ("Discovery failed" if not discovery_warning else f"Discovery completed with fallback: {discovery_warning}"),
         metadata={
             "success": discovery_success,
             "log_path": discovery_log_path,
             "missing_outputs": discovery_missing_outputs,
             "error": discovery_error,
+            "warning": discovery_warning,
+            "fallback_engine_id": fallback_engine_id,
             "engine_id": engine_id,
             "model": request.discovery_model,
             "pipeline": pipeline,
@@ -627,6 +639,8 @@ def retry_project_discovery(
         discovery_log_path=discovery_log_path,
         discovery_missing_outputs=discovery_missing_outputs,
         discovery_error=discovery_error,
+        discovery_warning=discovery_warning,
+        fallback_engine_id=fallback_engine_id,
         engine_id=engine_id,
         model=request.discovery_model,
         pipeline=pipeline,

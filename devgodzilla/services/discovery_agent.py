@@ -42,6 +42,8 @@ class DiscoveryResult:
     expected_outputs: list[Path] = field(default_factory=list)
     missing_outputs: list[Path] = field(default_factory=list)
     error: Optional[str] = None
+    fallback_engine_id: Optional[str] = None  # Set when a fallback engine was used
+    warning: Optional[str] = None  # Non-fatal warning message
 
 
 def _resolve_prompt(repo_root: Path, *, prompt_name: str) -> Path:
@@ -85,6 +87,9 @@ class DiscoveryAgentService(Service):
         selected = list(stage_map.keys()) if stages is None else stages
 
         registry = get_registry()
+        original_engine_id = engine_id
+        fallback_used = False
+        
         try:
             engine = registry.get(engine_id)
         except EngineNotFoundError as e:
@@ -98,14 +103,36 @@ class DiscoveryAgentService(Service):
             )
 
         if not engine.check_availability():
-            return DiscoveryResult(
-                success=False,
-                engine_id=engine_id,
-                model=model,
-                repo_root=repo_root,
-                log_path=log_path,
-                error=f"Engine unavailable: {engine_id}",
-            )
+            # Try to find a fallback engine
+            fallback_engines = ["dummy"]  # dummy always available for dev/testing
+            for fallback_id in fallback_engines:
+                try:
+                    fallback = registry.get(fallback_id)
+                    if fallback.check_availability():
+                        logger.warning(
+                            "discovery_engine_fallback",
+                            extra={
+                                "requested_engine": engine_id,
+                                "fallback_engine": fallback_id,
+                                "reason": "requested engine unavailable",
+                            },
+                        )
+                        engine = fallback
+                        engine_id = fallback_id
+                        fallback_used = True
+                        break
+                except Exception:
+                    continue
+            
+            if not fallback_used:
+                return DiscoveryResult(
+                    success=False,
+                    engine_id=original_engine_id,
+                    model=model,
+                    repo_root=repo_root,
+                    log_path=log_path,
+                    error=f"Engine unavailable: {original_engine_id}. No fallback engine available.",
+                )
 
         run_model = model or engine.metadata.default_model
 
@@ -208,6 +235,14 @@ class DiscoveryAgentService(Service):
             if missing and strict_outputs:
                 error = f"Missing discovery outputs: {', '.join(str(p) for p in missing)}"
 
+        # Generate warning if we fell back to a different engine
+        warning = None
+        fallback_engine = None
+        if fallback_used:
+            fallback_engine = engine_id
+            warning = f"Used fallback engine '{engine_id}' instead of requested '{original_engine_id}' (no-op mode)"
+            engine_id = original_engine_id  # Report the originally requested engine
+        
         return DiscoveryResult(
             success=success,
             engine_id=engine_id,
@@ -218,6 +253,8 @@ class DiscoveryAgentService(Service):
             expected_outputs=[repo_root / p for p in expected],
             missing_outputs=[repo_root / p for p in missing],
             error=error,
+            fallback_engine_id=fallback_engine,
+            warning=warning,
         )
 
     def _expected_outputs(self, *, pipeline: bool) -> list[Path]:

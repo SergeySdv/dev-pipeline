@@ -115,6 +115,8 @@ class DiscoveryRetryResponse(BaseModel):
     discovery_log_path: Optional[str] = None
     discovery_missing_outputs: List[str] = Field(default_factory=list)
     discovery_error: Optional[str] = None
+    discovery_warning: Optional[str] = None
+    fallback_engine_id: Optional[str] = None
     engine_id: Optional[str] = None
     model: Optional[str] = None
     pipeline: Optional[bool] = None
