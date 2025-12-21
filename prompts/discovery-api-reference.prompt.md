@@ -1,10 +1,10 @@
 You are a senior engineering agent. Produce a callable-surface reference for this repo.
 
 Inputs:
-- Read `tasksgodzilla/DISCOVERY.md` and `tasksgodzilla/DISCOVERY_SUMMARY.json` if present.
+- Read `specs/discovery/_runtime/DISCOVERY.md` and `specs/discovery/_runtime/DISCOVERY_SUMMARY.json` if present.
 
 Deliverable:
-- `tasksgodzilla/API_REFERENCE.md`: callable surfaces in this repo (HTTP endpoints, CLIs, scripts, functions); include paths/verbs/flags, sample requests/responses or usage examples, auth/permissions, expected inputs/outputs.
+- `specs/discovery/_runtime/API_REFERENCE.md`: callable surfaces in this repo (HTTP endpoints, CLIs, scripts, functions); include paths/verbs/flags, sample requests/responses or usage examples, auth/permissions, expected inputs/outputs.
 
 Rules:
 - Work from repo root.

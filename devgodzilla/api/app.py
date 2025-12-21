@@ -15,6 +15,7 @@ from devgodzilla.api.routes import metrics, webhooks, events, logs
 from devgodzilla.api.routes import windmill as windmill_routes
 from devgodzilla.api.routes import runs as runs_routes
 from devgodzilla.api.routes import project_speckit as project_speckit_routes
+from devgodzilla.api.routes import cli_executions
 from devgodzilla.api.routes import queues
 from devgodzilla.api.dependencies import get_db, get_service_context, require_api_token, require_webhook_token
 from devgodzilla.config import get_config
@@ -76,6 +77,7 @@ app.include_router(policy_packs.router, dependencies=auth_deps)  # /policy_packs
 app.include_router(specifications.router, dependencies=auth_deps)  # /specifications
 app.include_router(quality.router, dependencies=auth_deps)  # /quality
 app.include_router(profile.router, dependencies=auth_deps)  # /profile
+app.include_router(cli_executions.router, tags=["CLI Executions"], dependencies=auth_deps)  # /cli-executions
 
 
 @app.on_event("startup")

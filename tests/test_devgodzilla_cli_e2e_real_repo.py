@@ -81,12 +81,11 @@ prompt = sys.stdin.read()
 # Drop a marker file in the working directory for debugging.
 Path(".opencode_stub_ran").write_text("ok\\n", encoding="utf-8")
 
-# Simulate agent-written artifacts (legacy TasksGodzilla-style) so tests validate outputs
-# produced by the "agent", not by the test harness.
+# Simulate agent-written artifacts so tests validate outputs produced by the agent.
 repo_root = Path(os.getcwd())
 
-if "tasksgodzilla/DISCOVERY" in prompt or "DISCOVERY_SUMMARY.json" in prompt:
-    out_dir = repo_root / "tasksgodzilla"
+if "specs/discovery/_runtime/DISCOVERY" in prompt or "DISCOVERY_SUMMARY.json" in prompt:
+    out_dir = repo_root / "specs" / "discovery" / "_runtime"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "DISCOVERY.md").write_text("# Discovery\\n\\n- stub\\n", encoding="utf-8")
     (out_dir / "ARCHITECTURE.md").write_text("# Architecture\\n\\n- stub\\n", encoding="utf-8")
@@ -172,17 +171,17 @@ sys.exit(0)
     assert created["success"] is True
     project_id = int(created["project_id"])
 
-    # Discovery artifacts (agent-driven; produces tasksgodzilla/*).
+    # Discovery artifacts (agent-driven; produces specs/discovery/_runtime/*).
     discovery = json.loads(
         _run_cli("--json", "project", "discover", str(project_id), "--agent", "--pipeline", cwd=tmp_path, env=env)
     )
     assert discovery["success"] is True
     assert discovery["engine_id"] == "opencode"
 
-    tasksgodzilla_dir = cloned_repo / "tasksgodzilla"
-    assert (tasksgodzilla_dir / "DISCOVERY.md").exists()
-    assert (tasksgodzilla_dir / "DISCOVERY_SUMMARY.json").exists()
-    assert json.loads((tasksgodzilla_dir / "DISCOVERY_SUMMARY.json").read_text(encoding="utf-8"))["languages"]
+    discovery_dir = cloned_repo / "specs" / "discovery" / "_runtime"
+    assert (discovery_dir / "DISCOVERY.md").exists()
+    assert (discovery_dir / "DISCOVERY_SUMMARY.json").exists()
+    assert json.loads((discovery_dir / "DISCOVERY_SUMMARY.json").read_text(encoding="utf-8"))["languages"]
 
     # Protocol workflow (app-like): create -> ensure worktree -> plan (auto-generates protocol files) -> execute step via opencode.
     proto = json.loads(

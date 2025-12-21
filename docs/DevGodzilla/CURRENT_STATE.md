@@ -78,8 +78,8 @@ Implementation reference:
 DevGodzilla supports a TasksGodzilla-style “discovery” phase driven by a headless agent (default engine `opencode`, default model `zai-coding-plan/glm-4.6`).
 
 The discovery agent writes and validates these expected outputs under the repo root:
-- `tasksgodzilla/DISCOVERY.md`
-- `tasksgodzilla/DISCOVERY_SUMMARY.json`
+- `specs/discovery/_runtime/DISCOVERY.md`
+- `specs/discovery/_runtime/DISCOVERY_SUMMARY.json`
 - `tasksgodzilla/ARCHITECTURE.md`
 - `tasksgodzilla/API_REFERENCE.md`
 - `tasksgodzilla/CI_NOTES.md`

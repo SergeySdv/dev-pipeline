@@ -145,7 +145,12 @@ def create_project(ctx, name, git_url, base_branch, local_path, no_onboard, no_d
 @project.command("discover")
 @click.argument("project_id", type=int)
 @click.option("--output-dir", default=None, help="Write discovery artifacts here (default: <repo>/.devgodzilla)")
-@click.option("--agent", "use_agent", is_flag=True, help="Run discovery via AI agent prompt(s) (writes tasksgodzilla/*)")
+@click.option(
+    "--agent",
+    "use_agent",
+    is_flag=True,
+    help="Run discovery via AI agent prompt(s) (writes specs/discovery/_runtime/*)",
+)
 @click.option("--pipeline/--single", default=True, help="Use multi-stage discovery pipeline (default: pipeline)")
 @click.option("--engine", "engine_id", default="opencode", help="Engine ID for agent discovery (default: opencode)")
 @click.option("--model", default=None, help="Model for agent discovery (default: engine default)")

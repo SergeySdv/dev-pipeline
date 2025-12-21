@@ -197,8 +197,8 @@ python -m devgodzilla.cli.main project create "test" --repo https://github.com/u
 # Run discovery
 python -m devgodzilla.cli.main project discover 1 --agent --pipeline --engine opencode
 
-# Verify outputs in tasksgodzilla/
-ls /path/to/repo/tasksgodzilla/
+# Verify outputs in specs/discovery/_runtime/
+ls /path/to/repo/specs/discovery/_runtime/
 # Expected: DISCOVERY.md, DISCOVERY_SUMMARY.json, ARCHITECTURE.md, API_REFERENCE.md, CI_NOTES.md
 ```
 

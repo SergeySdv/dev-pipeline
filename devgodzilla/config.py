@@ -3,6 +3,7 @@ DevGodzilla Configuration
 
 Pydantic-backed configuration loaded from environment variables.
 Uses DEVGODZILLA_ prefix for all environment variables.
+Supports .env file loading via python-dotenv.
 """
 
 import os
@@ -11,6 +12,14 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+try:
+    from dotenv import load_dotenv
+    _HAS_DOTENV = True
+except ImportError:
+    _HAS_DOTENV = False
+
+_DOTENV_LOADED = False
 
 
 class Config(BaseModel):
@@ -30,7 +39,7 @@ class Config(BaseModel):
     # Database
     db_url: Optional[str] = Field(default=None)
     db_path: Path = Field(default=Path(".devgodzilla.sqlite"))
-    db_pool_size: int = Field(default=5)
+    db_pool_size: int = Field(default=20)
     
     # Environment
     environment: str = Field(default="local")
@@ -241,13 +250,26 @@ def _maybe_load_windmill_env_defaults() -> None:
             os.environ["DEVGODZILLA_WINDMILL_URL"] = normalized
 
 
+def _maybe_load_dotenv() -> None:
+    """Load .env file if python-dotenv is available and file exists."""
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED or not _HAS_DOTENV:
+        return
+    _DOTENV_LOADED = True
+    for env_path in [Path(".env"), Path(".env.local")]:
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
+
+
 def load_config() -> Config:
     """
     Load DevGodzilla configuration from environment.
-    
+
     Environment variables use the DEVGODZILLA_ prefix.
-    Also supports DEVGODZILLA_CONFIG env var pointing to a config file (future).
+    Loads .env or .env.local file if present (requires python-dotenv).
     """
+    _maybe_load_dotenv()
     _maybe_load_windmill_env_defaults()
     env = os.environ.get("DEVGODZILLA_ENV", "local")
     cors = _parse_csv(os.environ.get("DEVGODZILLA_CORS_ORIGINS"))
@@ -257,7 +279,7 @@ def load_config() -> Config:
         # Database
         db_url=os.environ.get("DEVGODZILLA_DB_URL"),
         db_path=Path(os.environ.get("DEVGODZILLA_DB_PATH", ".devgodzilla.sqlite")).expanduser(),
-        db_pool_size=int(os.environ.get("DEVGODZILLA_DB_POOL_SIZE", "5")),
+        db_pool_size=int(os.environ.get("DEVGODZILLA_DB_POOL_SIZE", "20")),
         
         # Environment
         environment=env,

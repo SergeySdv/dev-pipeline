@@ -81,7 +81,7 @@ Onboard a project repo for DevGodzilla workflows:
 - ensure repo exists locally (clone if missing)
 - checkout branch
 - initialize `.specify/`
-- (optional) run headless agent discovery (writes `tasksgodzilla/*`)
+- (optional) run headless agent discovery (writes `specs/discovery/_runtime/*`)
 
 **Request Body:**
 ```json
@@ -107,7 +107,7 @@ Onboard a project repo for DevGodzilla workflows:
   "constitution_hash": "abc123",
   "warnings": [],
   "discovery_success": true,
-  "discovery_log_path": "/abs/path/to/repo/opencode-discovery.log",
+  "discovery_log_path": "/abs/path/to/repo/specs/discovery/_runtime/opencode-discovery.log",
   "discovery_missing_outputs": [],
   "discovery_error": null,
   "error": null

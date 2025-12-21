@@ -7,9 +7,10 @@ Handles process spawning, output capture, and timeout management.
 
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from devgodzilla.engines.interface import (
     Engine,
@@ -32,6 +33,7 @@ def run_cli_command(
     timeout: Optional[int] = None,
     env: Optional[Dict[str, str]] = None,
     capture_output: bool = True,
+    on_output: Optional[Callable[[str, str], None]] = None,
 ) -> EngineResult:
     """
     Run a CLI command and capture output.
@@ -53,13 +55,89 @@ def run_cli_command(
     proc_env = os.environ.copy()
     if env:
         proc_env.update(env)
-    
+
     logger.debug(
         "cli_command_start",
         extra={"cmd": cmd[:3], "cwd": str(cwd) if cwd else None},
     )
-    
+
     try:
+        if on_output:
+            capture = True
+            proc = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdin=subprocess.PIPE if input_text is not None else None,
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.PIPE if capture else None,
+                text=True,
+                env=proc_env,
+                bufsize=1,
+            )
+
+            if input_text is not None and proc.stdin:
+                try:
+                    proc.stdin.write(input_text)
+                except BrokenPipeError:
+                    pass
+                finally:
+                    proc.stdin.close()
+
+            stdout_chunks: List[str] = []
+            stderr_chunks: List[str] = []
+
+            def _read_stream(stream, sink: List[str], source: str) -> None:
+                for line in iter(stream.readline, ""):
+                    sink.append(line)
+                    try:
+                        on_output(source, line)
+                    except Exception as e:
+                        logger.warning(
+                            "cli_command_output_callback_failed",
+                            extra={"source": source, "error": str(e)},
+                        )
+                stream.close()
+
+            threads: List[threading.Thread] = []
+            if proc.stdout:
+                t = threading.Thread(target=_read_stream, args=(proc.stdout, stdout_chunks, "stdout"), daemon=True)
+                t.start()
+                threads.append(t)
+            if proc.stderr:
+                t = threading.Thread(target=_read_stream, args=(proc.stderr, stderr_chunks, "stderr"), daemon=True)
+                t.start()
+                threads.append(t)
+
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                duration = time.time() - start_time
+                for t in threads:
+                    t.join(timeout=0.2)
+                return EngineResult(
+                    success=False,
+                    stdout="".join(stdout_chunks),
+                    stderr="".join(stderr_chunks),
+                    duration_seconds=duration,
+                    error=f"Command timed out after {timeout}s",
+                    metadata={"cmd": cmd[0], "timeout": True},
+                )
+
+            duration = time.time() - start_time
+            for t in threads:
+                t.join(timeout=0.2)
+
+            return EngineResult(
+                success=proc.returncode == 0,
+                stdout="".join(stdout_chunks),
+                stderr="".join(stderr_chunks),
+                exit_code=proc.returncode,
+                duration_seconds=duration,
+                metadata={"cmd": cmd[0]},
+            )
+
         proc = subprocess.run(
             cmd,
             cwd=cwd,
@@ -69,9 +147,9 @@ def run_cli_command(
             text=True,
             env=proc_env,
         )
-        
+
         duration = time.time() - start_time
-        
+
         return EngineResult(
             success=proc.returncode == 0,
             stdout=proc.stdout or "",
@@ -182,12 +260,19 @@ class CLIEngine(Engine):
             },
         )
         
+        log_callback = None
+        if req.extra:
+            candidate = req.extra.get("log_callback")
+            if callable(candidate):
+                log_callback = candidate
+
         result = run_cli_command(
             cmd,
             cwd=cwd,
             input_text=prompt_text,
             timeout=timeout,
             env=req.extra.get("env"),
+            on_output=log_callback,
         )
         
         # Add engine info to metadata

@@ -126,12 +126,16 @@ class OpenCodeEngine(CLIEngine):
 
             req.extra = extra
             cmd = self._build_command(req, sandbox)
+            log_callback = req.extra.get("log_callback")
+            if not callable(log_callback):
+                log_callback = None
             result = run_cli_command(
                 cmd,
                 cwd=cwd,
                 input_text=None,
                 timeout=timeout,
                 env=req.extra.get("env"),
+                on_output=log_callback,
             )
             result.metadata["engine_id"] = self.metadata.id
             result.metadata["sandbox"] = sandbox.value

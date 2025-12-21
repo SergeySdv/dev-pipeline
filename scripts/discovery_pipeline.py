@@ -86,7 +86,9 @@ def main() -> int:
             }
             selected = list(stage_map.keys()) if artifacts is None else artifacts
             engine = registry.get("opencode")
-            log_path = repo_root / "opencode-discovery.log"
+            runtime_dir = repo_root / "specs" / "discovery" / "_runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            log_path = runtime_dir / "opencode-discovery.log"
             for stage in selected:
                 prompt_name = stage_map.get(stage)
                 if not prompt_name:

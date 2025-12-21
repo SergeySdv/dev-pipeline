@@ -1,8 +1,8 @@
 You are a senior engineering agent. Perform a *repository inventory* and produce durable discovery artifacts.
 
-Deliverables (write files under `tasksgodzilla/`; do not rely on terminal output):
-- `tasksgodzilla/DISCOVERY.md`: languages/frameworks, build/test tools, entrypoints/CLI targets, dependencies, data/config requirements, env vars/secrets, test fixtures, third-party services.
-- `tasksgodzilla/DISCOVERY_SUMMARY.json`: a machine-readable summary used by follow-up prompts.
+Deliverables (write files under `specs/discovery/_runtime/`; do not rely on terminal output):
+- `specs/discovery/_runtime/DISCOVERY.md`: languages/frameworks, build/test tools, entrypoints/CLI targets, dependencies, data/config requirements, env vars/secrets, test fixtures, third-party services.
+- `specs/discovery/_runtime/DISCOVERY_SUMMARY.json`: a machine-readable summary used by follow-up prompts.
 
 Rules:
 - Work from repo root (CWD is the repo root).

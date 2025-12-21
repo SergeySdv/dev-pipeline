@@ -22,6 +22,7 @@ export function useCreatePolicyPack() {
       version: string
       name: string
       description?: string
+      status?: PolicyPack["status"]
       pack: PolicyPackContent
     }) => apiClient.post<PolicyPack>("/policy_packs", data),
     onSuccess: () => {

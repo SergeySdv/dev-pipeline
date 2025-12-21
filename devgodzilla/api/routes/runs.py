@@ -10,9 +10,83 @@ from fastapi.responses import StreamingResponse
 
 from devgodzilla.api import schemas
 from devgodzilla.api.dependencies import get_db
+from devgodzilla.config import load_config
 from devgodzilla.db.database import Database
+from devgodzilla.logging import get_logger
+from devgodzilla.windmill.client import JobStatus, WindmillClient, WindmillConfig
 
 router = APIRouter(tags=["Runs"])
+logger = get_logger(__name__)
+
+
+def _build_windmill_client() -> WindmillClient | None:
+    config = load_config()
+    if not getattr(config, "windmill_enabled", False):
+        return None
+    try:
+        wm_config = WindmillConfig(
+            base_url=config.windmill_url or "http://localhost:8000",
+            token=config.windmill_token or "",
+            workspace=getattr(config, "windmill_workspace", "devgodzilla"),
+        )
+        return WindmillClient(wm_config)
+    except Exception as exc:
+        logger.warning("windmill_client_unavailable", extra={"error": str(exc)})
+        return None
+
+
+def _map_windmill_status(status: JobStatus) -> str:
+    mapping = {
+        JobStatus.QUEUED: "queued",
+        JobStatus.RUNNING: "running",
+        JobStatus.COMPLETED: "succeeded",
+        JobStatus.FAILED: "failed",
+        JobStatus.CANCELED: "cancelled",
+    }
+    return mapping.get(status, status.value)
+
+
+def _sync_run_from_windmill(
+    db: Database,
+    run,
+    windmill: WindmillClient | None,
+):
+    if not windmill or not run.windmill_job_id:
+        return run
+    if run.status not in ("queued", "running"):
+        return run
+
+    try:
+        job = windmill.get_job(run.windmill_job_id)
+    except Exception as exc:
+        logger.warning(
+            "windmill_job_sync_failed",
+            extra={"windmill_job_id": run.windmill_job_id, "error": str(exc)},
+        )
+        return run
+
+    updates: dict[str, object] = {}
+    mapped_status = _map_windmill_status(job.status)
+    if mapped_status != run.status:
+        updates["status"] = mapped_status
+    if job.started_at:
+        updates["started_at"] = job.started_at
+    if job.completed_at:
+        updates["finished_at"] = job.completed_at
+    if job.result is not None:
+        updates["result"] = job.result
+    if job.error:
+        updates["error"] = job.error
+
+    if updates:
+        try:
+            return db.update_job_run(run.run_id, **updates)
+        except Exception as exc:
+            logger.warning(
+                "windmill_job_sync_update_failed",
+                extra={"run_id": run.run_id, "error": str(exc)},
+            )
+    return run
 
 
 def _artifact_type_from_name(name: str) -> str:
@@ -94,6 +168,16 @@ def list_runs(
         status=status,
         job_type=job_type,
     )
+    windmill = _build_windmill_client()
+    if windmill:
+        try:
+            synced = [_sync_run_from_windmill(db, run, windmill) for run in runs]
+            if status:
+                runs = [run for run in synced if run.status == status]
+            else:
+                runs = synced
+        finally:
+            windmill.close()
     return [schemas.JobRunOut.model_validate(r) for r in runs]
 
 
@@ -106,6 +190,12 @@ def get_run(
         run = db.get_job_run(run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Run not found")
+    windmill = _build_windmill_client()
+    if windmill:
+        try:
+            run = _sync_run_from_windmill(db, run, windmill)
+        finally:
+            windmill.close()
     return schemas.JobRunOut.model_validate(run)
 
 

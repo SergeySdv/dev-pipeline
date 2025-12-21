@@ -1,7 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { apiClient } from "../client"
+import { apiClient, ApiError } from "../client"
 import { queryKeys } from "../query-keys"
 import type { ArtifactContent, CodexRun, RunArtifact, RunFilters } from "../types"
 
@@ -38,7 +38,11 @@ export function useRun(runId: string | undefined) {
     queryKey: queryKeys.runs.detail(runId!),
     queryFn: () => apiClient.get<CodexRun>(`/runs/${runId}`),
     enabled: !!runId,
-    refetchInterval,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status === 404) return false
+      return failureCount < 3
+    },
+    refetchInterval: (query) => (query.state.error ? false : refetchInterval),
   })
 }
 

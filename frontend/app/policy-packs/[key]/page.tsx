@@ -6,6 +6,7 @@ import { usePolicyPacks } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { LoadingState } from "@/components/ui/loading-state"
+import { EmptyState } from "@/components/ui/empty-state"
 import { CodeBlock } from "@/components/ui/code-block"
 import { StatusPill } from "@/components/ui/status-pill"
 import { ArrowLeft, Edit } from "lucide-react"
@@ -13,9 +14,17 @@ import { formatDateTime } from "@/lib/format"
 
 export default function PolicyPackDetailPage({ params }: { params: Promise<{ key: string }> }) {
   const { key } = use(params)
-  const { data: packs, isLoading } = usePolicyPacks()
+  const { data: packs, isLoading, error } = usePolicyPacks()
 
   if (isLoading) return <LoadingState message="Loading policy pack..." />
+  if (error) {
+    const message = error instanceof Error ? error.message : "Failed to load policy pack"
+    return (
+      <div className="container py-8">
+        <EmptyState title="Error loading policy pack" description={message} />
+      </div>
+    )
+  }
 
   const pack = packs?.find((p) => p.key === key)
 

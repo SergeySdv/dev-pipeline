@@ -24,7 +24,7 @@ DevGodzilla is an integrated AI development platform that combines:
 DevGodzilla’s main workflow is **agent-driven**: it runs a headless SWE-agent (default engine `opencode`, default model `zai-coding-plan/glm-4.6`) using prompts under `prompts/`, writes artifacts into the repo/worktree, and DevGodzilla only validates/records those outputs.
 
 **Key artifact locations:**
-- Repo discovery outputs (agent-written): `tasksgodzilla/DISCOVERY.md`, `tasksgodzilla/DISCOVERY_SUMMARY.json`, `tasksgodzilla/ARCHITECTURE.md`, `tasksgodzilla/API_REFERENCE.md`, `tasksgodzilla/CI_NOTES.md`
+- Repo discovery outputs (agent-written): `specs/discovery/_runtime/DISCOVERY.md`, `specs/discovery/_runtime/DISCOVERY_SUMMARY.json`, `specs/discovery/_runtime/ARCHITECTURE.md`, `specs/discovery/_runtime/API_REFERENCE.md`, `specs/discovery/_runtime/CI_NOTES.md`
 - Protocol definition (agent-written, per worktree): `.protocols/<protocol_name>/plan.md` + `.protocols/<protocol_name>/step-*.md`
 - Execution “git report” artifacts (DevGodzilla-written): `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`
 

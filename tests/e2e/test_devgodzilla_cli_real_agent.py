@@ -105,9 +105,9 @@ def test_cli_real_agent_discovery_and_protocol_generation(tmp_path: Path) -> Non
     assert discovery["engine_id"] == "opencode"
     assert discovery["model"] == "zai-coding-plan/glm-4.6"
 
-    tasksgodzilla_dir = cloned_repo / "tasksgodzilla"
-    assert (tasksgodzilla_dir / "DISCOVERY.md").exists()
-    summary_path = tasksgodzilla_dir / "DISCOVERY_SUMMARY.json"
+    discovery_dir = cloned_repo / "specs" / "discovery" / "_runtime"
+    assert (discovery_dir / "DISCOVERY.md").exists()
+    summary_path = discovery_dir / "DISCOVERY_SUMMARY.json"
     assert summary_path.exists()
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert isinstance(summary, dict)
@@ -152,4 +152,3 @@ def test_cli_real_agent_discovery_and_protocol_generation(tmp_path: Path) -> Non
     protocol_root = Path(generated["protocol_root"])
     assert (protocol_root / "plan.md").exists()
     assert len(list(protocol_root.glob("step-*.md"))) >= 2
-

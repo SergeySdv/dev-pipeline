@@ -1,10 +1,10 @@
 You are a senior engineering agent. Produce an architecture overview for this repo.
 
 Inputs:
-- Read `tasksgodzilla/DISCOVERY.md` and `tasksgodzilla/DISCOVERY_SUMMARY.json` if present.
+- Read `specs/discovery/_runtime/DISCOVERY.md` and `specs/discovery/_runtime/DISCOVERY_SUMMARY.json` if present.
 
 Deliverable:
-- `tasksgodzilla/ARCHITECTURE.md`: high-level system/flow overview (components, data/control flow, runtime/infrastructure, storage/messaging, auth/security, deployment notes).
+- `specs/discovery/_runtime/ARCHITECTURE.md`: high-level system/flow overview (components, data/control flow, runtime/infrastructure, storage/messaging, auth/security, deployment notes).
 
 Rules:
 - Work from repo root.

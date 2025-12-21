@@ -27,11 +27,15 @@ import { toast } from "sonner"
 import type { PolicyPack } from "@/lib/api/types"
 
 export default function PolicyPacksPage() {
-  const { data: packs, isLoading } = usePolicyPacks()
+  const { data: packs, isLoading, error } = usePolicyPacks()
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [selectedPack, setSelectedPack] = useState<PolicyPack | null>(null)
 
   if (isLoading) return <LoadingState message="Loading policy packs..." />
+  if (error) {
+    const message = error instanceof Error ? error.message : "Failed to load policy packs"
+    return <EmptyState title="Error loading policy packs" description={message} />
+  }
 
   return (
     <div className="container py-8">

@@ -43,7 +43,7 @@ from pathlib import Path
 
 _ = sys.stdin.read()
 repo_root = Path(os.getcwd())
-out_dir = repo_root / "tasksgodzilla"
+out_dir = repo_root / "specs" / "discovery" / "_runtime"
 out_dir.mkdir(parents=True, exist_ok=True)
 (out_dir / "DISCOVERY.md").write_text("# Discovery\\n", encoding="utf-8")
 (out_dir / "DISCOVERY_SUMMARY.json").write_text(json.dumps({"languages": ["python"]}), encoding="utf-8")
@@ -104,6 +104,5 @@ def test_api_onboard_can_run_discovery_agent(monkeypatch: pytest.MonkeyPatch) ->
             assert data["discovery_success"] is True
             assert data["discovery_missing_outputs"] == []
 
-        assert (repo / "tasksgodzilla" / "DISCOVERY.md").exists()
-        assert (repo / "tasksgodzilla" / "DISCOVERY_SUMMARY.json").exists()
-
+        assert (repo / "specs" / "discovery" / "_runtime" / "DISCOVERY.md").exists()
+        assert (repo / "specs" / "discovery" / "_runtime" / "DISCOVERY_SUMMARY.json").exists()

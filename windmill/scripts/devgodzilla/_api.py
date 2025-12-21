@@ -14,8 +14,17 @@ from typing import Any, Dict, Optional
 
 
 def get_devgodzilla_api_base_url() -> str:
-    # In docker-compose, Windmill workers can reach the API by service name.
-    return os.environ.get("DEVGODZILLA_API_URL", "http://devgodzilla-api:8000").rstrip("/")
+    url = os.environ.get("DEVGODZILLA_API_URL")
+    if url:
+        return url.rstrip("/")
+    try:
+        import wmill
+        url = wmill.get_variable("g/all/devgodzilla_api_url")
+        if url:
+            return url.rstrip("/")
+    except Exception:
+        pass
+    return "http://devgodzilla-api:8000"
 
 
 def api_json(

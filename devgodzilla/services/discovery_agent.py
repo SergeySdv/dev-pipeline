@@ -16,6 +16,7 @@ from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode,
 from devgodzilla.logging import get_logger
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.agent_config import AgentConfigService
+from devgodzilla.services.cli_execution_tracker import get_execution_tracker
 from devgodzilla.spec import resolve_spec_path
 
 logger = get_logger(__name__)
@@ -71,7 +72,8 @@ class DiscoveryAgentService(Service):
         project_id: Optional[int] = None,
     ) -> DiscoveryResult:
         repo_root = repo_root.expanduser().resolve()
-        log_path = repo_root / "opencode-discovery.log"
+        runtime_dir = self._ensure_discovery_runtime_dir(repo_root)
+        log_path = runtime_dir / "opencode-discovery.log"
 
         stage_map = (
             {
@@ -136,10 +138,37 @@ class DiscoveryAgentService(Service):
 
         run_model = model or engine.metadata.default_model
 
+        # Start CLI execution tracking
+        tracker = get_execution_tracker()
+        execution = tracker.start_execution(
+            execution_type="discovery",
+            engine_id=engine_id,
+            project_id=project_id,
+            command=f"discovery pipeline={pipeline} stages={selected}",
+            working_dir=str(repo_root),
+            metadata={
+                "pipeline": pipeline,
+                "stages": selected,
+                "model": run_model,
+                "original_engine_id": original_engine_id,
+                "fallback_used": fallback_used,
+            },
+        )
+
         self.logger.info(
             "discovery_agent_start",
-            extra=self.log_extra(repo_root=str(repo_root), engine_id=engine_id, model=run_model, pipeline=pipeline),
+            extra=self.log_extra(
+                repo_root=str(repo_root),
+                engine_id=engine_id,
+                model=run_model,
+                pipeline=pipeline,
+                execution_id=execution.execution_id,
+            ),
         )
+
+        tracker.log(execution.execution_id, "info", f"Starting discovery with engine {engine_id}, model {run_model}")
+        if fallback_used:
+            tracker.log(execution.execution_id, "warn", f"Using fallback engine {engine_id} (original {original_engine_id} unavailable)")
 
         results: list[DiscoveryStageResult] = []
         for stage in selected:
@@ -188,6 +217,26 @@ class DiscoveryAgentService(Service):
                 continue
 
             prompt_text = prompt_path.read_text(encoding="utf-8")
+            
+            # Log stage start
+            tracker.log(execution.execution_id, "info", f"Executing stage: {stage}", source=engine_id, metadata={"prompt": prompt_name})
+            
+            streamed_output = False
+            def _log_output(source: str, line: str, *, _stage: str = stage) -> None:
+                nonlocal streamed_output
+                message = line.rstrip("\n")
+                if not message:
+                    return
+                streamed_output = True
+                level = "info" if source == "stdout" else "warn"
+                tracker.log(
+                    execution.execution_id,
+                    level,
+                    message,
+                    source=f"{engine_id}:{source}",
+                    metadata={"stage": _stage},
+                )
+
             req = EngineRequest(
                 project_id=None,
                 protocol_run_id=None,
@@ -198,9 +247,23 @@ class DiscoveryAgentService(Service):
                 working_dir=str(repo_root),
                 sandbox=SandboxMode.WORKSPACE_WRITE,
                 timeout=timeout_seconds,
-                extra={"output_format": "text", "job_id": "discovery"},
+                extra={"output_format": "text", "job_id": "discovery", "log_callback": _log_output},
             )
             engine_result = engine.execute(req)
+
+            # Log stage result to tracker
+            if engine_result.success:
+                tracker.log(execution.execution_id, "info", f"Stage {stage} completed successfully", source=engine_id)
+            else:
+                tracker.log(execution.execution_id, "error", f"Stage {stage} failed: {engine_result.error or 'unknown error'}", source=engine_id)
+            
+            # Log stdout/stderr output (truncated for large outputs)
+            if engine_result.stdout and not streamed_output:
+                output_preview = engine_result.stdout[:1000] + ("..." if len(engine_result.stdout) > 1000 else "")
+                tracker.log(execution.execution_id, "debug", f"[{stage}] stdout: {output_preview}", source="stdout")
+            if engine_result.stderr and not streamed_output:
+                stderr_preview = engine_result.stderr[:500] + ("..." if len(engine_result.stderr) > 500 else "")
+                tracker.log(execution.execution_id, "warn", f"[{stage}] stderr: {stderr_preview}", source="stderr")
 
             # Best-effort aggregated log for debugging.
             try:
@@ -243,6 +306,19 @@ class DiscoveryAgentService(Service):
             warning = f"Used fallback engine '{engine_id}' instead of requested '{original_engine_id}' (no-op mode)"
             engine_id = original_engine_id  # Report the originally requested engine
         
+        # Complete CLI execution tracking
+        stages_succeeded = sum(1 for r in results if r.success)
+        stages_failed = sum(1 for r in results if not r.success)
+        
+        if success:
+            tracker.log(execution.execution_id, "info", f"Discovery completed successfully: {stages_succeeded}/{len(results)} stages passed")
+        else:
+            tracker.log(execution.execution_id, "error", f"Discovery failed: {stages_failed}/{len(results)} stages failed, error: {error}")
+            if missing:
+                tracker.log(execution.execution_id, "warn", f"Missing outputs: {', '.join(str(p) for p in missing)}")
+        
+        tracker.complete(execution.execution_id, success=success, error=error)
+        
         return DiscoveryResult(
             success=success,
             engine_id=engine_id,
@@ -258,7 +334,7 @@ class DiscoveryAgentService(Service):
         )
 
     def _expected_outputs(self, *, pipeline: bool) -> list[Path]:
-        base = Path("tasksgodzilla")
+        base = Path("specs") / "discovery" / "_runtime"
         if pipeline:
             return [
                 base / "DISCOVERY.md",
@@ -273,6 +349,12 @@ class DiscoveryAgentService(Service):
             base / "API_REFERENCE.md",
             base / "CI_NOTES.md",
         ]
+
+    @staticmethod
+    def _ensure_discovery_runtime_dir(repo_root: Path) -> Path:
+        runtime_dir = repo_root / "specs" / "discovery" / "_runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        return runtime_dir
 
 
 def parse_discovery_summary(path: Path) -> dict[str, Any]:

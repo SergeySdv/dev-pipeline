@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request, Query
 
 from devgodzilla.cli.main import get_db as cli_get_db, get_service_context as cli_get_service_context
 from devgodzilla.services.base import ServiceContext
@@ -21,13 +21,15 @@ def get_db():
 def require_api_token(
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_devgodzilla_token: Optional[str] = Header(None, alias="X-DevGodzilla-Token"),
+    token: Optional[str] = Query(None),
 ) -> None:
     """
     Require an API bearer token if `DEVGODZILLA_API_TOKEN` is set.
 
-    Accepted headers:
-    - `Authorization: Bearer <token>`
-    - `X-DevGodzilla-Token: <token>`
+    Accepted methods:
+    - Header `Authorization: Bearer <token>`
+    - Header `X-DevGodzilla-Token: <token>`
+    - Query parameter `token=<token>` (for SSE/WebSockets)
     """
     config = load_config()
     expected = config.api_token
@@ -35,6 +37,9 @@ def require_api_token(
         return
 
     if x_devgodzilla_token and x_devgodzilla_token == expected:
+        return
+        
+    if token and token == expected:
         return
 
     if authorization:

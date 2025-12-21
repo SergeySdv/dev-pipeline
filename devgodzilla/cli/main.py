@@ -56,14 +56,14 @@ def get_db():
     current_key = (
         config.db_url,
         str(config.db_path) if getattr(config, "db_path", None) else None,
-        getattr(config, "db_pool_size", 5),
+        getattr(config, "db_pool_size", 20),
     )
 
     if _DB is None or _DB_KEY != current_key:
         _DB = get_database(  # type: ignore[assignment]
             db_url=config.db_url,
             db_path=Path(config.db_path) if getattr(config, "db_path", None) else None,
-            pool_size=getattr(config, "db_pool_size", 5),
+            pool_size=getattr(config, "db_pool_size", 20),
         )
         _DB.init_schema()
         _DB_KEY = current_key  # type: ignore[assignment]

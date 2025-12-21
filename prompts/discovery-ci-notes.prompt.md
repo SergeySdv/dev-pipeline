@@ -1,11 +1,11 @@
 You are a senior engineering agent. Produce CI notes and minimally align CI scripts with this repo.
 
 Inputs:
-- Read `tasksgodzilla/DISCOVERY.md` and `tasksgodzilla/DISCOVERY_SUMMARY.json` if present.
+- Read `specs/discovery/_runtime/DISCOVERY.md` and `specs/discovery/_runtime/DISCOVERY_SUMMARY.json` if present.
 - Read existing CI config (`.github/workflows/*`, `.gitlab-ci.yml`, etc.) and `scripts/ci/*.sh` if they exist.
 
 Deliverables:
-- `tasksgodzilla/CI_NOTES.md`: how CI is wired here (workflows/pipelines), the concrete commands to run (lint/typecheck/test/build), required tools, caches/artifacts, and TODOs/gaps.
+- `specs/discovery/_runtime/CI_NOTES.md`: how CI is wired here (workflows/pipelines), the concrete commands to run (lint/typecheck/test/build), required tools, caches/artifacts, and TODOs/gaps.
 - Update `scripts/ci/*.sh` minimally to fit the detected stack; add TODO comments if unsure.
 
 Rules:

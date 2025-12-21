@@ -293,7 +293,7 @@ If you want consistent behavior across “beginner” through “enterprise” p
   - Ensures a repo exists (optionally `git init -b <base>`), warns if `origin` or base branch is missing, and materializes starter assets from `BASE_FILES`. Copies from this starter repo when available; otherwise writes placeholders.  
   - Marks CI scripts executable and can optionally run Codex discovery via `--run-discovery`/`PROTOCOL_DISCOVERY_MODEL`.
 - **Codex CI bootstrap (`scripts/codex_ci_bootstrap.py`)**  
-  - Multi-pass Codex discovery pipeline (inventory → architecture → API reference → CI notes) using `prompts/discovery-*.prompt.md`. Writes `tasksgodzilla/DISCOVERY.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `CI_NOTES.md`, and `DISCOVERY_SUMMARY.json`, and may update `scripts/ci/*`.
+  - Multi-pass Codex discovery pipeline (inventory → architecture → API reference → CI notes) using `prompts/discovery-*.prompt.md`. Writes `specs/discovery/_runtime/DISCOVERY.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `CI_NOTES.md`, and `DISCOVERY_SUMMARY.json`, and may update `scripts/ci/*`.
 - **CI surfaces**  
   - GitHub Actions job `checks` and GitLab stages `bootstrap → lint → typecheck → test → build` each call the matching `scripts/ci/*.sh` if executable; otherwise emit “skip” messages. The scripts are placeholders today and must be filled per stack.
 - **Prompts library**  

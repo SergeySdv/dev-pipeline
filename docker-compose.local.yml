@@ -112,6 +112,7 @@ services:
       - MODE=worker
       - WORKER_GROUP=default
       - DEVGODZILLA_API_URL=http://host.docker.internal:8000  # Points to local API
+      - WHITELIST_ENVS=DEVGODZILLA_API_URL  # Pass through to scripts
     depends_on:
       db:
         condition: service_healthy

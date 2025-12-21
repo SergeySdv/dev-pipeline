@@ -662,7 +662,7 @@ def get_project_discovery_logs(
         raise HTTPException(status_code=400, detail="Project has no local repository path")
 
     repo_root = Path(project.local_path).expanduser().resolve()
-    log_path = repo_root / "opencode-discovery.log"
+    log_path = repo_root / "specs" / "discovery" / "_runtime" / "opencode-discovery.log"
     if not log_path.exists() or not log_path.is_file():
         return schemas.ArtifactContentOut(
             id="discovery-log",

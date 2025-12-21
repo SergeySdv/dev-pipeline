@@ -39,7 +39,7 @@ def run_codex_discovery(
 
     Streams Codex output to stdout while also teeing it into:
     - the run registry log (when available)
-    - `codex-discovery.log` inside the target repo for easy inspection.
+    - `specs/discovery/_runtime/codex-discovery.log` inside the target repo for easy inspection.
 
     Returns the process return code.
     """
@@ -59,8 +59,9 @@ def run_codex_discovery(
 
     prompt_text = prompt_file.read_text(encoding="utf-8")
 
-    repo_log_path = repo_root / "codex-discovery.log"
-    repo_log_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_dir = repo_root / "specs" / "discovery" / "_runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    repo_log_path = runtime_dir / "codex-discovery.log"
     run_log_file = None
     if RUN_LOG_PATH:
         RUN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +106,7 @@ def run_opencode_discovery(
 ) -> int:
     """
     Invoke the OpenCode engine via the TasksGodzilla engine registry.
-    Writes output to stdout and to opencode-discovery.log in the repo.
+    Writes output to stdout and to specs/discovery/_runtime/opencode-discovery.log in the repo.
     """
     from tasksgodzilla.engines import EngineRequest, registry
     import tasksgodzilla.engines_opencode  # noqa: F401
@@ -124,8 +125,9 @@ def run_opencode_discovery(
     result = engine.execute(req)
     out = (result.stdout or "")
 
-    repo_log_path = repo_root / "opencode-discovery.log"
-    repo_log_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_dir = repo_root / "specs" / "discovery" / "_runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    repo_log_path = runtime_dir / "opencode-discovery.log"
     repo_log_path.write_text(out, encoding="utf-8")
     sys.stdout.write(out)
     sys.stdout.flush()

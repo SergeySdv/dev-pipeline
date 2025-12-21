@@ -35,8 +35,8 @@ if log_path:
 prompt = sys.stdin.read()
 root = Path(os.getcwd())
 
-if "DISCOVERY_SUMMARY.json" in prompt or "tasksgodzilla/DISCOVERY" in prompt:
-    out = root / "tasksgodzilla"
+if "DISCOVERY_SUMMARY.json" in prompt or "specs/discovery/_runtime/DISCOVERY" in prompt:
+    out = root / "specs" / "discovery" / "_runtime"
     out.mkdir(parents=True, exist_ok=True)
     (out / "DISCOVERY.md").write_text("# Discovery\\n", encoding="utf-8")
     (out / "DISCOVERY_SUMMARY.json").write_text(json.dumps({"languages": ["python"]}), encoding="utf-8")
@@ -179,6 +179,6 @@ def test_api_e2e_headless_workflow_real_repo(tmp_path: Path, monkeypatch: pytest
         assert final.json()["status"] == "completed"
 
     # Validate discovery outputs exist on disk (written by agent).
-    tasksgodzilla_dir = cloned_repo / "tasksgodzilla"
-    assert (tasksgodzilla_dir / "DISCOVERY.md").exists()
-    assert (tasksgodzilla_dir / "DISCOVERY_SUMMARY.json").exists()
+    discovery_dir = cloned_repo / "specs" / "discovery" / "_runtime"
+    assert (discovery_dir / "DISCOVERY.md").exists()
+    assert (discovery_dir / "DISCOVERY_SUMMARY.json").exists()

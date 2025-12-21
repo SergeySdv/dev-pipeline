@@ -13,6 +13,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    profiles: ["full-docker"]
     environment:
       - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
@@ -34,11 +35,12 @@ services:
     ports:
       - "${DEVGODZILLA_NGINX_PORT:-8080}:80"
     volumes:
-      - ./nginx.devgodzilla.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx.local.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - devgodzilla-api
-      - windmill
-      - frontend
+      windmill:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
       interval: 10s
@@ -50,6 +52,7 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    profiles: ["full-docker"]
     environment:
       # DevGodzilla config
       DEVGODZILLA_DB_URL: postgresql://devgodzilla:changeme@db:5432/devgodzilla_db
@@ -224,8 +227,8 @@ services:
     image: postgres:16-alpine
     shm_size: 1g
     restart: unless-stopped
-    expose:
-      - "5432"
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password

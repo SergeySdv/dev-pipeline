@@ -816,6 +816,9 @@ class SQLiteDatabase:
                 (project_id, project_id),
             )
             conn.execute("DELETE FROM qa_results WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM agent_overrides WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM agent_assignments WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM agent_assignment_settings WHERE project_id = ?", (project_id,))
             # Delete in order respecting foreign keys
             conn.execute(
                 "DELETE FROM feedback_events WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = ?)",
@@ -2693,7 +2696,7 @@ class PostgresDatabase:
     Requires psycopg>=3. Follows the same contract as the SQLite Database class.
     """
 
-    def __init__(self, db_url: str, pool_size: int = 5) -> None:
+    def __init__(self, db_url: str, pool_size: int = 20) -> None:
         if psycopg is None:
             raise ImportError("psycopg is required for Postgres support. Install psycopg[binary].")
         
@@ -2711,11 +2714,8 @@ class PostgresDatabase:
 
     def _connect(self):
         if self.pool:
-            conn = self.pool.connection()
-        else:
-            conn = psycopg.connect(self.db_url, row_factory=self.row_factory)
-        if self.row_factory is not None:
-            conn.row_factory = self.row_factory
+            return self.pool.connection()
+        conn = psycopg.connect(self.db_url, row_factory=self.row_factory)
         return conn
 
     @contextmanager
@@ -3610,6 +3610,9 @@ class PostgresDatabase:
                     (project_id, project_id),
                 )
                 cur.execute("DELETE FROM qa_results WHERE project_id = %s", (project_id,))
+                cur.execute("DELETE FROM agent_overrides WHERE project_id = %s", (project_id,))
+                cur.execute("DELETE FROM agent_assignments WHERE project_id = %s", (project_id,))
+                cur.execute("DELETE FROM agent_assignment_settings WHERE project_id = %s", (project_id,))
                 cur.execute(
                     "DELETE FROM feedback_events WHERE protocol_run_id IN (SELECT id FROM protocol_runs WHERE project_id = %s)",
                     (project_id,),
@@ -4430,6 +4433,99 @@ class PostgresDatabase:
                 events = [event for event in events if (event.event_category or "other") in category_set]
         return events
 
+    # QA results
+    def create_qa_result(
+        self,
+        *,
+        project_id: int,
+        protocol_run_id: int,
+        step_run_id: int,
+        verdict: str,
+        summary: Optional[str] = None,
+        gate_results: Optional[List[Dict[str, Any]]] = None,
+        findings: Optional[List[Dict[str, Any]]] = None,
+        prompt_path: Optional[str] = None,
+        prompt_hash: Optional[str] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+        report_path: Optional[str] = None,
+        report_text: Optional[str] = None,
+        duration_seconds: Optional[float] = None,
+    ) -> QAResultRecord:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO qa_results (
+                        project_id, protocol_run_id, step_run_id,
+                        verdict, summary, gate_results, findings,
+                        prompt_path, prompt_hash, engine_id, model,
+                        report_path, report_text, duration_seconds
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        project_id,
+                        protocol_run_id,
+                        step_run_id,
+                        verdict,
+                        summary,
+                        json.dumps(gate_results) if gate_results is not None else None,
+                        json.dumps(findings) if findings is not None else None,
+                        prompt_path,
+                        prompt_hash,
+                        engine_id,
+                        model,
+                        report_path,
+                        report_text,
+                        duration_seconds,
+                    ),
+                )
+                result_id = cur.fetchone()["id"]
+        row = self._fetchone("SELECT * FROM qa_results WHERE id = %s", (result_id,))
+        return self._row_to_qa_result(row)
+
+    def list_qa_results(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+        limit: int = 200,
+    ) -> List[QAResultRecord]:
+        limit = max(1, min(int(limit), 500))
+        where = []
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("project_id = %s")
+            params.append(project_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            params.append(step_run_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = self._fetchall(
+            f"SELECT * FROM qa_results {clause} ORDER BY id DESC LIMIT %s",
+            (*params, limit),
+        )
+        return [self._row_to_qa_result(row) for row in rows]
+
+    def get_latest_qa_result(
+        self,
+        *,
+        step_run_id: int,
+    ) -> Optional[QAResultRecord]:
+        row = self._fetchone(
+            "SELECT * FROM qa_results WHERE step_run_id = %s ORDER BY id DESC LIMIT 1",
+            (step_run_id,),
+        )
+        if row is None:
+            return None
+        return self._row_to_qa_result(row)
+
     # Job runs + artifacts
     def create_job_run(
         self,
@@ -4700,7 +4796,7 @@ class PostgresDatabase:
 Database = Union[SQLiteDatabase, PostgresDatabase]
 
 
-def get_database(db_url: Optional[str] = None, db_path: Optional[Path] = None, pool_size: int = 5) -> Database:
+def get_database(db_url: Optional[str] = None, db_path: Optional[Path] = None, pool_size: int = 20) -> Database:
     """
     Factory function to create the appropriate database instance.
     

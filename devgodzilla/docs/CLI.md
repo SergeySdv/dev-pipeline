@@ -288,7 +288,7 @@ devgodzilla project discover PROJECT_ID [OPTIONS]
 
 Options:
   --output-dir PATH          Write non-agent discovery artifacts here (default: <repo>/.devgodzilla)
-  --agent                    Run discovery via headless agent prompt(s) (writes tasksgodzilla/*)
+  --agent                    Run discovery via headless agent prompt(s) (writes specs/discovery/_runtime/*)
   --pipeline / --single      Use multi-stage pipeline (default: --pipeline)
   --engine TEXT              Engine ID for agent discovery (default: opencode)
   --model TEXT               Model for agent discovery (default: engine default)
@@ -296,7 +296,7 @@ Options:
   --stage TEXT               Discovery stage(s): inventory, architecture, api_reference, ci_notes (repeatable)
 ```
 
-Agent discovery writes (and validates) the expected outputs under `tasksgodzilla/` in the repo:
+Agent discovery writes (and validates) the expected outputs under `specs/discovery/_runtime/` in the repo:
 - `DISCOVERY.md`, `DISCOVERY_SUMMARY.json`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `CI_NOTES.md`
 
 ---
