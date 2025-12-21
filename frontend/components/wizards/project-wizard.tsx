@@ -134,7 +134,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
       <DialogContent size="3xl" className="max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
-          <DialogDescription>Follow the steps to set up your project with TasksGodzilla.</DialogDescription>
+          <DialogDescription>Follow the steps to set up your project with DevGodzilla.</DialogDescription>
         </DialogHeader>
 
         {/* Step Indicator */}
@@ -283,7 +283,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
               <div className="rounded-lg border bg-blue-500/10 p-4">
                 <p className="text-sm text-blue-600 dark:text-blue-400">
                   After creating the project, onboarding is queued in Windmill. You may need to answer clarification
-                  questions to help TasksGodzilla understand your codebase.
+                  questions to help DevGodzilla understand your codebase.
                 </p>
               </div>
             </div>

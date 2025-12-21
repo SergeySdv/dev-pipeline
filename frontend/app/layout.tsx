@@ -7,7 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "TasksGodzilla Console",
+  title: "DevGodzilla Console",
   description: "AI-powered protocol-driven development control plane",
   generator: "v0.app",
 }

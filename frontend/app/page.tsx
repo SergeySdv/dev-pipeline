@@ -52,7 +52,7 @@ export default function DashboardPage() {
     <div className="container py-8 space-y-8">
       <div>
         <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of your TasksGodzilla workspace</p>
+        <p className="text-muted-foreground">Overview of your DevGodzilla workspace</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

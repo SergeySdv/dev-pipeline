@@ -53,7 +53,7 @@ export default function LoginPage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-primary">
             <Layers className="h-7 w-7 text-primary-foreground" />
           </div>
-          <CardTitle className="text-2xl">Welcome to TasksGodzilla</CardTitle>
+          <CardTitle className="text-2xl">Welcome to DevGodzilla</CardTitle>
           <CardDescription>Sign in to access the control console</CardDescription>
         </CardHeader>
         <CardContent>

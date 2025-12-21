@@ -48,7 +48,7 @@ export function KeyboardShortcuts({ open, onOpenChange }: KeyboardShortcutsProps
             <Command className="h-5 w-5" />
             Keyboard Shortcuts
           </DialogTitle>
-          <DialogDescription>Quick reference for navigating TasksGodzilla Console</DialogDescription>
+          <DialogDescription>Quick reference for navigating DevGodzilla Console</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">

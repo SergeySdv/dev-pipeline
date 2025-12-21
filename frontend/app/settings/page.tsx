@@ -57,7 +57,7 @@ export default function SettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>API Configuration</CardTitle>
-              <CardDescription>Configure the connection to your TasksGodzilla API server.</CardDescription>
+              <CardDescription>Configure the connection to your DevGodzilla API server.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -68,7 +68,7 @@ export default function SettingsPage() {
                   value={apiBase}
                   onChange={(e) => setApiBase(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">The base URL of your TasksGodzilla API server</p>
+                <p className="text-xs text-muted-foreground">The base URL of your DevGodzilla API server</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="token">API Token (optional)</Label>
