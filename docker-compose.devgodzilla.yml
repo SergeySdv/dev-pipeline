@@ -47,7 +47,7 @@ services:
       # DevGodzilla config
       DEVGODZILLA_DB_URL: postgresql://devgodzilla:changeme@db:5432/devgodzilla_db
       DEVGODZILLA_DB_POOL_SIZE: "5"
-      DEVGODZILLA_LOG_LEVEL: INFO
+      DEVGODZILLA_LOG_LEVEL: DEBUG
       # Windmill integration (DevGodzilla -> Windmill)
       DEVGODZILLA_WINDMILL_URL: http://windmill:8000
       DEVGODZILLA_WINDMILL_WORKSPACE: ${DEVGODZILLA_WINDMILL_WORKSPACE:-demo1}

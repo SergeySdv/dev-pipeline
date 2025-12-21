@@ -134,7 +134,7 @@ export function LogsConsole({ mode = "application", sourceFilter, className }: L
   }
 
   const handleClear = () => {
-    setLogs([])
+    setStreamState({ key: streamKey, logs: [] })
   }
 
   if (isLoading) {
@@ -152,7 +152,7 @@ export function LogsConsole({ mode = "application", sourceFilter, className }: L
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-lg">Application Logs</CardTitle>
+            <CardTitle className="text-lg">Backend Logs (All Services)</CardTitle>
             {isStreaming && !isPaused && (
               <Badge variant="outline" className="text-green-500 border-green-500">
                 Live
@@ -202,7 +202,7 @@ export function LogsConsole({ mode = "application", sourceFilter, className }: L
           <div className="space-y-2 font-mono text-xs">
             {filteredLogs.length === 0 ? (
               <div className="text-center text-muted-foreground py-8">
-                {logs.length === 0 ? "No logs yet. Waiting for activity..." : "No logs match your filter."}
+                {combinedLogs.length === 0 ? "No logs yet. Waiting for activity..." : "No logs match your filter."}
               </div>
             ) : (
               filteredLogs.map((log) => {
