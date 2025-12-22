@@ -166,6 +166,42 @@ class SpecificationService(Service):
         self.speckit_cli = speckit_cli_path or "specify"
         self.speckit_source_path = Path(speckit_source_path).expanduser() if speckit_source_path else None
 
+    def _resolve_path_safely(self, path_str: str, workspace_root: Path) -> Path:
+        """
+        Resolve a path relative to workspace_root, avoiding double-joining.
+        
+        If the path is absolute, use it as-is.
+        If the path is relative and starts with a segment that's part of workspace_root,
+        try to resolve it intelligently to avoid path duplication.
+        """
+        path = Path(path_str)
+        if path.is_absolute():
+            return path
+        
+        # Try to resolve relative to workspace_root
+        resolved = workspace_root / path
+        
+        # Check if this creates a valid path
+        if resolved.exists():
+            return resolved
+        
+        # Check if the path_str already contains the workspace structure
+        # by looking for common patterns (e.g., specs/NNN-feature-name)
+        workspace_str = str(workspace_root)
+        if workspace_str in path_str:
+            # Path already contains workspace prefix - try extracting just the suffix
+            try:
+                suffix_start = path_str.find(workspace_str)
+                if suffix_start > 0:
+                    # Path has prefix before workspace - this is malformed, try fixing
+                    suffix = path_str[suffix_start:]
+                    return Path(suffix)
+            except Exception:
+                pass
+        
+        # Default: return the joined path (may not exist yet, which is fine for new files)
+        return resolved
+
     def init_project(
         self,
         project_path: str,
@@ -693,9 +729,7 @@ class SpecificationService(Service):
                     status=SpecRunStatus.PLANNING,
                 )
             policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
-            spec_file = Path(spec_path)
-            if not spec_file.is_absolute():
-                spec_file = workspace_root / spec_file
+            spec_file = self._resolve_path_safely(spec_path, workspace_root)
             spec_dir = spec_file.parent
             plan_path: Path
             adapter = self._get_speckit_adapter(str(workspace_root))
@@ -944,9 +978,7 @@ class SpecificationService(Service):
                 spec_run_id=spec_run_id,
                 spec_path=spec_path,
             )
-            spec_file = Path(spec_path)
-            if not spec_file.is_absolute():
-                spec_file = workspace_root / spec_file
+            spec_file = self._resolve_path_safely(spec_path, workspace_root)
             if not spec_file.exists():
                 return ClarifyResult(success=False, error="Spec file not found.")
 
@@ -1000,9 +1032,7 @@ class SpecificationService(Service):
                 spec_path=spec_path,
             )
             policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
-            spec_file = Path(spec_path)
-            if not spec_file.is_absolute():
-                spec_file = workspace_root / spec_file
+            spec_file = self._resolve_path_safely(spec_path, workspace_root)
             spec_dir = spec_file.parent
             checklist_path = spec_dir / "checklist.md"
             template = self._load_template(str(workspace_root), "checklist-template.md")
@@ -1097,16 +1127,10 @@ class SpecificationService(Service):
                 tasks_path=tasks_path,
             )
             policy_guidelines = self._policy_guidelines_text(str(workspace_root), project_id)
-            spec_file = Path(spec_path)
-            if not spec_file.is_absolute():
-                spec_file = workspace_root / spec_file
+            spec_file = self._resolve_path_safely(spec_path, workspace_root)
             spec_dir = spec_file.parent
-            plan_file = Path(plan_path) if plan_path else None
-            tasks_file = Path(tasks_path) if tasks_path else None
-            if plan_file and not plan_file.is_absolute():
-                plan_file = workspace_root / plan_file
-            if tasks_file and not tasks_file.is_absolute():
-                tasks_file = workspace_root / tasks_file
+            plan_file = self._resolve_path_safely(plan_path, workspace_root) if plan_path else None
+            tasks_file = self._resolve_path_safely(tasks_path, workspace_root) if tasks_path else None
             report_path = spec_dir / "analysis.md"
             report_content = [
                 "# SpecKit Analysis Report",
@@ -1197,9 +1221,7 @@ class SpecificationService(Service):
                 spec_run_id=spec_run_id,
                 spec_path=spec_path,
             )
-            spec_file = Path(spec_path)
-            if not spec_file.is_absolute():
-                spec_file = workspace_root / spec_file
+            spec_file = self._resolve_path_safely(spec_path, workspace_root)
             spec_dir = spec_file.parent
             runtime_dir = spec_dir / "_runtime" / "runs"
             runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -2010,7 +2032,8 @@ Legend:
         def _stringify(path: Optional[Path]) -> Optional[str]:
             if path is None:
                 return None
-            return str(path)
+            # Ensure stored paths are always absolute to prevent path duplication issues
+            return str(path.resolve() if hasattr(path, 'resolve') else path)
 
         try:
             self.db.update_spec_run(
@@ -2157,8 +2180,8 @@ Legend:
                 run = None
 
         if run and run.worktree_path:
-            return run, Path(run.worktree_path).expanduser()
-        return run, Path(project_path).expanduser()
+            return run, Path(run.worktree_path).expanduser().resolve()
+        return run, Path(project_path).expanduser().resolve()
 
     def _resolve_speckit_source(self) -> Optional[Path]:
         """Resolve upstream SpecKit source directory if vendored."""

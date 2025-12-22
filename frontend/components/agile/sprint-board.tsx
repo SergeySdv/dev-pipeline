@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -29,7 +29,32 @@ import {
 import { cn } from "@/lib/utils"
 import type { AgileTask, AgileTaskCreate, AgileTaskUpdate, TaskType, TaskPriority, TaskBoardStatus, Sprint } from "@/lib/api/types"
 import { TaskModal } from "./task-modal"
+import { MobileKanbanView } from "./mobile-kanban-view"
 import { toast } from "sonner"
+
+// Mobile breakpoint (matches Tailwind's md breakpoint)
+const MOBILE_BREAKPOINT = 768
+
+// Hook to detect mobile screen size
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    // Check initial screen size
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    }
+    
+    // Set initial value
+    checkMobile()
+    
+    // Listen for resize events
+    window.addEventListener("resize", checkMobile)
+    return () => window.removeEventListener("resize", checkMobile)
+  }, [])
+
+  return isMobile
+}
 
 const taskTypeConfig: Record<TaskType, { icon: typeof Bug; color: string; bg: string }> = {
   bug: { icon: Bug, color: "text-red-500", bg: "bg-red-500/10" },
@@ -79,6 +104,8 @@ export function SprintBoard({
   const [modalOpen, setModalOpen] = useState(false)
   const [modalMode, setModalMode] = useState<"create" | "edit" | "view">("create")
   const [selectedTask, setSelectedTask] = useState<AgileTask | null>(null)
+  
+  const isMobile = useIsMobile()
 
   const visibleColumns = showBacklog ? columns : columns.filter((c) => c.id !== "backlog")
 
@@ -174,8 +201,20 @@ export function SprintBoard({
         </Button>
       </div>
 
-      <ScrollArea className="w-full">
-        <div className="flex gap-4 pb-4" style={{ minWidth: visibleColumns.length * 280 }}>
+      {/* Mobile view */}
+      {isMobile ? (
+        <MobileKanbanView
+          tasks={tasks}
+          columns={visibleColumns}
+          onTaskUpdate={onTaskUpdate}
+          onTaskView={openViewModal}
+          onTaskEdit={openEditModal}
+          showBacklog={showBacklog}
+        />
+      ) : (
+        /* Desktop view */
+        <ScrollArea className="w-full">
+          <div className="flex gap-4 pb-4" style={{ minWidth: visibleColumns.length * 280 }}>
           {visibleColumns.map((column) => {
             const stats = getColumnStats(column.id)
             const columnTasks = getTasksByColumn(column.id)
@@ -326,6 +365,7 @@ export function SprintBoard({
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
+      )}
 
       <TaskModal
         open={modalOpen}
