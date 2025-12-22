@@ -15,7 +15,7 @@ import type { StepRun, ProtocolRun, StepStatus } from '@/lib/api/types'
 
 // Mock the PipelineDag component to avoid D3 rendering issues in tests
 vi.mock('@/components/visualizations/pipeline-dag', () => ({
-  PipelineDag: ({ steps, onStepClick, selectedStepId }: { 
+  PipelineDag: ({ steps, onStepClick, selectedStepId }: {
     steps: StepRun[]
     onStepClick?: (step: StepRun) => void
     selectedStepId?: number | null
@@ -44,9 +44,9 @@ const stepStatusArbitrary = fc.oneof(
   fc.constant('failed' as StepStatus)
 )
 
-const validDateArbitrary = fc.integer({ 
-  min: new Date('2020-01-01').getTime(), 
-  max: new Date('2030-12-31').getTime() 
+const validDateArbitrary = fc.integer({
+  min: new Date('2020-01-01').getTime(),
+  max: new Date('2030-12-31').getTime()
 }).map(ts => new Date(ts).toISOString())
 
 // Generate a valid StepRun object
@@ -72,7 +72,7 @@ const stepRunArbitrary = (id: number, stepIndex: number): fc.Arbitrary<StepRun> 
   })
 
 // Generate a list of steps
-const stepsListArbitrary = fc.nat({ min: 1, max: 5 }).chain(count => {
+const stepsListArbitrary = fc.integer({ min: 1, max: 5 }).chain(count => {
   const stepArbitraries: fc.Arbitrary<StepRun>[] = []
   for (let i = 0; i < count; i++) {
     stepArbitraries.push(stepRunArbitrary(i + 1, i))
@@ -80,10 +80,10 @@ const stepsListArbitrary = fc.nat({ min: 1, max: 5 }).chain(count => {
   return fc.tuple(...stepArbitraries)
 })
 
-// Generate a valid ProtocolRun object
+// Generate a valid ProtocolRun object matching the actual ProtocolRun interface
 const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
-  id: fc.nat({ min: 1, max: 1000 }),
-  project_id: fc.nat({ min: 1, max: 100 }),
+  id: fc.integer({ min: 1, max: 1000 }),
+  project_id: fc.integer({ min: 1, max: 100 }),
   protocol_name: fc.string({ minLength: 1, maxLength: 50 }),
   status: fc.oneof(
     fc.constant('pending' as const),
@@ -91,12 +91,21 @@ const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
     fc.constant('completed' as const),
     fc.constant('failed' as const)
   ),
+  base_branch: fc.string({ minLength: 1, maxLength: 50 }),
+  worktree_path: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
+  protocol_root: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
+  description: fc.option(fc.string({ minLength: 1, maxLength: 200 }), { nil: null }),
+  template_config: fc.constant(null),
+  template_source: fc.option(fc.string({ minLength: 1, maxLength: 50 }), { nil: null }),
+  spec_hash: fc.option(fc.string({ minLength: 1, maxLength: 64 }), { nil: null }),
+  spec_validation_status: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: null }),
+  spec_validated_at: fc.option(validDateArbitrary, { nil: null }),
+  policy_pack_key: fc.option(fc.string({ minLength: 1, maxLength: 50 }), { nil: null }),
+  policy_pack_version: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: null }),
+  policy_effective_hash: fc.option(fc.string({ minLength: 1, maxLength: 64 }), { nil: null }),
+  policy_effective_json: fc.constant(null),
   created_at: validDateArbitrary,
   updated_at: validDateArbitrary,
-  started_at: fc.option(validDateArbitrary, { nil: null }),
-  finished_at: fc.option(validDateArbitrary, { nil: null }),
-  error_message: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
-  metadata: fc.constant(null)
 })
 
 // View mode arbitrary
@@ -118,7 +127,7 @@ describe('Pipeline Visualizer Property Tests', () => {
         fc.property(
           protocolRunArbitrary,
           stepsListArbitrary,
-          fc.nat({ min: 0, max: 4 }), // Index to select
+          fc.integer({ min: 0, max: 4 }), // Index to select
           (protocol, steps, selectIndex) => {
             // Ensure we have a valid step to select
             const stepToSelect = steps[selectIndex % steps.length]
@@ -159,7 +168,7 @@ describe('Pipeline Visualizer Property Tests', () => {
             // Find the view mode toggle container and get the DAG button within it
             const toggleContainer = container.querySelector('.flex.items-center.gap-1.rounded-lg.border')
             if (!toggleContainer) return true // Skip if toggle not found
-            
+
             const dagButton = within(toggleContainer as HTMLElement).getByRole('button', { name: /dag view/i })
             fireEvent.click(dagButton)
 
@@ -188,7 +197,7 @@ describe('Pipeline Visualizer Property Tests', () => {
         fc.property(
           protocolRunArbitrary,
           stepsListArbitrary,
-          fc.nat({ min: 0, max: 4 }), // Index to select
+          fc.integer({ min: 0, max: 4 }), // Index to select
           (protocol, steps, selectIndex) => {
             // Ensure we have a valid step to select
             const stepToSelect = steps[selectIndex % steps.length]
@@ -226,7 +235,7 @@ describe('Pipeline Visualizer Property Tests', () => {
             // Find the view mode toggle container and get the Linear button within it
             const toggleContainer = container.querySelector('.flex.items-center.gap-1.rounded-lg.border')
             if (!toggleContainer) return true // Skip if toggle not found
-            
+
             const linearButton = within(toggleContainer as HTMLElement).getByRole('button', { name: /linear view/i })
             fireEvent.click(linearButton)
 
@@ -256,7 +265,7 @@ describe('Pipeline Visualizer Property Tests', () => {
           protocolRunArbitrary,
           stepsListArbitrary,
           fc.array(viewModeArbitrary, { minLength: 2, maxLength: 5 }), // Reduced max length for faster tests
-          fc.nat({ min: 0, max: 4 }), // Index to select
+          fc.integer({ min: 0, max: 4 }), // Index to select
           (protocol, steps, viewModeSequence, selectIndex) => {
             // Ensure we have a valid step to select
             const stepToSelect = steps[selectIndex % steps.length]
@@ -289,7 +298,7 @@ describe('Pipeline Visualizer Property Tests', () => {
               // Find the view mode toggle container
               const toggleContainer = container.querySelector('.flex.items-center.gap-1.rounded-lg.border')
               if (!toggleContainer) continue // Skip if toggle not found
-              
+
               // Click the appropriate button
               const buttonLabel = targetMode === 'dag' ? /dag view/i : /linear view/i
               const button = within(toggleContainer as HTMLElement).getByRole('button', { name: buttonLabel })

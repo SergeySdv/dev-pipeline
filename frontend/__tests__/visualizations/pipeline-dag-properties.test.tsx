@@ -257,13 +257,17 @@ describe('Pipeline DAG Property Tests', () => {
    */
   describe('Property 6: DAG duration calculation', () => {
     it('should calculate correct duration for valid timestamps', () => {
+      // Use integer timestamps to avoid Date edge cases during shrinking
+      const minTime = new Date('2020-01-01').getTime()
+      const maxTime = new Date('2025-01-01').getTime()
+
       fc.assert(
         fc.property(
-          fc.date({ min: new Date('2020-01-01'), max: new Date('2025-01-01') }),
+          fc.integer({ min: minTime, max: maxTime }),
           fc.integer({ min: 1, max: 86400 }), // 1 second to 24 hours in seconds
-          (startDate, durationSeconds) => {
-            const startedAt = startDate.toISOString()
-            const finishedAt = new Date(startDate.getTime() + durationSeconds * 1000).toISOString()
+          (startTimeMs, durationSeconds) => {
+            const startedAt = new Date(startTimeMs).toISOString()
+            const finishedAt = new Date(startTimeMs + durationSeconds * 1000).toISOString()
 
             const duration = calculateDuration(startedAt, finishedAt)
 
@@ -324,11 +328,15 @@ describe('Pipeline DAG Property Tests', () => {
     })
 
     it('should handle zero duration', () => {
+      // Use integer timestamps to avoid Date edge cases during shrinking
+      const minTime = new Date('2020-01-01').getTime()
+      const maxTime = new Date('2025-01-01').getTime()
+
       fc.assert(
         fc.property(
-          fc.date({ min: new Date('2020-01-01'), max: new Date('2025-01-01') }),
-          (date) => {
-            const timestamp = date.toISOString()
+          fc.integer({ min: minTime, max: maxTime }),
+          (timeMs) => {
+            const timestamp = new Date(timeMs).toISOString()
             const duration = calculateDuration(timestamp, timestamp)
 
             // Zero duration should return "0s"
