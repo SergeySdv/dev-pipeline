@@ -156,6 +156,7 @@ export default function RunArtifactsPage() {
               data={filteredArtifacts || []}
               enableSearch
               enableExport
+              enableColumnFilters
               exportFilename={`run-${runId}-artifacts.csv`}
             />
           </Card>

@@ -106,17 +106,6 @@ export function useProtocolSteps(protocolId: number | undefined, enabled = true)
   })
 }
 
-// Protocol Events
-export function useProtocolEvents(protocolId: number | undefined, enabled = true) {
-  const refetchInterval = useConditionalRefetchInterval(5000)
-  return useQuery({
-    queryKey: queryKeys.protocols.events(protocolId!),
-    queryFn: () => apiClient.get<Event[]>(`/protocols/${protocolId}/events`),
-    enabled: !!protocolId && enabled,
-    refetchInterval,
-  })
-}
-
 // Protocol Runs
 export function useProtocolRuns(protocolId: number | undefined, filters?: RunFilters) {
   return useQuery({

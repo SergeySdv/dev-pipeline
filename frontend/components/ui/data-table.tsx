@@ -12,7 +12,7 @@ import {
 } from "@tanstack/react-table"
 import { useMemo, useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ArrowUpDown, Download, Search } from "lucide-react"
+import { ArrowUpDown, Download, Filter, Search, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,7 @@ interface DataTableProps<TData, TValue> {
   searchPlaceholder?: string
   enableExport?: boolean
   exportFilename?: string
+  enableColumnFilters?: boolean
 }
 
 export function DataTable<TData, TValue>({
@@ -37,21 +38,74 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = "Search...",
   enableExport = false,
   exportFilename = "export.csv",
+  enableColumnFilters = false,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [search, setSearch] = useState("")
+  const [showFilters, setShowFilters] = useState(false)
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
+
+  const filterableColumns = useMemo(() => {
+    return columns
+      .map((col) => {
+        const accessorKey = (col as unknown as { accessorKey?: unknown }).accessorKey
+        if (typeof accessorKey !== "string") return null
+        const id = (col as unknown as { id?: unknown }).id
+        const columnId = typeof id === "string" ? id : accessorKey
+        return { columnId, accessorKey }
+      })
+      .filter((v): v is { columnId: string; accessorKey: string } => v != null)
+  }, [columns])
+
+  const accessorKeyByColumnId = useMemo(() => {
+    return new Map(filterableColumns.map((c) => [c.columnId, c.accessorKey] as const))
+  }, [filterableColumns])
+
+  const getRowValue = (row: unknown, accessorKey: string) => {
+    if (!row || typeof row !== "object") return undefined
+    if (!accessorKey.includes(".")) return (row as Record<string, unknown>)[accessorKey]
+    return accessorKey.split(".").reduce<unknown>((acc, key) => {
+      if (!acc || typeof acc !== "object") return undefined
+      return (acc as Record<string, unknown>)[key]
+    }, row)
+  }
 
   const filteredData = useMemo(() => {
     const query = search.trim().toLowerCase()
-    if (!query) return data
+    const activeColumnFilters = Object.entries(columnFilters)
+      .map(([columnId, value]) => ({ columnId, value: value.trim().toLowerCase() }))
+      .filter((f) => f.value.length > 0)
+
+    if (!query && activeColumnFilters.length === 0) return data
+
     return data.filter((row) => {
+      if (activeColumnFilters.length > 0) {
+        for (const f of activeColumnFilters) {
+          const accessorKey = accessorKeyByColumnId.get(f.columnId)
+          if (!accessorKey) continue
+          const value = getRowValue(row, accessorKey)
+          const asString =
+            typeof value === "string"
+              ? value
+              : value == null
+                ? ""
+                : typeof value === "number" || typeof value === "boolean"
+                  ? String(value)
+                  : JSON.stringify(value)
+          if (!asString.toLowerCase().includes(f.value)) {
+            return false
+          }
+        }
+      }
+
+      if (!query) return true
       try {
         return JSON.stringify(row).toLowerCase().includes(query)
       } catch {
         return false
       }
     })
-  }, [data, search])
+  }, [accessorKeyByColumnId, columnFilters, data, search])
 
   const table = useReactTable({
     data: filteredData,
@@ -117,7 +171,7 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className={cn("rounded-md border", className)}>
-      {(enableSearch || enableExport) && (
+      {(enableSearch || enableExport || enableColumnFilters) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 p-2">
           {enableSearch ? (
             <div className="relative w-full sm:w-80">
@@ -128,16 +182,53 @@ export function DataTable<TData, TValue>({
                 placeholder={searchPlaceholder || "Search..."}
                 className="pl-8"
               />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ) : (
             <div />
           )}
-          {enableExport && (
-            <Button variant="outline" size="sm" onClick={exportToCsv} disabled={filteredData.length === 0}>
-              <Download className="mr-2 h-4 w-4" />
-              Export CSV
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {enableColumnFilters && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowFilters((v) => !v)}
+                className={cn(showFilters && "bg-muted")}
+              >
+                <Filter className="mr-2 h-4 w-4" />
+                Filters
+              </Button>
+            )}
+            {(enableSearch || enableColumnFilters) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearch("")
+                  setColumnFilters({})
+                }}
+                disabled={!search && Object.keys(columnFilters).length === 0}
+              >
+                Clear
+              </Button>
+            )}
+            {enableExport && (
+              <Button variant="outline" size="sm" onClick={exportToCsv} disabled={filteredData.length === 0}>
+                <Download className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
+            )}
+          </div>
         </div>
       )}
       <Table>
@@ -162,6 +253,28 @@ export function DataTable<TData, TValue>({
               ))}
             </TableRow>
           ))}
+          {enableColumnFilters && showFilters && (
+            <TableRow>
+              {(table.getHeaderGroups()[table.getHeaderGroups().length - 1]?.headers ?? []).map((header) => {
+                const accessorKey = (header.column.columnDef as unknown as { accessorKey?: unknown }).accessorKey
+                const canFilter = typeof accessorKey === "string"
+                return (
+                  <TableHead key={`${header.id}-filter`} className="py-2">
+                    {canFilter ? (
+                      <Input
+                        value={columnFilters[header.column.id] || ""}
+                        onChange={(e) =>
+                          setColumnFilters((prev) => ({ ...prev, [header.column.id]: e.target.value }))
+                        }
+                        placeholder="Filter…"
+                        className="h-7 text-xs"
+                      />
+                    ) : null}
+                  </TableHead>
+                )
+              })}
+            </TableRow>
+          )}
         </TableHeader>
         <TableBody>
           {table.getRowModel().rows?.length ? (

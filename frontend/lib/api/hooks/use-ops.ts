@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { apiClient } from "../client"
 import { queryKeys } from "../query-keys"
-import type { QueueStats, QueueJob, Event, EventFilters, HealthResponse, MetricsSummary } from "../types"
+import type { Event, EventFilters, HealthResponse, MetricsSummary } from "../types"
 
 const useConditionalRefetchInterval = (baseInterval: number) => {
   if (typeof document === "undefined") return false
@@ -17,24 +17,6 @@ export function useHealth() {
     queryKey: queryKeys.health,
     queryFn: () => apiClient.get<HealthResponse>("/health"),
     refetchInterval: 30000, // Check every 30s
-  })
-}
-
-// Queue Stats
-export function useQueueStats() {
-  return useQuery({
-    queryKey: queryKeys.ops.queueStats,
-    queryFn: () => apiClient.get<QueueStats[]>("/queues"),
-    refetchInterval: 10000,
-  })
-}
-
-// Queue Jobs
-export function useQueueJobs(status?: string) {
-  return useQuery({
-    queryKey: queryKeys.ops.queueJobs(status),
-    queryFn: () => apiClient.get<QueueJob[]>(`/queues/jobs${status ? `?status=${status}` : ""}`),
-    refetchInterval: 5000,
   })
 }
 

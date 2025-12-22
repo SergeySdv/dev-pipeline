@@ -3,9 +3,13 @@
 import { useEffect, useState } from "react"
 
 export function useVisibility() {
-  const [isVisible, setIsVisible] = useState(!document.hidden)
+  const [isVisible, setIsVisible] = useState(() => {
+    if (typeof document === "undefined") return true
+    return !document.hidden
+  })
 
   useEffect(() => {
+    if (typeof document === "undefined") return
     const handleVisibilityChange = () => {
       setIsVisible(!document.hidden)
     }

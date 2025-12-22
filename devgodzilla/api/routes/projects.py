@@ -94,6 +94,13 @@ class ProjectOnboardResponse(BaseModel):
     error: Optional[str] = None
 
 
+class CreateBranchRequest(BaseModel):
+    name: str = Field(..., description="New branch name (e.g. feature/foo)")
+    base_ref: Optional[str] = Field(default=None, description="Base ref (branch/sha), defaults to project.base_branch")
+    checkout: bool = Field(default=False, description="Checkout the new branch after creation")
+    push: bool = Field(default=False, description="Push branch to origin and set upstream")
+
+
 @router.post("/projects", response_model=schemas.ProjectOut)
 def create_project(
     project: schemas.ProjectCreate,
@@ -1015,6 +1022,120 @@ def list_project_branches(
         pass
     
     return branches
+
+
+@router.post("/projects/{project_id}/branches")
+def create_project_branch(
+    project_id: int,
+    request: CreateBranchRequest,
+    db: Database = Depends(get_db),
+):
+    """Create a git branch in the project repository."""
+    try:
+        project = db.get_project(project_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.local_path:
+        raise HTTPException(status_code=400, detail="Project has no local repository path")
+
+    from devgodzilla.services.git import run_process
+
+    repo_path = Path(project.local_path).expanduser()
+    if not repo_path.exists():
+        raise HTTPException(status_code=400, detail="Project repository path does not exist")
+    if not (repo_path / ".git").exists():
+        raise HTTPException(status_code=400, detail="Project path is not a git repository")
+
+    branch_name = (request.name or "").strip()
+    if not branch_name:
+        raise HTTPException(status_code=400, detail="Branch name is required")
+
+    ref_check = run_process(["git", "check-ref-format", "--branch", branch_name], cwd=repo_path, check=False)
+    if ref_check.returncode != 0:
+        raise HTTPException(status_code=400, detail="Invalid branch name")
+
+    base_ref = (request.base_ref or project.base_branch or "main").strip()
+    base_commit = None
+    for candidate in (base_ref, f"origin/{base_ref}"):
+        res = run_process(["git", "rev-parse", "--verify", f"{candidate}^{{commit}}"], cwd=repo_path, check=False)
+        if res.returncode == 0:
+            base_commit = candidate
+            break
+    if not base_commit:
+        raise HTTPException(status_code=400, detail=f"Base ref not found: {base_ref}")
+
+    exists_res = run_process(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"], cwd=repo_path, check=False)
+    if exists_res.returncode == 0:
+        raise HTTPException(status_code=409, detail=f"Branch already exists: {branch_name}")
+
+    run_process(["git", "branch", branch_name, base_commit], cwd=repo_path, check=True)
+    if request.checkout:
+        run_process(["git", "checkout", branch_name], cwd=repo_path, check=True)
+    if request.push:
+        run_process(["git", "push", "-u", "origin", branch_name], cwd=repo_path, check=True)
+
+    _append_project_event(
+        db,
+        project_id=project_id,
+        event_type="git_branch_created",
+        message=f"Created branch {branch_name} from {base_commit}",
+        metadata={"branch": branch_name, "base_ref": base_ref, "checkout": request.checkout, "push": request.push},
+    )
+    return {"message": f"Branch created: {branch_name}", "branch": branch_name}
+
+
+@router.post("/projects/{project_id}/branches/{branch}/delete")
+def delete_project_branch(
+    project_id: int,
+    branch: str,
+    delete_remote: bool = False,
+    db: Database = Depends(get_db),
+):
+    """Delete a local (and optionally remote) git branch for the project repository."""
+    try:
+        project = db.get_project(project_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.local_path:
+        raise HTTPException(status_code=400, detail="Project has no local repository path")
+
+    from devgodzilla.services.git import run_process
+
+    repo_path = Path(project.local_path).expanduser()
+    if not repo_path.exists():
+        raise HTTPException(status_code=400, detail="Project repository path does not exist")
+    if not (repo_path / ".git").exists():
+        raise HTTPException(status_code=400, detail="Project path is not a git repository")
+
+    branch_name = (branch or "").strip()
+    if not branch_name:
+        raise HTTPException(status_code=400, detail="Branch name is required")
+
+    current_branch = run_process(["git", "symbolic-ref", "--short", "HEAD"], cwd=repo_path, check=False).stdout.strip()
+    if current_branch and current_branch == branch_name:
+        raise HTTPException(status_code=400, detail="Cannot delete the currently checked out branch")
+
+    exists_res = run_process(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"], cwd=repo_path, check=False)
+    if exists_res.returncode != 0:
+        raise HTTPException(status_code=404, detail=f"Local branch not found: {branch_name}")
+
+    run_process(["git", "branch", "-D", branch_name], cwd=repo_path, check=True)
+
+    deleted_remote_branch = False
+    if delete_remote:
+        remote_res = run_process(["git", "push", "origin", "--delete", branch_name], cwd=repo_path, check=False)
+        deleted_remote_branch = remote_res.returncode == 0
+
+    _append_project_event(
+        db,
+        project_id=project_id,
+        event_type="git_branch_deleted",
+        message=f"Deleted branch {branch_name}",
+        metadata={"branch": branch_name, "deleted_remote": deleted_remote_branch},
+    )
+    return {"message": f"Branch deleted: {branch_name}"}
 
 @router.get("/projects/{project_id}/clarifications", response_model=List[schemas.ClarificationOut])
 def list_project_clarifications(

@@ -3,7 +3,7 @@ import os from 'node:os'
 /** @type {import('next').NextConfig} */
 function getAllowedDevOrigins() {
   const port = process.env.PORT || process.env.FRONTEND_PORT || '3000'
-  const origins = new Set(['localhost', '127.0.0.1', '0.0.0.0', `[::1]`, '::1'])
+  const origins = new Set(['localhost', '127.0.0.1', '0.0.0.0'])
 
   for (const entries of Object.values(os.networkInterfaces())) {
     for (const entry of entries ?? []) {

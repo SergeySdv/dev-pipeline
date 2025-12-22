@@ -7,8 +7,6 @@ import type {
   Agent,
   AgentAssignments,
   AgentDefaults,
-  AgentHealth,
-  AgentMetrics,
   AgentOverrides,
   AgentPromptTemplate,
   AgentPromptUpdate,
@@ -56,22 +54,6 @@ export function useAgentPrompts(projectId?: number) {
   return useQuery({
     queryKey: queryKeys.agents.prompts(projectId),
     queryFn: () => apiClient.get<AgentPromptTemplate[]>(`/agents/prompts${suffix}`),
-  })
-}
-
-export function useAgentHealth(projectId?: number) {
-  const suffix = projectId ? `?project_id=${projectId}` : ""
-  return useQuery({
-    queryKey: queryKeys.agents.health(projectId),
-    queryFn: () => apiClient.get<AgentHealth[]>(`/agents/health${suffix}`),
-  })
-}
-
-export function useAgentMetrics(projectId?: number) {
-  const suffix = projectId ? `?project_id=${projectId}` : ""
-  return useQuery({
-    queryKey: queryKeys.agents.metrics(projectId),
-    queryFn: () => apiClient.get<AgentMetrics[]>(`/agents/metrics${suffix}`),
   })
 }
 

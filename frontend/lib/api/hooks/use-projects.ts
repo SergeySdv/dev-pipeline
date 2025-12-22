@@ -261,6 +261,37 @@ export function useDeleteBranch() {
   })
 }
 
+export function useCreateBranch() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      name,
+      baseRef,
+      checkout,
+      push,
+    }: {
+      projectId: number
+      name: string
+      baseRef?: string
+      checkout?: boolean
+      push?: boolean
+    }) =>
+      apiClient.post<ActionResponse>(`/projects/${projectId}/branches`, {
+        name,
+        base_ref: baseRef,
+        checkout: Boolean(checkout),
+        push: Boolean(push),
+      }),
+    onSuccess: (_, { projectId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.branches(projectId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.worktrees(projectId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.pulls(projectId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.commits(projectId) })
+    },
+  })
+}
+
 // Commits
 export function useProjectCommits(projectId: number | undefined) {
   return useQuery({

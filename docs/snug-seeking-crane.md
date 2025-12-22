@@ -7,17 +7,19 @@ Comprehensive refactor of UI components for Workflows/Pipeline/Task execution vi
 
 ### Implemented
 - Pipeline: DAG view exists (`frontend/components/visualizations/pipeline-dag.tsx`) and is wired into `frontend/components/workflow/pipeline-visualizer.tsx`.
-- Real-time: SSE “message” stream endpoint exists at `/events/stream` (`devgodzilla/api/routes/events.py`) and is consumed in `frontend/app/projects/[id]/components/workflow-tab.tsx` via `frontend/lib/hooks/use-event-stream.ts`.
+- Real-time: SSE “message” stream endpoint exists at `/events/stream` (`devgodzilla/api/routes/events.py`) and is consumed in `frontend/app/projects/[id]/components/workflow-tab.tsx` via `frontend/lib/api/hooks/use-events.ts`.
 - Sprint charts: burndown line + velocity trend charts exist (`frontend/components/visualizations/burndown-chart.tsx`, `frontend/components/visualizations/velocity-trend-chart.tsx`) and are used in `frontend/app/projects/[id]/components/sprint-tab.tsx`.
 - Quality drilldown: protocol-level quality tab exists (`frontend/app/protocols/[id]/components/quality-tab.tsx`) with hooks in `frontend/lib/api/hooks/use-quality.ts`.
 - Specification file viewing: spec/plan/tasks/checklist files are viewable in `frontend/app/specifications/[id]/page.tsx` using `/specifications/{id}/content`.
-- Table search/export: global JSON search + CSV export added to `frontend/components/ui/data-table.tsx` and enabled for common tables (runs/steps/protocol runs/artifacts/queues).
+- Git tab: create branch dialog + per-branch CI column are implemented in `frontend/app/projects/[id]/components/branches-tab.tsx` with backend routes in `devgodzilla/api/routes/projects.py`.
+- Policy UI: Monaco JSON editor + validation + pack version selector/preview are implemented in `frontend/app/projects/[id]/components/policy-tab.tsx`.
+- Tables: global search + CSV export + column filters added to `frontend/components/ui/data-table.tsx` and enabled for common tables (runs/steps/protocol runs/artifacts/queues/branches).
+- Phase 4 components: `frontend/components/features/agent-health-dashboard.tsx`, `frontend/components/features/quality-gates-drilldown.tsx`, `frontend/components/features/specification-viewer.tsx`, `frontend/components/features/event-feed.tsx`, `frontend/components/features/queue-stats-panel.tsx`, and `frontend/components/visualizations/cost-analytics-chart.tsx`.
 
 ### Still remaining / optional upgrades
 - DAG rendering upgrades: swimlanes for `parallel_group`, proper edge routing/arrow rendering, zoom/pan, and better layout.
 - Mobile kanban: dedicated small-screen UX for the sprint board.
 - Task modal decomposition: split `frontend/components/agile/task-modal.tsx` into smaller components.
-- Column-level table filters (current table search is global JSON search).
 - Cost analytics visualization (tokens/cents) and any additional ops dashboards.
 
 ## Critical Files Summary
@@ -29,7 +31,8 @@ Comprehensive refactor of UI components for Workflows/Pipeline/Task execution vi
 | Sprint Tab | `/frontend/app/projects/[id]/components/sprint-tab.tsx` | Burndown/velocity charts added; remaining gap is mobile UX |
 | Task Modal | `/frontend/components/agile/task-modal.tsx` | ~500 lines monolith; still needs decomposition |
 | SSE Events | `/devgodzilla/api/routes/events.py` | `/events/stream` added for default `EventSource.onmessage` |
-| Tables | `/frontend/components/ui/data-table.tsx` | Global search + export implemented; column filters still missing |
+| Tables | `/frontend/components/ui/data-table.tsx` | Global search + export + column filters implemented |
+| Phase 4 Components | `/frontend/components/features/*` | Feature components now exist; wiring is optional |
 
 ---
 
@@ -147,7 +150,7 @@ Create `/frontend/lib/api/hooks/use-agent-health.ts`:
 - `useAgentHealth()` - fetch all agent health
 - `useAgentMetrics()` - fetch agent metrics
 
-Status: implemented (health/metrics hooks exist; UI implemented in `frontend/app/agents/page.tsx`).
+Status: implemented (`frontend/components/features/agent-health-dashboard.tsx`, `frontend/lib/api/hooks/use-agent-health.ts`; existing `frontend/app/agents/page.tsx` also contains agent health UI).
 
 ### 4.2 Quality Gates Drilldown
 Create `/frontend/components/features/quality-gates-drilldown.tsx`:
@@ -159,7 +162,7 @@ Create `/frontend/components/features/quality-gates-drilldown.tsx`:
 Extend `/frontend/lib/api/hooks/use-quality.ts`:
 - Add `useProtocolQualityGates(protocolId)`
 
-Status: implemented (protocol quality hooks + `frontend/app/protocols/[id]/components/quality-tab.tsx`).
+Status: implemented (protocol quality hooks + `frontend/app/protocols/[id]/components/quality-tab.tsx` + `frontend/components/features/quality-gates-drilldown.tsx`).
 
 ### 4.3 Specification Content Viewer
 Create `/frontend/components/features/specification-viewer.tsx`:
@@ -171,7 +174,7 @@ Create `/frontend/components/features/specification-viewer.tsx`:
 Extend `/frontend/lib/api/hooks/use-specifications.ts`:
 - Add `useSpecificationContent(specId)`
 
-Status: implemented (tabs exist in `frontend/app/specifications/[id]/page.tsx`; markdown rendering/highlighting is still minimal).
+Status: implemented (feature component `frontend/components/features/specification-viewer.tsx` renders Markdown with syntax highlighting; `frontend/app/specifications/[id]/page.tsx` also shows raw content).
 
 ### 4.4 Event Stream Display
 Create `/frontend/components/features/event-feed.tsx`:
@@ -183,7 +186,7 @@ Create `/frontend/lib/api/hooks/use-events.ts`:
 - `useEventStream()` - SSE subscription
 - `useProtocolEvents(protocolId)`
 
-Status: implemented via `frontend/lib/hooks/use-event-stream.ts` + backend `/events/stream`; existing ops/protocol event UIs are polling-based.
+Status: implemented via `frontend/lib/api/hooks/use-events.ts` + backend `/events/stream`; `frontend/components/features/event-feed.tsx` provides a real-time UI.
 
 ### 4.5 Queue Statistics Panel
 Create `/frontend/components/features/queue-stats-panel.tsx`:
@@ -194,7 +197,7 @@ Create `/frontend/components/features/queue-stats-panel.tsx`:
 Create `/frontend/lib/api/hooks/use-queues.ts`:
 - `useQueueStats()`
 
-Status: implemented in `frontend/lib/api/hooks/use-ops.ts` (queue stats + jobs) and UI in `frontend/app/ops/queues/page.tsx`.
+Status: implemented (`devgodzilla/api/routes/queues.py` provides `/queues` and `/queues/stats`; hooks in `frontend/lib/api/hooks/use-queues.ts`; UI in `frontend/components/features/queue-stats-panel.tsx` and `frontend/app/ops/queues/page.tsx`).
 
 ### 4.6 Cost Analytics
 Create `/frontend/components/visualizations/cost-analytics-chart.tsx`:
@@ -202,7 +205,7 @@ Create `/frontend/components/visualizations/cost-analytics-chart.tsx`:
 - Stacked bar chart by job type
 - Cumulative cost line
 
-Status: not implemented yet.
+Status: implemented (`frontend/components/visualizations/cost-analytics-chart.tsx`) and shown in `frontend/app/runs/page.tsx`.
 
 ---
 
@@ -215,12 +218,16 @@ Modify `/frontend/app/projects/[id]/components/branches-tab.tsx`:
 - Create branch dialog
 - Show CI status per branch
 
+Status: implemented (including backend create/delete routes under `/projects/{id}/branches`).
+
 ### 5.2 Policy Configuration UI
 Enhance `/frontend/app/projects/[id]/components/policy-tab.tsx`:
 - Visual policy rule builder (tree view)
 - Monaco editor for JSON editing
 - Policy validation feedback
 - Policy pack selector with preview
+
+Status: implemented (tree view is a read-only JSON tree for overrides).
 
 ### 5.3 Add Search/Filter to Tables
 Enhance `/frontend/components/ui/data-table.tsx`:
@@ -232,7 +239,7 @@ Apply to pages:
 - `/app/runs/page.tsx`
 - (pages using `DataTable`, e.g. protocol steps/runs, run artifacts, ops queues, step runs)
 
-Status: global search + export implemented; column-level filters remain.
+Status: implemented (global search + column filters + export).
 
 ---
 

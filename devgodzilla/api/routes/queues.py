@@ -27,6 +27,12 @@ def get_queue_stats(db: Database = Depends(get_db)):
     stats = db.get_queue_stats()
     return [schemas.QueueStatsOut.model_validate(s) for s in stats]
 
+@router.get("/queues/stats", response_model=List[schemas.QueueStatsOut])
+def get_queue_stats_alias(db: Database = Depends(get_db)):
+    """Alias for `/queues` (kept for frontend/backwards compatibility)."""
+    stats = db.get_queue_stats()
+    return [schemas.QueueStatsOut.model_validate(s) for s in stats]
+
 
 @router.get("/queues/jobs", response_model=List[schemas.QueueJobOut])
 def list_queue_jobs(

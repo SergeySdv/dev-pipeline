@@ -138,7 +138,7 @@ export default function QueuesPage() {
         ) : !jobs || jobs.length === 0 ? (
           <EmptyState icon={Inbox} title="No jobs" description="No jobs match your filter criteria." />
         ) : (
-          <DataTable columns={jobColumns} data={jobs} enableSearch enableExport exportFilename="queue-jobs.csv" />
+          <DataTable columns={jobColumns} data={jobs} enableSearch enableExport enableColumnFilters exportFilename="queue-jobs.csv" />
         )}
       </div>
     </div>

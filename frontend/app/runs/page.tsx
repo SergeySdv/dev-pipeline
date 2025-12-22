@@ -15,6 +15,8 @@ import { ExternalLink, PlayCircle, RefreshCw, ListTodo } from "lucide-react"
 import { formatRelativeTime, formatTokens, formatCost, truncateHash } from "@/lib/format"
 import type { ColumnDef } from "@tanstack/react-table"
 import type { CodexRun, RunFilters } from "@/lib/api/types"
+import { CostAnalyticsChart } from "@/components/visualizations/cost-analytics-chart"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 const columns: ColumnDef<CodexRun>[] = [
   {
@@ -211,7 +213,18 @@ export default function RunsPage() {
         ) : !runs || runs.length === 0 ? (
           <EmptyState icon={PlayCircle} title="No runs found" description="No runs match your filter criteria." />
         ) : (
-          <DataTable columns={columns} data={runs} enableSearch enableExport exportFilename="runs.csv" />
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Cost Analytics</CardTitle>
+                <CardDescription>Costs aggregated from the current run set</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CostAnalyticsChart runs={runs} />
+              </CardContent>
+            </Card>
+            <DataTable columns={columns} data={runs} enableSearch enableExport enableColumnFilters exportFilename="runs.csv" />
+          </div>
         )}
       </div>
     </div>

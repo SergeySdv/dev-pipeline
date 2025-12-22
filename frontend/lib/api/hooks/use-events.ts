@@ -1,8 +1,11 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { apiClient } from "@/lib/api/client"
-import type { Event as DevGodzillaEvent } from "@/lib/api/types"
+import { useQuery } from "@tanstack/react-query"
+import { apiClient, ApiError } from "../client"
+import { queryKeys } from "../query-keys"
+import type { Event as DevGodzillaEvent } from "../types"
+import { useVisibility } from "@/lib/hooks/use-visibility"
 
 export interface EventStreamFilters {
   protocol_id?: number
@@ -82,7 +85,6 @@ export function useEventStream(
     source.onerror = () => {
       if (cancelled) return
       setState((prev) => ({ ...prev, status: "error" }))
-      // Let EventSource reconnect automatically; cleanup closes it.
     }
 
     return () => {
@@ -92,5 +94,29 @@ export function useEventStream(
   }, [streamUrl])
 
   return state
+}
+
+function useConditionalRefetchInterval(baseInterval: number) {
+  const isVisible = useVisibility()
+  return isVisible ? baseInterval : false
+}
+
+export function useProtocolEvents(protocolId: number | undefined, enabled = true) {
+  const refetchInterval = useConditionalRefetchInterval(5000)
+  return useQuery({
+    queryKey: queryKeys.protocols.events(protocolId!),
+    queryFn: () => apiClient.get<DevGodzillaEvent[]>(`/protocols/${protocolId}/events`),
+    enabled: !!protocolId && enabled,
+    refetchInterval,
+  })
+}
+
+export function useEventsStreamFallbackError(filters: EventStreamFilters | null) {
+  const streamState = useEventStream(filters, { enabled: Boolean(filters) })
+  if (streamState.status !== "error") return null
+  // Best-effort hint: if API requires token and none was provided, SSE can fail.
+  const token = apiClient.getConfig().token
+  if (!token) return new ApiError("SSE stream failed; API token may be required (configure in UI).", 401)
+  return new ApiError("SSE stream failed; check backend connectivity.", 0)
 }
 
