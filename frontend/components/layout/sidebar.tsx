@@ -18,6 +18,7 @@ import {
   Kanban,
   Sparkles,
   MessageCircle,
+  GitBranch,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -43,6 +44,7 @@ const navigation = [
     ],
   },
   { name: "Runs", href: "/runs", icon: PlayCircle },
+  { name: "Protocols", href: "/protocols", icon: GitBranch },
   { name: "Clarifications", href: "/clarifications", icon: MessageCircle },
   { name: "Quality", href: "/quality", icon: BarChart3 },
   { name: "Agents", href: "/agents", icon: Bot },
@@ -51,9 +53,9 @@ const navigation = [
     href: "/ops",
     icon: Activity,
     children: [
-      { name: "Overview", href: "/ops" },
       { name: "Queues", href: "/ops/queues" },
       { name: "Events", href: "/ops/events" },
+      { name: "Logs", href: "/ops/logs" },
       { name: "Metrics", href: "/ops/metrics" },
     ],
   },
