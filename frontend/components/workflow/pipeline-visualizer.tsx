@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { StatusPill } from "@/components/ui/status-pill"
-import { Play, Pause, CheckCircle, XCircle, Clock, Bot, ArrowRight, Settings, Maximize2, Download } from "lucide-react"
+import { Play, Pause, CheckCircle, XCircle, Clock, Bot, ArrowRight, Settings, Maximize2, Download, List, GitBranch } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { StepRun, ProtocolRun } from "@/lib/api/types"
 import {
@@ -17,14 +17,28 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { toast } from "sonner"
+import { PipelineDag } from "@/components/visualizations/pipeline-dag"
+
+// View mode type for toggle between linear and DAG views
+export type ViewMode = "linear" | "dag"
 
 interface PipelineVisualizerProps {
   protocol: ProtocolRun
   steps: StepRun[]
   onStepClick?: (step: StepRun) => void
   onAssignAgent?: (stepId: number, agentId: string) => void
+  /** Initial view mode - defaults to "linear" */
+  initialViewMode?: ViewMode
+  /** Controlled view mode - when provided, component becomes controlled */
+  viewMode?: ViewMode
+  /** Callback when view mode changes */
+  onViewModeChange?: (mode: ViewMode) => void
+  /** Currently selected step ID - preserved across view mode changes */
+  selectedStepId?: number | null
+  /** Callback when step selection changes */
+  onStepSelect?: (stepId: number | null) => void
 }
 
 const availableAgents = [
@@ -36,7 +50,44 @@ const availableAgents = [
   { id: "mistral-large", name: "Mistral Large", provider: "Mistral", speed: "fast" },
 ]
 
-export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent }: PipelineVisualizerProps) {
+export function PipelineVisualizer({ 
+  protocol, 
+  steps, 
+  onStepClick, 
+  onAssignAgent,
+  initialViewMode = "linear",
+  viewMode: controlledViewMode,
+  onViewModeChange,
+  selectedStepId: controlledSelectedStepId,
+  onStepSelect
+}: PipelineVisualizerProps) {
+  // Internal state for uncontrolled mode
+  const [internalViewMode, setInternalViewMode] = useState<ViewMode>(initialViewMode)
+  const [internalSelectedStepId, setInternalSelectedStepId] = useState<number | null>(null)
+
+  // Use controlled or uncontrolled state
+  const viewMode = controlledViewMode ?? internalViewMode
+  const selectedStepId = controlledSelectedStepId ?? internalSelectedStepId
+
+  // Handle view mode change - preserves step selection per Requirements 4.4
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    if (onViewModeChange) {
+      onViewModeChange(mode)
+    } else {
+      setInternalViewMode(mode)
+    }
+    // Step selection is preserved automatically since we don't reset it
+  }, [onViewModeChange])
+
+  // Handle step click - updates selection and calls external handler
+  const handleStepClick = useCallback((step: StepRun) => {
+    if (onStepSelect) {
+      onStepSelect(step.id)
+    } else {
+      setInternalSelectedStepId(step.id)
+    }
+    onStepClick?.(step)
+  }, [onStepClick, onStepSelect])
 
   const getStepIcon = (status: string) => {
     switch (status) {
@@ -55,6 +106,111 @@ export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent
     }
   }
 
+  // View mode toggle component per Requirements 4.1
+  const ViewModeToggle = () => (
+    <div className="flex items-center gap-1 rounded-lg border p-1 bg-muted/30">
+      <Button
+        variant={viewMode === "linear" ? "secondary" : "ghost"}
+        size="sm"
+        className="gap-2 h-8"
+        onClick={() => handleViewModeChange("linear")}
+        aria-label="Linear view"
+      >
+        <List className="h-4 w-4" />
+        Linear
+      </Button>
+      <Button
+        variant={viewMode === "dag" ? "secondary" : "ghost"}
+        size="sm"
+        className="gap-2 h-8"
+        onClick={() => handleViewModeChange("dag")}
+        aria-label="DAG view"
+      >
+        <GitBranch className="h-4 w-4" />
+        DAG
+      </Button>
+    </div>
+  )
+
+  // Linear view content (existing implementation)
+  const linearContent = (
+    <div className="relative">
+      <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-border" />
+
+      <div className="space-y-4">
+        {steps.map((step, index) => (
+          <div key={step.id} className="relative">
+            <div
+              className={cn(
+                "flex items-start gap-4 p-4 rounded-lg border-2 transition-all cursor-pointer hover:border-primary/50",
+                step.status === "running" && "border-blue-500/50 bg-blue-500/5",
+                step.status === "completed" && "border-green-500/30 bg-green-500/5",
+                step.status === "failed" && "border-red-500/50 bg-red-500/5",
+                step.status === "pending" && "border-border bg-card",
+                selectedStepId === step.id && "ring-2 ring-primary ring-offset-2",
+              )}
+              onClick={() => handleStepClick(step)}
+            >
+              <div className="relative z-10 flex-shrink-0">{getStepIcon(step.status)}</div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Badge variant="outline" className="text-xs font-mono">
+                        Step {step.step_index}
+                      </Badge>
+                      <h4 className="font-semibold truncate">{step.step_name}</h4>
+                      <StatusPill status={step.status} size="sm" />
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground mb-3">
+                      <span className="capitalize">Type: {step.step_type}</span>
+                      {step.model && (
+                        <>
+                          <span>•</span>
+                          <span>Model: {step.model}</span>
+                        </>
+                      )}
+                      {step.retries > 0 && (
+                        <>
+                          <span>•</span>
+                          <span className="text-yellow-600">Retries: {step.retries}</span>
+                        </>
+                      )}
+                    </div>
+
+                    {step.summary && (
+                      <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{step.summary}</p>
+                    )}
+
+                    <AssignAgentButton stepId={step.id} currentAgent={step.engine_id} onAssign={onAssignAgent} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {index < steps.length - 1 && (
+              <div className="flex items-center justify-center py-2">
+                <ArrowRight className="h-5 w-5 text-muted-foreground" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+
+  // DAG view content per Requirements 4.2
+  const dagContent = (
+    <PipelineDag
+      steps={steps}
+      onStepClick={handleStepClick}
+      className="min-h-[400px]"
+      selectedStepId={selectedStepId}
+    />
+  )
+
   const content = (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -65,6 +221,7 @@ export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ViewModeToggle />
           <Button variant="outline" size="sm">
             <Download className="h-4 w-4 mr-2" />
             Export
@@ -87,6 +244,10 @@ export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent
                   steps={steps}
                   onStepClick={onStepClick}
                   onAssignAgent={onAssignAgent}
+                  viewMode={viewMode}
+                  onViewModeChange={handleViewModeChange}
+                  selectedStepId={selectedStepId}
+                  onStepSelect={onStepSelect ?? setInternalSelectedStepId}
                 />
               </div>
             </DialogContent>
@@ -94,70 +255,8 @@ export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent
         </div>
       </div>
 
-      <div className="relative">
-        <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-border" />
-
-        <div className="space-y-4">
-          {steps.map((step, index) => (
-            <div key={step.id} className="relative">
-              <div
-                className={cn(
-                  "flex items-start gap-4 p-4 rounded-lg border-2 transition-all cursor-pointer hover:border-primary/50",
-                  step.status === "running" && "border-blue-500/50 bg-blue-500/5",
-                  step.status === "completed" && "border-green-500/30 bg-green-500/5",
-                  step.status === "failed" && "border-red-500/50 bg-red-500/5",
-                  step.status === "pending" && "border-border bg-card",
-                )}
-                onClick={() => onStepClick?.(step)}
-              >
-                <div className="relative z-10 flex-shrink-0">{getStepIcon(step.status)}</div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2">
-                        <Badge variant="outline" className="text-xs font-mono">
-                          Step {step.step_index}
-                        </Badge>
-                        <h4 className="font-semibold truncate">{step.step_name}</h4>
-                        <StatusPill status={step.status} size="sm" />
-                      </div>
-
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground mb-3">
-                        <span className="capitalize">Type: {step.step_type}</span>
-                        {step.model && (
-                          <>
-                            <span>•</span>
-                            <span>Model: {step.model}</span>
-                          </>
-                        )}
-                        {step.retries > 0 && (
-                          <>
-                            <span>•</span>
-                            <span className="text-yellow-600">Retries: {step.retries}</span>
-                          </>
-                        )}
-                      </div>
-
-                      {step.summary && (
-                        <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{step.summary}</p>
-                      )}
-
-                      <AssignAgentButton stepId={step.id} currentAgent={step.engine_id} onAssign={onAssignAgent} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {index < steps.length - 1 && (
-                <div className="flex items-center justify-center py-2">
-                  <ArrowRight className="h-5 w-5 text-muted-foreground" />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Render appropriate view based on viewMode per Requirements 4.2, 4.3 */}
+      {viewMode === "dag" ? dagContent : linearContent}
     </div>
   )
 

@@ -10,6 +10,8 @@ interface PipelineDagProps {
   steps: StepRun[]
   onStepClick?: (step: StepRun) => void
   className?: string
+  /** Currently selected step ID - used for highlighting */
+  selectedStepId?: number | null
 }
 
 // Status color mapping per requirements 3.3
@@ -108,7 +110,7 @@ interface DagEdge {
   points: Array<{ x: number; y: number }>
 }
 
-export function PipelineDag({ steps, onStepClick, className }: PipelineDagProps) {
+export function PipelineDag({ steps, onStepClick, className, selectedStepId }: PipelineDagProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -391,8 +393,21 @@ export function PipelineDag({ steps, onStepClick, className }: PipelineDagProps)
       .attr("rx", 8)
       .attr("fill", "#ffffff")
       .attr("stroke", d => getStatusColor(d.step.status))
-      .attr("stroke-width", 2)
+      .attr("stroke-width", d => d.step.id === selectedStepId ? 3 : 2)
       .attr("filter", "drop-shadow(0 1px 2px rgb(0 0 0 / 0.1))")
+
+    // Selection ring for selected node per Requirements 4.4
+    nodeElements.filter(d => d.step.id === selectedStepId)
+      .insert("rect", ":first-child")
+      .attr("x", -4)
+      .attr("y", -4)
+      .attr("width", nodeWidth + 8)
+      .attr("height", nodeHeight + 8)
+      .attr("rx", 12)
+      .attr("fill", "none")
+      .attr("stroke", "#6366f1")
+      .attr("stroke-width", 2)
+      .attr("stroke-dasharray", "4,2")
 
     // Status indicator circle
     nodeElements.append("circle")
@@ -446,7 +461,7 @@ export function PipelineDag({ steps, onStepClick, className }: PipelineDagProps)
       .attr("font-size", "10px")
       .text(d => d.step.parallel_group ?? "")
 
-  }, [nodes, edges, swimlanes, width, height, handleStepClick])
+  }, [nodes, edges, swimlanes, width, height, handleStepClick, selectedStepId])
 
   if (steps.length === 0) {
     return (
