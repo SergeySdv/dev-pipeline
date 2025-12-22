@@ -1,11 +1,13 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { apiClient, ApiError } from "../client"
 import { queryKeys } from "../query-keys"
 import type { Event as DevGodzillaEvent } from "../types"
 import { useVisibility } from "@/lib/hooks/use-visibility"
+import { useSubscription } from "@/lib/websocket/hooks"
+import type { WebSocketServerMessage } from "@/lib/websocket/types"
 
 export interface EventStreamFilters {
   protocol_id?: number
@@ -18,6 +20,138 @@ export interface EventStreamFilters {
 export interface EventStreamState {
   status: "idle" | "connecting" | "open" | "error"
   lastEventId: number
+}
+
+/**
+ * WebSocket-based event stream state
+ */
+export interface WebSocketEventStreamState {
+  events: DevGodzillaEvent[]
+  lastEventId: number
+  isConnected: boolean
+}
+
+/**
+ * Hook to subscribe to real-time events via WebSocket
+ * Implements Requirement 10.1: Real-time events using WebSocket
+ * 
+ * @param filters - Optional filters for events (event_type filtering is done client-side)
+ * @param options - Configuration options
+ * @returns WebSocket event stream state with events array
+ */
+export function useWebSocketEventStream(
+  filters?: EventStreamFilters | null,
+  options?: {
+    enabled?: boolean
+    maxEvents?: number
+    onEvent?: (event: DevGodzillaEvent) => void
+  }
+): WebSocketEventStreamState {
+  const [events, setEvents] = useState<DevGodzillaEvent[]>([])
+  const [lastEventId, setLastEventId] = useState(0)
+  const [isConnected, setIsConnected] = useState(false)
+  
+  const enabled = options?.enabled ?? true
+  const maxEvents = options?.maxEvents ?? 200
+  const onEventRef = useRef(options?.onEvent)
+  onEventRef.current = options?.onEvent
+
+  const handleMessage = useCallback((message: WebSocketServerMessage) => {
+    if (message.type !== "event" || !message.payload) return
+    
+    const event = message.payload as DevGodzillaEvent
+    if (typeof event?.id !== "number") return
+
+    // Apply client-side filters
+    if (filters) {
+      // Filter by protocol_id if specified
+      if (typeof filters.protocol_id === "number" && event.protocol_run_id !== filters.protocol_id) {
+        return
+      }
+      // Filter by project_id if specified
+      if (typeof filters.project_id === "number" && event.project_id !== filters.project_id) {
+        return
+      }
+      // Filter by event_type if specified
+      if (filters.event_type && event.event_type !== filters.event_type) {
+        return
+      }
+      // Filter by categories if specified
+      if (filters.categories && filters.categories.length > 0) {
+        if (!event.event_category || !filters.categories.includes(event.event_category)) {
+          return
+        }
+      }
+    }
+
+    setLastEventId((prev) => Math.max(prev, event.id))
+    setEvents((prev) => {
+      const next = [event, ...prev]
+      // Deduplicate by id
+      const unique = new Map<number, DevGodzillaEvent>()
+      for (const e of next) unique.set(e.id, e)
+      return Array.from(unique.values()).slice(0, maxEvents)
+    })
+    
+    onEventRef.current?.(event)
+  }, [filters, maxEvents])
+
+  // Subscribe to the events channel via WebSocket
+  useSubscription(enabled ? "events" : undefined, handleMessage)
+
+  // Track connection state
+  useEffect(() => {
+    if (enabled) {
+      setIsConnected(true)
+    } else {
+      setIsConnected(false)
+    }
+  }, [enabled])
+
+  // Reset events when filters change
+  useEffect(() => {
+    setEvents([])
+    setLastEventId(0)
+  }, [filters?.protocol_id, filters?.project_id])
+
+  return { events, lastEventId, isConnected }
+}
+
+/**
+ * Utility function to filter events by type
+ * Implements Property 13: Event feed filtering consistency
+ * 
+ * @param events - Array of events to filter
+ * @param eventType - Event type to filter by (or "all" for no filtering)
+ * @returns Filtered events array
+ */
+export function filterEventsByType(events: DevGodzillaEvent[], eventType: string): DevGodzillaEvent[] {
+  if (!eventType || eventType === "all") {
+    return events
+  }
+  return events.filter((e) => e.event_type === eventType)
+}
+
+/**
+ * Utility function to check if an event has a protocol link
+ * Implements Property 14: Event feed protocol links
+ * 
+ * @param event - Event to check
+ * @returns True if the event has a protocol_run_id
+ */
+export function eventHasProtocolLink(event: DevGodzillaEvent): boolean {
+  return typeof event.protocol_run_id === "number" && event.protocol_run_id !== null
+}
+
+/**
+ * Get unique event types from an array of events
+ * 
+ * @param events - Array of events
+ * @returns Sorted array of unique event types
+ */
+export function getUniqueEventTypes(events: DevGodzillaEvent[]): string[] {
+  const set = new Set(events.map((e) => e.event_type).filter(Boolean))
+  return Array.from(set).sort()
 }
 
 export function useEventStream(

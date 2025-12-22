@@ -12,6 +12,120 @@ import { FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useSpecificationContent } from "@/lib/api"
 
+// =============================================================================
+// Types for Property-Based Testing
+// =============================================================================
+
+/**
+ * Represents the available tab keys for the specification viewer
+ */
+export type SpecTabKey = "spec" | "plan" | "tasks" | "checklist"
+
+/**
+ * Represents a tab configuration for the specification viewer
+ */
+export interface SpecTab {
+  key: SpecTabKey
+  label: string
+  content: string | null
+}
+
+/**
+ * Represents the specification content data structure
+ */
+export interface SpecificationContentData {
+  id?: number
+  path?: string
+  title?: string
+  spec_content: string | null
+  plan_content: string | null
+  tasks_content: string | null
+  checklist_content: string | null
+}
+
+// =============================================================================
+// Helper Functions (Exported for Property-Based Testing)
+// =============================================================================
+
+/**
+ * Computes the tabs configuration from specification content data.
+ * For any specification with multiple files, this function SHALL return
+ * a tab for each available file type (spec, plan, tasks, checklist).
+ * 
+ * @param data - The specification content data
+ * @returns Array of tab configurations
+ */
+export function computeSpecTabs(data: SpecificationContentData | null | undefined): SpecTab[] {
+  return [
+    { key: "spec" as const, label: "Spec", content: data?.spec_content ?? null },
+    { key: "plan" as const, label: "Plan", content: data?.plan_content ?? null },
+    { key: "tasks" as const, label: "Tasks", content: data?.tasks_content ?? null },
+    { key: "checklist" as const, label: "Checklist", content: data?.checklist_content ?? null },
+  ]
+}
+
+/**
+ * Gets the available (non-null content) tabs from a tabs array.
+ * 
+ * @param tabs - Array of tab configurations
+ * @returns Array of tabs that have content
+ */
+export function getAvailableTabs(tabs: SpecTab[]): SpecTab[] {
+  return tabs.filter(tab => tab.content !== null)
+}
+
+/**
+ * Validates that all expected tab types are present in the tabs array.
+ * 
+ * @param tabs - Array of tab configurations
+ * @returns Object indicating which tab types are present
+ */
+export function validateTabsPresence(tabs: SpecTab[]): {
+  hasSpecTab: boolean
+  hasPlanTab: boolean
+  hasTasksTab: boolean
+  hasChecklistTab: boolean
+  allTabTypesPresent: boolean
+} {
+  const tabKeys = new Set(tabs.map(t => t.key))
+  const hasSpecTab = tabKeys.has("spec")
+  const hasPlanTab = tabKeys.has("plan")
+  const hasTasksTab = tabKeys.has("tasks")
+  const hasChecklistTab = tabKeys.has("checklist")
+  
+  return {
+    hasSpecTab,
+    hasPlanTab,
+    hasTasksTab,
+    hasChecklistTab,
+    allTabTypesPresent: hasSpecTab && hasPlanTab && hasTasksTab && hasChecklistTab,
+  }
+}
+
+/**
+ * Determines if a tab should be enabled (has content).
+ * 
+ * @param tab - The tab configuration
+ * @returns True if the tab has content and should be enabled
+ */
+export function isTabEnabled(tab: SpecTab): boolean {
+  return tab.content !== null
+}
+
+/**
+ * Gets the count of available (enabled) tabs.
+ * 
+ * @param tabs - Array of tab configurations
+ * @returns Number of tabs with content
+ */
+export function getAvailableTabCount(tabs: SpecTab[]): number {
+  return tabs.filter(isTabEnabled).length
+}
+
+// =============================================================================
+// Component
+// =============================================================================
+
 function MarkdownPanel({ content }: { content: string }) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -30,16 +144,9 @@ export function SpecificationViewer({
   className?: string
 }) {
   const { data, isLoading } = useSpecificationContent(specId)
-  const [tab, setTab] = useState<"spec" | "plan" | "tasks" | "checklist">("spec")
+  const [tab, setTab] = useState<SpecTabKey>("spec")
 
-  const tabs = useMemo(() => {
-    return [
-      { key: "spec" as const, label: "Spec", content: data?.spec_content ?? null },
-      { key: "plan" as const, label: "Plan", content: data?.plan_content ?? null },
-      { key: "tasks" as const, label: "Tasks", content: data?.tasks_content ?? null },
-      { key: "checklist" as const, label: "Checklist", content: data?.checklist_content ?? null },
-    ]
-  }, [data])
+  const tabs = useMemo(() => computeSpecTabs(data), [data])
 
   if (isLoading) return <LoadingState message="Loading specification content..." />
   if (!data) return <EmptyState icon={FileText} title="No content" description="No spec content available." />
@@ -51,10 +158,10 @@ export function SpecificationViewer({
         <CardDescription className="font-mono text-xs">{data.path}</CardDescription>
       </CardHeader>
       <CardContent>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="space-y-4">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as SpecTabKey)} className="space-y-4">
           <TabsList>
             {tabs.map((t) => (
-              <TabsTrigger key={t.key} value={t.key} disabled={!t.content}>
+              <TabsTrigger key={t.key} value={t.key} disabled={!isTabEnabled(t)}>
                 {t.label}
               </TabsTrigger>
             ))}

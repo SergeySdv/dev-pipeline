@@ -1,16 +1,120 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useCallback } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { Activity, Bot, Clock, XCircle } from "lucide-react"
-import { useAgents, useAgentHealth, useAgentMetrics } from "@/lib/api"
+import { useAgents, useAgentHealth, useAgentMetrics, queryKeys } from "@/lib/api"
+import { useSubscription } from "@/lib/websocket"
+import type { WebSocketServerMessage } from "@/lib/websocket/types"
+import type { Agent, AgentHealth, AgentMetrics } from "@/lib/api/types"
+
+/**
+ * Represents the data needed to render an agent card
+ */
+export interface AgentCardData {
+  id: string
+  name: string
+  kind: string
+  status: "available" | "unavailable" | "disabled"
+  activeSteps: number
+  completedSteps: number
+  failedSteps: number
+  responseTimeMs: number | null
+  error: string | null
+}
+
+/**
+ * Computes the card data for an agent by combining agent, health, and metrics data.
+ * This function is exported for property-based testing.
+ * 
+ * @param agent - The agent data
+ * @param health - Optional health data for the agent
+ * @param metrics - Optional metrics data for the agent
+ * @returns The computed card data
+ */
+export function computeAgentCardData(
+  agent: Agent,
+  health?: AgentHealth,
+  metrics?: AgentMetrics
+): AgentCardData {
+  const available = health?.available ?? agent.status === "available"
+  const enabled = agent.enabled ?? agent.status !== "unavailable"
+  
+  let status: "available" | "unavailable" | "disabled"
+  if (!enabled) {
+    status = "disabled"
+  } else if (available) {
+    status = "available"
+  } else {
+    status = "unavailable"
+  }
+
+  return {
+    id: agent.id,
+    name: agent.name,
+    kind: agent.kind,
+    status,
+    activeSteps: metrics?.active_steps ?? 0,
+    completedSteps: metrics?.completed_steps ?? 0,
+    failedSteps: metrics?.failed_steps ?? 0,
+    responseTimeMs: health?.response_time_ms ?? null,
+    error: health?.error ?? null,
+  }
+}
+
+/**
+ * Validates that an agent card has all required fields for rendering.
+ * Returns an object indicating which fields are present.
+ * 
+ * @param cardData - The agent card data to validate
+ * @returns Object with boolean flags for each required field
+ */
+export function validateAgentCardCompleteness(cardData: AgentCardData): {
+  hasName: boolean
+  hasStatus: boolean
+  hasActiveSteps: boolean
+  hasCompletedSteps: boolean
+  hasFailedSteps: boolean
+  isComplete: boolean
+} {
+  const hasName = typeof cardData.name === "string" && cardData.name.length > 0
+  const hasStatus = ["available", "unavailable", "disabled"].includes(cardData.status)
+  const hasActiveSteps = typeof cardData.activeSteps === "number"
+  const hasCompletedSteps = typeof cardData.completedSteps === "number"
+  const hasFailedSteps = typeof cardData.failedSteps === "number"
+  
+  return {
+    hasName,
+    hasStatus,
+    hasActiveSteps,
+    hasCompletedSteps,
+    hasFailedSteps,
+    isComplete: hasName && hasStatus && hasActiveSteps && hasCompletedSteps && hasFailedSteps,
+  }
+}
 
 export function AgentHealthDashboard({ projectId }: { projectId?: number }) {
+  const queryClient = useQueryClient()
   const { data: agents = [] } = useAgents(projectId)
   const { data: health = [] } = useAgentHealth(projectId)
   const { data: metrics = [] } = useAgentMetrics(projectId)
+
+  // Subscribe to agent status updates via WebSocket
+  const handleAgentUpdate = useCallback(
+    (message: WebSocketServerMessage) => {
+      // Invalidate agent-related queries to trigger refetch
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(projectId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.health(projectId) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.metrics(projectId) })
+    },
+    [queryClient, projectId]
+  )
+
+  // Subscribe to the "agents" channel for real-time updates
+  useSubscription("agents", handleAgentUpdate)
 
   const healthById = useMemo(() => new Map(health.map((h) => [h.agent_id, h])), [health])
   const metricsById = useMemo(() => new Map(metrics.map((m) => [m.agent_id, m])), [metrics])
