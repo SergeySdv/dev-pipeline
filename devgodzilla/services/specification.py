@@ -385,7 +385,9 @@ class SpecificationService(Service):
                     base_branch_value = project.base_branch
 
             spec_number = self._get_next_spec_number(str(repo_root), project_id)
-            resolved_feature_name = feature_name or self._sanitize_feature_name(description[:50])
+            # Always sanitize feature name to ensure valid git branch names
+            raw_feature_name = feature_name or description[:50]
+            resolved_feature_name = self._sanitize_feature_name(raw_feature_name)
             spec_name = f"{spec_number:03d}-{resolved_feature_name}"
 
             spec_run_id = None
