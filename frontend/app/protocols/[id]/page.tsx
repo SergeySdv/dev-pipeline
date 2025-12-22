@@ -18,6 +18,7 @@ import { RunsTab } from "./components/runs-tab"
 import { SpecTab } from "./components/spec-tab"
 import { PolicyTab } from "./components/policy-tab"
 import { ClarificationsTab } from "./components/clarifications-tab"
+import { QualityTab } from "./components/quality-tab"
 
 export default function ProtocolDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -187,6 +188,7 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
           <TabsTrigger value="events">Events</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="quality">Quality</TabsTrigger>
           <TabsTrigger value="spec">Spec</TabsTrigger>
           <TabsTrigger value="policy">Policy</TabsTrigger>
           <TabsTrigger value="clarifications">Clarifications</TabsTrigger>
@@ -203,6 +205,9 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
         </TabsContent>
         <TabsContent value="runs">
           <RunsTab protocolId={protocolId} />
+        </TabsContent>
+        <TabsContent value="quality">
+          <QualityTab protocolId={protocolId} />
         </TabsContent>
         <TabsContent value="spec">
           <SpecTab protocolId={protocolId} />

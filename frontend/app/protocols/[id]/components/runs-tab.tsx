@@ -89,7 +89,7 @@ export function RunsTab({ protocolId }: RunsTabProps) {
         <h3 className="text-lg font-semibold">Execution Runs</h3>
         <p className="text-sm text-muted-foreground">{runs.length} run(s)</p>
       </div>
-      <DataTable columns={columns} data={runs} />
+      <DataTable columns={columns} data={runs} enableSearch enableExport exportFilename={`protocol-${protocolId}-runs.csv`} />
     </div>
   )
 }

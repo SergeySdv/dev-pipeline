@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { LoadingState } from "@/components/ui/loading-state"
 import { EmptyState } from "@/components/ui/empty-state"
+import { CodeBlock } from "@/components/ui/code-block"
 import { ArrowLeft, FileText, Play, ListTodo, Target, TrendingUp, ExternalLink, ClipboardCheck } from "lucide-react"
 import Link from "next/link"
 
@@ -19,7 +20,7 @@ export default function SpecificationDetailPage({
   const { id: idParam } = use(params)
   const id = Number.parseInt(idParam)
   const { data: spec, isLoading } = useSpecification(id)
-  const { data: specContent } = useSpecificationContent(id)
+  const { data: specContent, isLoading: contentLoading } = useSpecificationContent(id)
 
   if (isLoading) {
     return <LoadingState message="Loading specification..." />
@@ -121,6 +122,9 @@ export default function SpecificationDetailPage({
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="tasks">Tasks ({spec.linked_tasks})</TabsTrigger>
+          <TabsTrigger value="spec_file">Spec File</TabsTrigger>
+          <TabsTrigger value="plan_file">Plan File</TabsTrigger>
+          <TabsTrigger value="tasks_file">Tasks File</TabsTrigger>
           <TabsTrigger value="checklist">Checklist</TabsTrigger>
           <TabsTrigger value="protocol">Protocol</TabsTrigger>
         </TabsList>
@@ -195,6 +199,60 @@ export default function SpecificationDetailPage({
           </Card>
         </TabsContent>
 
+        <TabsContent value="spec_file" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>spec.md</CardTitle>
+              <CardDescription>Rendered as plain Markdown text</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {contentLoading ? (
+                <LoadingState message="Loading spec content..." />
+              ) : specContent?.spec_content ? (
+                <CodeBlock code={specContent.spec_content} language="markdown" maxHeight="600px" />
+              ) : (
+                <div className="text-sm text-muted-foreground">No spec content available yet.</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="plan_file" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>plan.md</CardTitle>
+              <CardDescription>Rendered as plain Markdown text</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {contentLoading ? (
+                <LoadingState message="Loading plan content..." />
+              ) : specContent?.plan_content ? (
+                <CodeBlock code={specContent.plan_content} language="markdown" maxHeight="600px" />
+              ) : (
+                <div className="text-sm text-muted-foreground">No plan content available yet.</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="tasks_file" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>tasks.md</CardTitle>
+              <CardDescription>Rendered as plain Markdown text</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {contentLoading ? (
+                <LoadingState message="Loading tasks content..." />
+              ) : specContent?.tasks_content ? (
+                <CodeBlock code={specContent.tasks_content} language="markdown" maxHeight="600px" />
+              ) : (
+                <div className="text-sm text-muted-foreground">No tasks content available yet.</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="checklist" className="space-y-4">
           <Card>
             <CardHeader>
@@ -206,9 +264,7 @@ export default function SpecificationDetailPage({
             </CardHeader>
             <CardContent>
               {specContent?.checklist_content ? (
-                <pre className="whitespace-pre-wrap text-sm bg-muted/60 rounded-lg p-4">
-                  {specContent.checklist_content}
-                </pre>
+                <CodeBlock code={specContent.checklist_content} language="markdown" maxHeight="600px" />
               ) : (
                 <div className="text-sm text-muted-foreground">
                   No checklist generated yet. Run the checklist action from the SpecKit workspace.

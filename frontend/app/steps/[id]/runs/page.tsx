@@ -75,7 +75,7 @@ export default function StepRunsPage({ params }: { params: { id: string } }) {
 
       {runs && runs.length > 0 ? (
         <Card>
-          <DataTable columns={columns} data={runs} />
+          <DataTable columns={columns} data={runs} enableSearch enableExport exportFilename={`step-${id}-runs.csv`} />
         </Card>
       ) : (
         <Card className="p-12">

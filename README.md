@@ -2,18 +2,18 @@
 
 DevGodzilla is the primary backend in this repo: a FastAPI API (`devgodzilla/api/app.py`) integrated with a Windmill-based UI (served via nginx).
 
-## Quick start (Docker)
+## Quick start (local dev)
 
 ```bash
-docker compose up --build -d
+scripts/run-local-dev.sh dev
 ```
 
 - UI: `http://localhost:8080` (or `$DEVGODZILLA_NGINX_PORT`)
 - API docs: `http://localhost:8080/docs`
 
 Notes:
-- Windmill scripts/flows/apps are imported on startup by the one-shot `windmill_import` service (check `docker compose logs windmill_import`).
-- DevGodzilla calls Windmill via `DEVGODZILLA_WINDMILL_URL`/`DEVGODZILLA_WINDMILL_TOKEN`/`DEVGODZILLA_WINDMILL_WORKSPACE` (Compose defaults workspace to `demo1`).
+- `docker compose up --build -d` starts infra only (nginx + windmill + workers + db + redis + lsp). The API + frontend run locally on the host.
+- Import Windmill assets (optional): `scripts/run-local-dev.sh import`.
 
 ## Legacy backend (TasksGodzilla orchestrator)
 

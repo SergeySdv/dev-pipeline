@@ -151,7 +151,13 @@ export default function RunArtifactsPage() {
           </Tabs>
 
           <Card>
-            <DataTable columns={columns} data={filteredArtifacts || []} />
+            <DataTable
+              columns={columns}
+              data={filteredArtifacts || []}
+              enableSearch
+              enableExport
+              exportFilename={`run-${runId}-artifacts.csv`}
+            />
           </Card>
         </div>
       ) : (

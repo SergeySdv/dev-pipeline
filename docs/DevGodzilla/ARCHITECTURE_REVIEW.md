@@ -4,7 +4,7 @@ Date: 2025-12-17
 
 This document captures an end-to-end architecture review of the **DevGodzilla** stack in this repository, with focus on:
 - DevGodzilla API + services architecture (`devgodzilla/`)
-- Windmill integration (`windmill/` exports + `windmill_import`)
+- Windmill integration (`windmill/` exports + import script)
 - Embedded React app approach (preferred UI)
 - Security/ops best practices and missing pieces
 
@@ -35,11 +35,12 @@ This document captures an end-to-end architecture review of the **DevGodzilla** 
 ### Docker Compose topology
 
 The default stack runs:
-- `nginx` reverse proxy (`nginx.devgodzilla.conf`)
-- `devgodzilla-api` (FastAPI, `devgodzilla/api/app.py`)
+- `nginx` reverse proxy (`nginx.local.conf`, proxies to host backend/frontend via `host.docker.internal`)
 - `windmill` server + workers (built from `Origins/Windmill`)
 - `db` (Postgres)
-- `windmill_import` one-shot bootstrap job to import assets (`windmill/import_to_windmill.py`)
+- Host processes (started via `scripts/run-local-dev.sh dev`):
+  - `devgodzilla` API (FastAPI, `devgodzilla/api/app.py`)
+  - DevGodzilla frontend (Next.js)
 
 See: `docker-compose.yml`, `DEPLOYMENT.md`, `README.md`.
 
@@ -67,7 +68,7 @@ See: `docker-compose.yml`, `DEPLOYMENT.md`, `README.md`.
   - API-driven scripts (`windmill/scripts/devgodzilla/*_api.py`) that call DevGodzilla API (portable, low coupling).
   - DevGodzilla-side Windmill API client (`devgodzilla/windmill/client.py`) for server-side orchestration/proxying.
 - Stable operational entrypoint:
-  - `windmill_import` produces a repeatable “bootstrap workspace assets” flow for local dev.
+  - `scripts/run-local-dev.sh import` produces a repeatable “bootstrap workspace assets” flow for local dev.
 
 ## Major Gaps / Mismatches (Highest Priority)
 
@@ -190,4 +191,4 @@ Target a single correlation model:
 - DevGodzilla services: `devgodzilla/services/`
 - Windmill assets: `windmill/flows/devgodzilla/`, `windmill/scripts/devgodzilla/`, `windmill/apps/devgodzilla/`
 - Windmill import: `windmill/import_to_windmill.py`
-- Deployment: `docker-compose.yml`, `DEPLOYMENT.md`, `nginx.devgodzilla.conf`
+- Deployment: `docker-compose.yml`, `DEPLOYMENT.md`, `nginx.local.conf`

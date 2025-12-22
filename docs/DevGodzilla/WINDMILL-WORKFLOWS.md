@@ -53,21 +53,23 @@ graph TB
 
 ---
 
-## Docker Compose bootstrap (single-solution stack)
+## Docker Compose bootstrap (local dev)
 
-The repo’s `docker-compose.yml` brings up nginx + DevGodzilla API + Windmill + workers + DB + Redis.
+The repo’s `docker-compose.yml` brings up **infra only**: nginx + Windmill + workers + DB + Redis (+ LSP).
+DevGodzilla backend + frontend run locally on the host and are proxied by nginx via `nginx.local.conf`.
 
 ```bash
 docker compose up --build -d
-docker compose logs -f windmill_import
+
+# start/restart local backend + frontend (no duplicate instances)
+scripts/run-local-dev.sh backend restart
+scripts/run-local-dev.sh frontend restart
+
+# optional: import windmill assets into the local Windmill workspace
+scripts/run-local-dev.sh import
 ```
 
-`windmill_import` imports local assets into Windmill:
-- `windmill/scripts/devgodzilla/` → `u/devgodzilla/*`
-- `windmill/flows/devgodzilla/` → `f/devgodzilla/*`
-- `windmill/apps/devgodzilla/` + `windmill/apps/devgodzilla-react-app/`
-
-For local development, the Windmill token/workspace are typically kept in `windmill/apps/devgodzilla-react-app/.env.development` (local-only) and used by `windmill_import` via `--token-file`.
+For local development, the Windmill token/workspace are typically kept in `windmill/apps/devgodzilla-react-app/.env.development` (local-only) and used by `scripts/run-local-dev.sh import` via `--token-file`.
 
 ### Useful endpoints (via nginx)
 

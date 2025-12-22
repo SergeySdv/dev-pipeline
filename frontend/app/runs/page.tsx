@@ -211,7 +211,7 @@ export default function RunsPage() {
         ) : !runs || runs.length === 0 ? (
           <EmptyState icon={PlayCircle} title="No runs found" description="No runs match your filter criteria." />
         ) : (
-          <DataTable columns={columns} data={runs} />
+          <DataTable columns={columns} data={runs} enableSearch enableExport exportFilename="runs.csv" />
         )}
       </div>
     </div>

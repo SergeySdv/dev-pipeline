@@ -245,15 +245,14 @@ python windmill/import_to_windmill.py \
 ### Starting the Stack
 
 ```bash
-# Start all services
-docker compose -f docker-compose.devgodzilla.yml up -d
+# Start infra services in Docker (Windmill/DB/Redis/Nginx/etc)
+scripts/run-local-dev.sh up
+
+# Start backend + frontend locally on the host
+scripts/run-local-dev.sh dev
 
 # View logs
-docker compose -f docker-compose.devgodzilla.yml logs -f
-
-# Rebuild frontend after changes
-docker compose -f docker-compose.devgodzilla.yml build frontend
-docker compose -f docker-compose.devgodzilla.yml up -d frontend
+scripts/run-local-dev.sh logs
 ```
 
 ---

@@ -240,7 +240,7 @@ function StepRunsTab({ runs, isLoading }: { runs: CodexRun[] | undefined; isLoad
         <h3 className="text-lg font-semibold">Step Runs</h3>
         <p className="text-sm text-muted-foreground">{runs.length} run(s)</p>
       </div>
-      <DataTable columns={columns} data={runs} />
+      <DataTable columns={columns} data={runs} enableSearch enableExport exportFilename={`step-${stepId}-runs.csv`} />
     </div>
   )
 }

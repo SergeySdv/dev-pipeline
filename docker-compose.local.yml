@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Local Development Stack
 # This compose file runs only infrastructure services (DB, Redis, Windmill)
 # while the API and Frontend are run locally for development with local API keys

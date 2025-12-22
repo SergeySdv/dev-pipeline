@@ -169,7 +169,7 @@ export function StepsTab({ protocolId }: StepsTabProps) {
           </p>
         </div>
       </div>
-      <DataTable columns={columns} data={steps} />
+      <DataTable columns={columns} data={steps} enableSearch enableExport exportFilename={`protocol-${protocolId}-steps.csv`} />
       <Dialog open={!!assignStep} onOpenChange={(open) => (!open ? setAssignStep(null) : null)}>
         <DialogContent>
           <DialogHeader>

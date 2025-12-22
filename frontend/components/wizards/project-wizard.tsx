@@ -212,7 +212,9 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                       </SelectItem>
                     ))}
                     {(!policyPacks || policyPacks.length === 0) && !policyPacksLoading && (
-                      <SelectItem value="" disabled>No policy packs available</SelectItem>
+                      <SelectItem value="__no_policy_packs__" disabled>
+                        No policy packs available
+                      </SelectItem>
                     )}
                   </SelectContent>
                 </Select>

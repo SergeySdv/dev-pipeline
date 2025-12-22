@@ -5,12 +5,11 @@
 - 8GB+ RAM recommended (for compiling Windmill)
 
 ## Architecture
-The system runs as a set of Docker containers:
-1.  **`devgodzilla-api`**: The core API service (FastAPI).
-2.  **`windmill`**: The extended Windmill platform (with DevGodzilla frontend).
-3.  **`db`**: PostgreSQL (stores data for both).
-4.  **`redis`**: Redis (for job queues/caching).
-5.  **`windmill_import`**: One-shot bootstrap job that imports scripts/flows/apps into Windmill.
+The default local development setup is **hybrid**:
+- **Docker (infra)**: `nginx`, `windmill`, workers, `db`, `redis`, `lsp`
+- **Host (local processes)**: DevGodzilla backend (FastAPI) + DevGodzilla frontend (Next.js)
+
+Nginx inside Docker proxies to the host via `nginx.local.conf` (`host.docker.internal`).
 
 ## Setup & Run
 
@@ -21,9 +20,9 @@ The system runs as a set of Docker containers:
     ```
 
 2.  **Build and Run**:
-    Use the default compose stack:
+    Start everything (infra + backend + frontend) via the local dev manager:
     ```bash
-    docker compose up --build -d
+    scripts/run-local-dev.sh dev
     ```
 
     > **Note**: The first build takes a while as it compiles Windmill from source (Rust + `deno_core`/V8 for JavaScript `input_transforms`).
@@ -31,18 +30,17 @@ The system runs as a set of Docker containers:
     If you want a faster `python`-only Windmill build (no JS `input_transforms`), set:
     ```bash
     export WINDMILL_FEATURES="static_frontend python"
-    docker compose up --build -d
+    scripts/run-local-dev.sh dev
     ```
 
-3.  **Import Windmill assets (auto)**:
-    The stack includes `windmill_import`, which imports:
+3.  **Import Windmill assets (optional)**:
+    Import scripts/flows/apps into Windmill:
     - scripts from `windmill/scripts/devgodzilla/` → `u/devgodzilla/*`
     - flows from `windmill/flows/devgodzilla/` → `f/devgodzilla/*`
     - apps from `windmill/apps/devgodzilla/`
 
-    Verify it ran:
     ```bash
-    docker compose logs windmill_import
+    scripts/run-local-dev.sh import
     ```
 
     Windmill token/workspace are read from `windmill/apps/devgodzilla-react-app/.env.development` by default.
@@ -64,11 +62,9 @@ On success, generated files appear under `projects/<project_id>/<repo>/specs/<sp
 
 ## Development
 
-- The `devgodzilla-api` container mounts the local directory, so code changes execute immediately (hot reload).
-- Frontend changes to Windmill require a rebuild:
-  ```bash
-  docker compose build windmill
-  ```
+- Backend and frontend run locally; restart them with:
+  - `scripts/run-local-dev.sh backend restart`
+  - `scripts/run-local-dev.sh frontend restart`
 
 ## Environment Variables (Compose)
 

@@ -6,17 +6,21 @@ If you’re looking for aspirational design/roadmaps, start with:
 - `docs/DevGodzilla/ARCHITECTURE.md`
 - `docs/DevGodzilla/ARCHITECTURE_REVIEW.md`
 
-## Runtime Topology (Docker Compose)
+## Runtime Topology (Local dev)
 
-Default stack (`docker compose up --build -d`) runs:
-- `nginx`: single entrypoint for UI + API
-- `devgodzilla-api`: FastAPI service (`devgodzilla/api/app.py`)
+Default infra stack (`docker compose up --build -d`) runs:
+- `nginx`: single entrypoint for UI + API (proxies to host backend/frontend via `nginx.local.conf`)
 - `windmill`: Windmill server + UI (built from `Origins/Windmill`)
 - `windmill_worker` / `windmill_worker_native`: Windmill workers
 - `db`: Postgres (shared by DevGodzilla + Windmill)
-- `windmill_import`: one-shot job that imports local `windmill/` assets into Windmill
+- `redis`: Redis (queues/cache)
+- `lsp`: Windmill LSP (optional)
 
-See: `docker-compose.yml`, `DEPLOYMENT.md`, `nginx.devgodzilla.conf`.
+Host processes (started via `scripts/run-local-dev.sh dev`) run:
+- DevGodzilla API: `uvicorn devgodzilla.api.app:app` on `:8000`
+- DevGodzilla frontend (Next.js) on `:3000`
+
+See: `docker-compose.yml`, `docker-compose.local.yml`, `nginx.local.conf`, `scripts/run-local-dev.sh`, `DEPLOYMENT.md`.
 
 ## Source of Truth (API + Services)
 
@@ -128,7 +132,7 @@ Implementation reference:
 
 ### Asset import
 
-`windmill_import` (compose service) imports local assets into Windmill:
+Assets can be imported into Windmill via `scripts/run-local-dev.sh import` (runs `windmill/import_to_windmill.py`):
 - `windmill/scripts/devgodzilla/` → `u/devgodzilla/*`
 - `windmill/flows/devgodzilla/` → `f/devgodzilla/*`
 - `windmill/apps/devgodzilla/` → apps in the workspace

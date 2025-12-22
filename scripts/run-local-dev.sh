@@ -62,6 +62,178 @@ export_env() {
   export DEVGODZILLA_PROJECTS_ROOT="${DEVGODZILLA_PROJECTS_ROOT:-$PROJECT_DIR/projects}"
 }
 
+RUN_DIR="$PROJECT_DIR/runs/local-dev"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+FRONTEND_HOSTNAME="${FRONTEND_HOSTNAME:-0.0.0.0}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
+BACKEND_PID_FILE="$RUN_DIR/backend.pid"
+
+ensure_run_dir() {
+  mkdir -p "$RUN_DIR"
+}
+
+pid_is_alive() {
+  local pid="$1"
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
+pid_cwd() {
+  local pid="$1"
+  readlink -f "/proc/$pid/cwd" 2>/dev/null || true
+}
+
+pid_cmdline() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    tr '\0' ' ' <"/proc/$pid/cmdline"
+    return 0
+  fi
+  return 1
+}
+
+pid_ppid() {
+  local pid="$1"
+  awk '/^PPid:/{print $2}' "/proc/$pid/status" 2>/dev/null || true
+}
+
+find_pids_listening_on_port() {
+  local port="$1"
+  if command_exists ss; then
+    ss -lptn "sport = :$port" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true
+    return 0
+  fi
+
+  if command_exists lsof; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u || true
+    return 0
+  fi
+
+  return 0
+}
+
+find_pid_listening_on_port() {
+  local port="$1"
+  find_pids_listening_on_port "$port" | head -n 1 || true
+}
+
+stop_pid_gracefully() {
+  local pid="$1"
+  local name="$2"
+
+  if ! pid_is_alive "$pid"; then
+    return 0
+  fi
+
+  log "Stopping ${name} (pid=${pid})"
+  kill "$pid" 2>/dev/null || true
+
+  local i
+  for i in {1..40}; do
+    if ! pid_is_alive "$pid"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  warn "${name} did not stop in time; sending SIGKILL (pid=${pid})"
+  kill -9 "$pid" 2>/dev/null || true
+}
+
+frontend_lock_file() {
+  echo "$PROJECT_DIR/frontend/.next/dev/lock"
+}
+
+clear_frontend_lock_if_safe() {
+  local lock_file
+  lock_file="$(frontend_lock_file)"
+  [[ -f "$lock_file" ]] || return 0
+
+  local pid=""
+  for pid in $(find_pids_listening_on_port "$FRONTEND_PORT"); do
+    if [[ -n "$pid" ]] && pid_is_alive "$pid"; then
+      return 0
+    fi
+  done
+
+  warn "Removing stale Next.js dev lock: $lock_file"
+  rm -f "$lock_file"
+}
+
+frontend_pid_matches_project() {
+  local pid="$1"
+  local cwd
+  cwd="$(pid_cwd "$pid")"
+  [[ -n "$cwd" ]] || return 1
+  [[ "$cwd" == "$PROJECT_DIR/frontend"* ]] || return 1
+  return 0
+}
+
+backend_pid_matches_project() {
+  local pid="$1"
+  local cwd
+  cwd="$(pid_cwd "$pid")"
+  [[ -n "$cwd" ]] || return 1
+  [[ "$cwd" == "$PROJECT_DIR"* ]] || return 1
+
+  local cmdline=""
+  cmdline="$(pid_cmdline "$pid" 2>/dev/null || true)"
+  [[ "$cmdline" == *"uvicorn"* ]] || return 1
+  [[ "$cmdline" == *"devgodzilla.api.app:app"* ]] || return 1
+  return 0
+}
+
+resolve_backend_controller_pid_from_pid() {
+  local pid="$1"
+  local depth=0
+
+  while [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" && "$depth" -lt 12 ]]; do
+    if pid_is_alive "$pid" && backend_pid_matches_project "$pid"; then
+      echo "$pid"
+      return 0
+    fi
+
+    pid="$(pid_ppid "$pid")"
+    depth=$((depth + 1))
+  done
+
+  return 0
+}
+
+frontend_status() {
+  local pid=""
+  pid="$(find_pid_listening_on_port "$FRONTEND_PORT")"
+  if [[ -z "$pid" ]] || ! pid_is_alive "$pid"; then
+    echo "frontend: stopped (port $FRONTEND_PORT)"
+    return 0
+  fi
+
+  local cwd
+  cwd="$(pid_cwd "$pid")"
+  echo "frontend: running (pid $pid, port $FRONTEND_PORT, cwd $cwd)"
+}
+
+backend_status() {
+  local pid=""
+  local controller_pid=""
+
+  for pid in $(find_pids_listening_on_port "$BACKEND_PORT"); do
+    controller_pid="$(resolve_backend_controller_pid_from_pid "$pid")"
+    if [[ -n "$controller_pid" ]]; then
+      break
+    fi
+  done
+
+  if [[ -z "$controller_pid" ]] || ! pid_is_alive "$controller_pid"; then
+    echo "backend: stopped (port $BACKEND_PORT)"
+    return 0
+  fi
+
+  local cwd
+  cwd="$(pid_cwd "$controller_pid")"
+  echo "backend: running (pid $controller_pid, port $BACKEND_PORT, cwd $cwd)"
+}
+
 print_usage() {
   cat <<EOF
 Usage: scripts/run-local-dev.sh <command>
@@ -72,12 +244,17 @@ Commands:
   clean       Stop Docker infra and remove volumes
   status      Show Docker infra status
   logs        Tail Docker infra logs
-  backend     Run backend locally (uvicorn --reload)
-  frontend    Run frontend locally (pnpm dev)
+  backend     Manage backend locally (start|stop|restart|status)
+  frontend    Manage frontend locally (start|stop|restart|status)
   dev         Start infra + run backend + frontend together
   import      Import Windmill assets into local Windmill
   env         Print local dev environment variables
   help        Show this help
+
+Notes:
+  - Default backend port: 8000 (override with BACKEND_PORT)
+  - Default frontend port: 3000 (override with FRONTEND_PORT)
+  - Default frontend hostname: 0.0.0.0 (override with FRONTEND_HOSTNAME)
 EOF
 }
 
@@ -107,23 +284,82 @@ infra_logs() {
   compose_cmd logs -f --tail=200
 }
 
-run_backend() {
+backend_stop() {
+  ensure_run_dir
+
+  local pid=""
+  local controller_pid=""
+  if [[ -f "$BACKEND_PID_FILE" ]]; then
+    pid="$(cat "$BACKEND_PID_FILE" 2>/dev/null || true)"
+    controller_pid="$(resolve_backend_controller_pid_from_pid "$pid")"
+    if [[ -n "$controller_pid" ]] && pid_is_alive "$controller_pid"; then
+      stop_pid_gracefully "$controller_pid" "backend"
+      rm -f "$BACKEND_PID_FILE"
+      return 0
+    fi
+    rm -f "$BACKEND_PID_FILE"
+  fi
+
+  local found_any="false"
+  for pid in $(find_pids_listening_on_port "$BACKEND_PORT"); do
+    found_any="true"
+    controller_pid="$(resolve_backend_controller_pid_from_pid "$pid")"
+    if [[ -n "$controller_pid" ]] && pid_is_alive "$controller_pid"; then
+      stop_pid_gracefully "$controller_pid" "backend"
+      return 0
+    fi
+  done
+
+  if [[ "$found_any" == "false" ]]; then
+    return 0
+  fi
+
+  die "Refusing to stop backend on port $BACKEND_PORT: port is in use but no DevGodzilla uvicorn controller process was found."
+}
+
+run_backend_foreground() {
   export_env
   local py
   py="$(python_bin)"
-  log "Starting backend (uvicorn) on :8000"
+  log "Starting backend (uvicorn) on :$BACKEND_PORT"
   "$py" -m uvicorn devgodzilla.api.app:app \
     --host 0.0.0.0 \
-    --port 8000 \
+    --port "$BACKEND_PORT" \
     --reload \
     --reload-dir "$PROJECT_DIR/devgodzilla"
 }
 
-run_frontend() {
+frontend_stop() {
+  ensure_run_dir
+
+  local server_pid=""
+  server_pid="$(find_pid_listening_on_port "$FRONTEND_PORT")"
+  if [[ -n "$server_pid" ]] && pid_is_alive "$server_pid"; then
+    if ! frontend_pid_matches_project "$server_pid"; then
+      local cwd
+      cwd="$(pid_cwd "$server_pid")"
+      die "Refusing to stop frontend on port $FRONTEND_PORT (pid $server_pid, cwd $cwd): not recognized as this project's Next dev server."
+    fi
+    stop_pid_gracefully "$server_pid" "frontend"
+  fi
+
+  local wrapper_pid=""
+  if [[ -f "$FRONTEND_PID_FILE" ]]; then
+    wrapper_pid="$(cat "$FRONTEND_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$wrapper_pid" ]] && pid_is_alive "$wrapper_pid" && frontend_pid_matches_project "$wrapper_pid"; then
+      stop_pid_gracefully "$wrapper_pid" "frontend wrapper"
+    fi
+    rm -f "$FRONTEND_PID_FILE"
+  fi
+
+  clear_frontend_lock_if_safe
+}
+
+run_frontend_foreground() {
   command_exists pnpm || die "pnpm not found. Install pnpm before running frontend."
   export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}"
-  log "Starting frontend (Next.js) on :3000"
-  (cd "$PROJECT_DIR/frontend" && pnpm dev)
+  log "Starting frontend (Next.js) on :$FRONTEND_PORT"
+  (cd "$PROJECT_DIR/frontend" && pnpm exec next dev --hostname "$FRONTEND_HOSTNAME" --port "$FRONTEND_PORT")
 }
 
 windmill_import() {
@@ -154,19 +390,109 @@ NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
 EOF
 }
 
+backend_cmd() {
+  local action="${1:-restart}"
+  case "$action" in
+    start)
+      local pid=""
+      local controller_pid=""
+      local found_any="false"
+
+      for pid in $(find_pids_listening_on_port "$BACKEND_PORT"); do
+        found_any="true"
+        controller_pid="$(resolve_backend_controller_pid_from_pid "$pid")"
+        if [[ -n "$controller_pid" ]] && pid_is_alive "$controller_pid"; then
+          log "Backend already running (pid=$controller_pid, port=$BACKEND_PORT)"
+          return 0
+        fi
+      done
+
+      if [[ "$found_any" == "true" ]]; then
+        die "Backend port $BACKEND_PORT is in use. Use BACKEND_PORT=... or stop the other process."
+      fi
+
+      run_backend_foreground
+      ;;
+    stop) backend_stop ;;
+    restart) backend_stop || true; run_backend_foreground ;;
+    status) backend_status ;;
+    *) die "Unknown backend action: $action (expected start|stop|restart|status)" ;;
+  esac
+}
+
+frontend_cmd() {
+  local action="${1:-restart}"
+  case "$action" in
+    start)
+      local pid=""
+      pid="$(find_pid_listening_on_port "$FRONTEND_PORT")"
+      if [[ -n "$pid" ]] && pid_is_alive "$pid"; then
+        if frontend_pid_matches_project "$pid"; then
+          log "Frontend already running (pid=$pid, port=$FRONTEND_PORT)"
+          return 0
+        fi
+        local cwd
+        cwd="$(pid_cwd "$pid")"
+        die "Frontend port $FRONTEND_PORT is in use (pid $pid, cwd $cwd). Use FRONTEND_PORT=... or stop the other process."
+      fi
+      clear_frontend_lock_if_safe
+      run_frontend_foreground
+      ;;
+    stop) frontend_stop ;;
+    restart) frontend_stop || true; run_frontend_foreground ;;
+    status) frontend_status ;;
+    *) die "Unknown frontend action: $action (expected start|stop|restart|status)" ;;
+  esac
+}
+
 run_dev() {
   infra_up
   export_env
   local backend_pid=""
   local frontend_pid=""
 
-  run_backend &
-  backend_pid=$!
+  # Ensure we don't end up with multiple host dev servers.
+  frontend_stop || true
+  backend_stop || true
 
-  run_frontend &
+  run_backend_foreground &
+  backend_pid=$!
+  echo "$backend_pid" >"$BACKEND_PID_FILE"
+
+  clear_frontend_lock_if_safe
+  (cd "$PROJECT_DIR/frontend" && pnpm exec next dev --hostname "$FRONTEND_HOSTNAME" --port "$FRONTEND_PORT") &
   frontend_pid=$!
 
-  trap 'kill "$backend_pid" "$frontend_pid" 2>/dev/null || true' EXIT INT TERM
+  local server_pid=""
+  local i
+  for i in {1..50}; do
+    server_pid="$(find_pid_listening_on_port "$FRONTEND_PORT")"
+    if [[ -n "$server_pid" ]] && pid_is_alive "$server_pid"; then
+      break
+    fi
+    sleep 0.1
+  done
+  echo "${server_pid:-$frontend_pid}" >"$FRONTEND_PID_FILE"
+
+  trap '
+    kill "$backend_pid" "$frontend_pid" 2>/dev/null || true
+
+    if [[ -f "$FRONTEND_PID_FILE" ]]; then
+      pid="$(cat "$FRONTEND_PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$pid" ]] && pid_is_alive "$pid" && frontend_pid_matches_project "$pid"; then
+        kill "$pid" 2>/dev/null || true
+      fi
+      rm -f "$FRONTEND_PID_FILE" || true
+    fi
+
+    if [[ -f "$BACKEND_PID_FILE" ]]; then
+      pid="$(cat "$BACKEND_PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$pid" ]] && pid_is_alive "$pid" && backend_pid_matches_project "$pid"; then
+        kill "$pid" 2>/dev/null || true
+      fi
+      rm -f "$BACKEND_PID_FILE" || true
+    fi
+  ' EXIT INT TERM
   wait -n "$backend_pid" "$frontend_pid"
 }
 
@@ -178,8 +504,8 @@ main() {
     clean) infra_clean ;;
     status) infra_status ;;
     logs) infra_logs ;;
-    backend) run_backend ;;
-    frontend) run_frontend ;;
+    backend) backend_cmd "${2:-restart}" ;;
+    frontend) frontend_cmd "${2:-restart}" ;;
     dev) run_dev ;;
     import) windmill_import ;;
     env) print_env ;;
