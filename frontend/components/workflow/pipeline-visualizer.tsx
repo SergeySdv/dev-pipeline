@@ -161,10 +161,6 @@ export function PipelineVisualizer({ protocol, steps, onStepClick, onAssignAgent
     </div>
   )
 
-  if (fullscreen) {
-    return content
-  }
-
   return (
     <Card>
       <CardHeader>

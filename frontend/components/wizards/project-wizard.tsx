@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useCreateProject, useUpdateProjectPolicy } from "@/lib/api/hooks/use-projects"
 import { usePolicyPacks } from "@/lib/api/hooks/use-policy-packs"
+import type { PolicyEnforcementMode } from "@/lib/api/types"
 
 interface ProjectWizardProps {
   open: boolean
@@ -103,7 +104,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
           projectId: project.id,
           policy: {
             policy_pack_key: formData.policyPack || undefined,
-            policy_enforcement_mode: formData.enforcementMode || undefined,
+            policy_enforcement_mode: (formData.enforcementMode || undefined) as PolicyEnforcementMode | undefined,
           },
         })
       }

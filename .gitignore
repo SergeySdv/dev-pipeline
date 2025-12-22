@@ -17,7 +17,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-projects/
 dataset_report.pdf
 dataset.csv
 docs/terraformmanager-workflow-plan.md
@@ -47,3 +46,19 @@ windmill/apps/devgodzilla-react-app/.env.development
 specs/*/_runtime/runs/
 AGENTS.md
 CLAUDE.md
+projects/4/
+projects/1/
+projects/2/
+projects/3/
+projects/4/
+projects/5/
+projects/6/
+projects/7/
+projects/8/
+projects/9/
+projects/10/
+projects/11/
+projects/12/
+projects/13/
+projects/14/
+projects/15/

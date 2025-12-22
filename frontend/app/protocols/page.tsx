@@ -26,7 +26,7 @@ export default function ProtocolsPage() {
   const filteredProtocols = protocols?.filter((protocol) => {
     const matchesSearch =
       search === "" ||
-      protocol.name.toLowerCase().includes(search.toLowerCase()) ||
+      protocol.protocol_name.toLowerCase().includes(search.toLowerCase()) ||
       protocol.id.toString().includes(search)
     const matchesStatus = statusFilter === "all" || protocol.status === statusFilter
     return matchesSearch && matchesStatus
@@ -165,7 +165,7 @@ function ProtocolCard({ protocol }: { protocol: ProtocolRun }) {
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-lg truncate">{protocol.name}</CardTitle>
+              <CardTitle className="text-lg truncate">{protocol.protocol_name}</CardTitle>
               <CardDescription className="text-xs">ID: {protocol.id}</CardDescription>
             </div>
             <StatusPill status={protocol.status} />
@@ -179,34 +179,12 @@ function ProtocolCard({ protocol }: { protocol: ProtocolRun }) {
             </div>
             <div>
               <p className="text-muted-foreground text-xs">Branch</p>
-              <p className="font-medium truncate">{protocol.branch || "main"}</p>
+              <p className="font-medium truncate">{protocol.base_branch || "main"}</p>
             </div>
           </div>
 
-          {protocol.step_index !== undefined && protocol.total_steps !== undefined && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Progress</span>
-                <span className="font-medium">
-                  {protocol.step_index} / {protocol.total_steps}
-                </span>
-              </div>
-              <div className="w-full bg-muted rounded-full h-1.5">
-                <div
-                  className="bg-primary h-1.5 rounded-full transition-all"
-                  style={{
-                    width: `${protocol.total_steps > 0 ? (protocol.step_index / protocol.total_steps) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          {protocol.blocked_reason && (
-            <div className="flex items-start gap-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs">
-              <AlertTriangle className="h-3 w-3 text-yellow-500 mt-0.5 shrink-0" />
-              <p className="text-yellow-600 dark:text-yellow-400">{protocol.blocked_reason}</p>
-            </div>
+          {protocol.description && (
+            <p className="text-xs text-muted-foreground line-clamp-2">{protocol.description}</p>
           )}
 
           <p className="text-xs text-muted-foreground">Updated {formatRelativeTime(protocol.updated_at)}</p>

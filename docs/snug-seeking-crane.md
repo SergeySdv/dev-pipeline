@@ -20,7 +20,7 @@ Comprehensive refactor of UI components for Workflows/Pipeline/Task execution vi
 - DAG rendering upgrades: swimlanes for `parallel_group`, proper edge routing/arrow rendering, zoom/pan, and better layout.
 - Mobile kanban: dedicated small-screen UX for the sprint board.
 - Task modal decomposition: split `frontend/components/agile/task-modal.tsx` into smaller components.
-- Cost analytics visualization (tokens/cents) and any additional ops dashboards.
+- Additional ops dashboards (optional).
 
 ## Critical Files Summary
 
@@ -252,15 +252,19 @@ Split `/frontend/components/agile/task-modal.tsx` (670+ lines) into:
 - `task-criteria-tab.tsx` - Acceptance criteria
 - `task-activity-tab.tsx` - Activity timeline
 
+Status: not implemented yet.
+
 ### 6.2 Create Reusable Hooks
 Create `/frontend/lib/api/hooks/`:
 - `use-git.ts` - Branch, commit, PR operations
 - `use-queue.ts` - Queue statistics
 - `use-events-stream.ts` - Real-time event streaming
 
+Status: partially implemented via domain hooks (`frontend/lib/api/hooks/use-agent-health.ts`, `frontend/lib/api/hooks/use-queues.ts`, `frontend/lib/api/hooks/use-events.ts`). A dedicated `use-git.ts` wrapper is optional.
+
 ---
 
-## Backend Changes (Required for WebSocket)
+## Backend Changes (Optional for WebSocket)
 
 ### WebSocket Endpoint
 Add to `/devgodzilla/api/app.py`:
@@ -268,7 +272,24 @@ Add to `/devgodzilla/api/app.py`:
 - Channel subscriptions: `protocol:{id}`, `step:{id}`, `events`
 - Broadcast on status changes
 
+Status: deferred in favor of SSE (`/events/stream`).
+
 ---
+
+## Remaining Work Plan (gaps)
+
+1. **Pipeline DAG upgrades** (`frontend/components/visualizations/pipeline-dag.tsx`)
+   - Add swimlanes for `parallel_group` and improve node packing/spacing
+   - Render routed edges with arrows (avoid “implied” edges)
+   - Add zoom/pan and node focus/selection UX
+
+2. **Mobile Kanban** (`frontend/components/agile/mobile-kanban-view.tsx`, `frontend/components/agile/sprint-board.tsx`)
+   - Add responsive breakpoint + single-column/tabbed view
+   - (Optional) swipe gestures
+
+3. **Task modal decomposition** (`frontend/components/agile/task-modal.tsx`)
+   - Split into smaller components + keep existing API surface
+   - Add minimal unit tests where existing patterns exist
 
 ## Implementation Order
 

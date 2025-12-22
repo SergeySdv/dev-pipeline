@@ -136,7 +136,7 @@ export function Sidebar() {
 
                           const isChildActive = pathname === child.href
                           return (
-                            <Link key={child.href} href={child.href}>
+                            <Link key={child.href || child.name} href={child.href!}>
                               <Button
                                 variant="ghost"
                                 className={cn(

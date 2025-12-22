@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Check, Copy } from "lucide-react"
 
 interface CodeBlockProps {
-  code: string | Record<string, unknown>
+  code: string | object
   language?: string
   title?: string
   className?: string

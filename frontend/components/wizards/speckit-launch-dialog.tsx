@@ -157,9 +157,6 @@ export function SpecKitLaunchDialog({ open, onOpenChange, action }: SpecKitLaunc
                           {project.policy_pack_key && (
                             <Badge variant="secondary">{project.policy_pack_key}</Badge>
                           )}
-                          {project.ci_provider && (
-                            <Badge variant="outline">{project.ci_provider}</Badge>
-                          )}
                         </div>
                       </div>
                     </button>

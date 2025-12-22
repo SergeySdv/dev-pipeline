@@ -15,10 +15,10 @@ import Link from "next/link"
 export default function SpecificationDetailPage({
   params,
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
-  const { id: idParam } = use(params)
-  const id = Number.parseInt(idParam)
+  const resolvedParams = use(params)
+  const id = Number.parseInt(resolvedParams.id)
   const { data: spec, isLoading } = useSpecification(id)
   const { data: specContent, isLoading: contentLoading } = useSpecificationContent(id)
 

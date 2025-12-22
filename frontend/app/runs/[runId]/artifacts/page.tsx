@@ -189,7 +189,11 @@ export default function RunArtifactsPage() {
               hunks={viewingArtifact.diff_data.hunks}
             />
           ) : (
-            <CodeBlock code={viewingArtifact?.content || "Loading..."} language="text" />
+            <div className="p-4 text-sm text-muted-foreground">
+              <p>Artifact: {viewingArtifact?.name}</p>
+              <p className="mt-2">Path: <code className="font-mono">{viewingArtifact?.path}</code></p>
+              <p className="mt-4">Use the Download button to view the full content.</p>
+            </div>
           )}
         </DialogContent>
       </Dialog>

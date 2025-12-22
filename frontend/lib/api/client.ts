@@ -179,6 +179,14 @@ class ApiClient {
   delete<T>(path: string, options?: { projectId?: number }) {
     return this.fetch<T>(path, { method: "DELETE", ...options })
   }
+
+  patch<T>(path: string, body?: unknown, options?: { projectId?: number }) {
+    return this.fetch<T>(path, {
+      method: "PATCH",
+      body: body ? JSON.stringify(body) : undefined,
+      ...options,
+    })
+  }
 }
 
 export const apiClient = new ApiClient()

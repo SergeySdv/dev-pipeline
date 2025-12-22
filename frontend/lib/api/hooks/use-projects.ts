@@ -92,7 +92,8 @@ export function useOnboarding(projectId: number | undefined, enabled = true) {
     enabled: !!projectId && enabled,
     retry: false, // Don't retry - endpoint may not exist
     refetchOnWindowFocus: false,
-    refetchInterval: (data) => {
+    refetchInterval: (query) => {
+      const data = query.state.data
       if (!data) return 3000
       if (["completed", "failed"].includes(data.status)) return false
       return 3000

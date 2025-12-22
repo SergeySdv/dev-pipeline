@@ -92,7 +92,7 @@ export default function DashboardPage() {
                   <Link key={protocol.id} href={`/protocols/${protocol.id}`}>
                     <div className="flex items-center justify-between rounded-lg border p-3 hover:bg-accent">
                       <div className="space-y-1">
-                        <p className="text-sm font-medium">{protocol.name}</p>
+                        <p className="text-sm font-medium">{protocol.protocol_name}</p>
                         <p className="text-xs text-muted-foreground">
                           Project: {projects?.find((p) => p.id === protocol.project_id)?.name}
                         </p>
@@ -135,7 +135,7 @@ export default function DashboardPage() {
                       </div>
                       <Badge
                         variant={
-                          run.status === "completed" ? "default" : run.status === "failed" ? "destructive" : "secondary"
+                          run.status === "succeeded" ? "default" : run.status === "failed" ? "destructive" : "secondary"
                         }
                       >
                         {run.status}

@@ -28,8 +28,8 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
   // Get the protocol_run_id from the first run or URL param
   const protocolRunId = runs?.[0]?.protocol_run_id
 
-  const { data: protocol } = useProtocol(protocolRunId)
-  const { data: steps } = useProtocolSteps(protocolRunId)
+  const { data: protocol } = useProtocol(protocolRunId ?? undefined)
+  const { data: steps } = useProtocolSteps(protocolRunId ?? undefined)
   const { data: findings } = useStepPolicyFindings(stepId)
   const stepAction = useStepAction()
 
@@ -174,7 +174,7 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
         </TabsList>
 
         <TabsContent value="runs">
-          <StepRunsTab runs={runs} isLoading={runsLoading} />
+          <StepRunsTab runs={runs} isLoading={runsLoading} stepId={stepId} />
         </TabsContent>
         <TabsContent value="policy">
           <StepPolicyTab findings={findings} />
@@ -184,7 +184,7 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
   )
 }
 
-function StepRunsTab({ runs, isLoading }: { runs: CodexRun[] | undefined; isLoading: boolean }) {
+function StepRunsTab({ runs, isLoading, stepId }: { runs: CodexRun[] | undefined; isLoading: boolean; stepId: number }) {
   const columns: ColumnDef<CodexRun>[] = [
     {
       accessorKey: "run_id",

@@ -75,6 +75,7 @@ export interface PlanRequest {
     project_id: number
     spec_path: string
     spec_run_id?: number
+    context?: string
 }
 
 export interface PlanResponse {
