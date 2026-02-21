@@ -20,6 +20,8 @@ except ImportError:
     _HAS_DOTENV = False
 
 _DOTENV_LOADED = False
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_WINDMILL_IMPORT_ROOT = _REPO_ROOT / "windmill"
 
 
 class Config(BaseModel):
@@ -110,7 +112,7 @@ class Config(BaseModel):
     windmill_workspace: str = Field(default="devgodzilla")
     windmill_env_file: Optional[Path] = Field(default=None)
     windmill_onboard_script_path: str = Field(default="u/devgodzilla/project_onboard_api")
-    windmill_import_root: Path = Field(default=Path("windmill"))
+    windmill_import_root: Path = Field(default=_DEFAULT_WINDMILL_IMPORT_ROOT)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -366,7 +368,7 @@ def load_config() -> Config:
             "u/devgodzilla/project_onboard_api",
         ),
         windmill_import_root=_normalize_path(
-            os.environ.get("DEVGODZILLA_WINDMILL_IMPORT_ROOT", "windmill")
+            os.environ.get("DEVGODZILLA_WINDMILL_IMPORT_ROOT", str(_DEFAULT_WINDMILL_IMPORT_ROOT))
         ),
     )
 
