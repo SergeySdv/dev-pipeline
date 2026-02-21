@@ -1,0 +1,21 @@
+{
+  "adapter_id": "simple_admin_reporter",
+  "required_paths": [
+    "README.md"
+  ],
+  "path_aliases": {
+    "discovery_runtime": "specs/discovery/_runtime",
+    "protocol_root": ".protocols"
+  },
+  "discovery_expectations": {
+    "summary_json": "specs/discovery/_runtime/DISCOVERY_SUMMARY.json"
+  },
+  "artifact_patterns": [
+    ".protocols/*/plan.md",
+    ".devgodzilla/steps/*/artifacts/execution.json"
+  ],
+  "worktree_branch_expectations": {
+    "branch_prefix": "protocol/",
+    "require_worktree_registration": true
+  }
+}

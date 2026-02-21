@@ -1,0 +1,43 @@
+{
+  "scenario_id": "live_onboarding_test_glm5_demo",
+  "source": "github_user_allowlist",
+  "repo": {
+    "owner": "ilyafedotov-ops",
+    "name": "test-glm5-demo",
+    "url": "https://github.com/ilyafedotov-ops/test-glm5-demo.git",
+    "default_branch": "main"
+  },
+  "adapter_id": "test_glm5_demo",
+  "workflow": {
+    "stages": [
+      "project_create",
+      "project_onboard_windmill",
+      "protocol_create",
+      "protocol_worktree",
+      "protocol_plan",
+      "step_execute"
+    ]
+  },
+  "expectations": {
+    "discovery_outputs": [
+      "specs/discovery/_runtime/DISCOVERY.md",
+      "specs/discovery/_runtime/DISCOVERY_SUMMARY.json"
+    ],
+    "min_protocol_steps": 2,
+    "terminal_protocol_status": "completed",
+    "artifact_patterns": [
+      ".protocols/*/plan.md",
+      ".devgodzilla/steps/*/artifacts/execution.json"
+    ]
+  },
+  "timeouts": {
+    "onboard_seconds": 600,
+    "planning_seconds": 600,
+    "execution_seconds": 600
+  },
+  "retries": {
+    "max_attempts": 3,
+    "backoff_seconds": 2,
+    "max_backoff_seconds": 20
+  }
+}

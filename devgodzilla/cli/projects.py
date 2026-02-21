@@ -250,10 +250,10 @@ def discover_project(
         click.echo(json.dumps(payload))
     else:
         if use_agent:
-            console.print(f"[green]✓ Agent discovery complete[/green]")
+            console.print("[green]✓ Agent discovery complete[/green]")
             console.print(f"  Log: {payload.get('log_path')}")
         else:
-            console.print(f"[green]✓ Discovery written[/green]")
+            console.print("[green]✓ Discovery written[/green]")
             console.print(f"  {md_path}")
             console.print(f"  {meta_path}")
 
@@ -262,7 +262,8 @@ def discover_project(
 @click.argument("project_id", type=int)
 @click.option("--branch", default=None, help="Branch to checkout (defaults to project base branch)")
 @click.option("--no-discovery", is_flag=True, help="Disable auto discovery during onboarding")
-def onboard_project(project_id, branch, no_discovery):
+@click.pass_context
+def onboard_project(ctx, project_id, branch, no_discovery):
     """Queue onboarding for a project (Windmill)."""
     context = get_service_context(project_id=project_id)
     if not getattr(context.config, "windmill_enabled", False):
@@ -279,6 +280,19 @@ def onboard_project(project_id, branch, no_discovery):
             branch=branch,
             run_discovery_agent=not no_discovery,
         )
-        console.print(f"[green]Queued onboarding job {result.windmill_job_id}[/green]")
+        payload = {
+            "success": True,
+            "project_id": project_id,
+            "run_id": result.run_id,
+            "windmill_job_id": result.windmill_job_id,
+            "script_path": result.script_path,
+        }
+        if ctx.obj and ctx.obj.get("JSON"):
+            click.echo(json.dumps(payload))
+        else:
+            console.print(f"[green]Queued onboarding job {result.windmill_job_id}[/green]")
     except Exception as e:
-        console.print(f"[red]Error enqueueing onboarding: {e}[/red]")
+        if ctx.obj and ctx.obj.get("JSON"):
+            click.echo(json.dumps({"success": False, "error": str(e), "project_id": project_id}))
+        else:
+            console.print(f"[red]Error enqueueing onboarding: {e}[/red]")

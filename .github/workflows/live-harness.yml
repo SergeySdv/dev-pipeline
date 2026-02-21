@@ -1,0 +1,75 @@
+name: Live Harness
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      harness_repos:
+        description: "Comma-separated GitHub repo allowlist"
+        required: false
+        default: "test-glm5-demo,SimpleAdminReporter,demo-spring"
+      harness_scenario:
+        description: "Optional single scenario_id filter"
+        required: false
+        default: ""
+      repo_url_override:
+        description: "Optional one-off repo URL override"
+        required: false
+        default: ""
+      continue_on_error:
+        description: "Continue running remaining scenarios after failure"
+        required: false
+        type: choice
+        options:
+          - "1"
+          - "0"
+        default: "1"
+      onboard_mode:
+        description: "Onboard mode"
+        required: false
+        type: choice
+        options:
+          - windmill
+          - agent
+        default: windmill
+      step_engine:
+        description: "Step execution engine"
+        required: false
+        type: choice
+        options:
+          - dummy
+          - opencode
+        default: dummy
+
+jobs:
+  live-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DEVGODZILLA_RUN_E2E_HARNESS: "1"
+      HARNESS_GITHUB_OWNER: "ilyafedotov-ops"
+      HARNESS_GITHUB_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.harness_repos || 'test-glm5-demo,SimpleAdminReporter,demo-spring' }}
+      HARNESS_SCENARIO: ${{ github.event_name == 'workflow_dispatch' && inputs.harness_scenario || '' }}
+      HARNESS_REPO_URL_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.repo_url_override || '' }}
+      HARNESS_CONTINUE_ON_ERROR: ${{ github.event_name == 'workflow_dispatch' && inputs.continue_on_error || '1' }}
+      HARNESS_ONBOARD_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.onboard_mode || 'windmill' }}
+      HARNESS_STEP_ENGINE: ${{ github.event_name == 'workflow_dispatch' && inputs.step_engine || 'dummy' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap
+        run: scripts/ci/bootstrap.sh
+
+      - name: Run Live Harness
+        run: scripts/ci/test-harness-live.sh
+
+      - name: Upload Harness Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-harness-${{ github.run_id }}
+          path: |
+            runs/harness/**
+          if-no-files-found: warn
+          retention-days: 14
