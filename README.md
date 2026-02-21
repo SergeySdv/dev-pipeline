@@ -22,6 +22,8 @@ Historical docs are archived under `docs/legacy/` with mapping in `docs/legacy/R
 - `scripts/`: operational scripts and CI wrappers
 - `tests/`: pytest suite for backend/services/workflows
 - `docs/`: active + archived documentation
+- `prompts/`: reusable agent/system prompts used by protocol/project workflows
+- `schemas/`: JSON schema contracts for protocol planning/spec/task artifacts
 
 ## Runtime Topology (Local)
 
@@ -39,6 +41,12 @@ Routing is defined in `nginx.local.conf`:
 - `/` -> Windmill UI
 
 ## Quick Start
+
+### 0) Install host prerequisites
+
+- Python 3.12
+- Node.js + `pnpm` (required by `scripts/run-local-dev.sh frontend start`)
+- Docker + Docker Compose
 
 ### 1) Bootstrap Python environment
 

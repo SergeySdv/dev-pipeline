@@ -77,6 +77,8 @@ Current engine adapters are implemented under `devgodzilla/engines/` and configu
 - Alembic migrations: `devgodzilla/alembic/`
 - Windmill integration: `devgodzilla/windmill/`
 - Windmill assets: `windmill/flows/devgodzilla/`, `windmill/scripts/devgodzilla/`, `windmill/apps/devgodzilla/`
+- Prompt assets: `prompts/` (protocol/discovery/project bootstrapping prompts)
+- Schema contracts: `schemas/` (JSON schemas validating planning/spec/task documents and protocol artifacts)
 
 ## Current Constraints and Known Leftovers
 

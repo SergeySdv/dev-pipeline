@@ -15,7 +15,7 @@ Follow this strict algorithm.
    * Ensure working tree is clean. If not, ask the user what to do.
    * Run `git fetch origin` to refresh remote info.
    * Compare local `main` with `origin/main`. If local is behind, **stop and ask the user to update** before continuing.
-   * Run current checks (`typecheck`, `lint`). If they fail, **stop and report**; continue only after fixes.
+   * Run current checks (`scripts/ci/typecheck.sh`, `scripts/ci/lint.sh`). If they fail, **stop and report**; continue only after fixes.
    * If you plan to use `gh`, run `which gh`. If missing, be ready to create PR manually or use GitLab MR.
 
 2. **Determine the new protocol number (NNNN):**
@@ -138,7 +138,7 @@ All work happens in the worktree (CWD).
 3. Follow Generic Principles below.
 
 ### C. After the step (verify & fix)
-1. Run checks: `typecheck`, `lint`, `test`. Fix until green.
+1. Run checks: `scripts/ci/typecheck.sh`, `scripts/ci/lint.sh`, `scripts/ci/test.sh`. Fix until green.
 2. Add a `log.md` entry describing what and why (include commit ID).
 3. Rewrite `context.md` for the next step.
 4. Verify `main` has no stray files from our branch. Commit with `type(scope): subject [protocol-NNNN/YY]`. Push.
@@ -223,7 +223,7 @@ This is a technical step: commit plan files, publish the branch, and open a PR/M
 
 ## Workflow
 1. Execute sub-tasks.
-2. Verify: run `lint`, `typecheck`, `test` (scope as needed). Fix failures.
+2. Verify: run `scripts/ci/lint.sh`, `scripts/ci/typecheck.sh`, `scripts/ci/test.sh` (scope as needed). Fix failures.
 3. Fix/record:
    - Add to `log.md` what/why (non-obvious decisions).
    - Update `context.md`: increment `Current Step`, set `Next Action`.
