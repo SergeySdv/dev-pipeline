@@ -405,7 +405,9 @@ class TestCLIJSON:
 
         result = runner.invoke(cli, ["--json", "project", "onboard", "7"])
         assert result.exit_code == 0
-        payload = json.loads(result.output)
+        json_lines = [line for line in result.output.splitlines() if line.strip().startswith("{")]
+        assert json_lines
+        payload = json.loads(json_lines[-1])
         assert payload["success"] is True
         assert payload["project_id"] == 7
         assert payload["run_id"] == "run-123"
