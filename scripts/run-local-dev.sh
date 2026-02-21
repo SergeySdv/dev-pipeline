@@ -61,6 +61,7 @@ export_env() {
   export DEVGODZILLA_WINDMILL_ENV_FILE="${DEVGODZILLA_WINDMILL_ENV_FILE:-$PROJECT_DIR/windmill/apps/devgodzilla-react-app/.env.development}"
   export DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH="${DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH:-u/devgodzilla/project_onboard_api}"
   export DEVGODZILLA_WINDMILL_IMPORT_ROOT="${DEVGODZILLA_WINDMILL_IMPORT_ROOT:-$PROJECT_DIR/windmill}"
+  export WINDMILL_JOB_TIMEOUT_SECONDS="${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}"
   export DEVGODZILLA_PROJECTS_ROOT="${DEVGODZILLA_PROJECTS_ROOT:-$PROJECT_DIR/projects}"
 }
 
@@ -378,6 +379,15 @@ windmill_import() {
     --workspace "$DEVGODZILLA_WINDMILL_WORKSPACE" \
     --root "$DEVGODZILLA_WINDMILL_IMPORT_ROOT" \
     --token-file "$token_file"
+
+  local timeout_seconds="$WINDMILL_JOB_TIMEOUT_SECONDS"
+  if [[ "$timeout_seconds" =~ ^[0-9]+$ ]]; then
+    compose_cmd exec -T db psql -U postgres -d windmill_db -c \
+      "INSERT INTO global_settings (name, value) VALUES ('job_default_timeout', to_jsonb(${timeout_seconds}::int)) ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"
+    log "Windmill job_default_timeout set to ${timeout_seconds}s"
+  else
+    warn "Skipping Windmill job_default_timeout update: WINDMILL_JOB_TIMEOUT_SECONDS is not numeric (${timeout_seconds})"
+  fi
 }
 
 print_env() {
@@ -390,6 +400,7 @@ DEVGODZILLA_WINDMILL_WORKSPACE=$DEVGODZILLA_WINDMILL_WORKSPACE
 DEVGODZILLA_WINDMILL_ENV_FILE=$DEVGODZILLA_WINDMILL_ENV_FILE
 DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH=$DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH
 DEVGODZILLA_WINDMILL_IMPORT_ROOT=$DEVGODZILLA_WINDMILL_IMPORT_ROOT
+WINDMILL_JOB_TIMEOUT_SECONDS=$WINDMILL_JOB_TIMEOUT_SECONDS
 DEVGODZILLA_PROJECTS_ROOT=$DEVGODZILLA_PROJECTS_ROOT
 NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
 EOF

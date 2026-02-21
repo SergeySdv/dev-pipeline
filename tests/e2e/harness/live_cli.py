@@ -4,17 +4,21 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from devgodzilla.db.database import SQLiteDatabase
+from devgodzilla.config import load_config
+from devgodzilla.db.database import get_database
 from devgodzilla.windmill.client import JobStatus, WindmillClient, WindmillConfig
 
 from .assertions import (
     assert_glob_matches,
     assert_paths_exist,
     assert_protocol_terminal_status,
+    write_diagnostic_file,
 )
 from .runner import HarnessRunContext, StageHandler
 from .scenario_loader import ScenarioConfig
@@ -22,27 +26,120 @@ from .scenario_loader import ScenarioConfig
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _run_cli(*args: str, cwd: Path, env: dict[str, str], timeout: int) -> dict[str, Any]:
+def _run_cli(
+    *args: str,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+    log_file: Path | None = None,
+) -> dict[str, Any]:
     cmd = [sys.executable, "-m", "devgodzilla.cli.main", "--json", *args]
-    proc = subprocess.run(  # noqa: S603
+    log_handle = None
+    log_lock = threading.Lock()
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = log_file.open("a", encoding="utf-8")
+        log_handle.write(f"{datetime.now(UTC).isoformat()} meta cmd={' '.join(cmd)} cwd={cwd}\n")
+
+    proc = subprocess.Popen(  # noqa: S603
         cmd,
         cwd=cwd,
         env=env,
         text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
     )
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    def _consume(stream, sink: list[str], source: str) -> None:
+        for line in iter(stream.readline, ""):
+            sink.append(line)
+            if log_handle is not None:
+                with log_lock:
+                    log_handle.write(f"{datetime.now(UTC).isoformat()} {source} {line}")
+                    log_handle.flush()
+        stream.close()
+
+    threads: list[threading.Thread] = []
+    if proc.stdout is not None:
+        thread = threading.Thread(target=_consume, args=(proc.stdout, stdout_lines, "stdout"), daemon=True)
+        thread.start()
+        threads.append(thread)
+    if proc.stderr is not None:
+        thread = threading.Thread(target=_consume, args=(proc.stderr, stderr_lines, "stderr"), daemon=True)
+        thread.start()
+        threads.append(thread)
+
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        proc.wait()
+        for thread in threads:
+            thread.join(timeout=0.2)
+        stdout_text = "".join(stdout_lines)
+        stderr_text = "".join(stderr_lines)
+        if log_handle is not None:
+            log_handle.write(f"{datetime.now(UTC).isoformat()} meta timeout seconds={timeout}\n")
+        raise RuntimeError(
+            "CLI command timed out\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"cwd: {cwd}\n"
+            f"timeout_seconds: {timeout}\n"
+            f"log_file: {log_file}\n"
+            f"stdout:\n{stdout_text}\n"
+            f"stderr:\n{stderr_text}\n"
+        ) from exc
+    finally:
+        for thread in threads:
+            thread.join(timeout=0.2)
+        if log_handle is not None:
+            log_handle.close()
+
+    stdout_text = "".join(stdout_lines)
+    stderr_text = "".join(stderr_lines)
     if proc.returncode != 0:
         raise RuntimeError(
             "CLI command failed\n"
             f"cmd: {' '.join(cmd)}\n"
             f"cwd: {cwd}\n"
             f"exit_code: {proc.returncode}\n"
-            f"stdout:\n{proc.stdout}\n"
-            f"stderr:\n{proc.stderr}\n"
+            f"log_file: {log_file}\n"
+            f"stdout:\n{stdout_text}\n"
+            f"stderr:\n{stderr_text}\n"
         )
-    return json.loads(proc.stdout)
+    parsed = _parse_json_output(stdout_text)
+    if not isinstance(parsed, dict):
+        raise RuntimeError(
+            "CLI command returned non-object JSON payload\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"log_file: {log_file}\n"
+            f"stdout:\n{stdout_text}\n"
+        )
+    return parsed
+
+
+def _parse_json_output(stdout_text: str) -> Any:
+    stripped = stdout_text.strip()
+    if not stripped:
+        raise ValueError("CLI stdout is empty; expected JSON payload")
+
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    lines = [line.strip() for line in stdout_text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+    raise ValueError(f"Unable to parse CLI JSON output from stdout: {stdout_text[:1000]}")
 
 
 def _run_git(*args: str, cwd: Path, env: dict[str, str], timeout: int = 60) -> str:
@@ -62,6 +159,27 @@ def _run_git(*args: str, cwd: Path, env: dict[str, str], timeout: int = 60) -> s
     return (proc.stdout or "").strip()
 
 
+def _checkout_and_update_branch(repo_root: Path, env: dict[str, str], preferred_branch: str) -> str:
+    try:
+        _run_git("checkout", preferred_branch, cwd=repo_root, env=env)
+        _run_git("pull", "--ff-only", "origin", preferred_branch, cwd=repo_root, env=env)
+        return preferred_branch
+    except RuntimeError as primary_error:
+        try:
+            symref = _run_git("symbolic-ref", "--short", "refs/remotes/origin/HEAD", cwd=repo_root, env=env)
+        except RuntimeError:
+            raise primary_error
+
+        fallback_branch = symref.split("/", 1)[1] if "/" in symref else symref
+        fallback_branch = fallback_branch.strip()
+        if not fallback_branch or fallback_branch == preferred_branch:
+            raise primary_error
+
+        _run_git("checkout", fallback_branch, cwd=repo_root, env=env)
+        _run_git("pull", "--ff-only", "origin", fallback_branch, cwd=repo_root, env=env)
+        return fallback_branch
+
+
 def _workspace_root() -> Path:
     default = REPO_ROOT / "projects" / "harness-cache"
     root = Path(os.environ.get("HARNESS_WORKSPACE_ROOT", str(default))).expanduser().resolve(strict=False)
@@ -69,19 +187,34 @@ def _workspace_root() -> Path:
     return root
 
 
+def _stage_log_file(ctx: HarnessRunContext, stage: str, command_label: str) -> Path:
+    attempt = int(ctx.metadata.get("_current_attempt", 1))
+    safe_label = "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in command_label)
+    return ctx.diagnostics_dir / f"cli-{stage}-attempt-{attempt}-{safe_label}.log"
+
+
 def _build_cli_env(run_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     db_path = run_dir / "harness.sqlite"
     env.setdefault("PYTHONPATH", str(REPO_ROOT))
     env["DEVGODZILLA_ENV"] = "test"
-    env["DEVGODZILLA_DB_PATH"] = str(db_path)
+    if not env.get("DEVGODZILLA_DB_URL"):
+        env.setdefault("DEVGODZILLA_DB_PATH", str(db_path))
     env.setdefault("DEVGODZILLA_DEFAULT_ENGINE_ID", "opencode")
     env.setdefault("DEVGODZILLA_OPENCODE_MODEL", "zai-coding-plan/glm-5")
+    cfg = load_config()
+    if cfg.windmill_url:
+        env.setdefault("DEVGODZILLA_WINDMILL_URL", cfg.windmill_url)
+    if cfg.windmill_token:
+        env.setdefault("DEVGODZILLA_WINDMILL_TOKEN", cfg.windmill_token)
+    if cfg.windmill_workspace:
+        env.setdefault("DEVGODZILLA_WINDMILL_WORKSPACE", cfg.windmill_workspace)
+    if cfg.windmill_env_file:
+        env.setdefault("DEVGODZILLA_WINDMILL_ENV_FILE", str(cfg.windmill_env_file))
     return env
 
 
 def _stage_project_create(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
-    del stage
     env = _build_cli_env(ctx.run_dir)
 
     checkout_root = _workspace_root() / scenario.repo.owner / scenario.repo.name
@@ -89,12 +222,10 @@ def _stage_project_create(ctx: HarnessRunContext, scenario: ScenarioConfig, stag
 
     if (checkout_root / ".git").exists():
         _run_git("fetch", "--all", "--prune", cwd=checkout_root, env=env)
-        _run_git("checkout", scenario.repo.default_branch, cwd=checkout_root, env=env)
-        _run_git("pull", "--ff-only", "origin", scenario.repo.default_branch, cwd=checkout_root, env=env)
+        base_branch = _checkout_and_update_branch(checkout_root, env, scenario.repo.default_branch)
     else:
         _run_git("clone", "--depth", "1", scenario.repo.url, str(checkout_root), cwd=checkout_root.parent, env=env)
-
-    base_branch = _run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=checkout_root, env=env)
+        base_branch = _run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=checkout_root, env=env)
     project_name = f"{scenario.scenario_id}-{int(time.time())}"
     created = _run_cli(
         "project",
@@ -110,6 +241,7 @@ def _stage_project_create(ctx: HarnessRunContext, scenario: ScenarioConfig, stag
         cwd=REPO_ROOT,
         env=env,
         timeout=scenario.timeouts.onboard_seconds,
+        log_file=_stage_log_file(ctx, stage, "project-create"),
     )
 
     if not created.get("success"):
@@ -134,10 +266,18 @@ def _require_metadata(ctx: HarnessRunContext, *keys: str) -> None:
 
 
 def _build_windmill_client(env: dict[str, str]) -> WindmillClient:
+    cfg = load_config()
+    token = env.get("DEVGODZILLA_WINDMILL_TOKEN", "") or (cfg.windmill_token or "")
+    if not token:
+        raise RuntimeError(
+            "Windmill token is missing for harness polling. "
+            "Set DEVGODZILLA_WINDMILL_TOKEN or DEVGODZILLA_WINDMILL_ENV_FILE."
+        )
+
     config = WindmillConfig(
-        base_url=env.get("DEVGODZILLA_WINDMILL_URL", "http://localhost:8001"),
-        token=env.get("DEVGODZILLA_WINDMILL_TOKEN", ""),
-        workspace=env.get("DEVGODZILLA_WINDMILL_WORKSPACE", "demo1"),
+        base_url=env.get("DEVGODZILLA_WINDMILL_URL", cfg.windmill_url or "http://localhost:8001"),
+        token=token,
+        workspace=env.get("DEVGODZILLA_WINDMILL_WORKSPACE", cfg.windmill_workspace or "demo1"),
         timeout=float(env.get("DEVGODZILLA_WINDMILL_TIMEOUT", "30")),
         max_retries=int(env.get("DEVGODZILLA_WINDMILL_MAX_RETRIES", "3")),
         backoff_base_seconds=float(env.get("DEVGODZILLA_WINDMILL_BACKOFF_BASE_SECONDS", "0.5")),
@@ -146,8 +286,118 @@ def _build_windmill_client(env: dict[str, str]) -> WindmillClient:
     return WindmillClient(config)
 
 
+def _wait_for_windmill_job(
+    *,
+    client: WindmillClient,
+    job_id: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    log_file: Path,
+    heartbeat_timeout_seconds: float,
+) -> Any:
+    start = time.monotonic()
+    last_status: JobStatus | None = None
+    log_offset = 0
+    last_progress = start
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(
+            f"{datetime.now(UTC).isoformat()} meta wait_start job_id={job_id} "
+            f"timeout_seconds={timeout_seconds} poll_interval_seconds={poll_interval_seconds} "
+            f"heartbeat_timeout_seconds={heartbeat_timeout_seconds}\n"
+        )
+        handle.flush()
+        while True:
+            job = client.get_job(job_id)
+            now = time.monotonic()
+
+            if job.status != last_status:
+                handle.write(f"{datetime.now(UTC).isoformat()} meta status={job.status.value}\n")
+                handle.flush()
+                last_status = job.status
+                last_progress = now
+
+            try:
+                logs = client.get_job_logs(job_id)
+            except Exception as exc:  # noqa: BLE001
+                logs = ""
+                handle.write(f"{datetime.now(UTC).isoformat()} meta log_fetch_error={exc}\n")
+                handle.flush()
+
+            if logs:
+                if len(logs) < log_offset:
+                    log_offset = 0
+                if len(logs) > log_offset:
+                    delta = logs[log_offset:]
+                    handle.write(delta)
+                    if not delta.endswith("\n"):
+                        handle.write("\n")
+                    handle.flush()
+                    log_offset = len(logs)
+                    last_progress = now
+
+            if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED):
+                handle.write(f"{datetime.now(UTC).isoformat()} meta wait_finished status={job.status.value}\n")
+                handle.flush()
+                return job
+
+            if now - start > timeout_seconds:
+                raise TimeoutError(
+                    f"Windmill job {job_id} did not complete within {timeout_seconds}s "
+                    f"(status={job.status.value}, log_file={log_file})"
+                )
+
+            if heartbeat_timeout_seconds > 0 and now - last_progress > heartbeat_timeout_seconds:
+                raise TimeoutError(
+                    f"Windmill job {job_id} had no status/log updates for {heartbeat_timeout_seconds}s "
+                    f"(status={job.status.value}, log_file={log_file})"
+                )
+
+            time.sleep(poll_interval_seconds)
+
+
+def _coerce_job_result_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"_raw": value}
+        return parsed if isinstance(parsed, dict) else {"_raw": parsed}
+    return {}
+
+
+def _assert_discovery_outputs(
+    *,
+    repo_root: Path,
+    scenario: ScenarioConfig,
+    payload_local_path: str | None,
+) -> Path:
+    roots: list[Path] = [repo_root]
+    if payload_local_path:
+        candidate = Path(payload_local_path).expanduser().resolve(strict=False)
+        if candidate not in roots:
+            roots.insert(0, candidate)
+
+    errors: list[str] = []
+    for candidate in roots:
+        try:
+            assert_paths_exist(candidate, scenario.discovery_outputs)
+            return candidate
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{candidate}: {exc}")
+
+    checked = ", ".join(str(root) for root in roots)
+    details = " | ".join(errors)
+    raise RuntimeError(f"Missing expected discovery outputs. checked={checked} details={details}")
+
+
 def _stage_project_onboard_agent(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
-    del stage
     _require_metadata(ctx, "project_id", "env", "repo_root")
 
     env = ctx.metadata["env"]
@@ -168,6 +418,7 @@ def _stage_project_onboard_agent(ctx: HarnessRunContext, scenario: ScenarioConfi
         cwd=REPO_ROOT,
         env=env,
         timeout=scenario.timeouts.onboard_seconds,
+        log_file=_stage_log_file(ctx, stage, "project-discover"),
     )
     if not discover.get("success"):
         raise RuntimeError(f"Discovery failed payload: {discover}")
@@ -183,7 +434,6 @@ def _stage_project_onboard_agent(ctx: HarnessRunContext, scenario: ScenarioConfi
 def _stage_project_onboard_windmill(
     ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str
 ) -> dict[str, Any]:
-    del stage
     _require_metadata(ctx, "project_id", "env", "repo_root", "base_branch")
 
     env = ctx.metadata["env"]
@@ -200,6 +450,7 @@ def _stage_project_onboard_windmill(
         cwd=REPO_ROOT,
         env=env,
         timeout=scenario.timeouts.onboard_seconds,
+        log_file=_stage_log_file(ctx, stage, "project-onboard"),
     )
     if not onboarded.get("success"):
         raise RuntimeError(f"Windmill onboarding enqueue failed: {onboarded}")
@@ -209,12 +460,17 @@ def _stage_project_onboard_windmill(
         raise RuntimeError(f"Missing windmill_job_id in onboard payload: {onboarded}")
 
     poll_interval = float(os.environ.get("HARNESS_WINDMILL_POLL_INTERVAL", "2.0"))
+    heartbeat_timeout = float(os.environ.get("HARNESS_WINDMILL_HEARTBEAT_TIMEOUT_SECONDS", "0"))
+    windmill_log_file = ctx.diagnostics_dir / f"windmill-job-{job_id}.log"
     client = _build_windmill_client(env)
     try:
-        final_job = client.wait_for_job(
-            job_id,
-            timeout=float(scenario.timeouts.onboard_seconds),
-            poll_interval=poll_interval,
+        final_job = _wait_for_windmill_job(
+            client=client,
+            job_id=job_id,
+            timeout_seconds=float(scenario.timeouts.onboard_seconds),
+            poll_interval_seconds=poll_interval,
+            log_file=windmill_log_file,
+            heartbeat_timeout_seconds=heartbeat_timeout,
         )
         if final_job.status != JobStatus.COMPLETED:
             logs = ""
@@ -223,16 +479,62 @@ def _stage_project_onboard_windmill(
             except Exception:
                 logs = ""
             raise RuntimeError(
-                f"Windmill onboarding job failed: id={job_id} status={final_job.status} error={final_job.error} logs={logs}"
+                "Windmill onboarding job failed: "
+                f"id={job_id} status={final_job.status} error={final_job.error} "
+                f"log_file={windmill_log_file} logs={logs}"
             )
     finally:
         client.close()
 
-    assert_paths_exist(repo_root, scenario.discovery_outputs)
+    job_result = _coerce_job_result_dict(final_job.result)
+    write_diagnostic_file(
+        ctx.run_dir,
+        f"windmill-job-{job_id}",
+        {
+            "job_id": job_id,
+            "status": final_job.status.value,
+            "error": final_job.error,
+            "result": job_result or final_job.result,
+            "job_log_file": str(windmill_log_file),
+        },
+    )
+
+    if job_result:
+        if job_result.get("success") is False:
+            payload_error = str(job_result.get("error") or "unknown")
+            hint = ""
+            if "project not found" in payload_error.lower():
+                hint = (
+                    " This usually indicates harness CLI and backend use different databases; "
+                    "align DEVGODZILLA_DB_URL/DEVGODZILLA_DB_PATH."
+                )
+            raise RuntimeError(
+                f"Windmill onboarding payload reported failure: id={job_id} error={payload_error}.{hint}"
+            )
+
+        if job_result.get("discovery_success") is False:
+            missing = job_result.get("discovery_missing_outputs") or []
+            discovery_error = job_result.get("discovery_error")
+            raise RuntimeError(
+                f"Windmill onboarding discovery failed: id={job_id} error={discovery_error} missing_outputs={missing}"
+            )
+
+    payload_local_path = str(job_result.get("local_path") or "").strip() if job_result else ""
+    resolved_repo_root = _assert_discovery_outputs(
+        repo_root=repo_root,
+        scenario=scenario,
+        payload_local_path=payload_local_path or None,
+    )
+    if resolved_repo_root != repo_root:
+        ctx.metadata["repo_root"] = str(resolved_repo_root)
+
     return {
         "windmill_job_id": job_id,
         "onboard_mode": "windmill",
         "windmill_status": final_job.status.value,
+        "windmill_log_file": str(windmill_log_file),
+        "repo_root": str(resolved_repo_root),
+        "discovery_success": job_result.get("discovery_success") if job_result else None,
     }
 
 
@@ -244,7 +546,6 @@ def _stage_project_onboard(ctx: HarnessRunContext, scenario: ScenarioConfig, sta
 
 
 def _stage_protocol_create(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
-    del stage
     _require_metadata(ctx, "project_id", "env", "base_branch")
 
     env = ctx.metadata["env"]
@@ -264,6 +565,7 @@ def _stage_protocol_create(ctx: HarnessRunContext, scenario: ScenarioConfig, sta
         cwd=REPO_ROOT,
         env=env,
         timeout=scenario.timeouts.planning_seconds,
+        log_file=_stage_log_file(ctx, stage, "protocol-create"),
     )
 
     if not proto.get("success"):
@@ -275,7 +577,7 @@ def _stage_protocol_create(ctx: HarnessRunContext, scenario: ScenarioConfig, sta
 
 
 def _stage_protocol_worktree(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
-    del scenario, stage
+    del scenario
     _require_metadata(ctx, "protocol_id", "env")
 
     env = ctx.metadata["env"]
@@ -287,6 +589,7 @@ def _stage_protocol_worktree(ctx: HarnessRunContext, scenario: ScenarioConfig, s
         cwd=REPO_ROOT,
         env=env,
         timeout=240,
+        log_file=_stage_log_file(ctx, stage, "protocol-worktree"),
     )
     if not worktree.get("success"):
         raise RuntimeError(f"Protocol worktree failed payload: {worktree}")
@@ -300,7 +603,6 @@ def _stage_protocol_worktree(ctx: HarnessRunContext, scenario: ScenarioConfig, s
 
 
 def _stage_protocol_plan(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
-    del stage
     _require_metadata(ctx, "protocol_id", "env")
 
     env = ctx.metadata["env"]
@@ -312,6 +614,7 @@ def _stage_protocol_plan(ctx: HarnessRunContext, scenario: ScenarioConfig, stage
         cwd=REPO_ROOT,
         env=env,
         timeout=scenario.timeouts.planning_seconds,
+        log_file=_stage_log_file(ctx, stage, "protocol-plan"),
     )
     if not planned.get("success"):
         raise RuntimeError(f"Protocol plan failed payload: {planned}")
@@ -326,12 +629,14 @@ def _stage_protocol_plan(ctx: HarnessRunContext, scenario: ScenarioConfig, stage
 
 
 def _stage_step_execute(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
-    del stage
     _require_metadata(ctx, "protocol_id", "env")
 
     env = ctx.metadata["env"]
     protocol_id = int(ctx.metadata["protocol_id"])
-    db = SQLiteDatabase(Path(env["DEVGODZILLA_DB_PATH"]))
+    db_url = env.get("DEVGODZILLA_DB_URL")
+    db_path_raw = env.get("DEVGODZILLA_DB_PATH")
+    db_path = Path(db_path_raw).expanduser() if db_path_raw else None
+    db = get_database(db_url=db_url, db_path=db_path)
     db.init_schema()
 
     step_runs = db.list_step_runs(protocol_id)
@@ -350,6 +655,7 @@ def _stage_step_execute(ctx: HarnessRunContext, scenario: ScenarioConfig, stage:
             cwd=REPO_ROOT,
             env=env,
             timeout=scenario.timeouts.execution_seconds,
+            log_file=_stage_log_file(ctx, stage, f"step-execute-{step.id}"),
         )
         if not executed.get("success"):
             raise RuntimeError(f"Step execution failed for step {step.id}: {executed}")

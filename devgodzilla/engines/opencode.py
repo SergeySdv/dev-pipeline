@@ -19,6 +19,9 @@ from devgodzilla.engines.interface import (
 )
 from devgodzilla.engines.cli_adapter import CLIEngine, run_cli_command
 from devgodzilla.engines.registry import register_engine
+from devgodzilla.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class OpenCodeEngine(CLIEngine):
@@ -126,9 +129,33 @@ class OpenCodeEngine(CLIEngine):
 
             req.extra = extra
             cmd = self._build_command(req, sandbox)
-            log_callback = req.extra.get("log_callback")
-            if not callable(log_callback):
-                log_callback = None
+            user_callback = req.extra.get("log_callback")
+
+            def _default_callback(source: str, line: str) -> None:
+                cleaned = line.rstrip()
+                if not cleaned:
+                    return
+                max_len = 2000
+                logger.info(
+                    "opencode_output",
+                    extra={
+                        "project_id": req.project_id,
+                        "protocol_run_id": req.protocol_run_id,
+                        "step_run_id": req.step_run_id,
+                        "source": source,
+                        "line": cleaned[:max_len],
+                        "truncated": len(cleaned) > max_len,
+                    },
+                )
+
+            if callable(user_callback):
+                def _combined_callback(source: str, line: str) -> None:
+                    _default_callback(source, line)
+                    user_callback(source, line)
+                log_callback = _combined_callback
+            else:
+                log_callback = _default_callback
+
             result = run_cli_command(
                 cmd,
                 cwd=cwd,

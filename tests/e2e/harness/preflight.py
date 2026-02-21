@@ -4,6 +4,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -40,6 +41,25 @@ def _default_http_probe(url: str, timeout: float) -> tuple[bool, str]:
 
     body = response.text[:256]
     return response.status_code < 500, body
+
+
+def _wait_for_probe(
+    probe: HttpProbe,
+    *,
+    url: str,
+    probe_timeout_seconds: float,
+    ready_timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> tuple[bool, str]:
+    deadline = time.monotonic() + ready_timeout_seconds
+    last_body = ""
+    while time.monotonic() < deadline:
+        ok, body = probe(url, probe_timeout_seconds)
+        last_body = body
+        if ok:
+            return True, body
+        time.sleep(poll_interval_seconds)
+    return False, last_body
 
 
 @dataclass
@@ -105,6 +125,15 @@ def ensure_local_services(
         timeout=240,
         runner=runner,
     )
+    if os.environ.get("HARNESS_WINDMILL_AUTO_IMPORT", "1") == "1":
+        _run_and_capture(
+            report,
+            ["bash", str(script), "import"],
+            name="windmill_import",
+            cwd=project_root,
+            timeout=900,
+            runner=runner,
+        )
     background_backend_cmd = (
         f"nohup bash {shlex.quote(str(script))} backend start "
         "> /tmp/devgodzilla-harness-backend.log 2>&1 &"
@@ -164,7 +193,15 @@ def run_preflight(
     )
 
     backend_health = os.environ.get("HARNESS_BACKEND_HEALTH_URL", "http://localhost:8000/health")
-    backend_ok, backend_body = probe(backend_health, 4.0)
+    ready_timeout_seconds = float(os.environ.get("HARNESS_READY_TIMEOUT_SECONDS", "90"))
+    poll_interval_seconds = float(os.environ.get("HARNESS_READY_POLL_INTERVAL_SECONDS", "2"))
+    backend_ok, backend_body = _wait_for_probe(
+        probe,
+        url=backend_health,
+        probe_timeout_seconds=4.0,
+        ready_timeout_seconds=ready_timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
     report.details["backend_health_url"] = backend_health
     report.details["backend_health_probe"] = backend_body
     if not backend_ok:
@@ -172,7 +209,13 @@ def run_preflight(
 
     if require_windmill:
         windmill_version = os.environ.get("HARNESS_WINDMILL_VERSION_URL", "http://localhost:8001/api/version")
-        windmill_ok, windmill_body = probe(windmill_version, 4.0)
+        windmill_ok, windmill_body = _wait_for_probe(
+            probe,
+            url=windmill_version,
+            probe_timeout_seconds=4.0,
+            ready_timeout_seconds=ready_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
         report.details["windmill_version_url"] = windmill_version
         report.details["windmill_version_probe"] = windmill_body
         if not windmill_ok:

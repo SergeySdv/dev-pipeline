@@ -18,6 +18,9 @@ export HARNESS_GITHUB_REPOS="${HARNESS_GITHUB_REPOS:-test-glm5-demo,SimpleAdminR
 export HARNESS_CONTINUE_ON_ERROR="${HARNESS_CONTINUE_ON_ERROR:-1}"
 export HARNESS_ONBOARD_MODE="${HARNESS_ONBOARD_MODE:-windmill}"
 export HARNESS_STEP_ENGINE="${HARNESS_STEP_ENGINE:-opencode}"
+if [[ -z "${DEVGODZILLA_DB_URL:-}" && -z "${DEVGODZILLA_DB_PATH:-}" ]]; then
+  export DEVGODZILLA_DB_URL="postgresql://devgodzilla:changeme@localhost:5432/devgodzilla_db"
+fi
 
 cd "${REPO_ROOT}"
 "${PYTEST_BIN}" -q -m integration tests/e2e/test_workflow_harness_live.py

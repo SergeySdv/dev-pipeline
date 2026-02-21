@@ -26,6 +26,7 @@ def main(
     discovery_engine_id: str = "",
     discovery_model: str = "",
     clone_if_missing: bool = True,
+    api_timeout_seconds: int = 2700,
 ) -> Dict[str, Any]:
     if project_id:
         onboard_body: Dict[str, Any] = {
@@ -41,7 +42,12 @@ def main(
         if discovery_model:
             onboard_body["discovery_model"] = discovery_model
 
-        onboarded = api_json("POST", f"/projects/{project_id}/actions/onboard", body=onboard_body)
+        onboarded = api_json(
+            "POST",
+            f"/projects/{project_id}/actions/onboard",
+            body=onboard_body,
+            timeout_seconds=max(30, int(api_timeout_seconds)),
+        )
         if onboarded.get("error"):
             return {
                 "success": False,
@@ -99,7 +105,12 @@ def main(
     if discovery_model:
         onboard_body["discovery_model"] = discovery_model
 
-    onboarded = api_json("POST", f"/projects/{project_id}/actions/onboard", body=onboard_body)
+    onboarded = api_json(
+        "POST",
+        f"/projects/{project_id}/actions/onboard",
+        body=onboard_body,
+        timeout_seconds=max(30, int(api_timeout_seconds)),
+    )
     if onboarded.get("error"):
         return {
             "success": False,

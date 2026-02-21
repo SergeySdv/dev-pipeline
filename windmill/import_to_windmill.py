@@ -145,7 +145,7 @@ def create_script(base_url: str, token: str, workspace: str, path: str, content:
     # Check if script exists
     check = api_request(base_url, f"/w/{workspace}/scripts/get/p/{path}", token)
     
-    exists = "error" not in check
+    exists = not (isinstance(check, dict) and "error" in check)
 
     payload = {
         "path": path,
@@ -160,18 +160,23 @@ def create_script(base_url: str, token: str, workspace: str, path: str, content:
         # Script exists: create a new version by chaining from the latest hash.
         # Without parent_hash, Windmill rejects the create with a path-conflict.
         print("  Script exists, creating new version...")
-        existing_hash = check.get("hash")
+        existing_hash = check.get("hash") if isinstance(check, dict) else None
         if existing_hash:
             payload["parent_hash"] = existing_hash
 
     result = api_request(base_url, f"/w/{workspace}/scripts/create", token, "POST", payload)
 
     # If still conflicting, archive then create (last resort).
-    if "error" in result and result.get("code") == 400 and "Path conflict" in str(result.get("error", "")):
+    if (
+        isinstance(result, dict)
+        and "error" in result
+        and result.get("code") == 400
+        and "Path conflict" in str(result.get("error", ""))
+    ):
         api_request(base_url, f"/w/{workspace}/scripts/archive/p/{path}", token, "POST", {})
         result = api_request(base_url, f"/w/{workspace}/scripts/create", token, "POST", payload)
     
-    return "error" not in result
+    return not (isinstance(result, dict) and "error" in result)
 
 
 def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: dict) -> bool:
@@ -188,7 +193,7 @@ def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: 
         "schema": flow_def.get("schema", {}),
     }
     
-    if "error" not in check or check.get("code") != 404:
+    if not (isinstance(check, dict) and check.get("code") == 404 and "error" in check):
         # Flow exists, update it
         print("  Flow exists, updating...")
         result = api_request(base_url, f"/w/{workspace}/flows/update/{path}", token, "POST", payload)
@@ -196,7 +201,7 @@ def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: 
         # Create new flow
         result = api_request(base_url, f"/w/{workspace}/flows/create", token, "POST", payload)
     
-    return "error" not in result
+    return not (isinstance(result, dict) and "error" in result)
 
 
 def _inject_script_hashes_into_flow(base_url: str, token: str, workspace: str, flow_def: dict) -> None:

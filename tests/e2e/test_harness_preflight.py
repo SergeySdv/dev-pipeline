@@ -113,3 +113,34 @@ def test_run_preflight_no_autostart_skips_runner(monkeypatch: pytest.MonkeyPatch
     assert report.ok
     assert runner.calls == []
     assert report.warnings
+
+
+def test_run_preflight_waits_for_backend_readiness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    script = tmp_path / "scripts" / "run-local-dev.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    monkeypatch.setenv("HARNESS_GITHUB_REPOS", "a,b,c")
+    monkeypatch.setenv("HARNESS_READY_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("HARNESS_READY_POLL_INTERVAL_SECONDS", "0.01")
+
+    calls = {"backend": 0, "windmill": 0}
+
+    def _probe(url: str, timeout: float) -> tuple[bool, str]:
+        del timeout
+        if "8000/health" in url:
+            calls["backend"] += 1
+            return (calls["backend"] >= 2, "backend")
+        calls["windmill"] += 1
+        return (calls["windmill"] >= 2, "windmill")
+
+    report = run_preflight(
+        project_root=tmp_path,
+        command_exists=lambda command: True,
+        command_runner=_FakeRunner(),
+        http_probe=_probe,
+    )
+
+    assert report.ok
+    assert calls["backend"] >= 2
+    assert calls["windmill"] >= 2

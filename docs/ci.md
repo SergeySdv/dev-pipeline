@@ -79,6 +79,7 @@ HARNESS_STEP_ENGINE=dummy scripts/ci/test-harness-live.sh
 Key harness env vars:
 
 - `DEVGODZILLA_RUN_E2E_HARNESS=1`
+- `DEVGODZILLA_DB_URL` or `DEVGODZILLA_DB_PATH` (must match the backend DB used by `scripts/run-local-dev.sh backend start`)
 - `HARNESS_GITHUB_OWNER`
 - `HARNESS_GITHUB_REPOS`
 - `HARNESS_REPO_URL_OVERRIDE`
@@ -86,6 +87,9 @@ Key harness env vars:
 - `HARNESS_CONTINUE_ON_ERROR` (`1` or `0`)
 - `HARNESS_ONBOARD_MODE` (`windmill` or `agent`)
 - `HARNESS_STEP_ENGINE` (`opencode` or `dummy`)
+- `HARNESS_WINDMILL_AUTO_IMPORT` (`1` default; set `0` to skip `scripts/run-local-dev.sh import` during preflight)
+- `HARNESS_WINDMILL_HEARTBEAT_TIMEOUT_SECONDS` (optional; fail stage if Windmill status/log stream is silent for this many seconds)
+- `WINDMILL_JOB_TIMEOUT_SECONDS` (`3600` default in local compose; increases Windmill worker instance-wide max job duration)
 
 ## Adding New Repo Coverage
 
@@ -107,6 +111,8 @@ Steps:
    - `pytest -q tests/e2e/test_harness_scenario_loader.py`
 8. Run a focused live harness pass:
    - `HARNESS_SCENARIO=<scenario_id> scripts/ci/test-harness-live.sh`
+9. Cached checkout branch handling:
+   - harness auto-falls back from configured `repo.default_branch` to `origin/HEAD` when they diverge (for example `main` vs `master`).
 
 Failure outputs:
 
@@ -114,3 +120,31 @@ Failure outputs:
 - CI diagnostics: uploaded artifact from `runs/harness/**`
 - Structured event stream: `runs/harness/<timestamp>-<scenario_id>/diagnostics/events.jsonl`
   - Event types: `run_started`, `stage_started`, `stage_retry`, `stage_succeeded`, `stage_failed`, `run_finished`
+- Per-command live CLI logs: `runs/harness/<timestamp>-<scenario_id>/diagnostics/cli-<stage>-attempt-<n>-*.log`
+- Windmill job payload snapshots: `runs/harness/<timestamp>-<scenario_id>/diagnostics/windmill-job-<job_id>.json`
+
+DB alignment note:
+
+- Windmill onboarding uses the backend API DB, while harness CLI commands use the local process DB config.
+- If these differ, onboarding can enqueue successfully but return payload errors like `Project not found`.
+- Fix by exporting the same `DEVGODZILLA_DB_URL` (or `DEVGODZILLA_DB_PATH`) for both harness and backend startup.
+- `project_onboard_api` now uses `api_timeout_seconds` (default `2700`) for the `/actions/onboard` API call, so long discovery runs do not fail at the previous 30s HTTP timeout.
+- Windmill server/workers now set `JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}` and workers set `TIMEOUT=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}` in compose to avoid killing long onboarding jobs after short default limits.
+- `scripts/run-local-dev.sh import` now also updates Windmill `global_settings.job_default_timeout` to `WINDMILL_JOB_TIMEOUT_SECONDS` so DB-stored default timeout matches container env limits.
+
+### Live Monitoring Commands
+
+```bash
+# watch structured harness lifecycle events
+RUN_DIR="$(ls -td runs/harness/* | head -n1)"
+tail -F "$RUN_DIR/diagnostics/events.jsonl" | jq -c
+
+# watch all streamed CLI/opencode stage logs
+tail -F "$RUN_DIR"/diagnostics/cli-*.log
+
+# watch live Windmill job stream logs captured by harness polling
+tail -F "$RUN_DIR"/diagnostics/windmill-job-*.log
+
+# watch backend structured logs (includes opencode_output events)
+tail -F /tmp/devgodzilla-harness-backend.log | rg --line-buffered "opencode_output|execute_step_started|execute_step_failed"
+```

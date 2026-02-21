@@ -17,6 +17,9 @@ def test_workflow_harness_live() -> None:
     if os.environ.get("DEVGODZILLA_RUN_E2E_HARNESS") != "1":
         pytest.skip("Set DEVGODZILLA_RUN_E2E_HARNESS=1 to enable live harness E2E.")
 
+    if not os.environ.get("DEVGODZILLA_DB_URL") and not os.environ.get("DEVGODZILLA_DB_PATH"):
+        os.environ["DEVGODZILLA_DB_URL"] = "postgresql://devgodzilla:changeme@localhost:5432/devgodzilla_db"
+
     step_engine = (os.environ.get("HARNESS_STEP_ENGINE", "opencode").strip() or "opencode").lower()
     report = run_preflight(
         auto_start=True,

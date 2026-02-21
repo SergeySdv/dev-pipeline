@@ -70,6 +70,7 @@ services:
       - DATABASE_URL=postgresql://windmill:changeme@db:5432/windmill_db
       - MODE=server
       - BASE_URL=http://localhost:8001
+      - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
       - DEVGODZILLA_API_URL=http://host.docker.internal:8000  # Points to local API
     depends_on:
       db:
@@ -109,6 +110,8 @@ services:
       - DATABASE_URL=postgresql://windmill:changeme@db:5432/windmill_db
       - MODE=worker
       - WORKER_GROUP=default
+      - TIMEOUT=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
+      - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
       - DEVGODZILLA_API_URL=http://host.docker.internal:8000  # Points to local API
       - WHITELIST_ENVS=DEVGODZILLA_API_URL  # Pass through to scripts
     depends_on:
@@ -141,6 +144,8 @@ services:
       - DATABASE_URL=postgresql://windmill:changeme@db:5432/windmill_db
       - MODE=worker
       - WORKER_GROUP=native
+      - TIMEOUT=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
+      - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
       - NUM_WORKERS=8
       - SLEEP_QUEUE=200
       - DEVGODZILLA_API_URL=http://host.docker.internal:8000  # Points to local API

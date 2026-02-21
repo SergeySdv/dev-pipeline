@@ -103,6 +103,8 @@ def _execute_stage_with_retries(
 
     for attempt in range(1, scenario.retries.max_attempts + 1):
         attempts = attempt
+        ctx.metadata["_current_stage"] = stage
+        ctx.metadata["_current_attempt"] = attempt
         emit_event(
             "stage_started",
             {
@@ -154,6 +156,9 @@ def _execute_stage_with_retries(
                 },
             )
             sleep_fn(delay)
+        finally:
+            ctx.metadata.pop("_current_stage", None)
+            ctx.metadata.pop("_current_attempt", None)
 
     duration_ms = int((clock_fn() - start) * 1000)
     emit_event(
