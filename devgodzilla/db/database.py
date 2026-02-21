@@ -316,6 +316,8 @@ class DatabaseProtocol(Protocol):
 
     def get_sprint(self, sprint_id: int) -> Sprint: ...
     def list_sprints(self, project_id: Optional[int] = None, status: Optional[str] = None) -> List[Sprint]: ...
+    def set_spec_sprint_link(self, project_id: int, spec_key: str, sprint_id: Optional[int]) -> Optional[int]: ...
+    def list_spec_sprint_links(self, project_id: int) -> Dict[str, int]: ...
     def update_sprint(self, sprint_id: int, **kwargs: Any) -> Sprint: ...
     def delete_sprint(self, sprint_id: int) -> None: ...
 
@@ -832,6 +834,7 @@ class SQLiteDatabase:
             conn.execute("DELETE FROM clarifications WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM spec_runs WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM speckit_specs WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM spec_sprint_links WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
             conn.execute("DELETE FROM sprints WHERE project_id = ?", (project_id,))
             conn.execute(
@@ -2506,6 +2509,40 @@ class SQLiteDatabase:
         )
         return [self._row_to_sprint(row) for row in rows]
 
+    def set_spec_sprint_link(self, project_id: int, spec_key: str, sprint_id: Optional[int]) -> Optional[int]:
+        key = str(spec_key).strip()
+        if not key:
+            raise ValueError("spec_key is required")
+        with self._transaction() as conn:
+            if sprint_id is None:
+                conn.execute(
+                    "DELETE FROM spec_sprint_links WHERE project_id = ? AND spec_key = ?",
+                    (project_id, key),
+                )
+                return None
+            conn.execute(
+                """
+                INSERT INTO spec_sprint_links (project_id, spec_key, sprint_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(project_id, spec_key) DO UPDATE SET
+                    sprint_id = excluded.sprint_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (project_id, key, sprint_id),
+            )
+        return sprint_id
+
+    def list_spec_sprint_links(self, project_id: int) -> Dict[str, int]:
+        rows = self._fetchall(
+            "SELECT spec_key, sprint_id FROM spec_sprint_links WHERE project_id = ?",
+            (project_id,),
+        )
+        return {
+            str(row["spec_key"]): int(row["sprint_id"])
+            for row in rows
+            if row["spec_key"] is not None and row["sprint_id"] is not None
+        }
+
     def update_sprint(self, sprint_id: int, **kwargs: Any) -> Sprint:
         updates = ["updated_at = CURRENT_TIMESTAMP"]
         params: List[Any] = []
@@ -3050,6 +3087,41 @@ class PostgresDatabase:
             tuple(params),
         )
         return [self._row_to_sprint(row) for row in rows]
+
+    def set_spec_sprint_link(self, project_id: int, spec_key: str, sprint_id: Optional[int]) -> Optional[int]:
+        key = str(spec_key).strip()
+        if not key:
+            raise ValueError("spec_key is required")
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                if sprint_id is None:
+                    cur.execute(
+                        "DELETE FROM spec_sprint_links WHERE project_id = %s AND spec_key = %s",
+                        (project_id, key),
+                    )
+                    return None
+                cur.execute(
+                    """
+                    INSERT INTO spec_sprint_links (project_id, spec_key, sprint_id)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT(project_id, spec_key) DO UPDATE SET
+                        sprint_id = EXCLUDED.sprint_id,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (project_id, key, sprint_id),
+                )
+        return sprint_id
+
+    def list_spec_sprint_links(self, project_id: int) -> Dict[str, int]:
+        rows = self._fetchall(
+            "SELECT spec_key, sprint_id FROM spec_sprint_links WHERE project_id = %s",
+            (project_id,),
+        )
+        return {
+            str(row["spec_key"]): int(row["sprint_id"])
+            for row in rows
+            if row.get("spec_key") is not None and row.get("sprint_id") is not None
+        }
 
     def update_sprint(self, sprint_id: int, **kwargs: Any) -> Sprint:
         updates = ["updated_at = CURRENT_TIMESTAMP"]
@@ -3625,6 +3697,7 @@ class PostgresDatabase:
                 cur.execute("DELETE FROM clarifications WHERE project_id = %s", (project_id,))
                 cur.execute("DELETE FROM spec_runs WHERE project_id = %s", (project_id,))
                 cur.execute("DELETE FROM speckit_specs WHERE project_id = %s", (project_id,))
+                cur.execute("DELETE FROM spec_sprint_links WHERE project_id = %s", (project_id,))
                 cur.execute("DELETE FROM tasks WHERE project_id = %s", (project_id,))
                 cur.execute("DELETE FROM sprints WHERE project_id = %s", (project_id,))
                 cur.execute(

@@ -112,6 +112,17 @@ CREATE TABLE IF NOT EXISTS spec_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_spec_runs_project ON spec_runs(project_id, created_at);
 
+CREATE TABLE IF NOT EXISTS spec_sprint_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    spec_key TEXT NOT NULL,
+    sprint_id INTEGER NOT NULL REFERENCES sprints(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, spec_key)
+);
+CREATE INDEX IF NOT EXISTS idx_spec_sprint_links_project ON spec_sprint_links(project_id, sprint_id);
+
 CREATE TABLE IF NOT EXISTS step_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     protocol_run_id INTEGER NOT NULL REFERENCES protocol_runs(id),
@@ -430,6 +441,17 @@ CREATE TABLE IF NOT EXISTS spec_runs (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_spec_runs_project ON spec_runs(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS spec_sprint_links (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    spec_key TEXT NOT NULL,
+    sprint_id INTEGER NOT NULL REFERENCES sprints(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, spec_key)
+);
+CREATE INDEX IF NOT EXISTS idx_spec_sprint_links_project ON spec_sprint_links(project_id, sprint_id);
 
 CREATE TABLE IF NOT EXISTS step_runs (
     id SERIAL PRIMARY KEY,

@@ -17,6 +17,21 @@ from devgodzilla.services.specification import SpecificationService
 router = APIRouter(tags=["specifications"])
 
 
+def _spec_value(item: Any, key: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _spec_key(item: Any, resolved_spec_id: int) -> str:
+    spec_run_id = _spec_value(item, "spec_run_id", None) or _spec_value(item, "id", None)
+    if spec_run_id is not None:
+        return f"run:{spec_run_id}"
+    spec_path_value = str(_spec_value(item, "path", "") or "")
+    spec_slug = Path(spec_path_value).name if spec_path_value else str(resolved_spec_id)
+    return f"slug:{spec_slug}"
+
+
 class SpecificationOut(BaseModel):
     id: int
     spec_run_id: Optional[int] = None
@@ -158,11 +173,6 @@ def list_specifications(
     all_specifications = []
     spec_id = 0
     
-    def _spec_value(item: Any, key: str, default: Any = None) -> Any:
-        if isinstance(item, dict):
-            return item.get(key, default)
-        return getattr(item, key, default)
-
     for project in projects:
         if not project or not project.local_path:
             continue
@@ -175,6 +185,10 @@ def list_specifications(
             specs = service.list_specs(project.local_path, project_id=project.id)
             project_tasks = db.list_tasks(project_id=project.id, limit=500)
             project_sprints = {sprint.id: sprint for sprint in db.list_sprints(project_id=project.id)}
+            try:
+                project_spec_links = db.list_spec_sprint_links(project.id)
+            except Exception:
+                project_spec_links = {}
             spec_task_map: Dict[str, List[Any]] = {}
             for task in project_tasks:
                 spec_label = next((label for label in task.labels if label.startswith("spec:")), None)
@@ -185,6 +199,7 @@ def list_specifications(
             for spec in specs:
                 spec_id += 1
                 resolved_spec_id = _spec_value(spec, "spec_run_id", None) or _spec_value(spec, "id", None) or spec_id
+                spec_ref_key = _spec_key(spec, resolved_spec_id)
                 
                 # Determine status based on what exists
                 has_tasks_value = bool(_spec_value(spec, "has_tasks", False))
@@ -267,10 +282,17 @@ def list_specifications(
                 completed_tasks = sum(1 for t in spec_tasks if t.board_status == "done")
                 story_points = sum(t.story_points or 0 for t in spec_tasks)
                 spec_sprint_ids = {t.sprint_id for t in spec_tasks if t.sprint_id}
+                linked_sprint_id = project_spec_links.get(spec_ref_key)
+                if linked_sprint_id is not None:
+                    spec_sprint_ids.add(linked_sprint_id)
                 spec_sprint_id = None
                 spec_sprint_name = None
 
-                if len(spec_sprint_ids) == 1:
+                if linked_sprint_id is not None:
+                    spec_sprint_id = linked_sprint_id
+                    sprint = project_sprints.get(spec_sprint_id)
+                    spec_sprint_name = sprint.name if sprint else None
+                elif len(spec_sprint_ids) == 1:
                     spec_sprint_id = next(iter(spec_sprint_ids))
                     sprint = project_sprints.get(spec_sprint_id)
                     spec_sprint_name = sprint.name if sprint else None
@@ -328,6 +350,31 @@ def list_specifications(
     )
 
 
+def _get_specification_by_id(
+    spec_id: int,
+    db: Database,
+    service: SpecificationService,
+) -> SpecificationOut:
+    result = list_specifications(
+        project_id=None,
+        sprint_id=None,
+        status=None,
+        date_from=None,
+        date_to=None,
+        has_plan=None,
+        has_tasks=None,
+        search=None,
+        limit=500,
+        offset=0,
+        db=db,
+        service=service,
+    )
+    for spec in result.items:
+        if spec.id == spec_id:
+            return spec
+    raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+
+
 @router.get("/specifications/{spec_id}", response_model=SpecificationOut)
 def get_specification(
     spec_id: int,
@@ -335,11 +382,7 @@ def get_specification(
     service: SpecificationService = Depends(get_specification_service),
 ):
     """Get a single specification by ID."""
-    result = list_specifications(limit=500, db=db, service=service)
-    for spec in result.items:
-        if spec.id == spec_id:
-            return spec
-    raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+    return _get_specification_by_id(spec_id=spec_id, db=db, service=service)
 
 
 @router.get("/specifications/{spec_id}/content", response_model=SpecificationContentOut)
@@ -349,15 +392,7 @@ def get_specification_content(
     service: SpecificationService = Depends(get_specification_service),
 ):
     """Get specification content including spec, plan, and tasks markdown."""
-    result = list_specifications(limit=500, db=db, service=service)
-    spec = None
-    for s in result.items:
-        if s.id == spec_id:
-            spec = s
-            break
-    
-    if not spec:
-        raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+    spec = _get_specification_by_id(spec_id=spec_id, db=db, service=service)
     
     # Get project to find local path
     try:
@@ -428,16 +463,7 @@ def link_specification_to_sprint(
     service: SpecificationService = Depends(get_specification_service),
 ):
     """Link or unlink a specification to/from a sprint."""
-    # First verify the spec exists
-    result = list_specifications(limit=500, db=db, service=service)
-    spec = None
-    for s in result.items:
-        if s.id == spec_id:
-            spec = s
-            break
-    
-    if not spec:
-        raise HTTPException(status_code=404, detail=f"Specification {spec_id} not found")
+    spec = _get_specification_by_id(spec_id=spec_id, db=db, service=service)
     
     # Verify sprint exists if linking
     if request.sprint_id is not None:
@@ -449,13 +475,24 @@ def link_specification_to_sprint(
                     status_code=400,
                     detail="Sprint must belong to the same project as the specification"
                 )
-        except (KeyError, Exception):
+        except KeyError:
             raise HTTPException(status_code=404, detail=f"Sprint {request.sprint_id} not found")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to load sprint {request.sprint_id}: {exc}")
     
-    # TODO: Store spec-sprint linking in metadata file or database
-    # For now, return success as this requires schema extension
+    spec_ref_key = _spec_key(spec, spec.id)
+    try:
+        db.set_spec_sprint_link(spec.project_id, spec_ref_key, request.sprint_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to persist spec-sprint link: {exc}")
+
     return {
         "success": True,
+        "persisted": True,
         "spec_id": spec_id,
         "sprint_id": request.sprint_id,
         "message": f"Specification {'linked to' if request.sprint_id else 'unlinked from'} sprint"
