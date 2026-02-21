@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from devgodzilla.logging import get_logger, init_cli_logging
+from devgodzilla.services.path_contract import validate_path_contract
 
 logger = get_logger(__name__)
 
@@ -92,6 +93,12 @@ def cli(ctx, verbose, json_output):
     # Load configuration and agents
     from devgodzilla.config import load_config
     config = load_config()
+    path_contract_report = validate_path_contract(config)
+    for warning in path_contract_report.warnings:
+        logger.warning("path_contract_warning", extra={"warning": warning})
+    if not path_contract_report.is_valid:
+        details = "\n".join(f"- {error}" for error in path_contract_report.errors)
+        raise click.ClickException(f"Invalid path configuration:\n{details}")
 
     # Ensure engines are available for local CLI execution paths.
     try:

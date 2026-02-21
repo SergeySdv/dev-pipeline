@@ -108,6 +108,9 @@ class Config(BaseModel):
     windmill_url: Optional[str] = Field(default=None)
     windmill_token: Optional[str] = Field(default=None)
     windmill_workspace: str = Field(default="devgodzilla")
+    windmill_env_file: Optional[Path] = Field(default=None)
+    windmill_onboard_script_path: str = Field(default="u/devgodzilla/project_onboard_api")
+    windmill_import_root: Path = Field(default=Path("windmill"))
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -170,6 +173,11 @@ def _parse_csv(value: Optional[str]) -> List[str]:
     if value.strip() == "*":
         return ["*"]
     return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _normalize_path(value: str) -> Path:
+    """Expand and resolve a path without requiring existence."""
+    return Path(value).expanduser().resolve(strict=False)
 
 
 def _read_simple_env_file(path: Path) -> Dict[str, str]:
@@ -278,6 +286,7 @@ def load_config() -> Config:
     cors = _parse_csv(os.environ.get("DEVGODZILLA_CORS_ORIGINS"))
     if not cors and env == "local":
         cors = ["*"]
+    windmill_env_file = os.environ.get("DEVGODZILLA_WINDMILL_ENV_FILE")
     return Config(
         # Database
         db_url=os.environ.get("DEVGODZILLA_DB_URL"),
@@ -338,7 +347,7 @@ def load_config() -> Config:
         git_lock_retry_delay=float(os.environ.get("DEVGODZILLA_GIT_LOCK_RETRY_DELAY", "1.0")),
 
         # Projects
-        projects_root=Path(os.environ.get("DEVGODZILLA_PROJECTS_ROOT", "projects")).expanduser(),
+        projects_root=_normalize_path(os.environ.get("DEVGODZILLA_PROJECTS_ROOT", "projects")),
         
         # Misc
         spec_audit_interval_seconds=int(v) if (v := os.environ.get("DEVGODZILLA_SPEC_AUDIT_INTERVAL_SECONDS")) else None,
@@ -351,6 +360,14 @@ def load_config() -> Config:
         windmill_url=os.environ.get("DEVGODZILLA_WINDMILL_URL"),
         windmill_token=os.environ.get("DEVGODZILLA_WINDMILL_TOKEN"),
         windmill_workspace=os.environ.get("DEVGODZILLA_WINDMILL_WORKSPACE", "devgodzilla"),
+        windmill_env_file=_normalize_path(windmill_env_file) if windmill_env_file else None,
+        windmill_onboard_script_path=os.environ.get(
+            "DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH",
+            "u/devgodzilla/project_onboard_api",
+        ),
+        windmill_import_root=_normalize_path(
+            os.environ.get("DEVGODZILLA_WINDMILL_IMPORT_ROOT", "windmill")
+        ),
     )
 
 

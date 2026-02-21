@@ -45,7 +45,10 @@ def enqueue_project_onboarding(
     discovery_model: Optional[str] = None,
     clone_if_missing: bool = True,
 ) -> OnboardingEnqueueResult:
-    script_path = "u/devgodzilla/project_onboard_api"
+    script_path = (
+        getattr(ctx.config, "windmill_onboard_script_path", None)
+        or "u/devgodzilla/project_onboard_api"
+    )
     payload: dict[str, Any] = {
         "project_id": project_id,
         "run_discovery_agent": bool(run_discovery_agent),

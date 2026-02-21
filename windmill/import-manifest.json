@@ -1,0 +1,40 @@
+{
+  "scripts": {
+    "source_dir": "scripts/devgodzilla",
+    "path_prefix": "u/devgodzilla",
+    "glob": "*.py"
+  },
+  "flows": {
+    "source_dir": "flows/devgodzilla",
+    "path_prefix": "f/devgodzilla",
+    "glob": "*.flow.json",
+    "strip_suffix": ".flow.json"
+  },
+  "apps": {
+    "source_dir": "apps/devgodzilla",
+    "path_prefix": "app/devgodzilla",
+    "glob": "*.app.json",
+    "items": [
+      {
+        "file": "devgodzilla_dashboard.app.json",
+        "path": "app/devgodzilla/dashboard"
+      },
+      {
+        "file": "devgodzilla_projects.app.json",
+        "path": "app/devgodzilla/projects"
+      },
+      {
+        "file": "devgodzilla_project_detail.app.json",
+        "path": "app/devgodzilla/project_detail"
+      },
+      {
+        "file": "devgodzilla_protocols.app.json",
+        "path": "app/devgodzilla/protocols"
+      },
+      {
+        "file": "devgodzilla_protocol_detail.app.json",
+        "path": "app/devgodzilla/protocol_detail"
+      }
+    ]
+  }
+}

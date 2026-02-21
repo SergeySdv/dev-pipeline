@@ -17,13 +17,59 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 import urllib.request
 import urllib.error
 import re
 
-SCRIPTS_DIR = Path(__file__).parent / "scripts" / "devgodzilla"
-FLOWS_DIR = Path(__file__).parent / "flows" / "devgodzilla"
-APPS_DIR = Path(__file__).parent / "apps" / "devgodzilla"
+DEFAULT_IMPORT_MANIFEST: dict[str, Any] = {
+    "scripts": {
+        "source_dir": "scripts/devgodzilla",
+        "path_prefix": "u/devgodzilla",
+        "glob": "*.py",
+    },
+    "flows": {
+        "source_dir": "flows/devgodzilla",
+        "path_prefix": "f/devgodzilla",
+        "glob": "*.flow.json",
+        "strip_suffix": ".flow.json",
+    },
+    "apps": {
+        "source_dir": "apps/devgodzilla",
+        "path_prefix": "app/devgodzilla",
+        "glob": "*.app.json",
+        "items": [
+            {"file": "devgodzilla_dashboard.app.json", "path": "app/devgodzilla/dashboard"},
+            {"file": "devgodzilla_projects.app.json", "path": "app/devgodzilla/projects"},
+            {"file": "devgodzilla_project_detail.app.json", "path": "app/devgodzilla/project_detail"},
+            {"file": "devgodzilla_protocols.app.json", "path": "app/devgodzilla/protocols"},
+            {"file": "devgodzilla_protocol_detail.app.json", "path": "app/devgodzilla/protocol_detail"},
+        ],
+    },
+}
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(base_value, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_import_manifest(root: Path, manifest_path: Path | None = None) -> dict[str, Any]:
+    """Load importer manifest from disk, merging onto defaults."""
+    manifest = DEFAULT_IMPORT_MANIFEST
+    candidate = manifest_path or (root / "import-manifest.json")
+    if candidate.exists():
+        loaded = json.loads(candidate.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            raise ValueError(f"Invalid manifest format in {candidate}: expected object")
+        manifest = _deep_merge(DEFAULT_IMPORT_MANIFEST, loaded)
+    return manifest
 
 
 def read_script_content(script_path: Path) -> str:
@@ -144,7 +190,7 @@ def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: 
     
     if "error" not in check or check.get("code") != 404:
         # Flow exists, update it
-        print(f"  Flow exists, updating...")
+        print("  Flow exists, updating...")
         result = api_request(base_url, f"/w/{workspace}/flows/update/{path}", token, "POST", payload)
     else:
         # Create new flow
@@ -200,7 +246,7 @@ def create_app(base_url: str, token: str, workspace: str, path: str, app_def: di
     
     if "error" not in check or check.get("code") != 404:
         # App exists, update it
-        print(f"  App exists, updating...")
+        print("  App exists, updating...")
         result = api_request(base_url, f"/w/{workspace}/apps/update/{path}", token, "POST", payload)
     else:
         # Create new app
@@ -208,10 +254,27 @@ def create_app(base_url: str, token: str, workspace: str, path: str, app_def: di
         
         # Fallback: if create fails with 400, it might exist but hidden/archived or check failed
         if "error" in result and result.get("code") == 400:
-             print(f"  Create failed (400), trying update...", end=" ")
+             print("  Create failed (400), trying update...", end=" ")
              result = api_request(base_url, f"/w/{workspace}/apps/update/{path}", token, "POST", payload)
     
     return "error" not in result
+
+
+def _resolve_source_dir(root: Path, section: dict[str, Any], fallback: str) -> Path:
+    return root / section.get("source_dir", fallback)
+
+
+def _strip_suffix(filename: str, suffix: str) -> str:
+    if suffix and filename.endswith(suffix):
+        return filename[: -len(suffix)]
+    return Path(filename).stem
+
+
+def _app_name_from_file(filename: str) -> str:
+    if filename.endswith(".app.json"):
+        return filename[: -len(".app.json")]
+    return Path(filename).stem
+
 
 def main():
     parser = argparse.ArgumentParser(description="Import DevGodzilla to Windmill")
@@ -223,9 +286,22 @@ def main():
         help="Path to an env file containing WINDMILL_TOKEN/DEVGODZILLA_WINDMILL_TOKEN/VITE_TOKEN",
     )
     parser.add_argument("--workspace", default="demo1", help="Windmill workspace")
+    parser.add_argument(
+        "--root",
+        default=os.environ.get("DEVGODZILLA_WINDMILL_IMPORT_ROOT", str(Path(__file__).parent)),
+        help="Windmill export root containing scripts/flows/apps",
+    )
+    parser.add_argument(
+        "--manifest",
+        default=os.environ.get("DEVGODZILLA_WINDMILL_IMPORT_MANIFEST"),
+        help="Optional import manifest JSON file",
+    )
     parser.add_argument("--scripts-only", action="store_true", help="Only import scripts")
     parser.add_argument("--flows-only", action="store_true", help="Only import flows")
     args = parser.parse_args()
+    root = Path(args.root).expanduser().resolve(strict=False)
+    manifest_path = Path(args.manifest).expanduser().resolve(strict=False) if args.manifest else None
+    manifest = load_import_manifest(root=root, manifest_path=manifest_path)
 
     token = args.token
     if not token and args.token_file:
@@ -253,11 +329,14 @@ def main():
     # Import scripts
     if not args.flows_only:
         print("=== Importing Scripts ===")
-
-        script_files = sorted([p for p in SCRIPTS_DIR.glob("*.py") if p.is_file()])
+        scripts_cfg = manifest.get("scripts", {})
+        scripts_dir = _resolve_source_dir(root, scripts_cfg, "scripts/devgodzilla")
+        script_glob = scripts_cfg.get("glob", "*.py")
+        script_prefix = scripts_cfg.get("path_prefix", "u/devgodzilla")
+        script_files = sorted([p for p in scripts_dir.glob(script_glob) if p.is_file()])
         for script_file in script_files:
             script_name = script_file.stem
-            path = f"u/devgodzilla/{script_name}"
+            path = f"{script_prefix}/{script_name}"
             summary = script_name.replace("_", " ").strip().title()
 
             content = read_script_content(script_file)
@@ -274,11 +353,15 @@ def main():
     # Import flows
     if not args.scripts_only:
         print("=== Importing Flows ===")
-
-        flow_files = sorted([p for p in FLOWS_DIR.glob("*.flow.json") if p.is_file()])
+        flows_cfg = manifest.get("flows", {})
+        flows_dir = _resolve_source_dir(root, flows_cfg, "flows/devgodzilla")
+        flow_glob = flows_cfg.get("glob", "*.flow.json")
+        flow_prefix = flows_cfg.get("path_prefix", "f/devgodzilla")
+        flow_strip_suffix = flows_cfg.get("strip_suffix", ".flow.json")
+        flow_files = sorted([p for p in flows_dir.glob(flow_glob) if p.is_file()])
         for flow_file in flow_files:
-            flow_name = flow_file.name.removesuffix(".flow.json")
-            path = f"f/devgodzilla/{flow_name}"
+            flow_name = _strip_suffix(flow_file.name, flow_strip_suffix)
+            path = f"{flow_prefix}/{flow_name}"
             flow_def = json.loads(flow_file.read_text())
             _inject_script_hashes_into_flow(args.url, token, args.workspace, flow_def)
             print(f"Importing {path}...", end=" ")
@@ -294,17 +377,25 @@ def main():
     # Import apps
     if not args.scripts_only and not args.flows_only:
         print("=== Importing Apps ===")
-        apps = [
-            ("devgodzilla_dashboard", "app/devgodzilla/dashboard"),
-            ("devgodzilla_projects", "app/devgodzilla/projects"),
-            ("devgodzilla_project_detail", "app/devgodzilla/project_detail"),
-            ("devgodzilla_protocols", "app/devgodzilla/protocols"),
-            ("devgodzilla_protocol_detail", "app/devgodzilla/protocol_detail"),
-        ]
-        
-        for app_name, path in apps:
-            app_file = APPS_DIR / f"{app_name}.app.json"
-            
+        apps_cfg = manifest.get("apps", {})
+        apps_dir = _resolve_source_dir(root, apps_cfg, "apps/devgodzilla")
+        apps_prefix = apps_cfg.get("path_prefix", "app/devgodzilla")
+        apps_items = apps_cfg.get("items") or []
+        if apps_items:
+            app_records = []
+            for item in apps_items:
+                filename = item.get("file", "")
+                if not filename:
+                    continue
+                app_path = item.get("path") or f"{apps_prefix}/{_app_name_from_file(filename)}"
+                app_records.append((filename, app_path))
+        else:
+            app_glob = apps_cfg.get("glob", "*.app.json")
+            discovered = sorted([p for p in apps_dir.glob(app_glob) if p.is_file()])
+            app_records = [(p.name, f"{apps_prefix}/{_app_name_from_file(p.name)}") for p in discovered]
+
+        for filename, path in app_records:
+            app_file = apps_dir / filename
             if not app_file.exists():
                 print(f"✗ {path} - file not found ({app_file})")
                 error_count += 1
@@ -321,7 +412,7 @@ def main():
                 error_count += 1
         print()
     
-    print(f"=== Summary ===")
+    print("=== Summary ===")
     print(f"Success: {success_count}")
     print(f"Errors: {error_count}")
     

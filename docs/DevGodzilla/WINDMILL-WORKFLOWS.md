@@ -19,8 +19,8 @@ Windmill is used as orchestration runtime and operator UI companion. In this rep
 
 ## Local Development Pattern
 
-1. Start infra: `docker compose up --build -d`
-2. Start host services: `scripts/run-local-dev.sh backend restart` and `scripts/run-local-dev.sh frontend restart`
+1. Start infra: `scripts/run-local-dev.sh up` (uses `docker-compose.local.yml` and starts `db redis windmill windmill_worker windmill_worker_native lsp nginx`)
+2. Start host services: `scripts/run-local-dev.sh backend start` and `scripts/run-local-dev.sh frontend start` (or `scripts/run-local-dev.sh dev` for both)
 3. Import assets: `scripts/run-local-dev.sh import`
 
 Default token file for import in local setup:
@@ -60,6 +60,19 @@ SpecKit-related API wrapper scripts:
 - `speckit_checklist_api.py`
 - `speckit_analyze_api.py`
 - `speckit_implement_api.py`
+
+Sprint/tasks and sync scripts:
+
+- `sync_tasks_api.py`
+- `sprint_from_protocol_api.py`
+- `complete_sprint_api.py`
+
+Project/bootstrap utility scripts:
+
+- `project_setup.py`
+- `generate_spec.py`
+- `generate_plan.py`
+- `generate_tasks.py`
 
 ## Key Flows (Current)
 

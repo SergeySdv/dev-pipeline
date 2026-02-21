@@ -23,6 +23,7 @@ from devgodzilla.engines.bootstrap import bootstrap_default_engines
 from devgodzilla.db.database import Database
 from devgodzilla.logging import get_logger, get_log_buffer
 from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
+from devgodzilla.services.path_contract import validate_path_contract
 from devgodzilla.windmill.client import WindmillClient, WindmillConfig
 
 logger = get_logger(__name__)
@@ -171,6 +172,20 @@ def bootstrap_sprint_integration() -> None:
         register_sprint_event_handlers()
     except Exception as e:
         logger.error(f"Failed to register sprint event handlers: {e}")
+
+
+@app.on_event("startup")
+def validate_path_contract_startup() -> None:
+    """Fail fast when core folder/file path contracts are invalid."""
+    report = validate_path_contract(config)
+    for warning in report.warnings:
+        logger.warning("path_contract_warning", extra={"warning": warning})
+    if report.is_valid:
+        return
+
+    logger.error("path_contract_invalid", extra={"errors": report.errors})
+    joined = "; ".join(report.errors)
+    raise RuntimeError(f"Path contract validation failed: {joined}")
 
 
 @app.get("/health", response_model=schemas.Health)
