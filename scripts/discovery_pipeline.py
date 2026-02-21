@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Run TasksGodzilla multi-pass discovery pipeline on an existing repo.
+Run DevGodzilla multi-stage discovery on an existing repository.
 
-Allows re-running specific artifacts without a full onboarding flow.
+This replaces the archived legacy implementation and uses the active
+`DiscoveryAgentService` from `devgodzilla.services.discovery_agent`.
 """
 
 import argparse
@@ -15,35 +16,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tasksgodzilla.config import load_config  # noqa: E402
-from tasksgodzilla.logging import init_cli_logging, json_logging_from_env, get_logger, EXIT_DEP_MISSING, EXIT_RUNTIME_ERROR  # noqa: E402
-from tasksgodzilla.project_setup import run_codex_discovery_pipeline  # noqa: E402
+from devgodzilla.config import load_config  # noqa: E402
+from devgodzilla.logging import (  # noqa: E402
+    EXIT_RUNTIME_ERROR,
+    get_logger,
+    init_cli_logging,
+    json_logging_from_env,
+)
+from devgodzilla.services.base import ServiceContext  # noqa: E402
+from devgodzilla.services.discovery_agent import DiscoveryAgentService  # noqa: E402
 
 log = get_logger(__name__)
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run multi-pass discovery and generate artifacts.")
+    parser = argparse.ArgumentParser(description="Run multi-stage discovery and generate artifacts.")
     parser.add_argument("--repo-root", default=".", help="Repository root to analyze.")
-    parser.add_argument(
-        "--engine",
-        default=None,
-        help="Engine to use for discovery (codex|opencode). Defaults to TASKSGODZILLA_DEFAULT_ENGINE_ID or opencode.",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Model to use (default PROTOCOL_DISCOVERY_MODEL or zai-coding-plan/glm-4.6).",
-    )
-    parser.add_argument("--sandbox", default="workspace-write", help="Codex sandbox (default: workspace-write).")
+    parser.add_argument("--engine", default=None, help="Engine ID for discovery (default: config/env/opencode).")
+    parser.add_argument("--model", default=None, help="Model to use (default: engine default).")
     parser.add_argument(
         "--artifacts",
         default="inventory,architecture,api_reference,ci_notes",
-        help="Comma-separated stages to run: inventory,architecture,api_reference,ci_notes",
+        help="Comma-separated stages: inventory,architecture,api_reference,ci_notes",
     )
-    parser.add_argument("--timeout-seconds", type=int, default=None, help="Optional Codex timeout per stage.")
-    parser.add_argument("--strict", action="store_true", help="Fail if prompts/Codex missing.")
-    parser.add_argument("--skip-git-check", action="store_true", help="Pass --skip-git-repo-check to Codex.")
+    parser.add_argument("--timeout-seconds", type=int, default=900, help="Engine timeout per stage.")
+    parser.add_argument("--strict", dest="strict", action="store_true", help="Fail on missing outputs.")
+    parser.add_argument("--no-strict", dest="strict", action="store_false", help="Allow missing outputs.")
+    parser.set_defaults(strict=True)
+    parser.add_argument("--pipeline", action="store_true", default=True, help="Use multi-stage discovery (default).")
+    parser.add_argument("--single", dest="pipeline", action="store_false", help="Use single-stage discovery prompt.")
     return parser.parse_args(argv)
 
 
@@ -57,78 +58,56 @@ def main() -> int:
         log.error("repo_root_missing", extra={"repo_root": str(repo_root)})
         return EXIT_RUNTIME_ERROR
 
-    engine_id = args.engine or os.environ.get("PROTOCOL_DISCOVERY_ENGINE") or getattr(config, "default_engine_id", None) or "opencode"
-    env_model = os.environ.get("PROTOCOL_DISCOVERY_MODEL")
-    if args.model:
-        model = args.model
-    elif env_model:
-        model = env_model
-    elif engine_id == "opencode":
-        from tasksgodzilla.engines import registry
-        import tasksgodzilla.engines_opencode  # noqa: F401
+    engine_id = (
+        args.engine
+        or os.environ.get("PROTOCOL_DISCOVERY_ENGINE")
+        or getattr(config, "default_engine_id", None)
+        or "opencode"
+    )
+    model = args.model or os.environ.get("PROTOCOL_DISCOVERY_MODEL")
 
-        model = registry.get("opencode").metadata.default_model or "zai-coding-plan/glm-4.6"
-    else:
-        model = "zai-coding-plan/glm-4.6"
     artifacts = [a.strip() for a in args.artifacts.split(",") if a.strip()]
+    if args.pipeline:
+        stages = artifacts
+    else:
+        stages = ["repo_discovery"]
 
-    try:
-        if engine_id == "opencode":
-            from tasksgodzilla.engines import EngineRequest, registry
-            import tasksgodzilla.engines_opencode  # noqa: F401
-            from tasksgodzilla.project_setup import _resolve_prompt  # type: ignore
+    service = DiscoveryAgentService(ServiceContext(config=config))
+    result = service.run_discovery(
+        repo_root=repo_root,
+        engine_id=engine_id,
+        model=model,
+        pipeline=args.pipeline,
+        stages=stages,
+        timeout_seconds=args.timeout_seconds,
+        strict_outputs=args.strict,
+    )
 
-            stage_map: dict[str, str] = {
-                "inventory": "discovery-inventory.prompt.md",
-                "architecture": "discovery-architecture.prompt.md",
-                "api_reference": "discovery-api-reference.prompt.md",
-                "ci_notes": "discovery-ci-notes.prompt.md",
-            }
-            selected = list(stage_map.keys()) if artifacts is None else artifacts
-            engine = registry.get("opencode")
-            runtime_dir = repo_root / "specs" / "discovery" / "_runtime"
-            runtime_dir.mkdir(parents=True, exist_ok=True)
-            log_path = runtime_dir / "opencode-discovery.log"
-            for stage in selected:
-                prompt_name = stage_map.get(stage)
-                if not prompt_name:
-                    continue
-                prompt_path = _resolve_prompt(repo_root, prompt_name)
-                if not prompt_path:
-                    if args.strict:
-                        raise FileNotFoundError(f"discovery prompt missing: {prompt_name}")
-                    continue
-                prompt_text = prompt_path.read_text(encoding="utf-8")
-                req = EngineRequest(
-                    project_id=0,
-                    protocol_run_id=0,
-                    step_run_id=0,
-                    model=model,
-                    prompt_files=[],
-                    working_dir=str(repo_root),
-                    extra={"prompt_text": prompt_text, "sandbox": "workspace-write", "timeout_seconds": args.timeout_seconds},
-                )
-                result = engine.execute(req)
-                with log_path.open("a", encoding="utf-8") as f:
-                    f.write(f"\n\n===== discovery stage: {stage} ({prompt_name}) =====\n")
-                    f.write((result.stdout or "") + "\n")
-        else:
-            run_codex_discovery_pipeline(
-                repo_root=repo_root,
-                model=model,
-                sandbox=args.sandbox,
-                skip_git_check=args.skip_git_check,
-                strict=args.strict,
-                timeout_seconds=args.timeout_seconds,
-                artifacts=artifacts,
-            )
-    except FileNotFoundError as exc:
-        log.error("discovery_dependency_missing", extra={"error": str(exc)})
-        return EXIT_DEP_MISSING
-    except Exception as exc:  # pragma: no cover
-        log.error("discovery_pipeline_failed", extra={"error": str(exc), "error_type": exc.__class__.__name__})
-        return EXIT_RUNTIME_ERROR
-    return 0
+    if result.success:
+        log.info(
+            "discovery_pipeline_complete",
+            extra={
+                "repo_root": str(result.repo_root),
+                "engine_id": result.engine_id,
+                "model": result.model,
+                "log_path": str(result.log_path),
+            },
+        )
+        if result.warning:
+            log.warning("discovery_pipeline_warning", extra={"warning": result.warning})
+        return 0
+
+    log.error(
+        "discovery_pipeline_failed",
+        extra={
+            "repo_root": str(result.repo_root),
+            "engine_id": result.engine_id,
+            "model": result.model,
+            "error": result.error,
+            "missing_outputs": [str(p) for p in result.missing_outputs],
+        },
+    )
+    return EXIT_RUNTIME_ERROR
 
 
 if __name__ == "__main__":

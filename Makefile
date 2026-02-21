@@ -17,7 +17,7 @@ migrate: $(VENV)
 
 # One-shot setup for the orchestrator: create venv, install deps, apply migrations.
 orchestrator-setup: deps migrate
-	@echo "Orchestrator ready. DB: $$TASKSGODZILLA_DB_URL or $$TASKSGODZILLA_DB_PATH (default .tasksgodzilla.sqlite)"
+	@echo "Orchestrator ready. DB: $$DEVGODZILLA_DB_URL or $$DEVGODZILLA_DB_PATH (default .devgodzilla.sqlite)"
 
 # Start only the Postgres/Redis containers (host ports 5433/6380) for local runs.
 compose-deps:
@@ -28,4 +28,4 @@ compose-down:
 	docker compose stop db redis
 
 demo-harness: $(VENV)
-	TASKSGODZILLA_AUTO_CLONE=false $(PY) -m pytest tests/test_demo_harness.py -q
+	DEVGODZILLA_AUTO_CLONE=false $(PY) -m pytest tests/test_devgodzilla_*.py -q

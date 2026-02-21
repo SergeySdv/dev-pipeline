@@ -266,7 +266,7 @@ export default function ProjectsPage() {
           description={
             searchQuery
               ? "Try adjusting your search query."
-              : "Create your first project to get started with TasksGodzilla."
+              : "Create your first project to get started with DevGodzilla."
           }
           action={
             !searchQuery ? (

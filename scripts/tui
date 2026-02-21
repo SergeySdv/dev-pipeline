@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Minimal launcher to start the TasksGodzilla TUI like a standalone app.
+# Minimal launcher to start the DevGodzilla TUI.
 
 set -euo pipefail
 
@@ -20,7 +20,6 @@ if [[ -z "$PY_BIN" ]]; then
   exit 1
 fi
 
-# Default API base unless caller overrides.
-export TASKSGODZILLA_API_BASE="${TASKSGODZILLA_API_BASE:-http://localhost:8011}"
+export DEVGODZILLA_API_BASE="${DEVGODZILLA_API_BASE:-http://localhost:8080}"
 
-exec "$PY_BIN" -m tasksgodzilla.cli.tui "$@"
+exec "$ROOT/scripts/tui-rs" "$@"

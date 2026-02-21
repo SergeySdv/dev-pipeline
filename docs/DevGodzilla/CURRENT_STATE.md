@@ -1,160 +1,108 @@
-# DevGodzilla Current State (What Runs Today)
+# DevGodzilla Current State
 
-This document describes the **actual** DevGodzilla runtime and workflow in this repository, as of 2025-12-17.
+> Status: Active
+> Scope: Current Runtime (Implemented)
+> Source of truth: `devgodzilla/api/app.py`, `devgodzilla/api/routes/`, `frontend/next.config.mjs`, `nginx.local.conf`, `docker-compose.yml`, `windmill/`
+> Last updated: 2026-02-21
 
-If you’re looking for aspirational design/roadmaps, start with:
-- `docs/DevGodzilla/ARCHITECTURE.md`
-- `docs/DevGodzilla/ARCHITECTURE_REVIEW.md`
+This document describes what runs in this repository today.
 
-## Runtime Topology (Local dev)
+## Canonical Documentation
 
-Default infra stack (`docker compose up --build -d`) runs:
-- `nginx`: single entrypoint for UI + API (proxies to host backend/frontend via `nginx.local.conf`)
-- `windmill`: Windmill server + UI (built from `Origins/Windmill`)
-- `windmill_worker` / `windmill_worker_native`: Windmill workers
-- `db`: Postgres (shared by DevGodzilla + Windmill)
-- `redis`: Redis (queues/cache)
-- `lsp`: Windmill LSP (optional)
+- Runtime truth: `docs/DevGodzilla/CURRENT_STATE.md` (this file)
+- Architecture (current + target boundaries): `docs/DevGodzilla/ARCHITECTURE.md`
+- API architecture: `docs/DevGodzilla/API-ARCHITECTURE.md`
+- Windmill workflows: `docs/DevGodzilla/WINDMILL-WORKFLOWS.md`
+- Legacy/history docs: `docs/legacy/README.md`
 
-Host processes (started via `scripts/run-local-dev.sh dev`) run:
-- DevGodzilla API: `uvicorn devgodzilla.api.app:app` on `:8000`
-- DevGodzilla frontend (Next.js) on `:3000`
+## Runtime Topology (Local Dev)
 
-See: `docker-compose.yml`, `docker-compose.local.yml`, `nginx.local.conf`, `scripts/run-local-dev.sh`, `DEPLOYMENT.md`.
+Local default workflow is hybrid:
 
-## Source of Truth (API + Services)
+1. Docker Compose runs infra: nginx, windmill, windmill workers, postgres, redis, lsp.
+2. Host runs DevGodzilla API (`:8000`) and Next.js frontend (`:3000`).
+3. nginx proxies API paths to host API and `/console` to host frontend.
+4. Windmill UI remains served at `/`.
 
-### API
+Primary files:
 
-DevGodzilla exposes a REST API (via nginx at `http://localhost:8080` by default).
+- `docker-compose.yml`
+- `docker-compose.local.yml`
+- `scripts/run-local-dev.sh`
+- `nginx.local.conf`
 
-Key route groups:
-- Projects: `/projects`
-- Protocols: `/protocols`
-- Steps: `/steps`
-- SpecKit artifacts: `/speckit/*` and `/projects/{id}/speckit/*`
-- Windmill passthrough: `/flows`, `/jobs`
-- Runs/artifacts (DevGodzilla job runs): `/runs`
+## Frontend
 
-### Services
+Current primary console is Next.js at `frontend/` with base path `/console`:
 
-Business logic lives under `devgodzilla/services/*` (planning, execution, quality, orchestration, git, policy, clarifications).
+- Config: `frontend/next.config.mjs` (`basePath: '/console'`)
+- API calls: frontend rewrites `/api/*` to DevGodzilla API base URL
 
-## Planning Model (Protocols → StepRuns)
+Windmill UI remains available at root path (`/`) for workflow operations.
 
-The current planning path is **protocol-file driven**:
+## API Surface (Implemented)
 
-1. A protocol run exists in DB (`ProtocolRun`).
-2. Planning reads step markdown files under:
-   - `.protocols/<protocol_name>/step-*.md` (preferred), or
-   - `specs/<protocol_name>/...` (SpecKit-backed runs)
-3. Planning materializes `StepRun` rows from those step files.
+FastAPI app entrypoint: `devgodzilla/api/app.py`.
 
-Implementation references:
-- Spec building: `devgodzilla/spec.py` (`build_spec_from_protocol_files`)
-- Planning: `devgodzilla/services/planning.py` (parses protocol root, creates steps)
+Route groups currently registered:
 
-### Auto-generating protocol files (headless agent)
+- Health: `/health`, `/health/live`, `/health/ready`
+- Core: `/projects`, `/protocols`, `/steps`, `/agents`, `/clarifications`
+- SpecKit: `/speckit/*`, `/projects/{id}/speckit/*`
+- Agile: `/sprints`, `/tasks`
+- Governance: `/policy_packs`, project policy endpoints under `/projects/{id}/policy*`
+- Quality and specs: `/quality/dashboard`, `/specifications*`
+- Ops: `/events*`, `/logs*`, `/metrics*`, `/queues*`, `/cli-executions*`, `/runs*`
+- Windmill passthrough: `/flows*`, `/jobs*`
+- Webhooks: `/webhooks/github`, `/webhooks/gitlab`, `/webhooks/windmill/*`
+- Profile: `/profile`
 
-If `.protocols/<protocol_name>/step-*.md` are missing and `DEVGODZILLA_AUTO_GENERATE_PROTOCOL=true` (default), planning runs a headless agent to generate:
-- `.protocols/<protocol_name>/plan.md`
-- `.protocols/<protocol_name>/step-*.md`
+For exact request/response shapes, use `GET /openapi.json`.
 
-Implementation reference:
-- `devgodzilla/services/protocol_generation.py`
+## Planning and Execution Model
 
-## SpecKit Artifacts (.specify/)
+Current planning is protocol-file driven:
 
-The SpecKit-style workflow in DevGodzilla is **agent-assisted**:
+1. A protocol run exists in DB.
+2. Planning reads `.protocols/<protocol_name>/step-*.md` (or SpecKit-backed sources when used).
+3. `StepRun` rows are materialized from protocol step files.
 
-- `SpecificationService` creates `.specify/` structure, seeds templates, and invokes SWE agents (prompt-driven) to write:
-  - `spec.md`
-  - `plan.md`
-  - `tasks.md`
+If step files are missing and auto-generation is enabled, protocol files are generated via headless agent before planning proceeds.
 
-It does **not** require an external `specify` binary for the current implementation.
+Execution artifacts are written under protocol worktree:
 
-Implementation reference:
-- `devgodzilla/services/specification.py`
+- `.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`
 
-## Headless Repo Discovery (agent-written artifacts)
+QA runs automatically after successful step execution, with manual re-run available via step QA endpoint.
 
-DevGodzilla supports a TasksGodzilla-style “discovery” phase driven by a headless agent (default engine `opencode`, default model `zai-coding-plan/glm-4.6`).
+## SpecKit Artifacts
 
-The discovery agent writes and validates these expected outputs under the repo root:
-- `specs/discovery/_runtime/DISCOVERY.md`
-- `specs/discovery/_runtime/DISCOVERY_SUMMARY.json`
+SpecKit-style artifacts are generated in `.specify/` through DevGodzilla services and prompts. Current implementation does not depend on an external `specify` binary.
+
+## Discovery Artifacts
+
+Onboarding can run optional discovery. Current expected outputs include legacy-named files under `tasksgodzilla/` for compatibility with existing downstream tooling:
+
 - `tasksgodzilla/ARCHITECTURE.md`
 - `tasksgodzilla/API_REFERENCE.md`
 - `tasksgodzilla/CI_NOTES.md`
 
-Entry points:
-- API onboarding: `POST /projects/{id}/actions/onboard` with `run_discovery_agent=true`
-- CLI: `devgodzilla project discover <id> --agent --pipeline`
+These are generated artifacts, not the active code package.
 
-Implementation reference:
-- `devgodzilla/services/discovery_agent.py`
+## Windmill Integration Model
 
-## Execution Artifacts (“git report”)
+Supported pattern: Windmill scripts call DevGodzilla API (thin adapters), rather than importing the `devgodzilla` Python package into Windmill runtime.
 
-Step execution persists artifacts under the protocol root (in the protocol worktree):
+Repository paths:
 
-`.protocols/<protocol_name>/.devgodzilla/steps/<step_run_id>/artifacts/*`
+- Scripts: `windmill/scripts/devgodzilla/`
+- Flows: `windmill/flows/devgodzilla/`
+- Apps: `windmill/apps/devgodzilla/`
+- Resources: `windmill/resources/devgodzilla/`
 
-This includes `execution.json`, `stdout.log`, optional `stderr.log`, plus best-effort `git-status.txt` and diffs.
+Recommended flows for local stack:
 
-Implementation reference:
-- `devgodzilla/services/execution.py`
-
-## QA Completion Semantics
-
-- QA runs automatically after every successful step execution (prompt-driven).
-- `POST /steps/{id}/actions/qa` re-runs QA; `gates` selects extra deterministic gates (lint/type/test).
-- After QA, DevGodzilla best-effort checks whether all steps are terminal and updates the protocol status to `completed` / `failed`.
-
-Implementation references:
-- `devgodzilla/services/quality.py`
-- `devgodzilla/api/routes/steps.py`
-
-## Sprint Integration (SpecKit Tasks -> Agile Board)
-
-DevGodzilla supports bidirectional synchronization between SpecKit task definitions (markdown) and database-backed agile sprints.
-
-- **Task Import**: `specs/<spec>/tasks.md` can be imported into a sprint via `POST /sprints/{id}/actions/import-tasks` (or Windmill `sync_tasks_to_sprint` flow).
-- **Protocol Linkage**: Protocols are linked to sprints via `linked_sprint_id`.
-- **Status Updates**: Step execution events (`StepCompleted`, `StepFailed`) automatically update corresponding sprint tasks and recalculate velocity.
-
-Implementation reference:
-- Service: `devgodzilla/services/sprint_integration.py`, `devgodzilla/services/task_sync.py`
-- Event Handlers: `devgodzilla/services/sprint_event_handlers.py`
-
-## Windmill Integration (Supported Pattern)
-
-### Asset import
-
-Assets can be imported into Windmill via `scripts/run-local-dev.sh import` (runs `windmill/import_to_windmill.py`):
-- `windmill/scripts/devgodzilla/` → `u/devgodzilla/*`
-- `windmill/flows/devgodzilla/` → `f/devgodzilla/*`
-- `windmill/apps/devgodzilla/` → apps in the workspace
-
-### Supported execution model
-
-**Supported**: Windmill scripts are thin API adapters that call DevGodzilla API.
-
-Examples:
-- `u/devgodzilla/protocol_plan_and_wait` (calls `/protocols/{id}/actions/start` and polls)
-- `u/devgodzilla/step_execute_api` (calls `/steps/{id}/actions/execute`)
-- `u/devgodzilla/step_run_qa_api` (calls `/steps/{id}/actions/qa` for manual re-runs)
-- `u/devgodzilla/onboard_to_tasks_api` (one-script pipeline alternative)
-
-This avoids requiring the Windmill worker runtime to import the `devgodzilla` Python package.
-
-### Supported flows
-
-Recommended flows to use in the default stack:
 - `f/devgodzilla/onboard_to_tasks`
 - `f/devgodzilla/protocol_start`
 - `f/devgodzilla/step_execute_with_qa`
-- `f/devgodzilla/run_next_step` (selection only)
-
-See: `docs/DevGodzilla/WINDMILL-WORKFLOWS.md`.
+- `f/devgodzilla/run_next_step`

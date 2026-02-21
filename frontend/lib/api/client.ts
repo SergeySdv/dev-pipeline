@@ -52,7 +52,7 @@ interface ApiClientConfig {
   onUnauthorized?: () => void
 }
 
-const STORAGE_KEY = "tasksgodzilla_config"
+const STORAGE_KEY = "devgodzilla_config"
 
 interface StoredConfig {
   apiBase: string

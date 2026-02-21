@@ -17,10 +17,10 @@ REQUIRED_FILES = [
     Path("prompts/discovery-architecture.prompt.md"),
     Path("prompts/discovery-api-reference.prompt.md"),
     Path("prompts/discovery-ci-notes.prompt.md"),
-    Path("docs/solution-design.md"),
-    Path("docs/implementation-plan.md"),
-    Path("docs/tasksgodzilla.md"),
-    Path("docs/terraformmanager-workflow-plan.md"),
+    Path("docs/DevGodzilla/ARCHITECTURE.md"),
+    Path("docs/DevGodzilla/API-ARCHITECTURE.md"),
+    Path("docs/DevGodzilla/WINDMILL-WORKFLOWS.md"),
+    Path("docs/ci.md"),
 ]
 
 

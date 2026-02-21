@@ -7,7 +7,7 @@ export async function GET() {
   // Mock implementation returns demo user
   const user = {
     id: "1",
-    email: "demo@tasksgodzilla.dev",
+    email: "demo@devgodzilla.dev",
     name: "Demo User",
     role: "admin",
     avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=demo",

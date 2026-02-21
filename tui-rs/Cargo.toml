@@ -1,9 +1,9 @@
 [package]
-name = "tasksgodzilla-tui"
+name = "devgodzilla-tui"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Rust TUI for the TasksGodzilla orchestrator API"
+description = "Rust TUI for the DevGodzilla orchestrator API"
 
 [dependencies]
 anyhow = "1"

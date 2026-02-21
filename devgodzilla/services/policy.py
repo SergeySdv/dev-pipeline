@@ -94,9 +94,9 @@ def _load_repo_local_policy(repo_root: Path) -> Optional[Dict[str, Any]]:
     Best-effort loader for repo-local override policy.
     
     Supports JSON always; YAML only if PyYAML is available.
-    Looks for: .devgodzilla/policy.(json|yaml|yml), .tasksgodzilla/policy.(json|yaml|yml)
+    Looks for: .devgodzilla/policy.(json|yaml|yml)
     """
-    policy_dirs = [repo_root / ".devgodzilla", repo_root / ".tasksgodzilla"]
+    policy_dirs = [repo_root / ".devgodzilla"]
     json_names = ["policy.json"]
     yaml_names = ["policy.yaml", "policy.yml"]
 

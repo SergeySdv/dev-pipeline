@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Run an RQ worker to process TasksGodzilla jobs from Redis.
+Run an RQ worker to process Redis jobs.
 
 Environment:
-  - TASKSGODZILLA_REDIS_URL (required)
-  - TASKSGODZILLA_DB_PATH (for Database)
+  - DEVGODZILLA_REDIS_URL
+  - DEVGODZILLA_RQ_QUEUES (comma-separated queue names, default: "default")
 """
 
 import os
 import sys
 from pathlib import Path
+import logging
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,25 +19,32 @@ if str(PROJECT_ROOT) not in sys.path:
 from rq import Queue, Worker  # type: ignore
 import redis  # type: ignore
 
-from tasksgodzilla.config import load_config  # noqa: E402
-from tasksgodzilla.logging import setup_logging, json_logging_from_env, log_extra  # noqa: E402
+
+def _env(name: str, default: str | None = None) -> str | None:
+    return os.environ.get(name) or default
 
 
 def main() -> None:
-    log_level = os.environ.get("TASKSGODZILLA_LOG_LEVEL") or "INFO"
-    logger = setup_logging(log_level, json_output=json_logging_from_env())
-    config = load_config()
-    if not config.redis_url:
-        logger.error("TASKSGODZILLA_REDIS_URL is required for RQ worker.")
+    log_level = (_env("DEVGODZILLA_LOG_LEVEL", "INFO") or "INFO").upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
+    logger = logging.getLogger("devgodzilla.rq_worker")
+
+    redis_url = _env("DEVGODZILLA_REDIS_URL")
+    if not redis_url:
+        logger.error("Missing DEVGODZILLA_REDIS_URL.")
         sys.exit(1)
-    redis_conn = redis.from_url(config.redis_url)
-    queues = [Queue("default", connection=redis_conn)]
+
+    queues_env = _env("DEVGODZILLA_RQ_QUEUES", "default") or "default"
+    queue_names = [q.strip() for q in queues_env.split(",") if q.strip()]
+
+    redis_conn = redis.from_url(redis_url)
+    queues = [Queue(name, connection=redis_conn) for name in queue_names]
     worker = Worker(queues, connection=redis_conn)
-    logger.info("[rq-worker] Listening", extra={"redis": config.redis_url, "queues": [q.name for q in queues]})
+    logger.info("[rq-worker] Listening redis=%s queues=%s", redis_url, ",".join(q.name for q in queues))
     try:
         worker.work()
     except Exception as exc:  # pragma: no cover - defensive
-        logger.error("[rq-worker] fatal error", extra=log_extra(error=str(exc), error_type=exc.__class__.__name__))
+        logger.exception("[rq-worker] fatal error: %s", exc)
         sys.exit(1)
 
 

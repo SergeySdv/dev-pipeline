@@ -20,11 +20,11 @@ async fn main() -> Result<()> {
         .with_target(false)
         .try_init();
 
-    let api_base =
-        env::var("TASKSGODZILLA_API_BASE").unwrap_or_else(|_| "http://localhost:8011".to_string());
-    let api_token = env::var("TASKSGODZILLA_API_TOKEN").ok();
-    let project_token = env::var("TASKSGODZILLA_PROJECT_TOKEN").ok();
-    let refresh_secs = env::var("TASKSGODZILLA_TUI_REFRESH_SECS")
+    let api_base = env::var("DEVGODZILLA_API_BASE")
+        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let api_token = env::var("DEVGODZILLA_API_TOKEN").ok();
+    let project_token = env::var("DEVGODZILLA_PROJECT_TOKEN").ok();
+    let refresh_secs = env::var("DEVGODZILLA_TUI_REFRESH_SECS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(4);

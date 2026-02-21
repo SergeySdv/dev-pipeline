@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a pbkdf2_sha256 password hash for TASKSGODZILLA_ADMIN_PASSWORD_HASH.
+Generate a pbkdf2_sha256 password hash for `DEVGODZILLA_ADMIN_PASSWORD_HASH`.
 
 Usage:
   python scripts/gen_admin_password_hash.py
@@ -9,19 +9,24 @@ Usage:
 """
 
 import argparse
+import base64
 import getpass
-import sys
-from pathlib import Path
+import hashlib
+import os
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
-from tasksgodzilla.auth.passwords import hash_pbkdf2_sha256  # noqa: E402
+def hash_pbkdf2_sha256(password: str, *, iterations: int = 210_000, salt_bytes: int = 16) -> str:
+    salt = os.urandom(salt_bytes)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256$%d$%s$%s" % (
+        iterations,
+        base64.urlsafe_b64encode(salt).decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(digest).decode("ascii").rstrip("="),
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate admin password hash for TasksGodzilla (pbkdf2_sha256).")
+    parser = argparse.ArgumentParser(description="Generate admin password hash for DevGodzilla (pbkdf2_sha256).")
     parser.add_argument("--password", help="Password (if omitted, will prompt).", default=None)
     parser.add_argument("--iterations", type=int, default=210_000, help="PBKDF2 iterations (default: 210000).")
     args = parser.parse_args()
@@ -40,4 +45,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -3,7 +3,7 @@
 CLI Workflow Harness - Main entry point for comprehensive CLI workflow testing.
 
 This script provides a command-line interface for running the CLI workflow harness
-in various modes to validate the complete TasksGodzilla workflow from project 
+in various modes to validate the complete DevGodzilla workflow from project
 onboarding through discovery, specs, protocol execution, and changes.
 """
 

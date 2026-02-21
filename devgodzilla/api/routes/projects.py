@@ -73,7 +73,10 @@ class ProjectOnboardRequest(BaseModel):
     branch: Optional[str] = Field(default=None, description="Branch to checkout after clone (defaults to project.base_branch)")
     clone_if_missing: bool = Field(default=True, description="Clone repo if local_path is missing")
     constitution_content: Optional[str] = Field(default=None, description="Optional custom constitution content")
-    run_discovery_agent: bool = Field(default=True, description="Run headless agent discovery (writes tasksgodzilla/*)")
+    run_discovery_agent: bool = Field(
+        default=True,
+        description="Run headless agent discovery (writes specs/discovery/_runtime/* artifacts)",
+    )
     discovery_pipeline: bool = Field(default=True, description="Use multi-stage discovery pipeline")
     discovery_engine_id: Optional[str] = Field(default=None, description="Engine ID for discovery (default: opencode)")
     discovery_model: Optional[str] = Field(default=None, description="Model for discovery (default: engine default)")

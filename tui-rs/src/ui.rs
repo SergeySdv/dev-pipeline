@@ -449,7 +449,7 @@ fn draw_login(f: &mut Frame<'_>, area: Rect, login: &LoginForm, app: &App) {
     let panel = centered_rect(70, 70, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Connect to TasksGodzilla");
+        .title("Connect to DevGodzilla");
     f.render_widget(Clear, panel);
     f.render_widget(block.clone(), panel);
     let inner = shrink(panel, 1);
@@ -478,7 +478,7 @@ fn draw_login(f: &mut Frame<'_>, area: Rect, login: &LoginForm, app: &App) {
     .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(banner, layout[0]);
 
-    let title = Paragraph::new("TasksGodzilla TUI — Login")
+    let title = Paragraph::new("DevGodzilla TUI — Login")
         .style(
             Style::default()
                 .fg(Color::Yellow)
@@ -524,7 +524,7 @@ fn draw_welcome(f: &mut Frame<'_>, area: Rect, welcome_index: usize, app: &App) 
     let panel = centered_rect(80, 70, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Welcome to TasksGodzilla");
+        .title("Welcome to DevGodzilla");
     f.render_widget(Clear, panel);
     f.render_widget(block.clone(), panel);
     let inner = shrink(panel, 1);
@@ -562,7 +562,7 @@ fn draw_welcome(f: &mut Frame<'_>, area: Rect, welcome_index: usize, app: &App) 
     .alignment(ratatui::layout::Alignment::Center);
     f.render_widget(subtitle, layout[1]);
 
-    let items = ["Start TasksGodzilla", "Settings", "Help", "Version", "Quit"];
+    let items = ["Start DevGodzilla", "Settings", "Help", "Version", "Quit"];
     let list_items: Vec<ListItem> = items
         .iter()
         .enumerate()
@@ -654,12 +654,12 @@ fn draw_help(f: &mut Frame<'_>, area: Rect, _app: &App) {
         Line::from(" b reload branches • d delete branch (selected)"),
         Line::from(""),
         heading_line("Welcome / Menu"),
-        Line::from(" Welcome: Start TasksGodzilla, Settings, Help, Version, Quit"),
+        Line::from(" Welcome: Start DevGodzilla, Settings, Help, Version, Quit"),
         Line::from(" Main menu: Dashboard, Configure API/token, Quit"),
         Line::from(""),
         heading_line("Environment"),
-        Line::from(" TASKSGODZILLA_API_BASE | TASKSGODZILLA_API_TOKEN | TASKSGODZILLA_PROJECT_TOKEN"),
-        Line::from(" TASKSGODZILLA_TUI_AUTOLOGIN (default 1) | TASKSGODZILLA_TUI_REFRESH_SECS (default 4)"),
+        Line::from(" DEVGODZILLA_API_BASE | DEVGODZILLA_API_TOKEN | DEVGODZILLA_PROJECT_TOKEN"),
+        Line::from(" DEVGODZILLA_TUI_AUTOLOGIN (default 1) | DEVGODZILLA_TUI_REFRESH_SECS (default 4)"),
         Line::from(""),
         Line::from("Enter → dashboard • m → main menu • w → welcome • q/Esc → back"),
     ];
@@ -676,7 +676,7 @@ fn draw_version(f: &mut Frame<'_>, area: Rect, _app: &App) {
     f.render_widget(block.clone(), panel);
     let inner = shrink(panel, 1);
     let text = vec![
-        Line::from(format!("TasksGodzilla TUI v{}", env!("CARGO_PKG_VERSION"))),
+        Line::from(format!("DevGodzilla TUI v{}", env!("CARGO_PKG_VERSION"))),
         Line::from("Rust ratatui client for the orchestrator."),
         Line::from(""),
         Line::from("m → main menu • q/Esc → back"),
@@ -691,7 +691,7 @@ fn draw_menu(f: &mut Frame<'_>, area: Rect, menu_index: usize, app: &App) {
     let panel = centered_rect(60, 50, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("TasksGodzilla");
+        .title("DevGodzilla");
     f.render_widget(Clear, panel);
     f.render_widget(block.clone(), panel);
     let inner = shrink(panel, 1);

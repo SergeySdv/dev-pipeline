@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Root-level launcher for the TasksGodzilla Textual TUI.
+# Root-level launcher for the DevGodzilla TUI.
 
 set -euo pipefail
 

@@ -1,50 +1,23 @@
 #!/usr/bin/env python3
 """
-CLI to audit/backfill ProtocolSpec entries across existing runs.
-
-Usage:
-  python3 scripts/spec_audit.py [--project-id 1] [--protocol-id 2] [--backfill]
+Legacy compatibility shim for the old spec audit script.
 """
 
 import argparse
-import json
-from pathlib import Path
-
-from tasksgodzilla.config import load_config
-from tasksgodzilla.spec_tools import audit_specs
-from tasksgodzilla.storage import create_database
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Audit/backfill ProtocolSpec for existing runs.")
-    parser.add_argument("--project-id", type=int, help="Limit audit to a specific project ID.")
-    parser.add_argument("--protocol-id", type=int, help="Limit audit to a specific protocol run ID.")
-    parser.add_argument("--backfill", action="store_true", help="Backfill missing specs from protocol files or CodeMachine config.")
-    return parser.parse_args()
+import sys
 
 
 def main() -> int:
-    args = parse_args()
-    cfg = load_config()
-    db = create_database(cfg.db_path, db_url=cfg.db_url, pool_size=cfg.db_pool_size)
-    db.init_schema()
-
-    results = audit_specs(
-        db,
-        project_id=args.project_id,
-        protocol_id=args.protocol_id,
-        backfill_missing=args.backfill,
+    parser = argparse.ArgumentParser(
+        description="Deprecated compatibility shim. Spec audit moved to API/TUI flows.",
     )
-    for res in results:
-        print(json.dumps(res, sort_keys=True))
-    summary = {
-        "count": len(results),
-        "backfilled": sum(1 for r in results if r.get("backfilled")),
-        "with_errors": sum(1 for r in results if r.get("errors")),
-    }
-    print(json.dumps({"summary": summary}, sort_keys=True))
-    return 0
+    parser.parse_args()
+
+    print("scripts/spec_audit.py is deprecated and no longer wired to the active runtime.")
+    print("Use current UI/API flows for specification integrity checks.")
+    print("See docs/DevGodzilla/API-ARCHITECTURE.md and docs/cli.md.")
+    return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

@@ -137,7 +137,7 @@ export function Header() {
                 <DropdownMenuLabel>
                   <div className="flex flex-col gap-1">
                     <p className="text-sm font-medium">Demo User</p>
-                    <p className="text-xs text-muted-foreground">demo@tasksgodzilla.dev</p>
+                    <p className="text-xs text-muted-foreground">demo@devgodzilla.dev</p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />

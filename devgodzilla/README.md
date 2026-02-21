@@ -19,7 +19,7 @@ DevGodzilla is an integrated AI development platform that combines:
 | **Windmill** | Industrial-grade workflow orchestration |
 | **Multi-Agent Execution** | 18+ AI coding agents (Codex, Claude, OpenCode, etc.) |
 
-## Headless SWE-Agent Workflow (TasksGodzilla-style)
+## Headless SWE-Agent Workflow
 
 DevGodzilla’s main workflow is **agent-driven**: it runs a headless SWE-agent (default engine `opencode`, default model `zai-coding-plan/glm-4.6`) using prompts under `prompts/`, writes artifacts into the repo/worktree, and DevGodzilla only validates/records those outputs.
 
@@ -73,7 +73,7 @@ export DEVGODZILLA_OPENCODE_MODEL=zai-coding-plan/glm-4.6
 devgodzilla project create my-project --repo https://github.com/yourorg/repo.git
 ```
 
-2) Run headless repo discovery (writes `tasksgodzilla/*` inside the repo):
+2) Run headless repo discovery (writes `specs/discovery/_runtime/*` artifacts):
 
 ```bash
 devgodzilla project discover 1 --agent --pipeline --engine opencode --model zai-coding-plan/glm-4.6

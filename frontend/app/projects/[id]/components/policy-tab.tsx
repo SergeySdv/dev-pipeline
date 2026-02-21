@@ -240,7 +240,7 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
               onCheckedChange={(v) => setFormData((p) => ({ ...p, policy_repo_local_enabled: v }))}
             />
             <Label htmlFor="repo_local" className="text-sm">
-              Enable repo-local override (.tasksgodzilla/policy.yml)
+              Enable repo-local override (.devgodzilla/policy.yml)
             </Label>
           </div>
 

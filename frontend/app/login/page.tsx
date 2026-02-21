@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth/context"
 import { toast } from "sonner"
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("demo@tasksgodzilla.dev")
+  const [email, setEmail] = useState("demo@devgodzilla.dev")
   const [password, setPassword] = useState("demo")
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
@@ -63,7 +63,7 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="demo@tasksgodzilla.dev"
+                placeholder="demo@devgodzilla.dev"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

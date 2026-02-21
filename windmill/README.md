@@ -18,5 +18,4 @@ Docker Compose already sets `DEVGODZILLA_API_URL` for the Windmill server/worker
 ## Notes
 
 - Some flows rely on JavaScript `input_transforms` and require a Windmill build with `deno_core` enabled (see `docs/DevGodzilla/WINDMILL-WORKFLOWS.md`).
-- A few legacy scripts/docs still reference TasksGodzilla (`TASKSGODZILLA_API_URL`, `TASKSGODZILLA_API_TOKEN`) for Codex log/artifact proxying.
-
+- Legacy environment variables may still be accepted by compatibility wrappers, but active Windmill integrations should use `DEVGODZILLA_*` variables.

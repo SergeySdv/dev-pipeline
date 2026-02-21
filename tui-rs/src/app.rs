@@ -100,7 +100,7 @@ pub(crate) enum QuickAction {
 
 impl App {
     pub fn new(client: ApiClient, refresh_interval: Duration) -> Self {
-        let auto_login = env::var("TASKSGODZILLA_TUI_AUTOLOGIN")
+        let auto_login = env::var("DEVGODZILLA_TUI_AUTOLOGIN")
             .ok()
             .map(|v| v != "0" && v.to_lowercase() != "false")
             .unwrap_or(true);
@@ -311,7 +311,7 @@ impl App {
     }
 
     async fn handle_welcome_key(&mut self, key: KeyEvent) -> Result<bool> {
-        let items = ["Start TasksGodzilla", "Settings", "Help", "Version", "Quit"];
+        let items = ["Start DevGodzilla", "Settings", "Help", "Version", "Quit"];
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.welcome_index == 0 {

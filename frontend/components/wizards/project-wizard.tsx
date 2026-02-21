@@ -278,7 +278,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   <div>
                     <p className="text-sm font-medium">Run repository discovery</p>
                     <p className="text-xs text-muted-foreground">
-                      Generate `tasksgodzilla/*` artifacts after cloning. Recommended.
+                      Generate discovery artifacts for planning and onboarding. Recommended.
                     </p>
                   </div>
                 </div>

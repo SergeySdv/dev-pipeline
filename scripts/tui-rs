@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launcher for the Rust TasksGodzilla TUI.
+# Launcher for the Rust DevGodzilla TUI.
 
 set -euo pipefail
 
