@@ -18,23 +18,26 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.harness import CLIWorkflowHarness, HarnessConfig, HarnessMode
-from tests.harness.models import HarnessStatus
+from devgodzilla.logging import get_logger, init_cli_logging, json_logging_from_env
 
 
 def setup_logging(verbose: bool = False, log_file: Optional[Path] = None) -> None:
     """Set up logging configuration."""
-    level = logging.DEBUG if verbose else logging.INFO
-    format_str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
-    handlers = [logging.StreamHandler(sys.stdout)]
-    if log_file:
-        handlers.append(logging.FileHandler(log_file))
-    
-    logging.basicConfig(
-        level=level,
-        format=format_str,
-        handlers=handlers
-    )
+    level = "DEBUG" if verbose else "INFO"
+    init_cli_logging(level=level, json_output=json_logging_from_env())
+
+    if not log_file:
+        return
+
+    root = logging.getLogger()
+    file_handler = logging.FileHandler(log_file)
+    if root.handlers:
+        primary_handler = root.handlers[0]
+        if primary_handler.formatter is not None:
+            file_handler.setFormatter(primary_handler.formatter)
+        for handler_filter in primary_handler.filters:
+            file_handler.addFilter(handler_filter)
+    root.addHandler(file_handler)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -263,12 +266,12 @@ def print_summary(report, generated_files: List[Path]) -> None:
     
     # Show top recommendations
     if report.recommendations:
-        print(f"\nTop Recommendations:")
+        print("\nTop Recommendations:")
         for rec in report.recommendations[:3]:  # Show top 3
             print(f"  {rec.priority}. [{rec.category.upper()}] {rec.description}")
     
     # Show generated files
-    print(f"\nGenerated Reports:")
+    print("\nGenerated Reports:")
     for file_path in generated_files:
         print(f"  - {file_path}")
     
@@ -281,7 +284,7 @@ def main() -> int:
     
     # Set up logging
     setup_logging(args.verbose, args.log_file)
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     
     try:
         # Create output directory

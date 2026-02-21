@@ -10,14 +10,14 @@ Environment:
 import os
 import sys
 from pathlib import Path
-import logging
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from rq import Queue, Worker  # type: ignore
-import redis  # type: ignore
+from rq import Queue, Worker  # type: ignore  # noqa: E402
+import redis  # type: ignore  # noqa: E402
+from devgodzilla.logging import get_logger, json_logging_from_env, setup_logging  # noqa: E402
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -26,8 +26,8 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 def main() -> None:
     log_level = (_env("DEVGODZILLA_LOG_LEVEL", "INFO") or "INFO").upper()
-    logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
-    logger = logging.getLogger("devgodzilla.rq_worker")
+    setup_logging(log_level, json_output=json_logging_from_env())
+    logger = get_logger("devgodzilla.rq_worker")
 
     redis_url = _env("DEVGODZILLA_REDIS_URL")
     if not redis_url:
@@ -40,11 +40,14 @@ def main() -> None:
     redis_conn = redis.from_url(redis_url)
     queues = [Queue(name, connection=redis_conn) for name in queue_names]
     worker = Worker(queues, connection=redis_conn)
-    logger.info("[rq-worker] Listening redis=%s queues=%s", redis_url, ",".join(q.name for q in queues))
+    logger.info(
+        "rq_worker_listening",
+        extra={"redis_url": redis_url, "queues": [q.name for q in queues]},
+    )
     try:
         worker.work()
     except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("[rq-worker] fatal error: %s", exc)
+        logger.exception("rq_worker_fatal_error", extra={"error": str(exc), "error_type": exc.__class__.__name__})
         sys.exit(1)
 
 
