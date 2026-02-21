@@ -67,7 +67,7 @@ alembic upgrade head
 | `DEVGODZILLA_API_HOST` | API host | `0.0.0.0` |
 | `DEVGODZILLA_API_PORT` | API port | `8000` |
 | `DEVGODZILLA_DEFAULT_ENGINE_ID` | Default engine ID for headless workflows | `opencode` |
-| `DEVGODZILLA_OPENCODE_MODEL` | Default model for the `opencode` engine | `zai-coding-plan/glm-4.6` |
+| `DEVGODZILLA_OPENCODE_MODEL` | Default model for the `opencode` engine | `zai-coding-plan/glm-5` |
 | `DEVGODZILLA_AUTO_GENERATE_PROTOCOL` | Auto-generate `.protocols/<name>/step-*.md` when missing | `true` |
 | `DEVGODZILLA_DISCOVERY_TIMEOUT_SECONDS` | Timeout for headless repo discovery | `900` |
 | `DEVGODZILLA_PROTOCOL_GENERATE_TIMEOUT_SECONDS` | Timeout for headless protocol generation | `900` |

@@ -21,7 +21,7 @@ DevGodzilla is an integrated AI development platform that combines:
 
 ## Headless SWE-Agent Workflow
 
-DevGodzilla’s main workflow is **agent-driven**: it runs a headless SWE-agent (default engine `opencode`, default model `zai-coding-plan/glm-4.6`) using prompts under `prompts/`, writes artifacts into the repo/worktree, and DevGodzilla only validates/records those outputs.
+DevGodzilla’s main workflow is **agent-driven**: it runs a headless SWE-agent (default engine `opencode`, default model `zai-coding-plan/glm-5`) using prompts under `prompts/`, writes artifacts into the repo/worktree, and DevGodzilla only validates/records those outputs.
 
 **Key artifact locations:**
 - Repo discovery outputs (agent-written): `specs/discovery/_runtime/DISCOVERY.md`, `specs/discovery/_runtime/DISCOVERY_SUMMARY.json`, `specs/discovery/_runtime/ARCHITECTURE.md`, `specs/discovery/_runtime/API_REFERENCE.md`, `specs/discovery/_runtime/CI_NOTES.md`
@@ -63,7 +63,7 @@ Defaults (recommended for deterministic E2E):
 
 ```bash
 export DEVGODZILLA_DEFAULT_ENGINE_ID=opencode
-export DEVGODZILLA_OPENCODE_MODEL=zai-coding-plan/glm-4.6
+export DEVGODZILLA_OPENCODE_MODEL=zai-coding-plan/glm-5
 ```
 
 1) Create a project and clone it (or point at an existing clone via `--local-path`):
@@ -76,7 +76,7 @@ devgodzilla project create my-project --repo https://github.com/yourorg/repo.git
 2) Run headless repo discovery (writes `specs/discovery/_runtime/*` artifacts):
 
 ```bash
-devgodzilla project discover 1 --agent --pipeline --engine opencode --model zai-coding-plan/glm-4.6
+devgodzilla project discover 1 --agent --pipeline --engine opencode --model zai-coding-plan/glm-5
 ```
 
 3) Create a protocol:
@@ -102,7 +102,7 @@ If `.protocols/<protocol_name>/step-*.md` are missing, planning auto-generates t
 curl -sS -X POST http://localhost:8000/protocols/1/actions/run_next_step
 
 # Execute + QA the returned step_run_id
-devgodzilla step execute <step_run_id> --engine opencode --model zai-coding-plan/glm-4.6
+devgodzilla step execute <step_run_id> --engine opencode --model zai-coding-plan/glm-5
 devgodzilla step qa <step_run_id>
 ```
 

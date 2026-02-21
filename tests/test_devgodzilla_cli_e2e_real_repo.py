@@ -133,7 +133,7 @@ sys.exit(0)
             "DEVGODZILLA_ENV": "test",
             "DEVGODZILLA_DB_PATH": str(tmp_path / "devgodzilla.sqlite"),
             "DEVGODZILLA_DEFAULT_ENGINE_ID": "opencode",
-            "DEVGODZILLA_OPENCODE_MODEL": "zai-coding-plan/glm-4.6",
+            "DEVGODZILLA_OPENCODE_MODEL": "zai-coding-plan/glm-5",
             "OPENCODE_E2E_LOG": str(opencode_log),
             "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
         }
@@ -251,7 +251,7 @@ sys.exit(0)
     )
     assert executed["success"] is True
     assert executed["engine_id"] == "opencode"
-    assert executed["model"] == "zai-coding-plan/glm-4.6"
+    assert executed["model"] == "zai-coding-plan/glm-5"
     assert executed["status"] == "needs_qa"
 
     # Validate DevGodzilla wrote execution artifacts (no manual file creation).
@@ -262,5 +262,5 @@ sys.exit(0)
 
     assert opencode_log.exists() and opencode_log.stat().st_size > 0
     logged = [json.loads(line) for line in opencode_log.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert any("--model" in entry["argv"] and "zai-coding-plan/glm-4.6" in entry["argv"] for entry in logged)
+    assert any("--model" in entry["argv"] and "zai-coding-plan/glm-5" in entry["argv"] for entry in logged)
     assert any("--cwd" in entry["argv"] and str(worktree_path) in entry["argv"] for entry in logged)

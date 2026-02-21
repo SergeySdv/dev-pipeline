@@ -86,7 +86,7 @@ def test_api_e2e_headless_workflow_real_repo(tmp_path: Path, monkeypatch: pytest
             "DEVGODZILLA_ENV": "test",
             "DEVGODZILLA_DB_PATH": str(tmp_path / "devgodzilla.sqlite"),
             "DEVGODZILLA_DEFAULT_ENGINE_ID": "opencode",
-            "DEVGODZILLA_OPENCODE_MODEL": "zai-coding-plan/glm-4.6",
+            "DEVGODZILLA_OPENCODE_MODEL": "zai-coding-plan/glm-5",
             "DEVGODZILLA_AUTO_GENERATE_PROTOCOL": "true",
         }
     )
@@ -131,7 +131,7 @@ def test_api_e2e_headless_workflow_real_repo(tmp_path: Path, monkeypatch: pytest
                 "run_discovery_agent": True,
                 "discovery_pipeline": True,
                 "discovery_engine_id": "opencode",
-                "discovery_model": "zai-coding-plan/glm-4.6",
+                "discovery_model": "zai-coding-plan/glm-5",
             },
         )
         assert onboard.status_code == 200

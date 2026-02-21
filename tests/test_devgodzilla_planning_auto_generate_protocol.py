@@ -78,7 +78,7 @@ def test_planning_auto_generates_protocol_files(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setenv("OPENCODE_E2E_LOG", str(opencode_log))
     monkeypatch.setenv("DEVGODZILLA_AUTO_GENERATE_PROTOCOL", "true")
     monkeypatch.setenv("DEVGODZILLA_DEFAULT_ENGINE_ID", "opencode")
-    monkeypatch.setenv("DEVGODZILLA_OPENCODE_MODEL", "zai-coding-plan/glm-4.6")
+    monkeypatch.setenv("DEVGODZILLA_OPENCODE_MODEL", "zai-coding-plan/glm-5")
     monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(tmp_path / "devgodzilla.sqlite"))
 
     db = SQLiteDatabase(Path(os.environ["DEVGODZILLA_DB_PATH"]))
@@ -114,4 +114,4 @@ def test_planning_auto_generates_protocol_files(monkeypatch: pytest.MonkeyPatch,
 
     assert opencode_log.exists()
     lines = [json.loads(l) for l in opencode_log.read_text(encoding="utf-8").splitlines() if l.strip()]
-    assert any("--model" in entry["argv"] and "zai-coding-plan/glm-4.6" in entry["argv"] for entry in lines)
+    assert any("--model" in entry["argv"] and "zai-coding-plan/glm-5" in entry["argv"] for entry in lines)

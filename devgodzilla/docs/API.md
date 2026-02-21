@@ -92,7 +92,7 @@ Onboard a project repo for DevGodzilla workflows:
   "run_discovery_agent": true,
   "discovery_pipeline": true,
   "discovery_engine_id": "opencode",
-  "discovery_model": "zai-coding-plan/glm-4.6"
+  "discovery_model": "zai-coding-plan/glm-5"
 }
 ```
 

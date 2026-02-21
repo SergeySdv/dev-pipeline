@@ -50,7 +50,7 @@ def test_cli_real_agent_discovery_and_protocol_generation(tmp_path: Path) -> Non
             "DEVGODZILLA_ENV": "test",
             "DEVGODZILLA_DB_PATH": str(tmp_path / "devgodzilla.sqlite"),
             "DEVGODZILLA_DEFAULT_ENGINE_ID": "opencode",
-            "DEVGODZILLA_OPENCODE_MODEL": "zai-coding-plan/glm-4.6",
+            "DEVGODZILLA_OPENCODE_MODEL": "zai-coding-plan/glm-5",
         }
     )
 
@@ -96,14 +96,14 @@ def test_cli_real_agent_discovery_and_protocol_generation(tmp_path: Path) -> Non
         "--engine",
         "opencode",
         "--model",
-        "zai-coding-plan/glm-4.6",
+        "zai-coding-plan/glm-5",
         cwd=tmp_path,
         env=env,
         timeout=600,  # Real agent discovery takes ~2-5 min
     )
     assert discovery["success"] is True
     assert discovery["engine_id"] == "opencode"
-    assert discovery["model"] == "zai-coding-plan/glm-4.6"
+    assert discovery["model"] == "zai-coding-plan/glm-5"
 
     discovery_dir = cloned_repo / "specs" / "discovery" / "_runtime"
     assert (discovery_dir / "DISCOVERY.md").exists()
@@ -141,14 +141,14 @@ def test_cli_real_agent_discovery_and_protocol_generation(tmp_path: Path) -> Non
         "--engine",
         "opencode",
         "--model",
-        "zai-coding-plan/glm-4.6",
+        "zai-coding-plan/glm-5",
         cwd=tmp_path,
         env=env,
         timeout=300,  # Real agent protocol generation takes ~1-3 min
     )
     assert generated["success"] is True
     assert generated["engine_id"] == "opencode"
-    assert generated["model"] == "zai-coding-plan/glm-4.6"
+    assert generated["model"] == "zai-coding-plan/glm-5"
     protocol_root = Path(generated["protocol_root"])
     assert (protocol_root / "plan.md").exists()
     assert len(list(protocol_root.glob("step-*.md"))) >= 2

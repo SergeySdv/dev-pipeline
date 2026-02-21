@@ -74,8 +74,10 @@ def test_api_onboard_can_run_discovery_agent(monkeypatch: pytest.MonkeyPatch) ->
 
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
         monkeypatch.setenv("DEVGODZILLA_DEFAULT_ENGINE_ID", "opencode")
-        monkeypatch.setenv("DEVGODZILLA_OPENCODE_MODEL", "zai-coding-plan/glm-4.6")
+        monkeypatch.setenv("DEVGODZILLA_OPENCODE_MODEL", "zai-coding-plan/glm-5")
 
         db = SQLiteDatabase(db_path)
         db.init_schema()
@@ -86,23 +88,29 @@ def test_api_onboard_can_run_discovery_agent(monkeypatch: pytest.MonkeyPatch) ->
             local_path=str(repo),
         )
 
-        with TestClient(app) as client:  # type: ignore[arg-type]
-            resp = client.post(
-                f"/projects/{project.id}/actions/onboard",
-                json={
-                    "branch": "main",
-                    "clone_if_missing": False,
-                    "run_discovery_agent": True,
-                    "discovery_pipeline": True,
-                    "discovery_engine_id": "opencode",
-                    "discovery_model": "zai-coding-plan/glm-4.6",
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["success"] is True
-            assert data["discovery_success"] is True
-            assert data["discovery_missing_outputs"] == []
+        from devgodzilla.api.dependencies import get_db
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.post(
+                    f"/projects/{project.id}/actions/onboard",
+                    json={
+                        "branch": "main",
+                        "clone_if_missing": False,
+                        "run_discovery_agent": True,
+                        "discovery_pipeline": True,
+                        "discovery_engine_id": "opencode",
+                        "discovery_model": "zai-coding-plan/glm-5",
+                    },
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["success"] is True
+                assert data["discovery_success"] is True
+                assert data["discovery_missing_outputs"] == []
+        finally:
+            app.dependency_overrides.clear()
 
         assert (repo / "specs" / "discovery" / "_runtime" / "DISCOVERY.md").exists()
         assert (repo / "specs" / "discovery" / "_runtime" / "DISCOVERY_SUMMARY.json").exists()

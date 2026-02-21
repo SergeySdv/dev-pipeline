@@ -41,7 +41,7 @@ class OpenCodeEngine(CLIEngine):
         prefer_cli: bool = True,
     ) -> None:
         env_model = os.environ.get("DEVGODZILLA_OPENCODE_MODEL")
-        resolved_default_model = default_model or (env_model.strip() if env_model else "") or "zai-coding-plan/glm-4.6"
+        resolved_default_model = default_model or (env_model.strip() if env_model else "") or "zai-coding-plan/glm-5"
         super().__init__(
             default_timeout=default_timeout,
             default_model=resolved_default_model,

@@ -50,7 +50,7 @@ value:
       cli_tool: "opencode"
       command_dir: ".opencode/command/"
       format: "markdown"
-      default_model: "zai-coding-plan/glm-4.6"
+      default_model: "zai-coding-plan/glm-5"
       sandbox: "workspace-write"
       capabilities:
         - code_generation
