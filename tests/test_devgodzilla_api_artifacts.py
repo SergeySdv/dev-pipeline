@@ -43,6 +43,8 @@ def test_step_artifacts_list_and_content(monkeypatch: pytest.MonkeyPatch) -> Non
         _init_repo(repo)
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         db = SQLiteDatabase(db_path)
         db.init_schema()
@@ -78,20 +80,25 @@ def test_step_artifacts_list_and_content(monkeypatch: pytest.MonkeyPatch) -> Non
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         (artifacts_dir / "execution.log").write_text("hello from log\n", encoding="utf-8")
         (artifacts_dir / "changes.diff").write_text("diff --git a/README.md b/README.md\n", encoding="utf-8")
+        from devgodzilla.api.dependencies import get_db
 
-        with TestClient(app) as client:  # type: ignore[arg-type]
-            listed = client.get(f"/steps/{step.id}/artifacts")
-            assert listed.status_code == 200
-            artifacts = listed.json()
-            assert any(a["name"] == "execution.log" for a in artifacts)
-            assert any(a["name"] == "changes.diff" for a in artifacts)
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                listed = client.get(f"/steps/{step.id}/artifacts")
+                assert listed.status_code == 200
+                artifacts = listed.json()
+                assert any(a["name"] == "execution.log" for a in artifacts)
+                assert any(a["name"] == "changes.diff" for a in artifacts)
 
-            content = client.get(f"/steps/{step.id}/artifacts/execution.log/content")
-            assert content.status_code == 200
-            data = content.json()
-            assert "hello from log" in data["content"]
-            assert data["truncated"] is False
+                content = client.get(f"/steps/{step.id}/artifacts/execution.log/content")
+                assert content.status_code == 200
+                data = content.json()
+                assert "hello from log" in data["content"]
+                assert data["truncated"] is False
 
-            download = client.get(f"/steps/{step.id}/artifacts/execution.log/download")
-            assert download.status_code == 200
-            assert b"hello from log" in download.content
+                download = client.get(f"/steps/{step.id}/artifacts/execution.log/download")
+                assert download.status_code == 200
+                assert b"hello from log" in download.content
+        finally:
+            app.dependency_overrides.clear()

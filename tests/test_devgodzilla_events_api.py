@@ -41,6 +41,7 @@ def test_events_persist_and_recent(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
@@ -95,6 +96,7 @@ def test_api_token_protects_routes(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.setenv("DEVGODZILLA_API_TOKEN", "secret")
 
         with TestClient(app) as client:  # type: ignore[arg-type]

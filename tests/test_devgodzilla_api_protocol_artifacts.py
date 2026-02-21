@@ -43,6 +43,8 @@ def test_protocol_artifacts_aggregate(monkeypatch: pytest.MonkeyPatch) -> None:
         _init_repo(repo)
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         db = SQLiteDatabase(db_path)
         db.init_schema()
@@ -88,9 +90,15 @@ def test_protocol_artifacts_aggregate(monkeypatch: pytest.MonkeyPatch) -> None:
         (a1 / "execution.log").write_text("s1\n", encoding="utf-8")
         (a2 / "quality-report.md").write_text("# report\n", encoding="utf-8")
 
-        with TestClient(app) as client:  # type: ignore[arg-type]
-            resp = client.get(f"/protocols/{run.id}/artifacts")
-            assert resp.status_code == 200
-            items = resp.json()
-            assert any(i["step_run_id"] == step1.id and i["name"] == "execution.log" for i in items)
-            assert any(i["step_run_id"] == step2.id and i["name"] == "quality-report.md" for i in items)
+        from devgodzilla.api.dependencies import get_db
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.get(f"/protocols/{run.id}/artifacts")
+                assert resp.status_code == 200
+                items = resp.json()
+                assert any(i["step_run_id"] == step1.id and i["name"] == "execution.log" for i in items)
+                assert any(i["step_run_id"] == step2.id and i["name"] == "quality-report.md" for i in items)
+        finally:
+            app.dependency_overrides.clear()

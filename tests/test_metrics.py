@@ -106,6 +106,7 @@ def test_metrics_summary_counts(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
@@ -123,3 +124,43 @@ def test_metrics_summary_counts(monkeypatch: pytest.MonkeyPatch) -> None:
         job_types = {m["job_type"]: m["count"] for m in payload["job_type_metrics"]}
         assert job_types["plan"] == 1
         assert job_types["execute"] == 1
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_metrics_summary_marks_degraded_on_protocol_query_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        def _boom(self, project_id: int):  # type: ignore[no-untyped-def]
+            raise RuntimeError(f"db unavailable for project={project_id}")
+
+        monkeypatch.setattr(SQLiteDatabase, "list_protocol_runs", _boom)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            resp = client.get("/metrics/summary")
+            assert resp.status_code == 200
+            payload = resp.json()
+
+        assert payload["degraded"] is True
+        assert payload["errors"]
+        assert payload["success_rate"] == 0.0

@@ -19,6 +19,9 @@ if [ ! -x "${PYTEST_BIN}" ]; then
 fi
 
 export PYTHONPATH="${PYTHONPATH:-.}"
+# Keep unit tests deterministic; many tests provision temporary SQLite DBs.
+export DEVGODZILLA_DB_URL=""
+export DEVGODZILLA_API_TOKEN=""
 
 if ! command -v opencode >/dev/null 2>&1; then
   ci_error "test opencode missing" "hint=install_opencode_and_authenticate"

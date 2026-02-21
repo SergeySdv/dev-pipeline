@@ -89,6 +89,7 @@ def test_list_project_branches(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
@@ -127,6 +128,7 @@ def test_list_branches_404_for_missing_project(monkeypatch: pytest.MonkeyPatch) 
         db.init_schema()
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
@@ -155,6 +157,7 @@ def test_list_branches_400_for_missing_local_path(monkeypatch: pytest.MonkeyPatc
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
@@ -184,6 +187,7 @@ def test_list_branches_400_for_nonexistent_path(monkeypatch: pytest.MonkeyPatch)
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
@@ -215,9 +219,54 @@ def test_list_branches_400_for_non_git_repo(monkeypatch: pytest.MonkeyPatch) -> 
         )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         with TestClient(app) as client:  # type: ignore[arg-type]
             response = client.get(f"/projects/{project.id}/branches")
             assert response.status_code == 400
             assert "not a git repository" in response.json()["detail"].lower()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_list_branches_returns_502_when_git_query_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GET /projects/{id}/branches surfaces git command errors."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True)
+        (repo / "README.md").write_text("# Test Repo")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo, check=True, capture_output=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        import devgodzilla.services.git as git_module
+
+        def _raise_run_process(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("git command failed")
+
+        monkeypatch.setattr(git_module, "run_process", _raise_run_process)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get(f"/projects/{project.id}/branches")
+            assert response.status_code == 502
+            assert "failed to list local branches" in response.json()["detail"].lower()

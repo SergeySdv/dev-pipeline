@@ -258,7 +258,18 @@ class AgentConfigService(Service):
             return {}
         return overrides
 
-    def _get_agent_overrides(self, project_id: Optional[int | str]) -> Dict[str, Dict[str, Any]]:
+    def _get_yaml_agent_overrides(self, project_id: Optional[int | str]) -> Dict[str, Dict[str, Any]]:
+        overrides = self._get_project_overrides(project_id)
+        project_agents = overrides.get("agents") if isinstance(overrides, dict) else None
+        resolved: Dict[str, Dict[str, Any]] = {}
+        if not isinstance(project_agents, dict):
+            return resolved
+        for agent_id, data in project_agents.items():
+            if isinstance(data, dict):
+                resolved[str(agent_id)] = data
+        return resolved
+
+    def _get_db_agent_overrides(self, project_id: Optional[int | str]) -> Dict[str, Dict[str, Any]]:
         if project_id is None:
             return {}
         try:
@@ -267,6 +278,12 @@ class AgentConfigService(Service):
             return overrides if isinstance(overrides, dict) else {}
         except Exception:
             return {}
+
+    def _get_agent_overrides(self, project_id: Optional[int | str]) -> Dict[str, Dict[str, Any]]:
+        resolved: Dict[str, Dict[str, Any]] = {}
+        resolved.update(self._get_yaml_agent_overrides(project_id))
+        resolved.update(self._get_db_agent_overrides(project_id))
+        return resolved
 
     def _inherit_project(self, overrides: Dict[str, Any]) -> bool:
         inherit = overrides.get("inherit", True)
@@ -322,7 +339,10 @@ class AgentConfigService(Service):
         try:
             db = self._get_db()
             project_value = int(project_id) if project_id is not None else None
-            return db.list_agent_assignments(project_value)
+            assignments = db.list_agent_assignments(project_value)
+            if isinstance(assignments, dict):
+                return assignments
+            return {}
         except Exception:
             return {}
 
@@ -347,7 +367,10 @@ class AgentConfigService(Service):
 
     def get_assignment(self, process_key: str, *, project_id: Optional[int | str] = None) -> Optional[Dict[str, Any]]:
         assignments = self._resolve_assignments(project_id)
-        return assignments.get(process_key)
+        assignment = assignments.get(process_key)
+        if isinstance(assignment, dict):
+            return assignment
+        return None
 
     def update_assignments(
         self,

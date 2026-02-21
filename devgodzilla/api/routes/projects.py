@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from typing import Any, List, Optional
 
@@ -1000,15 +1001,25 @@ def list_project_branches(
                         sha=parts[1],
                         is_remote=False,
                     ))
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list local branches: {exc}")
     
     # Get remote branches with their SHAs
     try:
         result = run_process(
             ["git", "ls-remote", "--heads", "origin"],
             cwd=repo_path,
+            check=False,
         )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").lower()
+            # Repos used in local tests/dev can have no configured origin.
+            if "no such remote" in stderr or "could not read from remote repository" in stderr:
+                return branches
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to list remote branches: {(result.stderr or result.stdout or '').strip()}",
+            )
         for line in result.stdout.strip().splitlines():
             if line:
                 parts = line.split()
@@ -1021,8 +1032,10 @@ def list_project_branches(
                             sha=parts[0],
                             is_remote=True,
                         ))
-    except Exception:
-        pass
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list remote branches: {exc}")
     
     return branches
 
@@ -1234,8 +1247,8 @@ def list_project_commits(
                         author=parts[2],
                         date=parts[3],
                     ))
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list commits: {exc}")
     
     return commits
 
@@ -1294,8 +1307,15 @@ def list_project_pulls(
                     author=pr.get("author", {}).get("login", "") if isinstance(pr.get("author"), dict) else "",
                     created_at=pr.get("createdAt", ""),
                 ))
-    except Exception:
-        pass  # gh CLI not available or not authenticated
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="GitHub CLI (gh) is not installed")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to parse GitHub PR response: {exc}")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise HTTPException(status_code=502, detail=f"Failed to list pull requests: {detail}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list pull requests: {exc}")
     
     return pulls
 
@@ -1326,8 +1346,8 @@ def list_project_worktrees(
     # Get all protocol runs for this project to find associated branches
     try:
         protocols = db.list_protocol_runs(project_id=project_id)
-    except Exception:
-        protocols = []
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load protocol runs: {exc}")
     
     # Build a map of branch names to protocols
     branch_protocols = {}
@@ -1357,8 +1377,8 @@ def list_project_worktrees(
                         worktree_paths[current_branch] = current_worktree
                     current_worktree = None
                     current_branch = None
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list git worktrees: {exc}")
     
     # Build worktree list from protocols
     for branch_name, protocol in branch_protocols.items():
@@ -1378,8 +1398,8 @@ def list_project_worktrees(
                     last_sha = parts[0]
                     last_message = parts[1]
                     last_date = parts[2]
-        except Exception:
-            pass
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to read branch commit for {branch_name}: {exc}")
         
         # Check if there's a PR for this branch
         pr_url = None
@@ -1393,8 +1413,10 @@ def list_project_worktrees(
                 import json
                 pr_data = json.loads(result.stdout)
                 pr_url = pr_data.get("url")
-        except Exception:
-            pass
+        except FileNotFoundError:
+            raise HTTPException(status_code=503, detail="GitHub CLI (gh) is not installed")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to resolve PR for {branch_name}: {exc}")
         
         worktrees.append(schemas.WorktreeOut(
             branch_name=branch_name,

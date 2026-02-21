@@ -68,6 +68,8 @@ projects:
 """.strip()
         )
         monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         db_path = tmp_path / "test.db"
         db = SQLiteDatabase(db_path)

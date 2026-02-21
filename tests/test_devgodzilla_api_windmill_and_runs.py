@@ -63,6 +63,36 @@ class FakeWindmillClient:
         return f"logs for {job_id}"
 
 
+class _ErrorWindmillClient(FakeWindmillClient):
+    def __init__(self, fail_method: str) -> None:
+        super().__init__()
+        self._fail_method = fail_method
+
+    def _maybe_fail(self, name: str) -> None:
+        if self._fail_method == name:
+            raise RuntimeError(f"{name} failed")
+
+    def get_flow(self, path: str) -> Any:
+        self._maybe_fail("get_flow")
+        return super().get_flow(path)
+
+    def list_flow_runs(self, _flow_path: str, **_kwargs: Any) -> List[Dict[str, Any]]:
+        self._maybe_fail("list_flow_runs")
+        return super().list_flow_runs(_flow_path, **_kwargs)
+
+    def list_jobs(self, **_kwargs: Any) -> List[Dict[str, Any]]:
+        self._maybe_fail("list_jobs")
+        return super().list_jobs(**_kwargs)
+
+    def get_job(self, job_id: str) -> Any:
+        self._maybe_fail("get_job")
+        return super().get_job(job_id)
+
+    def get_job_logs(self, job_id: str) -> str:
+        self._maybe_fail("get_job_logs")
+        return super().get_job_logs(job_id)
+
+
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
 def test_windmill_and_runs_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     from devgodzilla.db.database import SQLiteDatabase
@@ -118,6 +148,8 @@ def test_windmill_and_runs_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
         db.create_run_artifact(run_id="run-1", name="manifest.json", kind="json", path=str(artifact_path))
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
 
         fake_windmill = FakeWindmillClient()
         app.dependency_overrides[get_windmill_client] = lambda: fake_windmill  # type: ignore[index]
@@ -137,6 +169,9 @@ def test_windmill_and_runs_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
             flows = client.get("/flows").json()
             assert flows and flows[0]["path"].startswith("f/")
 
+            flow_runs = client.get("/flows/f/devgodzilla/demo/runs").json()
+            assert flow_runs and flow_runs[0]["id"] == "job-2"
+
             jobs = client.get("/jobs").json()
             assert jobs and jobs[0]["id"] == "job-1"
 
@@ -153,3 +188,41 @@ def test_windmill_and_runs_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
 
         app.dependency_overrides.clear()
 
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+@pytest.mark.parametrize(
+    ("fail_method", "path"),
+    [
+        ("get_flow", "/flows/f/devgodzilla/demo"),
+        ("list_flow_runs", "/flows/f/devgodzilla/demo/runs"),
+        ("list_jobs", "/jobs"),
+        ("get_job", "/jobs/job-1"),
+        ("get_job_logs", "/jobs/job-1/logs"),
+    ],
+)
+def test_windmill_passthrough_error_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    fail_method: str,
+    path: str,
+) -> None:
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        app.dependency_overrides[get_windmill_client] = lambda: _ErrorWindmillClient(fail_method)  # type: ignore[index]
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.get(path)
+            assert response.status_code == 502
+            assert "Windmill error:" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()

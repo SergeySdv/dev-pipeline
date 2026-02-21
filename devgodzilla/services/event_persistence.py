@@ -66,7 +66,12 @@ def install_db_event_sink(
     bus = get_event_bus()
 
     if getattr(bus, "_db_sink_installed", False):
+        provider_ref = getattr(bus, "_db_sink_provider_ref", None)
+        if isinstance(provider_ref, dict):
+            provider_ref["provider"] = db_provider
         return
+
+    provider_ref: Dict[str, Callable[[], _EventDB]] = {"provider": db_provider}
 
     def _persist(event: BusEvent) -> None:
         protocol_run_id = cast(Optional[int], getattr(event, "protocol_run_id", None))
@@ -79,7 +84,7 @@ def install_db_event_sink(
         step_run_id = cast(Optional[int], getattr(event, "step_run_id", None))
 
         try:
-            db = db_provider()
+            db = provider_ref["provider"]()
             payload = _json_safe(event)
             normalized_type = normalize_event_type(event.event_type)
             db.append_event(
@@ -98,3 +103,4 @@ def install_db_event_sink(
 
     bus.add_handler(None, _persist)
     setattr(bus, "_db_sink_installed", True)
+    setattr(bus, "_db_sink_provider_ref", provider_ref)

@@ -19,18 +19,6 @@ def list_flows(
     return [{"path": f.path, "name": f.name, "summary": f.summary} for f in flows]
 
 
-@router.get("/flows/{flow_path:path}")
-def get_flow(
-    flow_path: str,
-    windmill: WindmillClient = Depends(get_windmill_client),
-) -> Dict[str, Any]:
-    try:
-        flow = windmill.get_flow(flow_path)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Windmill error: {e}")
-    return {"path": flow.path, "name": flow.name, "summary": flow.summary, "schema": flow.schema}
-
-
 @router.get("/flows/{flow_path:path}/runs")
 def list_flow_runs(
     flow_path: str,
@@ -42,6 +30,18 @@ def list_flow_runs(
         return windmill.list_flow_runs(flow_path, per_page=per_page, page=page)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Windmill error: {e}")
+
+
+@router.get("/flows/{flow_path:path}")
+def get_flow(
+    flow_path: str,
+    windmill: WindmillClient = Depends(get_windmill_client),
+) -> Dict[str, Any]:
+    try:
+        flow = windmill.get_flow(flow_path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Windmill error: {e}")
+    return {"path": flow.path, "name": flow.name, "summary": flow.summary, "schema": flow.schema}
 
 
 @router.get("/jobs")
@@ -93,4 +93,3 @@ def get_job_logs(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Windmill error: {e}")
     return {"job_id": job_id, "logs": logs}
-

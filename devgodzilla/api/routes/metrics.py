@@ -7,11 +7,12 @@ Provides Prometheus-compatible metrics for observability.
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 
 from devgodzilla.api.dependencies import get_db
 from devgodzilla.db.database import Database
+from devgodzilla.logging import get_logger
 
 # Try to import prometheus_client, provide stub if not available
 try:
@@ -41,6 +42,7 @@ except ImportError:
         def labels(self, *args, **kwargs): return self
 
 router = APIRouter(tags=["Metrics"])
+logger = get_logger(__name__)
 
 
 # ==================== JSON Summary Models ====================
@@ -66,6 +68,8 @@ class MetricsSummary(BaseModel):
     success_rate: float
     job_type_metrics: list[JobTypeMetric]
     recent_events_count: int
+    degraded: bool = False
+    errors: list[str] = Field(default_factory=list)
 
 
 @router.get("/metrics/summary", response_model=MetricsSummary)
@@ -78,8 +82,14 @@ def metrics_summary(
     
     Returns aggregated stats from the database.
     """
+    errors: list[str] = []
+
     # Get basic counts
-    projects = db.list_projects()
+    try:
+        projects = db.list_projects()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load projects for metrics: {exc}")
+
     active_projects = len([p for p in projects if p.status != "archived"])
     
     # Get protocol runs across all projects
@@ -88,15 +98,19 @@ def metrics_summary(
         try:
             runs = db.list_protocol_runs(project.id)
             all_protocol_runs.extend(runs)
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(f"protocol_runs_unavailable: project_id={project.id} error={exc}")
+            logger.warning("metrics_protocol_runs_unavailable", extra={"project_id": project.id, "error": str(exc)})
     total_protocol_runs = len(all_protocol_runs)
     
     # Calculate success rate
     completed = [r for r in all_protocol_runs if r.status in ("completed", "passed")]
     failed = [r for r in all_protocol_runs if r.status in ("failed", "error")]
     total_finished = len(completed) + len(failed)
-    success_rate = (len(completed) / total_finished * 100) if total_finished > 0 else 100.0
+    if total_finished > 0:
+        success_rate = len(completed) / total_finished * 100
+    else:
+        success_rate = 0.0 if errors else 100.0
     
     # Get step runs across all protocol runs
     total_step_runs = 0
@@ -104,11 +118,17 @@ def metrics_summary(
         try:
             steps = db.list_step_runs(pr.id)
             total_step_runs += len(steps)
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(f"step_runs_unavailable: protocol_run_id={pr.id} error={exc}")
+            logger.warning("metrics_step_runs_unavailable", extra={"protocol_run_id": pr.id, "error": str(exc)})
     
     # Get job runs (this method supports limit directly)
-    job_runs = db.list_job_runs(limit=1000)
+    try:
+        job_runs = db.list_job_runs(limit=1000)
+    except Exception as exc:
+        errors.append(f"job_runs_unavailable: error={exc}")
+        logger.warning("metrics_job_runs_unavailable", extra={"error": str(exc)})
+        job_runs = []
     total_job_runs = len(job_runs)
     
     # Aggregate job runs by type
@@ -147,7 +167,12 @@ def metrics_summary(
     job_type_metrics.sort(key=lambda x: x.count, reverse=True)
     
     # Get recent events count
-    recent_events = db.list_recent_events(limit=500)
+    try:
+        recent_events = db.list_recent_events(limit=500)
+    except Exception as exc:
+        errors.append(f"events_unavailable: error={exc}")
+        logger.warning("metrics_events_unavailable", extra={"error": str(exc)})
+        recent_events = []
     recent_events_count = len(recent_events)
     total_events = recent_events_count  # This is approximate
     
@@ -160,6 +185,8 @@ def metrics_summary(
         success_rate=round(success_rate, 1),
         job_type_metrics=job_type_metrics,
         recent_events_count=recent_events_count,
+        degraded=len(errors) > 0,
+        errors=errors,
     )
 
 
@@ -241,7 +268,10 @@ async def metrics():
     """
     if not PROMETHEUS_AVAILABLE:
         return Response(
-            content="# prometheus_client not installed\n",
+            content=(
+                "# devgodzilla metrics disabled\n"
+                "# reason: prometheus_client not installed\n"
+            ),
             media_type="text/plain",
         )
     
