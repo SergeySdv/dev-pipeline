@@ -50,6 +50,7 @@ Current E2E coverage is partial and mostly opt-in/skipped, so path/layout misali
     - `test-glm5-demo`
     - `SimpleAdminReporter`
     - `demo-spring`
+13. Runtime budget: live stages may run up to 45 minutes (`2700` seconds) for onboard/planning/execution.
 
 ## 6. Current-State Findings (Key Risks)
 1. Hardcoded Windmill onboarding path (`u/devgodzilla/project_onboard_api`) in onboarding queue.

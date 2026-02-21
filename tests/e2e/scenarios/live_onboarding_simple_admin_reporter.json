@@ -31,9 +31,9 @@
     ]
   },
   "timeouts": {
-    "onboard_seconds": 600,
-    "planning_seconds": 600,
-    "execution_seconds": 600
+    "onboard_seconds": 2700,
+    "planning_seconds": 2700,
+    "execution_seconds": 2700
   },
   "retries": {
     "max_attempts": 3,

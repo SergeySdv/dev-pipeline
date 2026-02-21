@@ -66,3 +66,4 @@ Small stable set (3 repos) from GitHub owner `ilyafedotov-ops` with mixed layout
    - running live harness locally,
    - using the three seeded `ilyafedotov-ops` repos,
    - adding new scenario/adapter manifests.
+8. Seeded live scenario stage timeouts are raised to `2700s` (45 minutes) for onboard/planning/execution.

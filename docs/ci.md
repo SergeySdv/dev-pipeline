@@ -55,6 +55,9 @@ Automation workflow:
   - Nightly scheduled run
   - Manual `workflow_dispatch`
 - Uploads run diagnostics from `runs/harness/**` as workflow artifacts.
+- Runtime profile:
+  - long-running live operations can take up to 45 minutes per stage (`2700s` stage timeout),
+  - workflow job budget is set to 300 minutes.
 
 Manual run examples:
 
@@ -109,3 +112,5 @@ Failure outputs:
 
 - Local diagnostics: `runs/harness/<timestamp>-<scenario_id>/diagnostics/`
 - CI diagnostics: uploaded artifact from `runs/harness/**`
+- Structured event stream: `runs/harness/<timestamp>-<scenario_id>/diagnostics/events.jsonl`
+  - Event types: `run_started`, `stage_started`, `stage_retry`, `stage_succeeded`, `stage_failed`, `run_finished`

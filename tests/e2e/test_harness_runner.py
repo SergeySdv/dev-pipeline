@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tests.e2e.harness.runner import run_scenario
@@ -39,6 +40,13 @@ def test_run_scenario_success(tmp_path: Path) -> None:
     result = run_scenario(scenario, handlers, run_root=tmp_path)
     assert result.success
     assert [stage.status for stage in result.stages] == ["passed", "passed"]
+    events_path = result.diagnostics_dir / "events.jsonl"
+    assert events_path.exists()
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    event_types = [event["event_type"] for event in events]
+    assert event_types[0] == "run_started"
+    assert event_types[-1] == "run_finished"
+    assert "stage_succeeded" in event_types
 
 
 def test_run_scenario_retry_then_success(tmp_path: Path) -> None:
@@ -54,6 +62,11 @@ def test_run_scenario_retry_then_success(tmp_path: Path) -> None:
     result = run_scenario(scenario, {"retry": _handler}, run_root=tmp_path)
     assert result.success
     assert result.stages[0].attempts == 2
+    events_path = result.diagnostics_dir / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    retry_events = [event for event in events if event["event_type"] == "stage_retry"]
+    assert retry_events
+    assert retry_events[0]["stage"] == "retry"
 
 
 def test_run_scenario_missing_handler_fails(tmp_path: Path) -> None:
@@ -64,3 +77,6 @@ def test_run_scenario_missing_handler_fails(tmp_path: Path) -> None:
     assert result.stages[0].status == "failed"
     diag = result.diagnostics_dir / "stage-missing-failure.json"
     assert diag.exists()
+    events_path = result.diagnostics_dir / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(event["event_type"] == "stage_failed" and event["stage"] == "missing" for event in events)

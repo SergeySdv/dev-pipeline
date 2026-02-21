@@ -199,7 +199,7 @@ def _stage_project_onboard_windmill(
         base_branch,
         cwd=REPO_ROOT,
         env=env,
-        timeout=90,
+        timeout=scenario.timeouts.onboard_seconds,
     )
     if not onboarded.get("success"):
         raise RuntimeError(f"Windmill onboarding enqueue failed: {onboarded}")

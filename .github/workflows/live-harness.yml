@@ -45,7 +45,7 @@ on:
 jobs:
   live-harness:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     env:
       DEVGODZILLA_RUN_E2E_HARNESS: "1"
       HARNESS_GITHUB_OWNER: "ilyafedotov-ops"
