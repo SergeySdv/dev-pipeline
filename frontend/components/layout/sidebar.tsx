@@ -15,63 +15,85 @@ import {
   Layers,
   BarChart3,
   Bot,
-  Kanban,
-  Sparkles,
   MessageCircle,
   GitBranch,
+  Zap,
+  TrendingUp,
+  FileText,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { SpecKitLaunchDialog, type SpecKitWizardAction } from "@/components/wizards/speckit-launch-dialog"
 import { useProjects } from "@/lib/api"
 
-const navigation = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Projects", href: "/projects", icon: FolderKanban },
-  { name: "Execution", href: "/execution", icon: Kanban },
+interface NavItem {
+  name: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+}
+
+interface NavGroup {
+  title: string
+  icon: React.ComponentType<{ className?: string }>
+  items: NavItem[]
+}
+
+const navigationGroups: NavGroup[] = [
   {
-    name: "SpecKit",
-    href: "/specifications",
-    icon: Sparkles,
-    children: [
-      { name: "All Specifications", href: "/specifications" },
-      { name: "Generate Spec", action: "generate-specs" },
-      { name: "Design Solution", action: "design-solution" },
-      { name: "Generate Tasks", action: "implement-feature" },
+    title: "Workspace",
+    icon: LayoutDashboard,
+    items: [
+      { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Projects", href: "/projects", icon: FolderKanban },
     ],
   },
-  { name: "Runs", href: "/runs", icon: PlayCircle },
-  { name: "Protocols", href: "/protocols", icon: GitBranch },
-  { name: "Clarifications", href: "/clarifications", icon: MessageCircle },
-  { name: "Quality", href: "/quality", icon: BarChart3 },
-  { name: "Agents", href: "/agents", icon: Bot },
   {
-    name: "Operations",
-    href: "/ops",
+    title: "Execute",
+    icon: Zap,
+    items: [
+      { name: "Runs", href: "/runs", icon: PlayCircle },
+      { name: "Protocols", href: "/protocols", icon: GitBranch },
+      { name: "Clarifications", href: "/clarifications", icon: MessageCircle },
+    ],
+  },
+  {
+    title: "Automation",
+    icon: Bot,
+    items: [
+      { name: "Agents", href: "/agents", icon: Bot },
+      { name: "Quality", href: "/quality", icon: BarChart3 },
+      { name: "Policy Packs", href: "/policy-packs", icon: Shield },
+    ],
+  },
+  {
+    title: "Operations",
     icon: Activity,
-    children: [
-      { name: "Queues", href: "/ops/queues" },
-      { name: "Events", href: "/ops/events" },
-      { name: "Logs", href: "/ops/logs" },
-      { name: "Metrics", href: "/ops/metrics" },
+    items: [
+      { name: "Queues", href: "/ops/queues", icon: Layers },
+      { name: "Events", href: "/ops/events", icon: Activity },
+      { name: "Logs", href: "/ops/logs", icon: FileText },
+      { name: "Metrics", href: "/ops/metrics", icon: TrendingUp },
     ],
   },
-  { name: "Policy Packs", href: "/policy-packs", icon: Shield },
-  { name: "Settings", href: "/settings", icon: Settings },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const [expandedSections, setExpandedSections] = useState<string[]>(["Operations"])
-  const [specKitAction, setSpecKitAction] = useState<SpecKitWizardAction | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(["Workspace", "Execute"])
   const { data: projects = [] } = useProjects()
 
-  const toggleSection = (name: string) => {
-    setExpandedSections((prev) => (prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]))
+  const toggleGroup = (title: string) => {
+    setExpandedGroups((prev) =>
+      prev.includes(title) ? prev.filter((g) => g !== title) : [...prev, title]
+    )
+  }
+
+  const isItemActive = (href: string) => {
+    if (href === "/") return pathname === "/"
+    return pathname.startsWith(href)
   }
 
   return (
@@ -94,84 +116,84 @@ export function Sidebar() {
         </div>
 
         <ScrollArea className="flex-1 px-3 py-4">
-          <nav className="space-y-1">
-            {navigation.map((item) => {
-              const isActive = pathname === item.href
-              const hasChildren = item.children && item.children.length > 0
-              const isExpanded = expandedSections.includes(item.name)
-
-              if (hasChildren) {
-                return (
-                  <Collapsible key={item.name} open={isExpanded} onOpenChange={() => toggleSection(item.name)}>
-                    <CollapsibleTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        className={cn(
-                          "w-full justify-start gap-3 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                          isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
-                        )}
-                      >
-                        <item.icon className="h-5 w-5 shrink-0" />
-                        {!isCollapsed && (
-                          <>
-                            <span className="flex-1 text-left">{item.name}</span>
-                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                          </>
-                        )}
-                      </Button>
-                    </CollapsibleTrigger>
-                    {!isCollapsed && (
-                      <CollapsibleContent className="ml-8 mt-1 space-y-1">
-                        {item.children.map((child) => {
-                          if ("action" in child && child.action) {
-                            return (
-                              <Button
-                                key={child.name}
-                                variant="ghost"
-                                className="w-full justify-start text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                                onClick={() => setSpecKitAction(child.action as SpecKitWizardAction)}
-                              >
-                                {child.name}
-                              </Button>
-                            )
-                          }
-
-                          const isChildActive = pathname === child.href
-                          return (
-                            <Link key={child.href || child.name} href={child.href!}>
-                              <Button
-                                variant="ghost"
-                                className={cn(
-                                  "w-full justify-start text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                                  isChildActive && "bg-sidebar-accent text-sidebar-accent-foreground",
-                                )}
-                              >
-                                {child.name}
-                              </Button>
-                            </Link>
-                          )
-                        })}
-                      </CollapsibleContent>
-                    )}
-                  </Collapsible>
-                )
-              }
+          <nav className="space-y-4">
+            {navigationGroups.map((group) => {
+              const isExpanded = expandedGroups.includes(group.title)
+              const hasActiveItem = group.items.some((item) => isItemActive(item.href))
 
               return (
-                <Link key={item.name} href={item.href}>
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "w-full justify-start gap-3 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                      isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
-                    )}
-                  >
-                    <item.icon className="h-5 w-5 shrink-0" />
-                    {!isCollapsed && <span>{item.name}</span>}
-                  </Button>
-                </Link>
+                <Collapsible
+                  key={group.title}
+                  open={isExpanded}
+                  onOpenChange={() => toggleGroup(group.title)}
+                >
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className={cn(
+                        "w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        hasActiveItem && "bg-sidebar-accent/50",
+                      )}
+                    >
+                      <group.icon className="h-4 w-4 shrink-0" />
+                      {!isCollapsed && (
+                        <>
+                          <span className="flex-1 text-left text-xs font-semibold uppercase tracking-wider">
+                            {group.title}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronDown className="h-3 w-3" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3" />
+                          )}
+                        </>
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                  {!isCollapsed && (
+                    <CollapsibleContent className="mt-1 space-y-0.5 pl-2 border-l border-sidebar-border/50 ml-2">
+                      {group.items.map((item) => {
+                        const isActive = isItemActive(item.href)
+                        return (
+                          <Link key={item.href} href={item.href}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={cn(
+                                "w-full justify-start gap-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                                isActive && "bg-sidebar-accent text-sidebar-accent-foreground font-medium",
+                              )}
+                            >
+                              <item.icon className="h-4 w-4 shrink-0" />
+                              <span>{item.name}</span>
+                            </Button>
+                          </Link>
+                        )
+                      })}
+                    </CollapsibleContent>
+                  )}
+                </Collapsible>
               )
             })}
+
+            {/* Settings - Always visible at bottom of nav */}
+            {!isCollapsed && (
+              <div className="pt-2 border-t border-sidebar-border/50">
+                <Link href="/settings">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "w-full justify-start gap-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                      pathname.startsWith("/settings") && "bg-sidebar-accent text-sidebar-accent-foreground",
+                    )}
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>Settings</span>
+                  </Button>
+                </Link>
+              </div>
+            )}
           </nav>
         </ScrollArea>
 
@@ -180,11 +202,13 @@ export function Sidebar() {
           <>
             <Separator />
             <div className="p-3">
-              <div className="mb-2 px-2 text-xs font-semibold text-muted-foreground">RECENT PROJECTS</div>
+              <div className="mb-2 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Recent Projects
+              </div>
               {projects.length === 0 ? (
                 <div className="px-2 py-2 text-xs text-muted-foreground">No projects yet.</div>
               ) : (
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {projects.slice(0, 4).map((project) => (
                     <Link key={project.id} href={`/projects/${project.id}`}>
                       <Button
@@ -192,8 +216,8 @@ export function Sidebar() {
                         size="sm"
                         className="w-full justify-start text-sm text-sidebar-foreground hover:bg-sidebar-accent"
                       >
-                        <FolderKanban className="mr-2 h-4 w-4" />
-                        {project.name}
+                        <FolderKanban className="mr-2 h-3.5 w-3.5" />
+                        <span className="truncate">{project.name}</span>
                       </Button>
                     </Link>
                   ))}
@@ -210,21 +234,16 @@ export function Sidebar() {
             size="sm"
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="w-full justify-center"
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronRight className="h-4 w-4 rotate-180" />}
+            {isCollapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4 rotate-180" />
+            )}
           </Button>
         </div>
       </div>
-
-      {specKitAction && (
-        <SpecKitLaunchDialog
-          open
-          action={specKitAction}
-          onOpenChange={(open) => {
-            if (!open) setSpecKitAction(null)
-          }}
-        />
-      )}
     </aside>
   )
 }
