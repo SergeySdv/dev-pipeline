@@ -10,8 +10,10 @@ from tests.e2e.harness.live_cli import (
     _build_cli_env,
     _build_windmill_client,
     _checkout_and_update_branch,
+    _desired_feature_cycles,
     _parse_json_output,
     _stage_log_file,
+    _stage_protocol_feature_cycles,
     _stage_project_onboard,
     _stage_project_onboard_windmill,
     _wait_for_windmill_job,
@@ -350,3 +352,72 @@ def test_wait_for_windmill_job_streams_logs(tmp_path: Path) -> None:
     assert job.status == JobStatus.COMPLETED
     assert "line-1" in content
     assert "line-2" in content
+
+
+def test_desired_feature_cycles_defaults_and_validates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HARNESS_FEATURE_CYCLES", raising=False)
+    assert _desired_feature_cycles() == 2
+
+    monkeypatch.setenv("HARNESS_FEATURE_CYCLES", "3")
+    assert _desired_feature_cycles() == 3
+
+    monkeypatch.setenv("HARNESS_FEATURE_CYCLES", "0")
+    assert _desired_feature_cycles() == 1
+
+    monkeypatch.setenv("HARNESS_FEATURE_CYCLES", "bad")
+    with pytest.raises(RuntimeError, match="HARNESS_FEATURE_CYCLES"):
+        _desired_feature_cycles()
+
+
+def test_stage_protocol_feature_cycles_runs_multiple_cycles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ctx = HarnessRunContext(
+        scenario_id="feature-cycles",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={},
+    )
+    scenario = _scenario(["specs/discovery/_runtime/DISCOVERY.md"])
+    monkeypatch.setenv("HARNESS_FEATURE_CYCLES", "3")
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_create(_ctx: HarnessRunContext, _scenario: ScenarioConfig, stage: str) -> dict[str, object]:
+        cycle = int(_ctx.metadata["_protocol_cycle_index"]) + 1
+        _ctx.metadata["protocol_id"] = cycle * 100
+        _ctx.metadata["protocol_name"] = f"proto-{cycle}"
+        calls.append(("create", stage))
+        return {"protocol_run_id": cycle * 100}
+
+    def _fake_worktree(_ctx: HarnessRunContext, _scenario: ScenarioConfig, stage: str) -> dict[str, object]:
+        cycle = int(_ctx.metadata["_protocol_cycle_index"]) + 1
+        calls.append(("worktree", stage))
+        return {"worktree_path": f"/tmp/wt-{cycle}"}
+
+    def _fake_plan(_ctx: HarnessRunContext, _scenario: ScenarioConfig, stage: str) -> dict[str, object]:
+        cycle = int(_ctx.metadata["_protocol_cycle_index"]) + 1
+        calls.append(("plan", stage))
+        return {"steps_created": cycle}
+
+    def _fake_execute(_ctx: HarnessRunContext, _scenario: ScenarioConfig, stage: str) -> dict[str, object]:
+        cycle = int(_ctx.metadata["_protocol_cycle_index"]) + 1
+        calls.append(("execute", stage))
+        return {
+            "executed_steps": cycle,
+            "protocol_status": "completed",
+            "protocol_root": f"/tmp/proto-{cycle}",
+        }
+
+    monkeypatch.setattr("tests.e2e.harness.live_cli._stage_protocol_create", _fake_create)
+    monkeypatch.setattr("tests.e2e.harness.live_cli._stage_protocol_worktree", _fake_worktree)
+    monkeypatch.setattr("tests.e2e.harness.live_cli._stage_protocol_plan", _fake_plan)
+    monkeypatch.setattr("tests.e2e.harness.live_cli._stage_step_execute", _fake_execute)
+
+    result = _stage_protocol_feature_cycles(ctx, scenario, "protocol_feature_cycles")
+    assert result["feature_cycles"] == 3
+    assert result["total_steps_created"] == 6
+    assert result["total_executed_steps"] == 6
+    assert len(result["cycles"]) == 3
+    assert calls[0][1] == "protocol_feature_cycles-cycle-1-protocol_create"
+    assert calls[-1][1] == "protocol_feature_cycles-cycle-3-step_execute"

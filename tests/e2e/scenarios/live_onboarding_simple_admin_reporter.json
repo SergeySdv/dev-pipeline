@@ -12,10 +12,7 @@
     "stages": [
       "project_create",
       "project_onboard_windmill",
-      "protocol_create",
-      "protocol_worktree",
-      "protocol_plan",
-      "step_execute"
+      "protocol_feature_cycles"
     ]
   },
   "expectations": {

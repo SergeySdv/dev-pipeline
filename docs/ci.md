@@ -87,6 +87,7 @@ Key harness env vars:
 - `HARNESS_CONTINUE_ON_ERROR` (`1` or `0`)
 - `HARNESS_ONBOARD_MODE` (`windmill` or `agent`)
 - `HARNESS_STEP_ENGINE` (`opencode` or `dummy`)
+- `HARNESS_FEATURE_CYCLES` (default `2`; number of protocol/worktree/plan/execute feature cycles per scenario)
 - `HARNESS_WINDMILL_AUTO_IMPORT` (`1` default; set `0` to skip `scripts/run-local-dev.sh import` during preflight)
 - `HARNESS_WINDMILL_HEARTBEAT_TIMEOUT_SECONDS` (optional; fail stage if Windmill status/log stream is silent for this many seconds)
 - `WINDMILL_JOB_TIMEOUT_SECONDS` (`3600` default in local compose; increases Windmill worker instance-wide max job duration)
@@ -113,6 +114,9 @@ Steps:
    - `HARNESS_SCENARIO=<scenario_id> scripts/ci/test-harness-live.sh`
 9. Cached checkout branch handling:
    - harness auto-falls back from configured `repo.default_branch` to `origin/HEAD` when they diverge (for example `main` vs `master`).
+10. Feature implementation cycles:
+   - `protocol_feature_cycles` runs repeated `protocol_create -> protocol_worktree -> protocol_plan -> step_execute` loops.
+   - Control loop count with `HARNESS_FEATURE_CYCLES` (default `2`).
 
 Failure outputs:
 

@@ -551,7 +551,16 @@ def _stage_protocol_create(ctx: HarnessRunContext, scenario: ScenarioConfig, sta
     env = ctx.metadata["env"]
     project_id = int(ctx.metadata["project_id"])
     base_branch = str(ctx.metadata["base_branch"])
-    protocol_name = f"{scenario.scenario_id}-protocol"
+    cycle_index = int(ctx.metadata.get("_protocol_cycle_index", 0))
+    cycle_total = int(ctx.metadata.get("_protocol_cycle_total", 1))
+    if cycle_total > 1:
+        protocol_name = f"{scenario.scenario_id}-protocol-{cycle_index + 1}"
+        protocol_description = (
+            f"Harness protocol cycle {cycle_index + 1}/{cycle_total} for {scenario.scenario_id}"
+        )
+    else:
+        protocol_name = f"{scenario.scenario_id}-protocol"
+        protocol_description = f"Harness protocol for {scenario.scenario_id}"
 
     proto = _run_cli(
         "protocol",
@@ -559,7 +568,7 @@ def _stage_protocol_create(ctx: HarnessRunContext, scenario: ScenarioConfig, sta
         str(project_id),
         protocol_name,
         "--description",
-        f"Harness protocol for {scenario.scenario_id}",
+        protocol_description,
         "--branch",
         base_branch,
         cwd=REPO_ROOT,
@@ -677,12 +686,63 @@ def _stage_step_execute(ctx: HarnessRunContext, scenario: ScenarioConfig, stage:
     }
 
 
+def _desired_feature_cycles() -> int:
+    raw = os.environ.get("HARNESS_FEATURE_CYCLES", "2").strip()
+    try:
+        cycles = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"HARNESS_FEATURE_CYCLES must be an integer, got: {raw!r}") from exc
+    return max(1, cycles)
+
+
+def _stage_protocol_feature_cycles(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    cycles = _desired_feature_cycles()
+    cycle_results: list[dict[str, Any]] = []
+
+    for cycle_index in range(cycles):
+        cycle_number = cycle_index + 1
+        cycle_stage_prefix = f"{stage}-cycle-{cycle_number}"
+        ctx.metadata["_protocol_cycle_index"] = cycle_index
+        ctx.metadata["_protocol_cycle_total"] = cycles
+        try:
+            created = _stage_protocol_create(ctx, scenario, f"{cycle_stage_prefix}-protocol_create")
+            worktree = _stage_protocol_worktree(ctx, scenario, f"{cycle_stage_prefix}-protocol_worktree")
+            planned = _stage_protocol_plan(ctx, scenario, f"{cycle_stage_prefix}-protocol_plan")
+            executed = _stage_step_execute(ctx, scenario, f"{cycle_stage_prefix}-step_execute")
+        finally:
+            ctx.metadata.pop("_protocol_cycle_index", None)
+            ctx.metadata.pop("_protocol_cycle_total", None)
+
+        cycle_results.append(
+            {
+                "cycle": cycle_number,
+                "protocol_run_id": int(created.get("protocol_run_id") or ctx.metadata.get("protocol_id")),
+                "protocol_name": str(ctx.metadata.get("protocol_name") or ""),
+                "worktree_path": worktree.get("worktree_path"),
+                "steps_created": int(planned.get("steps_created") or 0),
+                "executed_steps": int(executed.get("executed_steps") or 0),
+                "protocol_status": executed.get("protocol_status"),
+                "protocol_root": executed.get("protocol_root"),
+            }
+        )
+
+    total_steps_created = sum(item["steps_created"] for item in cycle_results)
+    total_executed_steps = sum(item["executed_steps"] for item in cycle_results)
+    return {
+        "feature_cycles": cycles,
+        "total_steps_created": total_steps_created,
+        "total_executed_steps": total_executed_steps,
+        "cycles": cycle_results,
+    }
+
+
 def build_live_cli_stage_handlers() -> dict[str, StageHandler]:
     return {
         "project_create": _stage_project_create,
         "project_onboard": _stage_project_onboard,
         "project_onboard_agent": _stage_project_onboard_agent,
         "project_onboard_windmill": _stage_project_onboard_windmill,
+        "protocol_feature_cycles": _stage_protocol_feature_cycles,
         "protocol_create": _stage_protocol_create,
         "protocol_worktree": _stage_protocol_worktree,
         "protocol_plan": _stage_protocol_plan,
