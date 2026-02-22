@@ -2,7 +2,9 @@ name: Live Harness
 
 on:
   schedule:
-    - cron: "30 2 * * *"
+    # GitHub Actions cron does not support true "every 2 weeks", so we trigger weekly
+    # and gate scheduled runs to alternating ISO weeks in the job steps below.
+    - cron: "30 2 * * 0"
   workflow_dispatch:
     inputs:
       harness_repos:
@@ -56,16 +58,32 @@ jobs:
       HARNESS_ONBOARD_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.onboard_mode || 'windmill' }}
       HARNESS_STEP_ENGINE: ${{ github.event_name == 'workflow_dispatch' && inputs.step_engine || 'dummy' }}
     steps:
+      - name: Biweekly schedule gate
+        if: github.event_name == 'schedule'
+        id: biweekly_gate
+        run: |
+          iso_week="$(date -u +%V)"
+          if (( 10#$iso_week % 2 == 0 )); then
+            echo "run_harness=true" >> "$GITHUB_OUTPUT"
+            echo "Running live harness on ISO week $iso_week."
+          else
+            echo "run_harness=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping live harness on ISO week $iso_week (off week)."
+          fi
+
       - uses: actions/checkout@v4
+        if: github.event_name != 'schedule' || steps.biweekly_gate.outputs.run_harness == 'true'
 
       - name: Bootstrap
+        if: github.event_name != 'schedule' || steps.biweekly_gate.outputs.run_harness == 'true'
         run: scripts/ci/bootstrap.sh
 
       - name: Run Live Harness
+        if: github.event_name != 'schedule' || steps.biweekly_gate.outputs.run_harness == 'true'
         run: scripts/ci/test-harness-live.sh
 
       - name: Upload Harness Artifacts
-        if: always()
+        if: always() && (github.event_name != 'schedule' || steps.biweekly_gate.outputs.run_harness == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: live-harness-${{ github.run_id }}
