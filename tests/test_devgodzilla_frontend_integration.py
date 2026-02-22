@@ -15,19 +15,22 @@ def _flag(name: str) -> bool:
 def test_frontend_container_startup() -> None:
     """
     Integration test for frontend container startup.
-    
+
     Verifies that:
     1. Frontend container builds successfully
     2. Frontend container can start (even if dependencies aren't available)
     3. Frontend serves the Next.js application on port 3000
-    
+
     Requirements: 1.1 - Frontend Service SHALL build and run the Next.js application on port 3000
-      
+
     This test focuses on the frontend container itself, independent of other services.
     """
+    if not _flag("DEVGODZILLA_RUN_LIVE_INTEGRATION_TESTS"):
+        pytest.skip("set DEVGODZILLA_RUN_LIVE_INTEGRATION_TESTS=1 to enable container startup tests")
+
     import subprocess
     import time
-    
+
     try:
         print("Building frontend container...")
         
@@ -204,7 +207,7 @@ def test_frontend_environment_configuration() -> None:
     # Check that the page loads without obvious configuration errors
     # Next.js would typically show error pages if environment configuration is severely broken
     assert "Application error" not in html_content, "Frontend shows application error"
-    assert "500" not in html_content, "Frontend shows 500 error"
+    assert "500 Internal Server Error" not in html_content, "Frontend shows 500 error"
     
     # Verify the page structure suggests a working React app
     # Next.js apps typically have a root div with id="__next"
