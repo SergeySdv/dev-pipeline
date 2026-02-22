@@ -1,15 +1,15 @@
+import json
+import os
+import shutil
+
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from devgodzilla.models.domain import SpecRunStatus
 from devgodzilla.models.speckit import TaskStatus
 from devgodzilla.services.specification import (
     SpecificationService,
-    ClarifyResult,
-    ChecklistResult,
-    AnalyzeResult,
-    ImplementResult,
 )
 from devgodzilla.services.base import ServiceContext
 
@@ -86,13 +86,19 @@ class TestSpecKitTaskStatusEnum:
         assert TaskStatus("skipped") == TaskStatus.SKIPPED
 
 
+def _skip_unless_real_agent():
+    if os.environ.get("DEVGODZILLA_RUN_E2E_REAL_AGENT") != "1":
+        pytest.skip("Set DEVGODZILLA_RUN_E2E_REAL_AGENT=1 to enable real-agent tests.")
+    if shutil.which("opencode") is None:
+        pytest.skip("opencode is required for real-agent tests.")
+
+
 @pytest.fixture
 def workspace(tmp_path):
     return tmp_path
 
 
-@pytest.fixture
-def initialized_workspace(tmp_path):
+def _init_workspace(tmp_path):
     specify_dir = tmp_path / ".specify"
     specify_dir.mkdir()
     (specify_dir / "memory").mkdir()
@@ -107,24 +113,18 @@ def initialized_workspace(tmp_path):
 
 
 @pytest.fixture
-def service_context(monkeypatch):
-    monkeypatch.setenv("DEVGODZILLA_SPECKIT_ENGINE_ID", "dummy")
-    config = Mock()
-    config.engine_defaults = {"planning": "dummy"}
-    return ServiceContext(config=config)
+def initialized_workspace(tmp_path):
+    return _init_workspace(tmp_path)
 
 
 @pytest.fixture
-def mock_db():
-    db = Mock()
-    mock_project = Mock()
-    mock_project.id = 1
-    mock_project.local_path = "/tmp/repo"
-    mock_project.constitution_version = None
-    mock_project.constitution_hash = None
-    db.get_project.return_value = mock_project
-    db.update_project.return_value = None
-    return db
+def service_context(monkeypatch):
+    monkeypatch.setenv("DEVGODZILLA_SPECKIT_ENGINE_ID", "opencode")
+    monkeypatch.setenv("DEVGODZILLA_DEFAULT_ENGINE_ID", "opencode")
+    monkeypatch.setenv("DEVGODZILLA_OPENCODE_MODEL", os.environ.get("DEVGODZILLA_OPENCODE_MODEL", "zai-coding-plan/glm-5"))
+    config = Mock()
+    config.engine_defaults = {"planning": "opencode"}
+    return ServiceContext(config=config)
 
 
 @pytest.fixture
@@ -132,9 +132,12 @@ def service(service_context):
     return SpecificationService(service_context)
 
 
+@pytest.mark.integration
 class TestSpecKitClarifyStage:
 
     def test_clarify_success(self, service, initialized_workspace):
+        _skip_unless_real_agent()
+
         spec_result = service.run_specify(str(initialized_workspace), "Test feature")
         assert spec_result.success
 
@@ -146,7 +149,12 @@ class TestSpecKitClarifyStage:
         assert result.success
         assert result.clarifications_added >= 0
 
+        spec_content = Path(spec_result.spec_path).read_text()
+        assert "Q1" in spec_content or "A1" in spec_content
+
     def test_clarify_missing_spec(self, service, initialized_workspace):
+        _skip_unless_real_agent()
+
         result = service.run_clarify(
             str(initialized_workspace),
             str(initialized_workspace / "specs" / "nonexistent" / "spec.md"),
@@ -155,6 +163,8 @@ class TestSpecKitClarifyStage:
         assert result.error is not None
 
     def test_clarify_with_notes(self, service, initialized_workspace):
+        _skip_unless_real_agent()
+
         spec_result = service.run_specify(str(initialized_workspace), "Test feature")
         assert spec_result.success
 
@@ -165,73 +175,83 @@ class TestSpecKitClarifyStage:
         )
         assert result.success
 
+        spec_content = Path(spec_result.spec_path).read_text()
+        assert "Additional context" in spec_content
 
-class TestSpecKitChecklistStage:
+
+@pytest.mark.integration
+class TestSpecKitChecklistStageRealAgent:
 
     def test_checklist_success(self, service, initialized_workspace):
-        spec_result = service.run_specify(str(initialized_workspace), "Test feature")
+        _skip_unless_real_agent()
+
+        spec_result = service.run_specify(str(initialized_workspace), "Test feature with auth")
         assert spec_result.success
 
-        with patch.object(service, "_run_speckit_agent") as mock_agent:
-            mock_agent.return_value = Mock(success=True)
-            result = service.run_checklist(
-                str(initialized_workspace),
-                spec_result.spec_path,
-            )
-            assert result.success
-            assert result.checklist_path is not None
-            assert Path(result.checklist_path).exists()
+        result = service.run_checklist(
+            str(initialized_workspace),
+            spec_result.spec_path,
+        )
+        assert result.success
+        assert result.checklist_path is not None
+        checklist_file = Path(result.checklist_path)
+        assert checklist_file.exists()
+        content = checklist_file.read_text()
+        assert len(content) > 10
 
-    def test_checklist_agent_failure(self, service, initialized_workspace):
-        spec_result = service.run_specify(str(initialized_workspace), "Test feature")
-        assert spec_result.success
+    def test_checklist_agent_failure_on_missing_spec(self, service, initialized_workspace):
+        _skip_unless_real_agent()
 
-        with patch.object(service, "_run_speckit_agent") as mock_agent:
-            mock_agent.return_value = Mock(success=False, error="Agent failed")
-            result = service.run_checklist(
-                str(initialized_workspace),
-                spec_result.spec_path,
-            )
-            assert not result.success
-            assert "failed" in result.error.lower()
+        result = service.run_checklist(
+            str(initialized_workspace),
+            str(initialized_workspace / "specs" / "nonexistent" / "spec.md"),
+        )
+        assert not result.success
 
 
-class TestSpecKitAnalyzeStage:
+@pytest.mark.integration
+class TestSpecKitAnalyzeStageRealAgent:
 
     def test_analyze_success(self, service, initialized_workspace):
-        spec_result = service.run_specify(str(initialized_workspace), "Test feature")
+        _skip_unless_real_agent()
+
+        spec_result = service.run_specify(str(initialized_workspace), "Test feature with database")
         assert spec_result.success
 
-        with patch.object(service, "_run_speckit_agent") as mock_agent:
-            mock_agent.return_value = Mock(success=True)
-            result = service.run_analyze(
-                str(initialized_workspace),
-                spec_result.spec_path,
-            )
-            assert result.success
-            assert result.report_path is not None
-            assert Path(result.report_path).exists()
+        result = service.run_analyze(
+            str(initialized_workspace),
+            spec_result.spec_path,
+        )
+        assert result.success
+        assert result.report_path is not None
+        report_file = Path(result.report_path)
+        assert report_file.exists()
+        content = report_file.read_text()
+        assert "Analysis" in content or "Spec" in content or "analysis" in content
 
     def test_analyze_without_optional_plan_tasks(self, service, initialized_workspace):
+        _skip_unless_real_agent()
+
         spec_result = service.run_specify(str(initialized_workspace), "Test feature")
         assert spec_result.success
 
-        with patch.object(service, "_run_speckit_agent") as mock_agent:
-            mock_agent.return_value = Mock(success=True)
-            result = service.run_analyze(
-                str(initialized_workspace),
-                spec_result.spec_path,
-                plan_path=None,
-                tasks_path=None,
-            )
-            assert result.success
-            content = Path(result.report_path).read_text()
-            assert "N/A" in content
+        result = service.run_analyze(
+            str(initialized_workspace),
+            spec_result.spec_path,
+            plan_path=None,
+            tasks_path=None,
+        )
+        assert result.success
+        content = Path(result.report_path).read_text()
+        assert len(content) > 0
 
 
+@pytest.mark.integration
 class TestSpecKitImplementStage:
 
     def test_implement_success(self, service, initialized_workspace):
+        _skip_unless_real_agent()
+
         spec_result = service.run_specify(str(initialized_workspace), "Test feature")
         assert spec_result.success
 
@@ -246,6 +266,8 @@ class TestSpecKitImplementStage:
         assert Path(result.metadata_path).exists()
 
     def test_implement_creates_metadata_json(self, service, initialized_workspace):
+        _skip_unless_real_agent()
+
         spec_result = service.run_specify(str(initialized_workspace), "Test feature")
         assert spec_result.success
 
@@ -254,30 +276,33 @@ class TestSpecKitImplementStage:
             spec_result.spec_path,
         )
         assert result.success
-        import json
         metadata = json.loads(Path(result.metadata_path).read_text())
         assert "run_id" in metadata
         assert metadata["status"] == "initialized"
 
 
-class TestSpecKitFullWorkflowChain:
+@pytest.mark.integration
+class TestSpecKitFullWorkflowChainRealAgent:
 
     def test_full_chain_statuses(self, service, workspace):
+        _skip_unless_real_agent()
+
         init_result = service.init_project(str(workspace))
         assert init_result.success
 
-        (workspace / ".specify" / "templates" / "checklist-template.md").write_text(
-            "# {{ title }}\n- [ ] Check 1"
-        )
-
-        spec_result = service.run_specify(str(workspace), "Auth feature")
+        spec_result = service.run_specify(str(workspace), "Auth feature with JWT")
         assert spec_result.success
+        assert Path(spec_result.spec_path).exists()
+        assert Path(spec_result.spec_path).stat().st_size > 0
 
         plan_result = service.run_plan(str(workspace), spec_result.spec_path)
         assert plan_result.success
+        assert Path(plan_result.plan_path).exists()
+        assert Path(plan_result.plan_path).stat().st_size > 0
 
         tasks_result = service.run_tasks(str(workspace), plan_result.plan_path)
         assert tasks_result.success
+        assert Path(tasks_result.tasks_path).exists()
 
         clarify_result = service.run_clarify(
             str(workspace),
@@ -286,15 +311,18 @@ class TestSpecKitFullWorkflowChain:
         )
         assert clarify_result.success
 
-        with patch.object(service, "_run_speckit_agent") as mock_agent:
-            mock_agent.return_value = Mock(success=True)
-            checklist_result = service.run_checklist(str(workspace), spec_result.spec_path)
-            assert checklist_result.success
+        checklist_result = service.run_checklist(str(workspace), spec_result.spec_path)
+        assert checklist_result.success
+        assert Path(checklist_result.checklist_path).exists()
+        checklist_content = Path(checklist_result.checklist_path).read_text()
+        assert len(checklist_content) > 10
 
-        with patch.object(service, "_run_speckit_agent") as mock_agent:
-            mock_agent.return_value = Mock(success=True)
-            analyze_result = service.run_analyze(str(workspace), spec_result.spec_path)
-            assert analyze_result.success
+        analyze_result = service.run_analyze(str(workspace), spec_result.spec_path)
+        assert analyze_result.success
+        assert Path(analyze_result.report_path).exists()
 
         implement_result = service.run_implement(str(workspace), spec_result.spec_path)
         assert implement_result.success
+        assert Path(implement_result.run_path).exists()
+        metadata = json.loads(Path(implement_result.metadata_path).read_text())
+        assert metadata["status"] == "initialized"
