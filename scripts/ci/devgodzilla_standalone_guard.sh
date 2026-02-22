@@ -20,16 +20,35 @@ PATTERNS=(
   'tasksgodzilla-api'
 )
 
+search_has_match() {
+  local pat="$1"
+  if command -v rg >/dev/null 2>&1; then
+    rg -n --hidden --glob '!.git/**' "${pat}" "${TARGETS[@]}" >/dev/null
+    return $?
+  fi
+
+  grep -R -n -F --exclude-dir=.git -- "${pat}" "${TARGETS[@]}" >/dev/null
+}
+
+search_print_matches() {
+  local pat="$1"
+  if command -v rg >/dev/null 2>&1; then
+    rg -n --hidden --glob '!.git/**' "${pat}" "${TARGETS[@]}" >&2 || true
+    return 0
+  fi
+
+  grep -R -n -F --exclude-dir=.git -- "${pat}" "${TARGETS[@]}" >&2 || true
+}
+
 if ! command -v rg >/dev/null 2>&1; then
-  echo "devgodzilla-standalone-guard: rg not found (install ripgrep)" >&2
-  exit 1
+  echo "devgodzilla-standalone-guard: rg not found, using grep fallback" >&2
 fi
 
 fail=0
 for pat in "${PATTERNS[@]}"; do
-  if rg -n --hidden --glob '!.git/**' "${pat}" "${TARGETS[@]}" >/dev/null; then
+  if search_has_match "${pat}"; then
     echo "devgodzilla-standalone-guard: found forbidden reference matching: ${pat}" >&2
-    rg -n --hidden --glob '!.git/**' "${pat}" "${TARGETS[@]}" >&2 || true
+    search_print_matches "${pat}"
     fail=1
   fi
 done
