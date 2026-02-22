@@ -37,6 +37,7 @@ import { BranchesTab } from "./components/branches-tab"
 import { OverviewTab } from "./components/overview-tab"
 import { SprintTab } from "./components/sprint-tab"
 import { WorkflowTab } from "./components/workflow-tab"
+import { SettingsTab } from "./components/settings-tab"
 import { cn } from "@/lib/utils"
 import { GenerateSpecsWizardModal } from "@/components/wizards/generate-specs-wizard"
 import { DesignSolutionWizardModal } from "@/components/wizards/design-solution-wizard"
@@ -88,27 +89,52 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     failed: protocols?.filter((p) => p.status === "failed").length || 0,
   }
 
-  const navItems = [
-    { id: "overview", label: "Overview", icon: LayoutDashboard, description: "Project summary and quick actions" },
+  const navGroups = [
     {
-      id: "workflow",
-      label: "Workflow Pipeline",
-      icon: Workflow,
-      description: "Visual pipeline with agent assignment",
+      title: "Development",
+      items: [
+        { id: "overview", label: "Overview", icon: LayoutDashboard, description: "Project summary and quick actions" },
+        { id: "spec", label: "Specifications", icon: FileCode2, description: "Technical specs and features" },
+        { id: "branches", label: "Branches & PRs", icon: GitPullRequest, description: "Git workflow and CI" },
+      ],
     },
-    { id: "execution", label: "Execution", icon: Kanban, description: "Protocol-driven execution cycles" },
-    { id: "onboarding", label: "Onboarding", icon: Workflow, description: "Setup progress and stages" },
-    { id: "spec", label: "Specification", icon: FileCode2, description: "Technical specs and features" },
-    { id: "policy", label: "Policy", icon: Shield, description: "Compliance and rules" },
     {
-      id: "clarifications",
-      label: "Clarifications",
-      icon: MessageSquare,
-      description: "Questions and blockers",
-      badge: onboarding?.blocking_clarifications || 0,
+      title: "Execution",
+      items: [
+        { id: "execution", label: "Sprints", icon: Kanban, description: "Protocol-driven execution cycles" },
+        {
+          id: "workflow",
+          label: "Workflow Pipeline",
+          icon: Workflow,
+          description: "Visual pipeline with agent assignment",
+        },
+      ],
     },
-    { id: "branches", label: "Branches & PRs", icon: GitPullRequest, description: "Git workflow and CI" },
+    {
+      title: "Governance",
+      items: [
+        { id: "policy", label: "Policy", icon: Shield, description: "Compliance and rules" },
+        {
+          id: "clarifications",
+          label: "Clarifications",
+          icon: MessageSquare,
+          description: "Questions and blockers",
+          badge: onboarding?.blocking_clarifications || 0,
+        },
+      ],
+    },
+    {
+      title: "Configuration",
+      items: [
+        { id: "settings", label: "Settings", icon: Settings2, description: "Project configuration and overrides" },
+        ...(onboarding
+          ? [{ id: "onboarding", label: "Onboarding", icon: Workflow, description: "Setup progress and stages" }]
+          : []),
+      ],
+    },
   ]
+
+  const navItems = navGroups.flatMap((g) => g.items)
 
   const tabParam = searchParams.get("tab")
   const normalizedTab = tabParam === "sprints" ? "execution" : tabParam
@@ -241,49 +267,57 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
       <div className="container py-6">
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
-          <aside className="space-y-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Navigation</div>
-            {navItems.map((item) => {
-              const Icon = item.icon
-              const isActive = activeTab === item.id
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handleTabClick(item.id)}
-                  className={cn(
-                    "w-full flex items-start gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors group",
-                    isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "hover:bg-muted text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <Icon
-                    className={cn(
-                      "h-5 w-5 shrink-0 mt-0.5",
-                      isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground",
-                    )}
-                  />
-                  <div className="flex-1 text-left">
-                    <div className="flex items-center gap-2">
-                      <span className={cn("font-medium", isActive && "text-primary-foreground")}>{item.label}</span>
-                      {item.badge && item.badge > 0 && (
-                        <Badge variant={isActive ? "secondary" : "destructive"} className="h-5 min-w-5 px-1.5 text-xs">
-                          {item.badge}
-                        </Badge>
-                      )}
-                    </div>
-                    <p
-                      className={cn(
-                        "text-xs mt-0.5",
-                        isActive ? "text-primary-foreground/80" : "text-muted-foreground",
-                      )}
-                    >
-                      {item.description}
-                    </p>
-                  </div>
-                </button>
-              )
-            })}
+          <aside className="space-y-4">
+            {navGroups.map((group) => (
+              <div key={group.title}>
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
+                  {group.title}
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const Icon = item.icon
+                    const isActive = activeTab === item.id
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => handleTabClick(item.id)}
+                        className={cn(
+                          "w-full flex items-start gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors group",
+                          isActive
+                            ? "bg-primary text-primary-foreground"
+                            : "hover:bg-muted text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <Icon
+                          className={cn(
+                            "h-5 w-5 shrink-0 mt-0.5",
+                            isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground",
+                          )}
+                        />
+                        <div className="flex-1 text-left">
+                          <div className="flex items-center gap-2">
+                            <span className={cn("font-medium", isActive && "text-primary-foreground")}>{item.label}</span>
+                            {"badge" in item && (item as { badge?: number }).badge && (item as { badge: number }).badge > 0 && (
+                              <Badge variant={isActive ? "secondary" : "destructive"} className="h-5 min-w-5 px-1.5 text-xs">
+                                {(item as { badge: number }).badge}
+                              </Badge>
+                            )}
+                          </div>
+                          <p
+                            className={cn(
+                              "text-xs mt-0.5",
+                              isActive ? "text-primary-foreground/80" : "text-muted-foreground",
+                            )}
+                          >
+                            {item.description}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </aside>
 
           <main>
@@ -295,6 +329,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             {activeTab === "policy" && <PolicyTab projectId={projectId} />}
             {activeTab === "clarifications" && <ClarificationsTab projectId={projectId} />}
             {activeTab === "branches" && <BranchesTab projectId={projectId} />}
+            {activeTab === "settings" && <SettingsTab projectId={projectId} />}
           </main>
         </div>
       </div>

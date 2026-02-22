@@ -39,6 +39,10 @@ export const queryKeys = {
     policySnapshot: (id: number) => [...queryKeys.protocols.all, "policySnapshot", id] as const,
     clarifications: (id: number, status?: string) =>
       [...queryKeys.protocols.all, "clarifications", id, { status }] as const,
+    artifacts: (id: number) => [...queryKeys.protocols.all, "artifacts", id] as const,
+    feedback: (id: number) => [...queryKeys.protocols.all, "feedback", id] as const,
+    flow: (id: number) => [...queryKeys.protocols.all, "flow", id] as const,
+    sprint: (id: number) => [...queryKeys.protocols.all, "sprint", id] as const,
   },
 
   // Steps
@@ -47,6 +51,8 @@ export const queryKeys = {
     detail: (id: number) => [...queryKeys.steps.all, "detail", id] as const,
     runs: (id: number) => [...queryKeys.steps.all, "runs", id] as const,
     policyFindings: (id: number) => [...queryKeys.steps.all, "policyFindings", id] as const,
+    artifacts: (id: number) => [...queryKeys.steps.all, "artifacts", id] as const,
+    quality: (id: number) => [...queryKeys.steps.all, "quality", id] as const,
   },
 
   // Runs
@@ -80,6 +86,7 @@ export const queryKeys = {
     byProject: (projectId: number) => ["sprints", "project", projectId] as const,
     detail: (id: number) => ["sprints", "detail", id] as const,
     metrics: (id: number) => ["sprints", "metrics", id] as const,
+    velocity: (id: number) => ["sprints", "velocity", id] as const,
   },
 
   tasks: {

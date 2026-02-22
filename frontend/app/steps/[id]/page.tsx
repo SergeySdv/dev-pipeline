@@ -2,7 +2,7 @@
 import { use } from "react"
 
 import Link from "next/link"
-import { useProtocolSteps, useStepRuns, useStepPolicyFindings, useStepAction, useProtocol } from "@/lib/api"
+import { useProtocolSteps, useStepRuns, useStepPolicyFindings, useStepAction, useProtocol, useStepArtifacts, useStepQuality } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -11,11 +11,11 @@ import { StatusPill } from "@/components/ui/status-pill"
 import { LoadingState } from "@/components/ui/loading-state"
 import { EmptyState } from "@/components/ui/empty-state"
 import { CodeBlock } from "@/components/ui/code-block"
-import { ArrowLeft, Play, ClipboardCheck, ExternalLink, PlayCircle, AlertTriangle } from "lucide-react"
+import { ArrowLeft, Play, ClipboardCheck, ExternalLink, PlayCircle, AlertTriangle, FileBox, FileText, Code2, Image, ShieldCheck, CheckCircle2, XCircle as XCircleIcon } from "lucide-react"
 import { toast } from "sonner"
 import { formatRelativeTime, truncateHash } from "@/lib/format"
 import type { ColumnDef } from "@tanstack/react-table"
-import type { CodexRun, StepRun, PolicyFinding } from "@/lib/api/types"
+import type { CodexRun, StepRun, PolicyFinding, StepArtifact, StepQuality } from "@/lib/api/types"
 
 export default function StepDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -31,6 +31,8 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
   const { data: protocol } = useProtocol(protocolRunId ?? undefined)
   const { data: steps } = useProtocolSteps(protocolRunId ?? undefined)
   const { data: findings } = useStepPolicyFindings(stepId)
+  const { data: artifacts } = useStepArtifacts(stepId)
+  const { data: quality } = useStepQuality(stepId)
   const stepAction = useStepAction()
 
   const step = steps?.find((s) => s.id === stepId)
@@ -165,6 +167,13 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
       <Tabs defaultValue="runs" className="space-y-4">
         <TabsList>
           <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="artifacts">
+            Artifacts
+            {artifacts && artifacts.length > 0 && (
+              <span className="ml-1 rounded-full bg-blue-500/10 px-2 text-xs text-blue-500">{artifacts.length}</span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="quality">Quality</TabsTrigger>
           <TabsTrigger value="policy">
             Policy Findings
             {findings && findings.length > 0 && (
@@ -175,6 +184,12 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
 
         <TabsContent value="runs">
           <StepRunsTab runs={runs} isLoading={runsLoading} stepId={stepId} />
+        </TabsContent>
+        <TabsContent value="artifacts">
+          <StepArtifactsTab artifacts={artifacts} stepId={stepId} />
+        </TabsContent>
+        <TabsContent value="quality">
+          <StepQualityTab quality={quality} />
         </TabsContent>
         <TabsContent value="policy">
           <StepPolicyTab findings={findings} />
@@ -242,6 +257,107 @@ function StepRunsTab({ runs, isLoading, stepId }: { runs: CodexRun[] | undefined
       </div>
       <DataTable columns={columns} data={runs} enableSearch enableExport enableColumnFilters exportFilename={`step-${stepId}-runs.csv`} />
     </div>
+  )
+}
+
+function artifactIcon(kind: string) {
+  if (kind === "code" || kind === "diff") return Code2
+  if (kind === "image" || kind === "screenshot") return Image
+  return FileText
+}
+
+function formatBytes(bytes: number | null) {
+  if (!bytes) return "-"
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function StepArtifactsTab({ artifacts, stepId }: { artifacts: StepArtifact[] | undefined; stepId: number }) {
+  if (!artifacts || artifacts.length === 0) {
+    return <EmptyState icon={FileBox} title="No artifacts" description="Step artifacts will appear here after execution." />
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-lg font-semibold">Step Artifacts</h3>
+        <p className="text-sm text-muted-foreground">{artifacts.length} artifact(s)</p>
+      </div>
+      <div className="space-y-2">
+        {artifacts.map((artifact) => {
+          const Icon = artifactIcon(artifact.kind)
+          return (
+            <div key={artifact.id} className="flex items-center gap-3 rounded-lg border p-3">
+              <Icon className="h-5 w-5 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm truncate">{artifact.name}</div>
+                <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                  <span>{artifact.kind}</span>
+                  <span>{formatBytes(artifact.bytes)}</span>
+                  <span className="truncate">{artifact.path}</span>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function qualityStatusMeta(status: string) {
+  if (status === "passed") return { label: "Passed", icon: CheckCircle2, className: "text-green-600" }
+  if (status === "warning") return { label: "Warning", icon: AlertTriangle, className: "text-amber-600" }
+  if (status === "failed") return { label: "Failed", icon: XCircleIcon, className: "text-red-600" }
+  return { label: status || "Unknown", icon: ShieldCheck, className: "text-muted-foreground" }
+}
+
+function StepQualityTab({ quality }: { quality: StepQuality | undefined }) {
+  if (!quality) {
+    return <EmptyState icon={ShieldCheck} title="No quality data" description="Run QA to populate quality results." />
+  }
+
+  const overall = qualityStatusMeta(quality.overall_status)
+  const OverallIcon = overall.icon
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <OverallIcon className={`h-5 w-5 ${overall.className}`} />
+          Step Quality
+        </CardTitle>
+        <CardDescription>QA score and gate results</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-4 text-sm">
+          <span>Score: <strong>{Math.round(quality.score * 100)}%</strong></span>
+          <span>Blocking: <strong>{quality.blocking_issues}</strong></span>
+          <span>Warnings: <strong>{quality.warnings}</strong></span>
+        </div>
+        {quality.gates.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium">Gates</h4>
+            <div className="grid gap-2 md:grid-cols-2">
+              {quality.gates.map((gate) => {
+                const meta = qualityStatusMeta(gate.status)
+                const GateIcon = meta.icon
+                return (
+                  <div key={`${gate.article}:${gate.name}`} className="rounded-lg border p-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium">{gate.name}</div>
+                      <div className="text-xs text-muted-foreground">{gate.article}</div>
+                    </div>
+                    <GateIcon className={`h-4 w-4 ${meta.className}`} />
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

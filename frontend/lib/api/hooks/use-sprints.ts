@@ -4,12 +4,15 @@ import { queryKeys } from "../query-keys"
 import type {
   Sprint,
   SprintCreate,
+  SprintUpdate,
+  SprintVelocity,
   AgileTask,
   AgileTaskCreate,
   AgileTaskUpdate,
   SprintMetrics,
   SyncResult,
   CreateSprintFromProtocolRequest,
+  ActionResponse,
 } from "../types"
 export function useSprints(projectId: number) {
   return useSWR<Sprint[]>(queryKeys.sprints.byProject(projectId), async () => {
@@ -115,6 +118,95 @@ export function useImportTasksToSprint(projectId: number) {
       mutate(queryKeys.tasks.all)
       mutate(queryKeys.sprints.byProject(projectId))
       mutate(queryKeys.sprints.all)
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useUpdateSprint() {
+  return {
+    mutateAsync: async (sprintId: number, data: SprintUpdate) => {
+      const result = await apiClient.put<Sprint>(`/sprints/${sprintId}`, data)
+      mutate(queryKeys.sprints.detail(sprintId))
+      mutate(queryKeys.sprints.all)
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useDeleteSprint() {
+  return {
+    mutateAsync: async (sprintId: number, projectId?: number) => {
+      const result = await apiClient.delete<{ status: string }>(`/sprints/${sprintId}`)
+      mutate(queryKeys.sprints.all)
+      if (projectId) mutate(queryKeys.sprints.byProject(projectId))
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useCompleteSprint() {
+  return {
+    mutateAsync: async (sprintId: number, projectId?: number) => {
+      const result = await apiClient.post<Sprint>(`/sprints/${sprintId}/actions/complete`)
+      mutate(queryKeys.sprints.detail(sprintId))
+      mutate(queryKeys.sprints.all)
+      if (projectId) mutate(queryKeys.sprints.byProject(projectId))
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useSprintVelocity(sprintId?: number | null) {
+  return useSWR<SprintVelocity>(
+    sprintId ? queryKeys.sprints.velocity(sprintId) : null,
+    async () => {
+      return apiClient.get<SprintVelocity>(`/sprints/${sprintId}/velocity`)
+    },
+  )
+}
+
+export function useDeleteTask() {
+  return {
+    mutateAsync: async (taskId: number) => {
+      const result = await apiClient.delete<{ status: string }>(`/tasks/${taskId}`)
+      mutate(queryKeys.tasks.detail(taskId))
+      mutate(queryKeys.tasks.all)
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useLinkProtocolToSprint() {
+  return {
+    mutateAsync: async (sprintId: number, protocolId: number) => {
+      const result = await apiClient.post<ActionResponse>(
+        `/sprints/${sprintId}/actions/link-protocol`,
+        { protocol_id: protocolId }
+      )
+      mutate(queryKeys.sprints.detail(sprintId))
+      return result
+    },
+    isPending: false,
+  }
+}
+
+export function useSyncSprintFromProtocol() {
+  return {
+    mutateAsync: async (sprintId: number, projectId?: number) => {
+      const result = await apiClient.post<SyncResult>(
+        `/sprints/${sprintId}/actions/sync-from-protocol`
+      )
+      mutate(queryKeys.sprints.detail(sprintId))
+      if (projectId) {
+        mutate(queryKeys.tasks.byProject(projectId, sprintId))
+      }
+      mutate(queryKeys.tasks.all)
       return result
     },
     isPending: false,

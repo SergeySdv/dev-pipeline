@@ -50,6 +50,23 @@ export function useCreateProject() {
   })
 }
 
+export function useUpdateProject() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      data,
+    }: {
+      projectId: number
+      data: Partial<ProjectCreate>
+    }) => apiClient.put<Project>(`/projects/${projectId}`, data),
+    onSuccess: (_, { projectId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list() })
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) })
+    },
+  })
+}
+
 export function useArchiveProject() {
   const queryClient = useQueryClient()
   return useMutation({

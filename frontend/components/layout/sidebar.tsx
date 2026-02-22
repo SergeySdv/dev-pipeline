@@ -20,6 +20,8 @@ import {
   Zap,
   TrendingUp,
   FileText,
+  Kanban,
+  FileCode2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -55,6 +57,8 @@ const navigationGroups: NavGroup[] = [
     items: [
       { name: "Runs", href: "/runs", icon: PlayCircle },
       { name: "Protocols", href: "/protocols", icon: GitBranch },
+      { name: "Sprints", href: "/execution", icon: Kanban },
+      { name: "Specifications", href: "/specifications", icon: FileCode2 },
       { name: "Clarifications", href: "/clarifications", icon: MessageCircle },
     ],
   },

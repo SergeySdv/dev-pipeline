@@ -578,10 +578,91 @@ export interface SyncResult {
   task_ids: number[]
 }
 
+export interface SprintUpdate {
+  name?: string
+  goal?: string
+  status?: SprintStatus
+  start_date?: string
+  end_date?: string
+  velocity_planned?: number
+}
+
+export interface SprintVelocity {
+  sprint_id: number
+  planned: number
+  actual: number
+  completed_points: number
+  total_points: number
+  trend: number[]
+}
+
 export interface BurndownPoint {
   date: string
   ideal: number
   actual: number
+}
+
+export interface ProtocolArtifact {
+  id: number
+  protocol_run_id: number
+  step_run_id: number | null
+  run_id: string | null
+  name: string
+  kind: string
+  path: string
+  sha256: string | null
+  bytes: number | null
+  created_at: string
+}
+
+export interface Feedback {
+  id: number
+  protocol_run_id: number
+  step_run_id: number | null
+  feedback_type: "approve" | "reject" | "clarify" | "retry"
+  message: string
+  metadata: Record<string, unknown> | null
+  created_by: string | null
+  created_at: string
+}
+
+export interface FeedbackCreate {
+  feedback_type: "approve" | "reject" | "clarify" | "retry"
+  message: string
+  step_run_id?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface ProtocolFlowInfo {
+  flow_path: string | null
+  flow_status: string | null
+  windmill_job_id: string | null
+}
+
+export interface StepArtifact {
+  id: number
+  step_run_id: number
+  run_id: string | null
+  name: string
+  kind: string
+  path: string
+  sha256: string | null
+  bytes: number | null
+  created_at: string
+}
+
+export interface StepQuality {
+  step_run_id: number
+  overall_status: string
+  score: number
+  blocking_issues: number
+  warnings: number
+  gates: Array<{
+    name: string
+    article: string
+    status: string
+    findings: unknown[]
+  }>
 }
 
 // =============================================================================

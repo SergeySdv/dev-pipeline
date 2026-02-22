@@ -16,6 +16,11 @@ import type {
   Clarification,
   ActionResponse,
   RunFilters,
+  ProtocolArtifact,
+  Feedback,
+  FeedbackCreate,
+  ProtocolFlowInfo,
+  Sprint,
 } from "../types"
 
 const useConditionalRefetchInterval = (baseInterval: number) => {
@@ -180,6 +185,89 @@ export function useProtocolAction() {
       })
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.events(protocolId),
+      })
+    },
+  })
+}
+
+// Protocol Artifacts
+export function useProtocolArtifacts(protocolId: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.protocols.artifacts(protocolId!),
+    queryFn: () => apiClient.get<ProtocolArtifact[]>(`/protocols/${protocolId}/artifacts`),
+    enabled: !!protocolId,
+  })
+}
+
+// Protocol Feedback
+export function useProtocolFeedback(protocolId: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.protocols.feedback(protocolId!),
+    queryFn: () => apiClient.get<Feedback[]>(`/protocols/${protocolId}/feedback`),
+    enabled: !!protocolId,
+  })
+}
+
+export function useSubmitProtocolFeedback() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      protocolId,
+      data,
+    }: {
+      protocolId: number
+      data: FeedbackCreate
+    }) => apiClient.post<Feedback>(`/protocols/${protocolId}/feedback`, data),
+    onSuccess: (_, { protocolId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.protocols.feedback(protocolId),
+      })
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.protocols.detail(protocolId),
+      })
+    },
+  })
+}
+
+// Protocol Flow
+export function useProtocolFlow(protocolId: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.protocols.flow(protocolId!),
+    queryFn: () => apiClient.get<ProtocolFlowInfo>(`/protocols/${protocolId}/flow`),
+    enabled: !!protocolId,
+  })
+}
+
+export function useCreateProtocolFlow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (protocolId: number) =>
+      apiClient.post<ProtocolFlowInfo>(`/protocols/${protocolId}/flow`),
+    onSuccess: (_, protocolId) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.protocols.flow(protocolId),
+      })
+    },
+  })
+}
+
+// Protocol Sprint
+export function useProtocolSprint(protocolId: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.protocols.sprint(protocolId!),
+    queryFn: () => apiClient.get<Sprint>(`/protocols/${protocolId}/sprint`),
+    enabled: !!protocolId,
+  })
+}
+
+export function useSyncProtocolToSprint() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (protocolId: number) =>
+      apiClient.post<ActionResponse>(`/protocols/${protocolId}/actions/sync-to-sprint`),
+    onSuccess: (_, protocolId) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.protocols.sprint(protocolId),
       })
     },
   })

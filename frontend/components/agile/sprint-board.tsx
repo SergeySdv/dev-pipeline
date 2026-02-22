@@ -86,6 +86,7 @@ interface SprintBoardProps {
   onTaskUpdate: (taskId: number, data: { board_status: TaskBoardStatus }) => Promise<void>
   onTaskCreate: (data: AgileTaskCreate) => Promise<void>
   onTaskEdit: (taskId: number, data: AgileTaskUpdate) => Promise<void>
+  onTaskDelete?: (taskId: number) => Promise<void>
   showBacklog?: boolean
   canCreate?: boolean
 }
@@ -96,6 +97,7 @@ export function SprintBoard({
   onTaskUpdate,
   onTaskCreate,
   onTaskEdit,
+  onTaskDelete,
   showBacklog = true,
   canCreate = true,
 }: SprintBoardProps) {
@@ -373,6 +375,7 @@ export function SprintBoard({
         task={selectedTask}
         sprints={sprints}
         onSave={handleModalSave}
+        onDelete={onTaskDelete}
         mode={modalMode}
       />
     </>

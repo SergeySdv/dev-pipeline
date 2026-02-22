@@ -30,6 +30,7 @@ interface TaskModalProps {
   task?: AgileTask | null
   sprints: Sprint[]
   onSave: (data: AgileTaskCreate | AgileTaskUpdate) => Promise<void>
+  onDelete?: (taskId: number) => Promise<void>
   mode: "create" | "edit" | "view"
 }
 
@@ -47,7 +48,7 @@ const initialFormData: AgileTaskCreate = {
   due_date: "",
 }
 
-export function TaskModal({ open, onOpenChange, task, sprints, onSave, mode }: TaskModalProps) {
+export function TaskModal({ open, onOpenChange, task, sprints, onSave, onDelete, mode }: TaskModalProps) {
   const [formData, setFormData] = useState<AgileTaskCreate>(initialFormData)
   const [saving, setSaving] = useState(false)
 
@@ -153,14 +154,33 @@ export function TaskModal({ open, onOpenChange, task, sprints, onSave, mode }: T
         </ScrollArea>
 
         <DialogFooter className="px-6 py-4 border-t">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {isReadOnly ? "Close" : "Cancel"}
-          </Button>
-          {!isReadOnly && (
-            <Button onClick={handleSave} disabled={saving || !validation.isValid}>
-              {saving ? "Saving..." : mode === "create" ? "Create Task" : "Save Changes"}
-            </Button>
-          )}
+          <div className="flex items-center justify-between w-full">
+            <div>
+              {onDelete && task && mode !== "create" && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={async () => {
+                    if (!confirm("Are you sure you want to delete this task?")) return
+                    await onDelete(task.id)
+                    onOpenChange(false)
+                  }}
+                >
+                  Delete
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                {isReadOnly ? "Close" : "Cancel"}
+              </Button>
+              {!isReadOnly && (
+                <Button onClick={handleSave} disabled={saving || !validation.isValid}>
+                  {saving ? "Saving..." : mode === "create" ? "Create Task" : "Save Changes"}
+                </Button>
+              )}
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

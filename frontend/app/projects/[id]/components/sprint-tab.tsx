@@ -10,6 +10,12 @@ import {
   useCreateTask,
   useProjectProtocols,
   useCreateSprintFromProtocol,
+  useUpdateSprint,
+  useDeleteSprint,
+  useCompleteSprint,
+  useLinkProtocolToSprint,
+  useSyncSprintFromProtocol,
+  useDeleteTask,
 } from "@/lib/api"
 import { SprintBoard } from "@/components/agile/sprint-board"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -41,9 +47,14 @@ import {
   ListTodo,
   Maximize2,
   ExternalLink,
+  Pencil,
+  Trash2,
+  Check,
+  Link2,
+  RefreshCw,
 } from "lucide-react"
 import { toast } from "sonner"
-import type { AgileTaskCreate, AgileTaskUpdate, TaskBoardStatus } from "@/lib/api/types"
+import type { AgileTaskCreate, AgileTaskUpdate, TaskBoardStatus, SprintUpdate } from "@/lib/api/types"
 
 interface SprintTabProps {
   projectId: number
@@ -62,13 +73,26 @@ export function SprintTab({ projectId }: SprintTabProps) {
   const { data: metrics } = useSprintMetrics(selectedSprintId)
   const updateTask = useUpdateTask()
   const createTask = useCreateTask()
+  const deleteTask = useDeleteTask()
   const { data: projectProtocols = [] } = useProjectProtocols(projectId)
   const createSprintFromProtocol = useCreateSprintFromProtocol(projectId)
+  const updateSprint = useUpdateSprint()
+  const deleteSprint = useDeleteSprint()
+  const completeSprint = useCompleteSprint()
+  const linkProtocol = useLinkProtocolToSprint()
+  const syncFromProtocol = useSyncSprintFromProtocol()
   const [createSprintOpen, setCreateSprintOpen] = useState(false)
+  const [editSprintOpen, setEditSprintOpen] = useState(false)
+  const [linkProtocolOpen, setLinkProtocolOpen] = useState(false)
   const [selectedProtocolId, setSelectedProtocolId] = useState("")
+  const [linkProtocolId, setLinkProtocolId] = useState("")
   const [sprintName, setSprintName] = useState("")
   const [sprintStart, setSprintStart] = useState("")
   const [sprintEnd, setSprintEnd] = useState("")
+  const [editName, setEditName] = useState("")
+  const [editGoal, setEditGoal] = useState("")
+  const [editStart, setEditStart] = useState("")
+  const [editEnd, setEditEnd] = useState("")
 
   const currentSprint =
     selectedSprintId != null
@@ -96,6 +120,12 @@ export function SprintTab({ projectId }: SprintTabProps) {
     toast.success("Task updated")
   }
 
+  const handleTaskDelete = async (taskId: number) => {
+    await deleteTask.mutateAsync(taskId)
+    mutateTasks()
+    toast.success("Task deleted")
+  }
+
   const handleCreateSprint = async () => {
     if (!selectedProtocolId) {
       toast.error("Select a protocol run to create an execution sprint.")
@@ -115,6 +145,77 @@ export function SprintTab({ projectId }: SprintTabProps) {
       setSprintEnd("")
     } catch {
       toast.error("Failed to create execution sprint")
+    }
+  }
+
+  const handleEditSprint = async () => {
+    if (!selectedSprintId) return
+    try {
+      const data: SprintUpdate = {}
+      if (editName) data.name = editName
+      if (editGoal) data.goal = editGoal
+      if (editStart) data.start_date = editStart
+      if (editEnd) data.end_date = editEnd
+      await updateSprint.mutateAsync(selectedSprintId, data)
+      toast.success("Sprint updated")
+      setEditSprintOpen(false)
+    } catch {
+      toast.error("Failed to update sprint")
+    }
+  }
+
+  const handleDeleteSprint = async () => {
+    if (!selectedSprintId) return
+    if (!confirm("Are you sure you want to delete this sprint?")) return
+    try {
+      await deleteSprint.mutateAsync(selectedSprintId, projectId)
+      toast.success("Sprint deleted")
+      setSelectedExecution(null)
+    } catch {
+      toast.error("Failed to delete sprint")
+    }
+  }
+
+  const handleCompleteSprint = async () => {
+    if (!selectedSprintId) return
+    try {
+      await completeSprint.mutateAsync(selectedSprintId, projectId)
+      toast.success("Sprint completed")
+    } catch {
+      toast.error("Failed to complete sprint")
+    }
+  }
+
+  const handleLinkProtocol = async () => {
+    if (!selectedSprintId || !linkProtocolId) return
+    try {
+      await linkProtocol.mutateAsync(selectedSprintId, Number.parseInt(linkProtocolId, 10))
+      toast.success("Protocol linked to sprint")
+      setLinkProtocolOpen(false)
+      setLinkProtocolId("")
+    } catch {
+      toast.error("Failed to link protocol")
+    }
+  }
+
+  const handleSyncFromProtocol = async () => {
+    if (!selectedSprintId) return
+    try {
+      await syncFromProtocol.mutateAsync(selectedSprintId, projectId)
+      toast.success("Tasks synced from protocol")
+      mutateTasks()
+    } catch {
+      toast.error("Failed to sync from protocol")
+    }
+  }
+
+  const openEditDialog = () => {
+    if (currentSprint) {
+      setEditName(currentSprint.name)
+      setEditGoal(currentSprint.goal || "")
+      setEditStart(currentSprint.start_date || "")
+      setEditEnd(currentSprint.end_date || "")
+      setEditSprintOpen(true)
     }
   }
 
@@ -182,6 +283,25 @@ export function SprintTab({ projectId }: SprintTabProps) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {currentSprint && currentSprint.status === "active" && (
+            <>
+              <Button size="sm" variant="ghost" onClick={openEditDialog} title="Edit sprint">
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button size="sm" variant="ghost" onClick={handleCompleteSprint} title="Complete sprint">
+                <Check className="h-4 w-4" />
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setLinkProtocolOpen(true)} title="Link protocol">
+                <Link2 className="h-4 w-4" />
+              </Button>
+              <Button size="sm" variant="ghost" onClick={handleSyncFromProtocol} title="Sync tasks from protocol">
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+              <Button size="sm" variant="ghost" onClick={handleDeleteSprint} title="Delete sprint" className="text-destructive hover:text-destructive">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </>
+          )}
           <Button size="sm" variant="outline" onClick={() => setCreateSprintOpen(true)}>
             <Plus className="h-4 w-4 mr-1" />
             Create from Protocol
@@ -231,6 +351,7 @@ export function SprintTab({ projectId }: SprintTabProps) {
               onTaskUpdate={handleTaskUpdate}
               onTaskCreate={handleTaskCreate}
               onTaskEdit={handleTaskEdit}
+              onTaskDelete={handleTaskDelete}
               showBacklog={!selectedExecution || selectedExecution === "all" || selectedExecution === "backlog"}
             />
           )}
@@ -262,6 +383,76 @@ export function SprintTab({ projectId }: SprintTabProps) {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Edit Sprint Dialog */}
+      <Dialog open={editSprintOpen} onOpenChange={setEditSprintOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Sprint</DialogTitle>
+            <DialogDescription>Update sprint details.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Sprint Name</Label>
+              <Input id="edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-goal">Goal</Label>
+              <Input id="edit-goal" value={editGoal} onChange={(e) => setEditGoal(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-start">Start Date</Label>
+                <Input id="edit-start" type="date" value={editStart} onChange={(e) => setEditStart(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-end">End Date</Label>
+                <Input id="edit-end" type="date" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditSprintOpen(false)}>Cancel</Button>
+            <Button onClick={handleEditSprint}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Link Protocol Dialog */}
+      <Dialog open={linkProtocolOpen} onOpenChange={setLinkProtocolOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link Protocol to Sprint</DialogTitle>
+            <DialogDescription>Connect an existing protocol run to sync tasks.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Protocol Run</Label>
+              <Select value={linkProtocolId} onValueChange={setLinkProtocolId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select protocol run" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projectProtocols.length === 0 && (
+                    <SelectItem value="none" disabled>No protocol runs found</SelectItem>
+                  )}
+                  {projectProtocols.map((protocol) => (
+                    <SelectItem key={protocol.id} value={protocol.id.toString()}>
+                      {protocol.protocol_name} #{protocol.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkProtocolOpen(false)}>Cancel</Button>
+            <Button onClick={handleLinkProtocol} disabled={!linkProtocolId || linkProtocolId === "none"}>
+              Link Protocol
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Execution Dialog */}
       <Dialog open={createSprintOpen} onOpenChange={setCreateSprintOpen}>

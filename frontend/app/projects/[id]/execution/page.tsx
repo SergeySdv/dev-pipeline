@@ -14,6 +14,7 @@ import {
   useProjectProtocols,
   useCreateSprintFromProtocol,
   useProject,
+  useDeleteTask,
 } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -126,6 +127,7 @@ export default function ProjectExecutionPage() {
   const { data: projectProtocols = [] } = useProjectProtocols(projectId)
   const updateTask = useUpdateTask()
   const createTask = useCreateTask()
+  const deleteTaskHook = useDeleteTask()
   const createSprintFromProtocol = useCreateSprintFromProtocol(projectId)
 
   // UI State
@@ -956,6 +958,10 @@ export default function ProjectExecutionPage() {
         task={selectedTask}
         sprints={sprints || []}
         onSave={handleModalSave}
+        onDelete={async (taskId) => {
+          await deleteTaskHook.mutateAsync(taskId)
+          mutateTasks()
+        }}
         mode={taskModalMode}
       />
     </div>
