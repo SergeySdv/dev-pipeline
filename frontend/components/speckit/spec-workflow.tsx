@@ -220,17 +220,17 @@ export function SpecWorkflow({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {steps.map((step, index) => {
             const status = stepStatus[step.key];
             const isActive = currentStep === step.key;
             const isNextStep = !currentStep && index === 0 && !status;
 
             return (
-              <div key={step.key} className="relative">
+              <div key={step.key} className="relative w-[180px] flex-shrink-0">
                 {/* Connector line */}
                 {index < steps.length - 1 && (
-                  <div className="bg-muted pointer-events-none absolute top-7 left-full hidden h-0.5 w-4 z-0 xl:block">
+                  <div className="bg-muted pointer-events-none absolute top-7 left-full hidden h-0.5 w-4 z-0 sm:block">
                     <div
                       className={cn(
                         "h-full transition-all",
@@ -249,7 +249,7 @@ export function SpecWorkflow({
                   >
                     <div className="mb-2 flex min-w-0 items-center gap-3">
                       <div className="flex-shrink-0">{getStatusIcon(status, isActive)}</div>
-                      <span className="min-w-0 flex-1 break-words text-sm leading-tight font-medium">
+                      <span className="min-w-0 flex-1 text-sm leading-tight font-medium whitespace-normal">
                         {step.label}
                       </span>
                     </div>
