@@ -247,9 +247,11 @@ export function SpecWorkflow({
                       getStatusColor(status, isActive)
                     )}
                   >
-                    <div className="mb-2 flex items-center gap-3">
-                      {getStatusIcon(status, isActive)}
-                      <span className="font-medium">{step.label}</span>
+                    <div className="mb-2 flex min-w-0 items-center gap-3">
+                      <div className="flex-shrink-0">{getStatusIcon(status, isActive)}</div>
+                      <span className="break-words text-sm leading-tight font-medium">
+                        {step.label}
+                      </span>
                     </div>
                     <p className="text-muted-foreground mb-3 text-xs">{step.description}</p>
 
