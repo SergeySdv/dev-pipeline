@@ -243,13 +243,13 @@ export function SpecWorkflow({
                 <Link href={getStepHref(step.key, projectId)}>
                   <div
                     className={cn(
-                      "relative z-10 cursor-pointer overflow-hidden rounded-lg border-2 p-4 transition-all hover:shadow-md",
+                      "relative z-10 cursor-pointer rounded-lg border-2 p-4 transition-all hover:shadow-md",
                       getStatusColor(status, isActive)
                     )}
                   >
                     <div className="mb-2 flex min-w-0 items-center gap-3">
                       <div className="flex-shrink-0">{getStatusIcon(status, isActive)}</div>
-                      <span className="break-words text-sm leading-tight font-medium">
+                      <span className="min-w-0 flex-1 break-words text-sm leading-tight font-medium">
                         {step.label}
                       </span>
                     </div>
