@@ -43,6 +43,20 @@ CREATE TABLE IF NOT EXISTS policy_packs (
     UNIQUE(key, version)
 );
 
+CREATE TABLE IF NOT EXISTS sprints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    goal TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    start_date DATETIME,
+    end_date DATETIME,
+    velocity_planned INTEGER,
+    velocity_actual INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS protocol_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -139,7 +153,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
     depends_on TEXT DEFAULT '[]',
     parallel_group TEXT,
     assigned_agent TEXT,
-    linked_task_id INTEGER REFERENCES tasks(id),
+    linked_task_id INTEGER,  -- FK to tasks removed to avoid circular dependency
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -293,20 +307,6 @@ CREATE INDEX IF NOT EXISTS idx_qa_results_project ON qa_results(project_id, crea
 CREATE INDEX IF NOT EXISTS idx_qa_results_protocol ON qa_results(protocol_run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_qa_results_step ON qa_results(step_run_id, created_at);
 
-CREATE TABLE IF NOT EXISTS sprints (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER NOT NULL REFERENCES projects(id),
-    name TEXT NOT NULL,
-    goal TEXT,
-    status TEXT NOT NULL DEFAULT 'planned',
-    start_date DATETIME,
-    end_date DATETIME,
-    velocity_planned INTEGER,
-    velocity_actual INTEGER,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -371,6 +371,20 @@ CREATE TABLE IF NOT EXISTS policy_packs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(key, version)
+);
+
+CREATE TABLE IF NOT EXISTS sprints (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    goal TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    start_date TIMESTAMP,
+    end_date TIMESTAMP,
+    velocity_planned INTEGER,
+    velocity_actual INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS protocol_runs (
@@ -469,7 +483,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
     depends_on JSONB DEFAULT '[]',
     parallel_group TEXT,
     assigned_agent TEXT,
-    linked_task_id INTEGER REFERENCES tasks(id),
+    linked_task_id INTEGER,  -- FK to tasks removed to avoid circular dependency
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -622,20 +636,6 @@ CREATE TABLE IF NOT EXISTS qa_results (
 CREATE INDEX IF NOT EXISTS idx_qa_results_project ON qa_results(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_qa_results_protocol ON qa_results(protocol_run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_qa_results_step ON qa_results(step_run_id, created_at);
-
-CREATE TABLE IF NOT EXISTS sprints (
-    id SERIAL PRIMARY KEY,
-    project_id INTEGER NOT NULL REFERENCES projects(id),
-    name TEXT NOT NULL,
-    goal TEXT,
-    status TEXT NOT NULL DEFAULT 'planned',
-    start_date TIMESTAMP,
-    end_date TIMESTAMP,
-    velocity_planned INTEGER,
-    velocity_actual INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY,

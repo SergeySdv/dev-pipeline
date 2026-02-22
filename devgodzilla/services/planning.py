@@ -297,6 +297,7 @@ class PlanningService(Service):
                         step_count=3,
                         engine_id=engine_id,
                         model=model,
+                        project_id=project.id,
                         prompt_path=prompt_path,
                         timeout_seconds=int(os.environ.get("DEVGODZILLA_PROTOCOL_GENERATE_TIMEOUT_SECONDS", "900")),
                         strict_outputs=True,

@@ -11,7 +11,7 @@
   "workflow": {
     "stages": [
       "project_create",
-      "project_onboard_windmill",
+      "project_onboard",
       "protocol_feature_cycles"
     ]
   },

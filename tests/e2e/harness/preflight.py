@@ -107,6 +107,7 @@ def ensure_local_services(
     project_root: Path,
     runner: CommandRunner,
     auto_start: bool,
+    require_windmill: bool,
 ) -> None:
     if not auto_start:
         report.warnings.append("Harness preflight auto_start disabled; assuming services already running.")
@@ -125,7 +126,7 @@ def ensure_local_services(
         timeout=240,
         runner=runner,
     )
-    if os.environ.get("HARNESS_WINDMILL_AUTO_IMPORT", "1") == "1":
+    if require_windmill and os.environ.get("HARNESS_WINDMILL_AUTO_IMPORT", "1") == "1":
         _run_and_capture(
             report,
             ["bash", str(script), "import"],
@@ -190,6 +191,7 @@ def run_preflight(
         project_root=root,
         runner=runner,
         auto_start=auto_start,
+        require_windmill=require_windmill,
     )
 
     backend_health = os.environ.get("HARNESS_BACKEND_HEALTH_URL", "http://localhost:8000/health")

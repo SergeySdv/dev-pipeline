@@ -127,6 +127,49 @@ class TestProtocolGenerationService:
         assert result.model == "test-model"
         assert result.protocol_root.name == "test-protocol"
 
+    def test_generate_uses_agent_config_default_model_when_project_provided(self, monkeypatch, tmp_path: Path, worktree_root, prompt_path):
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  opencode:
+    name: OpenCode
+    kind: cli
+    command: opencode
+    enabled: true
+    default_model: kimi-for-coding/kimi-k2-thinking
+defaults:
+  planning: opencode
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.delenv("DEVGODZILLA_OPENCODE_MODEL", raising=False)
+
+        config = load_config()
+        generation_service = ProtocolGenerationService(ServiceContext(config=config))
+
+        mock_engine = MagicMock()
+        mock_engine.check_availability.return_value = True
+        mock_engine.metadata.default_model = "engine-default-model"
+        mock_engine.execute.return_value = MagicMock(success=True, stdout="", stderr="", error=None)
+
+        with patch.object(EngineRegistry, "get", return_value=mock_engine):
+            result = generation_service.generate(
+                worktree_root=worktree_root,
+                protocol_name="test-protocol",
+                description="Test protocol description",
+                step_count=3,
+                prompt_path=prompt_path,
+                project_id=1,
+                strict_outputs=False,
+            )
+
+        assert result.success is True
+        assert result.model == "kimi-for-coding/kimi-k2-thinking"
+        req = mock_engine.execute.call_args[0][0]
+        assert req.model == "kimi-for-coding/kimi-k2-thinking"
+
     def test_generate_prompt_not_found(self, generation_service, worktree_root):
         """Test error when prompt file not found."""
         result = generation_service.generate(

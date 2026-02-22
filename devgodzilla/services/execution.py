@@ -273,9 +273,27 @@ class ExecutionService(Service):
                 return self._fail_step_pre_execution(step, run, error=error, engine_id=engine.metadata.id)
 
             # Persist the model choice deterministically: if the step didn't specify a model,
-            # use the engine default so downstream audits/tests can validate engine+model.
+            # prefer agent-configured default model so UI overrides apply, and finally fall back
+            # to the engine default so downstream audits/tests can validate engine+model.
             if resolution.model is None:
-                resolution.model = engine.metadata.default_model
+                env_model: Optional[str] = None
+                if resolution.engine_id == "opencode":
+                    candidate = os.environ.get("DEVGODZILLA_OPENCODE_MODEL")
+                    if isinstance(candidate, str) and candidate.strip():
+                        env_model = candidate.strip()
+
+                resolved_agent_model: Optional[str] = None
+                try:
+                    from devgodzilla.services.agent_config import AgentConfigService
+
+                    cfg = AgentConfigService(self.context, db=self.db)
+                    agent_cfg = cfg.get_agent(resolution.engine_id, project_id=project.id)
+                    if agent_cfg and isinstance(agent_cfg.default_model, str) and agent_cfg.default_model.strip():
+                        resolved_agent_model = agent_cfg.default_model.strip()
+                except Exception:
+                    resolved_agent_model = None
+
+                resolution.model = env_model or resolved_agent_model or engine.metadata.default_model
             
             # Build request
             request = EngineRequest(

@@ -1,62 +1,70 @@
 agents:
-  codex:
-    name: OpenAI Codex
-    kind: cli
-    command: codex
-    default_model: gpt-4.1
-    sandbox: workspace-write
-    capabilities: [code_gen, code_review]
-    enabled: true
-
-  opencode:
-    name: OpenCode
-    kind: cli
-    command: opencode
-    default_model: zai-coding-plan/glm-5
-    sandbox: workspace-write
-    capabilities: [code_gen, code_review, reasoning]
-    enabled: true
-
   claude-code:
-    name: Claude Code
-    kind: cli
+    capabilities:
+    - code_gen
+    - code_review
+    - reasoning
     command: claude
     command_dir: .claude/commands/
     default_model: claude-sonnet-4-20250514
-    capabilities: [code_gen, code_review, reasoning]
     enabled: true
-
-  gemini-cli:
-    name: Gemini CLI
     kind: cli
+    name: Claude Code
+  codex:
+    capabilities:
+    - code_gen
+    - code_review
+    command: codex
+    default_model: gpt-4.1
+    enabled: true
+    kind: cli
+    name: OpenAI Codex
+    sandbox: workspace-write
+  gemini-cli:
+    capabilities:
+    - code_gen
+    - reasoning
     command: gemini
     command_dir: .gemini/commands/
-    format: toml
-    capabilities: [code_gen, reasoning]
     enabled: true
-
+    format: toml
+    kind: cli
+    name: Gemini CLI
   gemini-pro:
-    name: Gemini Pro
-    kind: api
-    endpoint: https://generativelanguage.googleapis.com/v1
+    capabilities:
+    - reasoning
+    - coding
     default_model: gemini-pro
-    capabilities: [reasoning, coding]
     enabled: false
-
-  gpt-4:
-    name: GPT-4
+    endpoint: https://generativelanguage.googleapis.com/v1
     kind: api
-    endpoint: https://api.openai.com/v1
+    name: Gemini Pro
+  gpt-4:
+    capabilities:
+    - reasoning
+    - coding
     default_model: gpt-4
-    capabilities: [reasoning, coding]
     enabled: false
-
+    endpoint: https://api.openai.com/v1
+    kind: api
+    name: GPT-4
+  opencode:
+    capabilities:
+    - code_gen
+    - code_review
+    - reasoning
+    command: opencode
+    default_model: kimi-for-coding/kimi-k2-thinking
+    enabled: true
+    format: default
+    kind: cli
+    name: OpenCode
+    sandbox: workspace-write
 defaults:
   code_gen: opencode
+  discovery: opencode
   planning: opencode
   qa: opencode
-  discovery: opencode
-
 health_check:
-  timeout_seconds: 30
   retry_count: 3
+  timeout_seconds: 30
