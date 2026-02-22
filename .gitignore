@@ -7,6 +7,9 @@ node_modules/
 dist/
 build/
 coverage/
+.next/
+frontend/.next/
+frontend/out/
 archive/tasksgodzilla/api/frontend_dist/
 .vscode/
 .idea/

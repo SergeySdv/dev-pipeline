@@ -7,12 +7,14 @@ inside an isolated worktree.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode, get_registry
 from devgodzilla.logging import get_logger
+from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.base import Service, ServiceContext
 
 logger = get_logger(__name__)
@@ -53,6 +55,7 @@ class ProtocolGenerationService(Service):
         step_count: int = 3,
         engine_id: str = "opencode",
         model: Optional[str] = None,
+        project_id: Optional[int] = None,
         prompt_path: Optional[Path] = None,
         timeout_seconds: int = 900,
         strict_outputs: bool = True,
@@ -79,6 +82,13 @@ class ProtocolGenerationService(Service):
             )
 
         registry = get_registry()
+        if not registry.list_ids():
+            try:
+                from devgodzilla.engines.bootstrap import bootstrap_default_engines
+
+                bootstrap_default_engines(replace=False)
+            except Exception:
+                pass
         try:
             engine = registry.get(engine_id)
         except EngineNotFoundError as e:
@@ -105,7 +115,23 @@ class ProtocolGenerationService(Service):
                 error=f"Engine unavailable: {engine_id}",
             )
 
-        run_model = model or engine.metadata.default_model
+        env_model: Optional[str] = None
+        if model is None and engine.metadata.id == "opencode":
+            candidate = os.environ.get("DEVGODZILLA_OPENCODE_MODEL")
+            if isinstance(candidate, str) and candidate.strip():
+                env_model = candidate.strip()
+
+        resolved_agent_model: Optional[str] = None
+        if model is None and env_model is None and project_id is not None:
+            try:
+                cfg = AgentConfigService(self.context)
+                agent_cfg = cfg.get_agent(engine_id, project_id=project_id)
+                if agent_cfg and isinstance(agent_cfg.default_model, str) and agent_cfg.default_model.strip():
+                    resolved_agent_model = agent_cfg.default_model.strip()
+            except Exception:
+                resolved_agent_model = None
+
+        run_model = model or env_model or resolved_agent_model or engine.metadata.default_model
 
         template = prompt_path.read_text(encoding="utf-8")
         prompt_text = _render_prompt(
@@ -163,4 +189,3 @@ class ProtocolGenerationService(Service):
             stderr=engine_result.stderr,
             error=error,
         )
-

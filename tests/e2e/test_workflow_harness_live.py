@@ -21,10 +21,11 @@ def test_workflow_harness_live() -> None:
         os.environ["DEVGODZILLA_DB_URL"] = "postgresql://devgodzilla:changeme@localhost:5432/devgodzilla_db"
 
     step_engine = (os.environ.get("HARNESS_STEP_ENGINE", "opencode").strip() or "opencode").lower()
+    onboard_mode = (os.environ.get("HARNESS_ONBOARD_MODE", "windmill").strip() or "windmill").lower()
     report = run_preflight(
         auto_start=True,
         require_opencode=(step_engine == "opencode"),
-        require_windmill=True,
+        require_windmill=(onboard_mode == "windmill"),
     )
     assert report.ok, f"Preflight failed: errors={report.errors} warnings={report.warnings} details={report.details}"
 

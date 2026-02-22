@@ -155,6 +155,119 @@ class TestDiscoveryAgentService:
         assert len(result.stages) == 2
         assert all(s.success for s in result.stages)
 
+    def test_discovery_uses_agent_config_default_model_for_project(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  opencode:
+    name: OpenCode
+    kind: cli
+    command: opencode
+    enabled: true
+    default_model: kimi-for-coding/kimi-k2-thinking
+defaults:
+  discovery: opencode
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.delenv("DEVGODZILLA_OPENCODE_MODEL", raising=False)
+
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        (repo_root / ".git").mkdir()
+        (repo_root / "specs" / "discovery").mkdir(parents=True)
+
+        prompt_dir = tmp_path / "prompts"
+        prompt_dir.mkdir()
+        prompt_file = prompt_dir / "repo-discovery.prompt.md"
+        prompt_file.write_text("# Discovery Prompt\n\nExecute discovery.", encoding="utf-8")
+
+        config = load_config()
+        svc = DiscoveryAgentService(ServiceContext(config=config))
+
+        mock_engine = MagicMock()
+        mock_engine.check_availability.return_value = True
+        mock_engine.metadata.id = "opencode"
+        mock_engine.metadata.default_model = "engine-default-model"
+        mock_engine.execute.return_value = MagicMock(success=True, stdout="", stderr="", error=None)
+
+        with patch.object(EngineRegistry, "get", return_value=mock_engine):
+            with patch("devgodzilla.services.discovery_agent._resolve_prompt", return_value=prompt_file):
+                result = svc.run_discovery(
+                    repo_root=repo_root,
+                    engine_id="opencode",
+                    pipeline=False,
+                    strict_outputs=False,
+                    project_id=1,
+                )
+
+        assert result.success is True
+        assert result.model == "kimi-for-coding/kimi-k2-thinking"
+        req = mock_engine.execute.call_args[0][0]
+        assert req.model == "kimi-for-coding/kimi-k2-thinking"
+
+    def test_discovery_env_model_overrides_agent_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  opencode:
+    kind: cli
+    command: opencode
+    enabled: true
+    default_model: kimi-for-coding/kimi-k2-thinking
+defaults:
+  discovery: opencode
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.setenv("DEVGODZILLA_OPENCODE_MODEL", "opencode/glm-5-free")
+
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        (repo_root / ".git").mkdir()
+        (repo_root / "specs" / "discovery").mkdir(parents=True)
+
+        prompt_dir = tmp_path / "prompts"
+        prompt_dir.mkdir()
+        prompt_file = prompt_dir / "repo-discovery.prompt.md"
+        prompt_file.write_text("# Discovery Prompt\n\nExecute discovery.", encoding="utf-8")
+
+        config = load_config()
+        svc = DiscoveryAgentService(ServiceContext(config=config))
+
+        mock_engine = MagicMock()
+        mock_engine.check_availability.return_value = True
+        mock_engine.metadata.id = "opencode"
+        mock_engine.metadata.default_model = "engine-default-model"
+        mock_engine.execute.return_value = MagicMock(success=True, stdout="", stderr="", error=None)
+
+        with patch.object(EngineRegistry, "get", return_value=mock_engine):
+            with patch("devgodzilla.services.discovery_agent._resolve_prompt", return_value=prompt_file):
+                result = svc.run_discovery(
+                    repo_root=repo_root,
+                    engine_id="opencode",
+                    pipeline=False,
+                    strict_outputs=False,
+                    project_id=1,
+                )
+
+        assert result.success is True
+        assert result.model == "opencode/glm-5-free"
+        req = mock_engine.execute.call_args[0][0]
+        assert req.model == "opencode/glm-5-free"
+
     def test_run_discovery_stage_failure(self, discovery_service, repo_root, tmp_path):
         """Test discovery with stage failure."""
         prompt_dir = tmp_path / "prompts"

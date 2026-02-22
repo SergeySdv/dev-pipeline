@@ -81,9 +81,57 @@ pid_is_alive() {
   kill -0 "$pid" >/dev/null 2>&1
 }
 
+bash_supports_wait_n() {
+  # `wait -n` was added in Bash 4.3. macOS ships Bash 3.2 by default.
+  local major="${BASH_VERSINFO[0]:-0}"
+  local minor="${BASH_VERSINFO[1]:-0}"
+  if ((major > 4)); then
+    return 0
+  fi
+  if ((major == 4 && minor >= 3)); then
+    return 0
+  fi
+  return 1
+}
+
+wait_any_pid() {
+  # Wait until *any* of the given child PIDs exits, and return that PID's exit status.
+  # Uses `wait -n` when available; otherwise falls back to a small polling loop
+  # for compatibility with older Bash (notably macOS /bin/bash 3.2).
+  local pids=("$@")
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  if bash_supports_wait_n; then
+    wait -n "${pids[@]}"
+    return $?
+  fi
+
+  while true; do
+    local pid=""
+    for pid in "${pids[@]}"; do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        local status=0
+        wait "$pid" || status=$?
+        return "$status"
+      fi
+    done
+    sleep 0.2
+  done
+}
+
 pid_cwd() {
   local pid="$1"
-  readlink -f "/proc/$pid/cwd" 2>/dev/null || true
+  if [[ -e "/proc/$pid/cwd" ]]; then
+    readlink "/proc/$pid/cwd" 2>/dev/null || true
+    return 0
+  fi
+
+  # macOS fallback (no /proc): use lsof to read cwd.
+  if command_exists lsof; then
+    lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true
+  fi
 }
 
 pid_cmdline() {
@@ -92,12 +140,30 @@ pid_cmdline() {
     tr '\0' ' ' <"/proc/$pid/cmdline"
     return 0
   fi
+
+  # macOS fallback (no /proc): `ps` provides the full command.
+  if command_exists ps; then
+    ps -o command= -p "$pid" 2>/dev/null | head -n 1 || true
+    return 0
+  fi
+
   return 1
 }
 
 pid_ppid() {
   local pid="$1"
-  awk '/^PPid:/{print $2}' "/proc/$pid/status" 2>/dev/null || true
+  if [[ -r "/proc/$pid/status" ]]; then
+    awk '/^PPid:/{print $2}' "/proc/$pid/status" 2>/dev/null || true
+    return 0
+  fi
+
+  # macOS fallback (no /proc): use ps.
+  if command_exists ps; then
+    ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' | head -n 1 || true
+    return 0
+  fi
+
+  return 0
 }
 
 find_pids_listening_on_port() {
@@ -518,7 +584,7 @@ run_dev() {
       rm -f "$BACKEND_PID_FILE" || true
     fi
   ' EXIT INT TERM
-  wait -n "$backend_pid" "$frontend_pid"
+  wait_any_pid "$backend_pid" "$frontend_pid"
 }
 
 main() {

@@ -166,8 +166,12 @@ class AgentConfigService(Service):
         config_path = self._resolve_config_path()
         if not config_path.exists():
             self._create_default_config(config_path)
-        with open(config_path, "r") as f:
-            data = yaml.safe_load(f)
+        import textwrap
+
+        raw = config_path.read_text(encoding="utf-8")
+        # Be tolerant of common leading indentation (e.g. tests writing YAML via triple-quoted strings).
+        raw = textwrap.dedent(raw).lstrip("\ufeff")
+        data = yaml.safe_load(raw)
         return data or {}
 
     def _write_raw_config(self, data: Dict[str, Any]) -> None:

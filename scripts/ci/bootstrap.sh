@@ -10,7 +10,12 @@ report_status() {
 }
 trap 'report_status failure' ERR
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+# Prefer python3.12 if available, fallback to python3
+if command -v python3.12 &>/dev/null; then
+  PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+else
+  PYTHON_BIN="${PYTHON_BIN:-python3}"
+fi
 VENV_PATH="${VENV_PATH:-.venv}"
 REQ_FILE="${REQ_FILE:-requirements.txt}"
 

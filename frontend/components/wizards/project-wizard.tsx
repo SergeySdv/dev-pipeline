@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { CheckCircle2, GitBranch, Shield, type LucideIcon, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { ApiError } from "@/lib/api/client"
 import { useCreateProject, useUpdateProjectPolicy } from "@/lib/api/hooks/use-projects"
 import { usePolicyPacks } from "@/lib/api/hooks/use-policy-packs"
 import type { PolicyEnforcementMode } from "@/lib/api/types"
@@ -90,13 +91,37 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
     try {
       const name = extractProjectName(formData.repoUrl)
 
-      const project = await createProject.mutateAsync({
-        name,
-        git_url: formData.repoUrl,
-        base_branch: formData.branch || "main",
-        auto_onboard: true,
-        auto_discovery: formData.autoDiscovery,
-      })
+      let onboardingQueued = true
+      let project = null
+      try {
+        project = await createProject.mutateAsync({
+          name,
+          git_url: formData.repoUrl,
+          base_branch: formData.branch || "main",
+          auto_onboard: true,
+          auto_discovery: formData.autoDiscovery,
+        })
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          error.status === 503 &&
+          (error.message || "").toLowerCase().includes("windmill integration not configured")
+        ) {
+          onboardingQueued = false
+          project = await createProject.mutateAsync({
+            name,
+            git_url: formData.repoUrl,
+            base_branch: formData.branch || "main",
+            auto_onboard: false,
+            auto_discovery: false,
+          })
+        } else {
+          throw error
+        }
+      }
+      if (!project) {
+        throw new Error("Project creation failed")
+      }
 
       // 2. Update Policy if selected
       if (formData.policyPack || formData.enforcementMode) {
@@ -109,7 +134,11 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
         })
       }
 
-      toast.success("Project created and onboarding queued!")
+      if (onboardingQueued) {
+        toast.success("Project created and onboarding queued!")
+      } else {
+        toast.success("Project created. Windmill not configured, so onboarding was not queued (start it from the Onboarding page).")
+      }
       onOpenChange(false)
       setCurrentStep("git")
       setFormData({

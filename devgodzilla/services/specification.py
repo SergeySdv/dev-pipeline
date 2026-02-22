@@ -250,26 +250,15 @@ class SpecificationService(Service):
         try:
             (specify_path / self.MEMORY_DIR).mkdir(parents=True, exist_ok=True)
             (specify_path / self.TEMPLATES_DIR).mkdir(parents=True, exist_ok=True)
+            (specify_path / "scripts").mkdir(parents=True, exist_ok=True)
             specs_dir = base_path / "specs"
             specs_dir.mkdir(parents=True, exist_ok=True)
 
             speckit_source = self._resolve_speckit_source()
+            warnings: list[str] = []
             if not speckit_source or not speckit_source.exists():
-                return SpecKitResult(
-                    success=False,
-                    project_id=project_id,
-                    error="SpecKit source not found; ensure Origins/spec-kit is present.",
-                )
-            missing_assets = []
-            for required in ("templates", "scripts"):
-                if not (speckit_source / required).exists():
-                    missing_assets.append(required)
-            if missing_assets:
-                return SpecKitResult(
-                    success=False,
-                    project_id=project_id,
-                    error=f"SpecKit source missing assets: {', '.join(missing_assets)}",
-                )
+                warnings.append("SpecKit source not found; created default SpecKit assets.")
+                speckit_source = None
 
             constitution_path = specify_path / self.MEMORY_DIR / "constitution.md"
             if constitution_content:
@@ -280,21 +269,27 @@ class SpecificationService(Service):
                     constitution_path,
                 )
             else:
-                return SpecKitResult(
-                    success=False,
-                    project_id=project_id,
-                    error="SpecKit constitution template not found in source.",
+                warnings.append("SpecKit constitution template not found; using default constitution.")
+                self._create_default_constitution(constitution_path)
+
+            templates_source = (speckit_source / "templates") if speckit_source else None
+            if templates_source and templates_source.exists():
+                self._copy_dir_contents(
+                    templates_source,
+                    specify_path / self.TEMPLATES_DIR,
                 )
+            else:
+                warnings.append("SpecKit templates missing; using default templates.")
+                self._create_default_templates(specify_path / self.TEMPLATES_DIR)
 
-            self._copy_dir_contents(
-                speckit_source / "templates",
-                specify_path / self.TEMPLATES_DIR,
-            )
-
-            self._copy_dir_contents(
-                speckit_source / "scripts",
-                specify_path / "scripts",
-            )
+            scripts_source = (speckit_source / "scripts") if speckit_source else None
+            if scripts_source and scripts_source.exists():
+                self._copy_dir_contents(
+                    scripts_source,
+                    specify_path / "scripts",
+                )
+            else:
+                warnings.append("SpecKit scripts missing; leaving .specify/scripts empty.")
 
             constitution_hash = self._compute_constitution_hash(specify_path)
 
@@ -308,6 +303,7 @@ class SpecificationService(Service):
                 project_id=project_id,
                 spec_path=str(specify_path),
                 constitution_hash=constitution_hash,
+                warnings=warnings,
                 artifacts={
                     "constitution": str(constitution_path),
                     "templates": str(specify_path / self.TEMPLATES_DIR),

@@ -174,6 +174,7 @@ class QualityService(Service):
                 pass
         engine_id = None
         model = None
+        cfg: Optional["AgentConfigService"] = None
         try:
             from devgodzilla.services.agent_config import AgentConfigService
 
@@ -187,6 +188,7 @@ class QualityService(Service):
         except Exception:
             engine_id = None
             model = None
+            cfg = None
         if not engine_id:
             engine_id = "opencode"
         try:
@@ -212,7 +214,15 @@ class QualityService(Service):
                     error = f"{error} ({availability_error})"
                 raise RuntimeError(error)
         if not model:
-            model = engine.metadata.default_model
+            resolved_agent_model: Optional[str] = None
+            try:
+                if cfg is not None:
+                    agent_cfg = cfg.get_agent(engine.metadata.id, project_id=project_id)
+                    if agent_cfg and isinstance(agent_cfg.default_model, str) and agent_cfg.default_model.strip():
+                        resolved_agent_model = agent_cfg.default_model.strip()
+            except Exception:
+                resolved_agent_model = None
+            model = resolved_agent_model or engine.metadata.default_model
         return engine, model
 
     def _build_prompt_gate(

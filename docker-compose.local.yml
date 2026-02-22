@@ -58,11 +58,7 @@ services:
 
   # Windmill server
   windmill:
-    build:
-      context: ./Origins/Windmill
-      dockerfile: Dockerfile
-      args:
-        features: "${WINDMILL_FEATURES:-static_frontend python deno_core}"
+    image: ghcr.io/windmill-labs/windmill:main
     restart: unless-stopped
     ports:
       - "8001:8000"  # Windmill API on 8001
@@ -95,11 +91,7 @@ services:
 
   # Windmill worker
   windmill_worker:
-    build:
-      context: ./Origins/Windmill
-      dockerfile: Dockerfile
-      args:
-        features: "${WINDMILL_FEATURES:-static_frontend python deno_core}"
+    image: ghcr.io/windmill-labs/windmill:main
     restart: unless-stopped
     deploy:
       resources:
@@ -129,11 +121,7 @@ services:
 
   # Native worker for lightweight in-process jobs
   windmill_worker_native:
-    build:
-      context: ./Origins/Windmill
-      dockerfile: Dockerfile
-      args:
-        features: "${WINDMILL_FEATURES:-static_frontend python deno_core}"
+    image: ghcr.io/windmill-labs/windmill:main
     restart: unless-stopped
     deploy:
       resources:
