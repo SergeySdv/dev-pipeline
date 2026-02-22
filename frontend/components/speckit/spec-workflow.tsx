@@ -230,7 +230,7 @@ export function SpecWorkflow({
               <div key={step.key} className="relative">
                 {/* Connector line */}
                 {index < steps.length - 1 && (
-                  <div className="bg-muted pointer-events-none absolute top-8 left-full hidden h-0.5 w-4 xl:block">
+                  <div className="bg-muted pointer-events-none absolute top-7 left-full hidden h-0.5 w-4 z-0 xl:block">
                     <div
                       className={cn(
                         "h-full transition-all",
@@ -243,7 +243,7 @@ export function SpecWorkflow({
                 <Link href={getStepHref(step.key, projectId)}>
                   <div
                     className={cn(
-                      "cursor-pointer rounded-lg border-2 p-4 transition-all hover:shadow-md",
+                      "relative z-10 cursor-pointer overflow-hidden rounded-lg border-2 p-4 transition-all hover:shadow-md",
                       getStatusColor(status, isActive)
                     )}
                   >
