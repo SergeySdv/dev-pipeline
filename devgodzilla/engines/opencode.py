@@ -163,6 +163,11 @@ class OpenCodeEngine(CLIEngine):
                 timeout=timeout,
                 env=req.extra.get("env"),
                 on_output=log_callback,
+                tracker_execution_id=(
+                    str(req.extra.get("cli_execution_id")).strip()
+                    if req.extra and req.extra.get("cli_execution_id") is not None
+                    else None
+                ),
             )
             result.metadata["engine_id"] = self.metadata.id
             result.metadata["sandbox"] = sandbox.value

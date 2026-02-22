@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.e2e.harness.runner import run_scenario
 from tests.e2e.harness.scenario_loader import RepoConfig, RetryConfig, ScenarioConfig, TimeoutConfig
 
@@ -80,3 +82,55 @@ def test_run_scenario_missing_handler_fails(tmp_path: Path) -> None:
     events_path = result.diagnostics_dir / "events.jsonl"
     events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert any(event["event_type"] == "stage_failed" and event["stage"] == "missing" for event in events)
+
+
+def test_run_scenario_allows_stage_handlers_to_emit_custom_events(tmp_path: Path) -> None:
+    scenario = _scenario(["emit"])
+
+    def _handler(ctx, scn, stage):
+        del scn, stage
+        assert ctx.event_emitter is not None
+        ctx.event_emitter(
+            "custom_event",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": "emit",
+                "note": "from-handler",
+            },
+        )
+        return {"ok": True}
+
+    result = run_scenario(scenario, {"emit": _handler}, run_root=tmp_path)
+    assert result.success
+    events_path = result.diagnostics_dir / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(event["event_type"] == "custom_event" and event["note"] == "from-handler" for event in events)
+
+
+def test_run_scenario_writes_partial_summary_on_interrupt(tmp_path: Path) -> None:
+    scenario = _scenario(["ok", "boom"])
+
+    def _ok(ctx, scn, stage):
+        del ctx, scn, stage
+        return {"ok": True}
+
+    def _boom(ctx, scn, stage):
+        del ctx, scn, stage
+        raise KeyboardInterrupt("stop-now")
+
+    with pytest.raises(KeyboardInterrupt, match="stop-now"):
+        run_scenario(scenario, {"ok": _ok, "boom": _boom}, run_root=tmp_path)
+
+    run_dirs = [path for path in tmp_path.iterdir() if path.is_dir()]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+
+    summary_path = run_dir / "diagnostics" / "run-summary.json"
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["status"] == "interrupted"
+    assert [stage["stage"] for stage in summary["stages"]] == ["ok"]
+
+    events_path = run_dir / "diagnostics" / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(event["event_type"] == "run_interrupted" and event["stage"] == "boom" for event in events)

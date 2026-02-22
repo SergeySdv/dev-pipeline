@@ -4,17 +4,19 @@ CLI Executions API Routes
 Endpoints for tracking and monitoring in-progress CLI executions.
 """
 
+import asyncio
+import json
+import os
+import signal
 from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import asyncio
-import json
 
 from devgodzilla.services.cli_execution_tracker import (
     get_execution_tracker,
     ExecutionStatus,
-    CLIExecution,
 )
 
 router = APIRouter(tags=["cli-executions"])
@@ -265,7 +267,7 @@ async def stream_execution_logs(
                     yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     # Send heartbeat
-                    yield f": heartbeat\n\n"
+                    yield ": heartbeat\n\n"
         finally:
             tracker.unsubscribe(execution_id, on_log)
     
@@ -285,8 +287,9 @@ def cancel_execution(execution_id: str):
     """
     Cancel a running execution.
     
-    Note: This marks the execution as cancelled but does not actually kill the process.
-    Process termination should be handled by the caller.
+    Best effort:
+    - Sends SIGTERM to the tracked PID (if available)
+    - Marks the execution as cancelled in the tracker
     """
     tracker = get_execution_tracker()
     execution = tracker.get_execution(execution_id)
@@ -300,10 +303,32 @@ def cancel_execution(execution_id: str):
             detail=f"Cannot cancel execution with status {execution.status.value}"
         )
     
+    pid = execution.pid
+    termination_attempted = False
+    termination_result = "no_pid"
+    termination_error = None
+
+    if pid:
+        termination_attempted = True
+        try:
+            os.kill(pid, signal.SIGTERM)
+            termination_result = "signal_sent"
+        except ProcessLookupError:
+            termination_result = "process_not_found"
+        except Exception as exc:  # noqa: BLE001
+            termination_result = "signal_failed"
+            termination_error = str(exc) or exc.__class__.__name__
+
     tracker.cancel(execution_id)
-    
-    return {
+
+    payload = {
         "execution_id": execution_id,
         "status": "cancelled",
         "message": "Execution marked as cancelled",
+        "pid": pid,
+        "termination_attempted": termination_attempted,
+        "termination_result": termination_result,
     }
+    if termination_error:
+        payload["termination_error"] = termination_error
+    return payload

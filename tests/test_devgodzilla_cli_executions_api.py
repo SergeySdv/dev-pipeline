@@ -4,7 +4,6 @@ Tests for CLI Executions API routes.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,6 @@ from devgodzilla.api.app import app
 from devgodzilla.db.database import SQLiteDatabase
 from devgodzilla.services.cli_execution_tracker import (
     get_execution_tracker,
-    CLIExecutionTracker,
     ExecutionStatus,
 )
 
@@ -201,7 +199,7 @@ class TestCLIExecutionsAPI:
         resp = client.get(f"/cli-executions/{sample_execution.execution_id}/logs?level=error")
         assert resp.status_code == 200
         logs = resp.json()["logs"]
-        assert all(l["level"] == "error" for l in logs)
+        assert all(log_entry["level"] == "error" for log_entry in logs)
 
     def test_get_execution_logs_not_found(self, client):
         """Test getting logs for non-existent execution."""
@@ -219,6 +217,42 @@ class TestCLIExecutionsAPI:
         tracker = get_execution_tracker()
         exec_obj = tracker.get_execution(sample_execution.execution_id)
         assert exec_obj.status == ExecutionStatus.CANCELLED
+
+    def test_cancel_execution_terminates_process_when_pid_present(
+        self, client, sample_execution, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test cancel endpoint attempts to terminate the tracked process."""
+        tracker = get_execution_tracker()
+        tracker.set_pid(sample_execution.execution_id, 43210)
+
+        kill_calls: list[tuple[int, int]] = []
+
+        def _fake_kill(pid: int, sig: int) -> None:
+            kill_calls.append((pid, sig))
+
+        monkeypatch.setattr("devgodzilla.api.routes.cli_executions.os.kill", _fake_kill)
+
+        resp = client.post(f"/cli-executions/{sample_execution.execution_id}/cancel")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "cancelled"
+        assert data["pid"] == 43210
+        assert data["termination_attempted"] is True
+        assert data["termination_result"] == "signal_sent"
+        assert kill_calls == [(43210, 15)]
+
+    def test_tracker_complete_preserves_cancelled_status(self):
+        """Late completion callbacks should not overwrite cancelled status."""
+        tracker = get_execution_tracker()
+        execution = tracker.start_execution(execution_type="discovery", engine_id="opencode")
+        tracker.cancel(execution.execution_id)
+
+        tracker.complete(execution.execution_id, success=False, exit_code=-15, error="terminated")
+
+        exec_obj = tracker.get_execution(execution.execution_id)
+        assert exec_obj is not None
+        assert exec_obj.status == ExecutionStatus.CANCELLED
+        assert exec_obj.exit_code == -15
 
     def test_cancel_execution_not_found(self, client):
         """Test cancelling non-existent execution."""

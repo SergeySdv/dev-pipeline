@@ -7,9 +7,7 @@ with real-time log streaming and status updates.
 
 from __future__ import annotations
 
-import asyncio
 import threading
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -211,6 +209,20 @@ class CLIExecutionTracker:
         with self._execution_lock:
             execution = self._executions.get(execution_id)
             if not execution:
+                return
+            if execution.status == ExecutionStatus.CANCELLED:
+                # Preserve user-initiated cancellation if the process exits later.
+                execution.exit_code = exit_code
+                if error:
+                    execution.error = error
+                if execution.finished_at is None:
+                    execution.finished_at = datetime.now(timezone.utc)
+                execution.add_log(
+                    "debug",
+                    "Execution completion received after cancellation; preserving cancelled status",
+                    source="tracker",
+                )
+                self._cleanup_old_executions()
                 return
             execution.status = ExecutionStatus.SUCCEEDED if success else ExecutionStatus.FAILED
             execution.finished_at = datetime.now(timezone.utc)

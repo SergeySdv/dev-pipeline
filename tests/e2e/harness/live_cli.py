@@ -6,9 +6,12 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from devgodzilla.config import load_config
 from devgodzilla.db.database import get_database
@@ -24,6 +27,7 @@ from .runner import HarnessRunContext, StageHandler
 from .scenario_loader import ScenarioConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+ProgressCallback = Callable[[Any], None]
 
 
 def _run_cli(
@@ -193,6 +197,328 @@ def _stage_log_file(ctx: HarnessRunContext, stage: str, command_label: str) -> P
     return ctx.diagnostics_dir / f"cli-{stage}-attempt-{attempt}-{safe_label}.log"
 
 
+def _emit_ctx_event(ctx: HarnessRunContext, event_type: str, payload: dict[str, Any]) -> None:
+    if ctx.event_emitter is None:
+        return
+    ctx.event_emitter(event_type, payload)
+
+
+def _harness_api_base_url(env: dict[str, str]) -> str:
+    base = (
+        env.get("DEVGODZILLA_API_URL")
+        or os.environ.get("HARNESS_API_BASE_URL")
+        or "http://localhost:8000"
+    )
+    return base.rstrip("/")
+
+
+def _fetch_onboarding_summary(
+    *,
+    api_base_url: str,
+    project_id: int,
+    timeout_seconds: float = 5.0,
+) -> dict[str, Any]:
+    req = urllib.request.Request(
+        f"{api_base_url}/projects/{project_id}/onboarding",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+        raw = resp.read().decode("utf-8")
+    parsed = json.loads(raw) if raw else {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Unexpected onboarding summary payload type: {type(parsed).__name__}")
+    return parsed
+
+
+def _fetch_cli_executions(
+    *,
+    api_base_url: str,
+    project_id: int,
+    execution_type: str,
+    status: str,
+    limit: int = 10,
+    timeout_seconds: float = 5.0,
+) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode(
+        {
+            "project_id": str(project_id),
+            "execution_type": execution_type,
+            "status": status,
+            "limit": str(limit),
+        }
+    )
+    req = urllib.request.Request(
+        f"{api_base_url}/cli-executions?{query}",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+        raw = resp.read().decode("utf-8")
+    parsed = json.loads(raw) if raw else {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Unexpected CLI execution list payload type: {type(parsed).__name__}")
+    executions = parsed.get("executions")
+    if not isinstance(executions, list):
+        return []
+    return [item for item in executions if isinstance(item, dict)]
+
+
+def _cancel_cli_execution(
+    *,
+    api_base_url: str,
+    execution_id: str,
+    timeout_seconds: float = 5.0,
+) -> dict[str, Any]:
+    req = urllib.request.Request(
+        f"{api_base_url}/cli-executions/{execution_id}/cancel",
+        headers={"Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+        raw = resp.read().decode("utf-8")
+    parsed = json.loads(raw) if raw else {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Unexpected CLI execution cancel payload type: {type(parsed).__name__}")
+    return parsed
+
+
+def _cancel_windmill_job_on_interrupt(
+    ctx: HarnessRunContext,
+    *,
+    client: WindmillClient,
+    job_id: str,
+    stage: str,
+    project_id: int,
+) -> None:
+    try:
+        client.cancel_job(job_id)
+    except Exception as exc:  # noqa: BLE001
+        error_message = str(exc) or exc.__class__.__name__
+        if "400" in error_message:
+            windmill_status = None
+            try:
+                job = client.get_job(job_id)
+            except Exception:
+                job = None
+            if job is not None:
+                status_obj = getattr(job, "status", None)
+                windmill_status = getattr(status_obj, "value", None) or str(status_obj or "")
+                windmill_status = str(windmill_status).lower() or None
+            _emit_ctx_event(
+                ctx,
+                "windmill_job_cancel_skipped",
+                {
+                    "scenario_id": ctx.scenario_id,
+                    "stage": stage,
+                    "project_id": project_id,
+                    "windmill_job_id": job_id,
+                    "windmill_status": windmill_status,
+                    "reason": "queue_cancel_rejected",
+                    "cancel_error": error_message,
+                },
+            )
+            return
+        _emit_ctx_event(
+            ctx,
+            "windmill_job_cancel_failed",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": stage,
+                "project_id": project_id,
+                "windmill_job_id": job_id,
+                "error": error_message,
+            },
+        )
+        return
+
+    _emit_ctx_event(
+        ctx,
+        "windmill_job_cancelled",
+        {
+            "scenario_id": ctx.scenario_id,
+            "stage": stage,
+            "project_id": project_id,
+            "windmill_job_id": job_id,
+            "reason": "keyboard_interrupt",
+        },
+    )
+
+
+def _cancel_backend_discovery_on_interrupt(
+    ctx: HarnessRunContext,
+    *,
+    env: dict[str, str],
+    project_id: int,
+    stage: str,
+    reason: str,
+) -> None:
+    api_base_url = _harness_api_base_url(env)
+    try:
+        executions = _fetch_cli_executions(
+            api_base_url=api_base_url,
+            project_id=project_id,
+            execution_type="discovery",
+            status="running",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _emit_ctx_event(
+            ctx,
+            "backend_discovery_cancel_scan_failed",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": stage,
+                "project_id": project_id,
+                "api_base_url": api_base_url,
+                "reason": reason,
+                "error": str(exc) or exc.__class__.__name__,
+            },
+        )
+        return
+
+    if not executions:
+        _emit_ctx_event(
+            ctx,
+            "backend_discovery_cancel_skipped",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": stage,
+                "project_id": project_id,
+                "api_base_url": api_base_url,
+                "reason": reason,
+                "detail": "no_running_discovery_executions",
+            },
+        )
+        return
+
+    for execution in executions:
+        execution_id = str(execution.get("execution_id") or "").strip()
+        if not execution_id:
+            continue
+        try:
+            result = _cancel_cli_execution(api_base_url=api_base_url, execution_id=execution_id)
+        except Exception as exc:  # noqa: BLE001
+            _emit_ctx_event(
+                ctx,
+                "backend_discovery_cancel_failed",
+                {
+                    "scenario_id": ctx.scenario_id,
+                    "stage": stage,
+                    "project_id": project_id,
+                    "api_base_url": api_base_url,
+                    "execution_id": execution_id,
+                    "reason": reason,
+                    "error": str(exc) or exc.__class__.__name__,
+                },
+            )
+            continue
+
+        _emit_ctx_event(
+            ctx,
+            "backend_discovery_cancelled",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": stage,
+                "project_id": project_id,
+                "api_base_url": api_base_url,
+                "execution_id": execution_id,
+                "reason": reason,
+                "cancel_result": result.get("status"),
+                "termination_result": result.get("termination_result"),
+                "pid": result.get("pid"),
+            },
+        )
+
+
+def _mirror_onboarding_progress(
+    ctx: HarnessRunContext,
+    *,
+    env: dict[str, str],
+    project_id: int,
+    stage: str,
+    windmill_job_id: str,
+    windmill_status: str,
+) -> None:
+    api_base_url = _harness_api_base_url(env)
+    try:
+        summary = _fetch_onboarding_summary(api_base_url=api_base_url, project_id=project_id)
+    except Exception as exc:  # noqa: BLE001
+        error_message = str(exc) or exc.__class__.__name__
+        if ctx.metadata.get("_onboarding_progress_poll_error") != error_message:
+            ctx.metadata["_onboarding_progress_poll_error"] = error_message
+            _emit_ctx_event(
+                ctx,
+                "onboarding_progress_poll_error",
+                {
+                    "scenario_id": ctx.scenario_id,
+                    "stage": stage,
+                    "project_id": project_id,
+                    "windmill_job_id": windmill_job_id,
+                    "windmill_status": windmill_status,
+                    "api_base_url": api_base_url,
+                    "error": error_message,
+                },
+            )
+        return
+
+    ctx.metadata.pop("_onboarding_progress_poll_error", None)
+    stages = summary.get("stages") if isinstance(summary.get("stages"), list) else []
+    stages_snapshot = [
+        {
+            "name": str(item.get("name") or ""),
+            "status": str(item.get("status") or ""),
+        }
+        for item in stages
+        if isinstance(item, dict)
+    ]
+    status_snapshot = {
+        "onboarding_status": str(summary.get("status") or ""),
+        "stages": stages_snapshot,
+    }
+    if ctx.metadata.get("_onboarding_progress_snapshot") != status_snapshot:
+        ctx.metadata["_onboarding_progress_snapshot"] = status_snapshot
+        _emit_ctx_event(
+            ctx,
+            "onboarding_progress",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": stage,
+                "project_id": project_id,
+                "windmill_job_id": windmill_job_id,
+                "windmill_status": windmill_status,
+                "onboarding_status": status_snapshot["onboarding_status"],
+                "stages": stages_snapshot,
+            },
+        )
+
+    raw_events = summary.get("events") if isinstance(summary.get("events"), list) else []
+    backend_events = [item for item in raw_events if isinstance(item, dict)]
+    backend_events.sort(key=lambda item: int(item.get("id") or 0))
+    last_seen_id = int(ctx.metadata.get("_onboarding_last_event_id") or 0)
+    for item in backend_events:
+        event_id = int(item.get("id") or 0)
+        if event_id <= last_seen_id:
+            continue
+        _emit_ctx_event(
+            ctx,
+            "onboarding_backend_event",
+            {
+                "scenario_id": ctx.scenario_id,
+                "stage": stage,
+                "project_id": project_id,
+                "windmill_job_id": windmill_job_id,
+                "windmill_status": windmill_status,
+                "event_id": event_id,
+                "backend_event_type": str(item.get("event_type") or ""),
+                "message": str(item.get("message") or ""),
+                "created_at": item.get("created_at"),
+                "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+            },
+        )
+        last_seen_id = event_id
+    ctx.metadata["_onboarding_last_event_id"] = last_seen_id
+
+
 def _build_cli_env(run_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     db_path = run_dir / "harness.sqlite"
@@ -294,6 +620,7 @@ def _wait_for_windmill_job(
     poll_interval_seconds: float,
     log_file: Path,
     heartbeat_timeout_seconds: float,
+    progress_callback: ProgressCallback | None = None,
 ) -> Any:
     start = time.monotonic()
     last_status: JobStatus | None = None
@@ -336,6 +663,13 @@ def _wait_for_windmill_job(
                     handle.flush()
                     log_offset = len(logs)
                     last_progress = now
+
+            if progress_callback is not None:
+                try:
+                    progress_callback(job)
+                except Exception as exc:  # noqa: BLE001
+                    handle.write(f"{datetime.now(UTC).isoformat()} meta progress_callback_error={exc}\n")
+                    handle.flush()
 
             if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED):
                 handle.write(f"{datetime.now(UTC).isoformat()} meta wait_finished status={job.status.value}\n")
@@ -464,14 +798,39 @@ def _stage_project_onboard_windmill(
     windmill_log_file = ctx.diagnostics_dir / f"windmill-job-{job_id}.log"
     client = _build_windmill_client(env)
     try:
-        final_job = _wait_for_windmill_job(
-            client=client,
-            job_id=job_id,
-            timeout_seconds=float(scenario.timeouts.onboard_seconds),
-            poll_interval_seconds=poll_interval,
-            log_file=windmill_log_file,
-            heartbeat_timeout_seconds=heartbeat_timeout,
-        )
+        try:
+            final_job = _wait_for_windmill_job(
+                client=client,
+                job_id=job_id,
+                timeout_seconds=float(scenario.timeouts.onboard_seconds),
+                poll_interval_seconds=poll_interval,
+                log_file=windmill_log_file,
+                heartbeat_timeout_seconds=heartbeat_timeout,
+                progress_callback=lambda job: _mirror_onboarding_progress(
+                    ctx,
+                    env=env,
+                    project_id=project_id,
+                    stage=stage,
+                    windmill_job_id=job_id,
+                    windmill_status=job.status.value,
+                ),
+            )
+        except KeyboardInterrupt:
+            _cancel_windmill_job_on_interrupt(
+                ctx,
+                client=client,
+                job_id=job_id,
+                stage=stage,
+                project_id=project_id,
+            )
+            _cancel_backend_discovery_on_interrupt(
+                ctx,
+                env=env,
+                project_id=project_id,
+                stage=stage,
+                reason="keyboard_interrupt",
+            )
+            raise
         if final_job.status != JobStatus.COMPLETED:
             logs = ""
             try:
@@ -699,16 +1058,125 @@ def _stage_protocol_feature_cycles(ctx: HarnessRunContext, scenario: ScenarioCon
     cycles = _desired_feature_cycles()
     cycle_results: list[dict[str, Any]] = []
 
+    def _run_cycle_substage(
+        cycle_number: int,
+        substage: str,
+        stage_name: str,
+        fn,
+    ) -> dict[str, Any]:
+        started = time.monotonic()
+        _emit_ctx_event(
+            ctx,
+            "substage_started",
+            {
+                "scenario_id": ctx.scenario_id,
+                "parent_stage": stage,
+                "cycle": cycle_number,
+                "substage": substage,
+                "stage_name": stage_name,
+            },
+        )
+        try:
+            result = fn(ctx, scenario, stage_name)
+        except Exception as exc:  # noqa: BLE001
+            _emit_ctx_event(
+                ctx,
+                "substage_failed",
+                {
+                    "scenario_id": ctx.scenario_id,
+                    "parent_stage": stage,
+                    "cycle": cycle_number,
+                    "substage": substage,
+                    "stage_name": stage_name,
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                    "error": str(exc) or exc.__class__.__name__,
+                },
+            )
+            raise
+
+        _emit_ctx_event(
+            ctx,
+            "substage_succeeded",
+            {
+                "scenario_id": ctx.scenario_id,
+                "parent_stage": stage,
+                "cycle": cycle_number,
+                "substage": substage,
+                "stage_name": stage_name,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "details": result or {},
+            },
+        )
+        return result or {}
+
     for cycle_index in range(cycles):
         cycle_number = cycle_index + 1
         cycle_stage_prefix = f"{stage}-cycle-{cycle_number}"
+        cycle_started = time.monotonic()
+        _emit_ctx_event(
+            ctx,
+            "protocol_cycle_started",
+            {
+                "scenario_id": ctx.scenario_id,
+                "parent_stage": stage,
+                "cycle": cycle_number,
+                "total_cycles": cycles,
+            },
+        )
         ctx.metadata["_protocol_cycle_index"] = cycle_index
         ctx.metadata["_protocol_cycle_total"] = cycles
         try:
-            created = _stage_protocol_create(ctx, scenario, f"{cycle_stage_prefix}-protocol_create")
-            worktree = _stage_protocol_worktree(ctx, scenario, f"{cycle_stage_prefix}-protocol_worktree")
-            planned = _stage_protocol_plan(ctx, scenario, f"{cycle_stage_prefix}-protocol_plan")
-            executed = _stage_step_execute(ctx, scenario, f"{cycle_stage_prefix}-step_execute")
+            created = _run_cycle_substage(
+                cycle_number,
+                "protocol_create",
+                f"{cycle_stage_prefix}-protocol_create",
+                _stage_protocol_create,
+            )
+            worktree = _run_cycle_substage(
+                cycle_number,
+                "protocol_worktree",
+                f"{cycle_stage_prefix}-protocol_worktree",
+                _stage_protocol_worktree,
+            )
+            planned = _run_cycle_substage(
+                cycle_number,
+                "protocol_plan",
+                f"{cycle_stage_prefix}-protocol_plan",
+                _stage_protocol_plan,
+            )
+            executed = _run_cycle_substage(
+                cycle_number,
+                "step_execute",
+                f"{cycle_stage_prefix}-step_execute",
+                _stage_step_execute,
+            )
+            _emit_ctx_event(
+                ctx,
+                "protocol_cycle_finished",
+                {
+                    "scenario_id": ctx.scenario_id,
+                    "parent_stage": stage,
+                    "cycle": cycle_number,
+                    "total_cycles": cycles,
+                    "status": "passed",
+                    "duration_ms": int((time.monotonic() - cycle_started) * 1000),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            _emit_ctx_event(
+                ctx,
+                "protocol_cycle_finished",
+                {
+                    "scenario_id": ctx.scenario_id,
+                    "parent_stage": stage,
+                    "cycle": cycle_number,
+                    "total_cycles": cycles,
+                    "status": "failed",
+                    "duration_ms": int((time.monotonic() - cycle_started) * 1000),
+                    "error": str(exc) or exc.__class__.__name__,
+                },
+            )
+            raise
         finally:
             ctx.metadata.pop("_protocol_cycle_index", None)
             ctx.metadata.pop("_protocol_cycle_total", None)

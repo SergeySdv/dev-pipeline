@@ -4,7 +4,6 @@ Tests for DiscoveryAgentService.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -14,10 +13,9 @@ from devgodzilla.db.database import SQLiteDatabase
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.services.discovery_agent import (
     DiscoveryAgentService,
-    DiscoveryResult,
-    DiscoveryStageResult,
     parse_discovery_summary,
 )
+from devgodzilla.services.cli_execution_tracker import get_execution_tracker
 from devgodzilla.config import load_config
 from devgodzilla.engines import EngineRegistry, EngineNotFoundError
 
@@ -299,6 +297,77 @@ class TestDiscoveryAgentService:
 
         # Verify execution tracking was created (result should succeed)
         assert result.success is True
+
+    def test_run_discovery_passes_cli_execution_id_to_engine(self, discovery_service, repo_root, tmp_path):
+        """Discovery engine request should include execution id for later cancellation."""
+        prompt_dir = tmp_path / "prompts"
+        prompt_dir.mkdir()
+        prompt_file = prompt_dir / "repo-discovery.prompt.md"
+        prompt_file.write_text("# Discovery")
+
+        captured_req = {}
+
+        def _fake_execute(req):
+            captured_req["req"] = req
+            return MagicMock(success=True, stdout="", stderr="", error=None)
+
+        mock_engine = MagicMock()
+        mock_engine.check_availability.return_value = True
+        mock_engine.metadata.default_model = "test-model"
+        mock_engine.execute.side_effect = _fake_execute
+
+        with patch.object(EngineRegistry, "get", return_value=mock_engine):
+            with patch("devgodzilla.services.discovery_agent._resolve_prompt", return_value=prompt_file):
+                result = discovery_service.run_discovery(
+                    repo_root=repo_root,
+                    engine_id="opencode",
+                    pipeline=False,
+                    strict_outputs=False,
+                    project_id=123,
+                )
+
+        assert result.success is True
+        req = captured_req["req"]
+        assert req.extra["cli_execution_id"]
+
+    def test_run_discovery_stops_after_execution_cancelled(self, discovery_service, repo_root, tmp_path):
+        """Cancellation should stop the discovery pipeline before subsequent stages start."""
+        tracker = get_execution_tracker()
+        with tracker._execution_lock:
+            tracker._executions.clear()
+            tracker._subscribers.clear()
+
+        prompt_dir = tmp_path / "prompts"
+        prompt_dir.mkdir()
+        for prompt_name in ("discovery-inventory.prompt.md", "discovery-architecture.prompt.md"):
+            (prompt_dir / prompt_name).write_text(f"# {prompt_name}")
+
+        execute_calls: list[str] = []
+
+        def _fake_execute(req):
+            execute_calls.append(req.extra["cli_execution_id"])
+            tracker.cancel(req.extra["cli_execution_id"])
+            return MagicMock(success=False, stdout="", stderr="", error="terminated")
+
+        mock_engine = MagicMock()
+        mock_engine.check_availability.return_value = True
+        mock_engine.metadata.default_model = "test-model"
+        mock_engine.execute.side_effect = _fake_execute
+
+        with patch.object(EngineRegistry, "get", return_value=mock_engine):
+            with patch("devgodzilla.services.discovery_agent._resolve_prompt") as mock_resolve:
+                mock_resolve.side_effect = lambda _repo, *, prompt_name: prompt_dir / prompt_name
+                result = discovery_service.run_discovery(
+                    repo_root=repo_root,
+                    engine_id="opencode",
+                    pipeline=True,
+                    stages=["inventory", "architecture"],
+                    strict_outputs=False,
+                    project_id=321,
+                )
+
+        assert result.success is False
+        assert len(execute_calls) == 1
 
     # ==================== parse_discovery_summary Tests ====================
 

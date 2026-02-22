@@ -356,27 +356,32 @@ class WindmillClient:
         # Windmill exposes job details under jobs_u/*.
         resp = self._request("get", f"/jobs_u/get/{job_id}")
         data = resp.json()
-        
+
         # Map Windmill job type/success to a stable status enum.
         job_type = str(data.get("type") or "").lower()
+        started_at = data.get("started_at")
+        completed_at = data.get("completed_at")
+        canceled_flag = bool(data.get("canceled") or data.get("cancelled"))
         status = JobStatus.QUEUED
-        if "running" in job_type:
+        if canceled_flag or "canceled" in job_type or "cancelled" in job_type:
+            status = JobStatus.CANCELED
+        elif completed_at is not None or "completed" in job_type:
+            status = JobStatus.COMPLETED if bool(data.get("success", True)) else JobStatus.FAILED
+        elif started_at is not None:
             status = JobStatus.RUNNING
         elif "queued" in job_type:
             status = JobStatus.QUEUED
-        elif "canceled" in job_type or "cancelled" in job_type:
-            status = JobStatus.CANCELED
         elif "failed" in job_type:
             status = JobStatus.FAILED
-        elif "completed" in job_type:
-            status = JobStatus.COMPLETED if bool(data.get("success", True)) else JobStatus.FAILED
-        
+        elif "running" in job_type:
+            status = JobStatus.RUNNING
+
         return JobInfo(
             id=job_id,
             status=status,
             created_at=data.get("created_at"),
-            started_at=data.get("started_at"),
-            completed_at=data.get("completed_at"),
+            started_at=started_at,
+            completed_at=completed_at,
             result=data.get("result"),
             error=data.get("error") or data.get("err"),
         )

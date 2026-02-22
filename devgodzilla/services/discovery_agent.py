@@ -16,7 +16,7 @@ from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode,
 from devgodzilla.logging import get_logger
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.agent_config import AgentConfigService
-from devgodzilla.services.cli_execution_tracker import get_execution_tracker
+from devgodzilla.services.cli_execution_tracker import ExecutionStatus, get_execution_tracker
 from devgodzilla.spec import resolve_spec_path
 
 logger = get_logger(__name__)
@@ -170,8 +170,20 @@ class DiscoveryAgentService(Service):
         if fallback_used:
             tracker.log(execution.execution_id, "warn", f"Using fallback engine {engine_id} (original {original_engine_id} unavailable)")
 
+        def _execution_cancelled() -> bool:
+            tracked = tracker.get_execution(execution.execution_id)
+            return bool(tracked and tracked.status == ExecutionStatus.CANCELLED)
+
         results: list[DiscoveryStageResult] = []
         for stage in selected:
+            if _execution_cancelled():
+                tracker.log(
+                    execution.execution_id,
+                    "warn",
+                    f"Discovery cancelled before stage {stage}; stopping remaining stages",
+                    source="tracker",
+                )
+                break
             prompt_name = stage_map.get(stage)
             if not prompt_name:
                 results.append(
@@ -247,7 +259,12 @@ class DiscoveryAgentService(Service):
                 working_dir=str(repo_root),
                 sandbox=SandboxMode.WORKSPACE_WRITE,
                 timeout=timeout_seconds,
-                extra={"output_format": "text", "job_id": "discovery", "log_callback": _log_output},
+                extra={
+                    "output_format": "text",
+                    "job_id": "discovery",
+                    "log_callback": _log_output,
+                    "cli_execution_id": execution.execution_id,
+                },
             )
             engine_result = engine.execute(req)
 
@@ -288,15 +305,27 @@ class DiscoveryAgentService(Service):
                 )
             )
 
+            if _execution_cancelled():
+                tracker.log(
+                    execution.execution_id,
+                    "warn",
+                    f"Discovery cancelled after stage {stage}; stopping remaining stages",
+                    source="tracker",
+                )
+                break
+
         expected = self._expected_outputs(pipeline=pipeline)
         missing = [p for p in expected if not (repo_root / p).exists()]
 
         success = all(r.success for r in results) and (not missing if strict_outputs else True)
         error = None
         if not success:
-            error = "Discovery failed"
-            if missing and strict_outputs:
+            if _execution_cancelled():
+                error = "Discovery cancelled"
+            elif missing and strict_outputs:
                 error = f"Missing discovery outputs: {', '.join(str(p) for p in missing)}"
+            else:
+                error = "Discovery failed"
 
         # Generate warning if we fell back to a different engine
         warning = None

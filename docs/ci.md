@@ -123,7 +123,12 @@ Failure outputs:
 - Local diagnostics: `runs/harness/<timestamp>-<scenario_id>/diagnostics/`
 - CI diagnostics: uploaded artifact from `runs/harness/**`
 - Structured event stream: `runs/harness/<timestamp>-<scenario_id>/diagnostics/events.jsonl`
-  - Event types: `run_started`, `stage_started`, `stage_retry`, `stage_succeeded`, `stage_failed`, `run_finished`
+  - Top-level event types: `run_started`, `stage_started`, `stage_retry`, `stage_succeeded`, `stage_failed`, `run_finished`
+  - Nested protocol-cycle visibility: `protocol_cycle_started`, `substage_started`, `substage_succeeded`, `substage_failed`, `protocol_cycle_finished`
+  - Windmill onboarding visibility while waiting: `onboarding_progress`, `onboarding_backend_event`, `onboarding_progress_poll_error`
+  - Interrupt cleanup events: `windmill_job_cancelled`, `windmill_job_cancel_skipped`, `windmill_job_cancel_failed`
+  - Backend discovery cancel events (best-effort via `/cli-executions`): `backend_discovery_cancelled`, `backend_discovery_cancel_failed`, `backend_discovery_cancel_scan_failed`, `backend_discovery_cancel_skipped`
+  - Interrupted runs emit `run_interrupted` and still write `diagnostics/run-summary.json` with `status: "interrupted"`
 - Per-command live CLI logs: `runs/harness/<timestamp>-<scenario_id>/diagnostics/cli-<stage>-attempt-<n>-*.log`
 - Windmill job payload snapshots: `runs/harness/<timestamp>-<scenario_id>/diagnostics/windmill-job-<job_id>.json`
 
@@ -142,6 +147,15 @@ DB alignment note:
 # watch structured harness lifecycle events
 RUN_DIR="$(ls -td runs/harness/* | head -n1)"
 tail -F "$RUN_DIR/diagnostics/events.jsonl" | jq -c
+
+# filter protocol cycle internals (create/worktree/plan/execute)
+tail -F "$RUN_DIR/diagnostics/events.jsonl" | jq -c 'select(.event_type|test("protocol_cycle_|substage_"))'
+
+# filter onboarding/discovery progress while project_onboard_windmill is waiting
+tail -F "$RUN_DIR/diagnostics/events.jsonl" | jq -c 'select(.event_type|test("^onboarding_"))'
+
+# filter interrupt cleanup actions (Windmill + backend discovery)
+tail -F "$RUN_DIR/diagnostics/events.jsonl" | jq -c 'select(.event_type|test("windmill_job_cancel|backend_discovery_cancel"))'
 
 # watch all streamed CLI/opencode stage logs
 tail -F "$RUN_DIR"/diagnostics/cli-*.log

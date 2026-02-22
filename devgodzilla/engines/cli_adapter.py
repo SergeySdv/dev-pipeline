@@ -10,11 +10,10 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from devgodzilla.engines.interface import (
     Engine,
-    EngineKind,
     EngineMetadata,
     EngineRequest,
     EngineResult,
@@ -34,6 +33,7 @@ def run_cli_command(
     env: Optional[Dict[str, str]] = None,
     capture_output: bool = True,
     on_output: Optional[Callable[[str, str], None]] = None,
+    tracker_execution_id: Optional[str] = None,
 ) -> EngineResult:
     """
     Run a CLI command and capture output.
@@ -74,6 +74,16 @@ def run_cli_command(
                 env=proc_env,
                 bufsize=1,
             )
+            if tracker_execution_id:
+                try:
+                    from devgodzilla.services.cli_execution_tracker import get_execution_tracker
+
+                    get_execution_tracker().set_pid(tracker_execution_id, proc.pid)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "cli_command_set_pid_failed",
+                        extra={"execution_id": tracker_execution_id, "error": str(exc)},
+                    )
 
             if input_text is not None and proc.stdin:
                 try:

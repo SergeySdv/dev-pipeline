@@ -22,6 +22,7 @@ class HarnessRunContext:
     run_dir: Path
     diagnostics_dir: Path
     metadata: dict[str, Any] = field(default_factory=dict)
+    event_emitter: EventEmitter | None = None
 
 
 @dataclass
@@ -192,15 +193,18 @@ def run_scenario(
     base = run_root or (Path("runs") / "harness")
     run_dir = _make_run_dir(base, scenario.scenario_id)
     diagnostics_dir = run_dir / "diagnostics"
+    def _emit(event_type: str, payload: dict[str, Any]) -> None:
+        _append_event(diagnostics_dir, event_type, payload)
+
     ctx = HarnessRunContext(
         scenario_id=scenario.scenario_id,
         run_dir=run_dir,
         diagnostics_dir=diagnostics_dir,
+        event_emitter=_emit,
     )
 
     started_at = _now_utc()
-    _append_event(
-        diagnostics_dir,
+    _emit(
         "run_started",
         {
             "scenario_id": scenario.scenario_id,
@@ -211,81 +215,106 @@ def run_scenario(
     )
     stage_results: list[StageResult] = []
     run_status = "passed"
+    current_stage: str | None = None
 
-    for stage in scenario.workflow_stages:
-        handler = stage_handlers.get(stage)
-        if handler is None:
-            stage_result = StageResult(
-                stage=stage,
-                status="failed",
-                attempts=0,
-                duration_ms=0,
-                error=f"No stage handler registered for '{stage}'",
-            )
-        else:
-            stage_result = _execute_stage_with_retries(
-                handler,
-                ctx,
-                scenario,
-                stage,
-                sleep_fn=sleep_fn,
-                clock_fn=clock_fn,
-                emit_event=lambda event_type, payload: _append_event(
-                    diagnostics_dir,
-                    event_type,
-                    payload,
-                ),
-            )
-
-        stage_results.append(stage_result)
-        if stage_result.status != "passed":
-            run_status = "failed"
+    try:
+        for stage in scenario.workflow_stages:
+            current_stage = stage
+            handler = stage_handlers.get(stage)
             if handler is None:
-                _append_event(
-                    diagnostics_dir,
-                    "stage_failed",
+                stage_result = StageResult(
+                    stage=stage,
+                    status="failed",
+                    attempts=0,
+                    duration_ms=0,
+                    error=f"No stage handler registered for '{stage}'",
+                )
+            else:
+                stage_result = _execute_stage_with_retries(
+                    handler,
+                    ctx,
+                    scenario,
+                    stage,
+                    sleep_fn=sleep_fn,
+                    clock_fn=clock_fn,
+                    emit_event=_emit,
+                )
+
+            stage_results.append(stage_result)
+            current_stage = None
+            if stage_result.status != "passed":
+                run_status = "failed"
+                if handler is None:
+                    _emit(
+                        "stage_failed",
+                        {
+                            "scenario_id": scenario.scenario_id,
+                            "stage": stage_result.stage,
+                            "attempts": stage_result.attempts,
+                            "duration_ms": stage_result.duration_ms,
+                            "error": stage_result.error,
+                            "reason": "missing_handler",
+                        },
+                    )
+                write_diagnostic_file(
+                    run_dir,
+                    f"stage-{stage}-failure",
                     {
                         "scenario_id": scenario.scenario_id,
                         "stage": stage_result.stage,
-                        "attempts": stage_result.attempts,
-                        "duration_ms": stage_result.duration_ms,
                         "error": stage_result.error,
-                        "reason": "missing_handler",
+                        "attempts": stage_result.attempts,
                     },
                 )
-            write_diagnostic_file(
-                run_dir,
-                f"stage-{stage}-failure",
-                {
-                    "scenario_id": scenario.scenario_id,
-                    "stage": stage_result.stage,
-                    "error": stage_result.error,
-                    "attempts": stage_result.attempts,
-                },
-            )
-            if not continue_on_error:
-                break
+                if not continue_on_error:
+                    break
 
-    result = HarnessRunResult(
-        scenario_id=scenario.scenario_id,
-        run_dir=run_dir,
-        diagnostics_dir=diagnostics_dir,
-        status=run_status,
-        started_at=started_at,
-        finished_at=_now_utc(),
-        stages=stage_results,
-    )
-    _append_event(
-        diagnostics_dir,
-        "run_finished",
-        {
-            "scenario_id": scenario.scenario_id,
-            "status": result.status,
-            "started_at": result.started_at,
-            "finished_at": result.finished_at,
-            "stages_executed": len(result.stages),
-            "failed_stages": [stage.stage for stage in result.stages if stage.status != "passed"],
-        },
-    )
-    write_diagnostic_file(run_dir, "run-summary", result)
-    return result
+        result = HarnessRunResult(
+            scenario_id=scenario.scenario_id,
+            run_dir=run_dir,
+            diagnostics_dir=diagnostics_dir,
+            status=run_status,
+            started_at=started_at,
+            finished_at=_now_utc(),
+            stages=stage_results,
+        )
+        _emit(
+            "run_finished",
+            {
+                "scenario_id": scenario.scenario_id,
+                "status": result.status,
+                "started_at": result.started_at,
+                "finished_at": result.finished_at,
+                "stages_executed": len(result.stages),
+                "failed_stages": [stage.stage for stage in result.stages if stage.status != "passed"],
+            },
+        )
+        write_diagnostic_file(run_dir, "run-summary", result)
+        return result
+    except BaseException as exc:
+        interrupted_stage = current_stage or str(ctx.metadata.get("_current_stage") or "") or None
+        error_message = str(exc) or exc.__class__.__name__
+        _emit(
+            "run_interrupted",
+            {
+                "scenario_id": scenario.scenario_id,
+                "status": "interrupted",
+                "stage": interrupted_stage,
+                "error_type": exc.__class__.__name__,
+                "error": error_message,
+                "started_at": started_at,
+                "finished_at": _now_utc(),
+                "stages_completed": len(stage_results),
+            },
+        )
+        partial_result = HarnessRunResult(
+            scenario_id=scenario.scenario_id,
+            run_dir=run_dir,
+            diagnostics_dir=diagnostics_dir,
+            status="interrupted",
+            started_at=started_at,
+            finished_at=_now_utc(),
+            stages=stage_results,
+        )
+        write_diagnostic_file(run_dir, "run-summary", partial_result)
+        raise

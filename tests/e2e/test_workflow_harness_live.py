@@ -52,6 +52,7 @@ def test_workflow_harness_live() -> None:
             run_root=run_root,
             continue_on_error=continue_on_error,
         )
+        stage_by_name = {stage.stage: stage for stage in result.stages}
 
         repo_root_raw = ""
         for stage in result.stages:
@@ -62,9 +63,46 @@ def test_workflow_harness_live() -> None:
         if repo_root_raw:
             assert_paths_exist(Path(repo_root_raw), adapter.required_paths)
 
+        missing_stages = [stage_name for stage_name in scenario.workflow_stages if stage_name not in stage_by_name]
+        if missing_stages:
+            failures.append(
+                "scenario="
+                f"{scenario.scenario_id} missing_stages={missing_stages} "
+                f"run_dir={result.run_dir} diagnostics={result.diagnostics_dir}"
+            )
+
+        protocol_cycles_stage = stage_by_name.get("protocol_feature_cycles")
+        if protocol_cycles_stage and protocol_cycles_stage.status == "passed":
+            details = protocol_cycles_stage.details or {}
+            cycles = details.get("cycles")
+            if not isinstance(cycles, list) or not cycles:
+                failures.append(
+                    "scenario="
+                    f"{scenario.scenario_id} protocol_feature_cycles missing cycle details "
+                    f"run_dir={result.run_dir} diagnostics={result.diagnostics_dir}"
+                )
+            else:
+                min_steps = int(scenario.min_protocol_steps)
+                for cycle in cycles:
+                    cycle_num = cycle.get("cycle")
+                    protocol_id = cycle.get("protocol_run_id")
+                    steps_created = int(cycle.get("steps_created") or 0)
+                    executed_steps = int(cycle.get("executed_steps") or 0)
+                    if not protocol_id or steps_created < min_steps or executed_steps < 1:
+                        failures.append(
+                            "scenario="
+                            f"{scenario.scenario_id} invalid protocol cycle details "
+                            f"cycle={cycle_num} protocol_run_id={protocol_id} "
+                            f"steps_created={steps_created} executed_steps={executed_steps} "
+                            f"run_dir={result.run_dir} diagnostics={result.diagnostics_dir}"
+                        )
+
         if not result.success:
             failures.append(
-                f"scenario={scenario.scenario_id} run_dir={result.run_dir} diagnostics={result.diagnostics_dir}"
+                "scenario="
+                f"{scenario.scenario_id} failed_stages="
+                f"{[stage.stage for stage in result.stages if stage.status != 'passed']} "
+                f"run_dir={result.run_dir} diagnostics={result.diagnostics_dir}"
             )
 
     assert not failures, "Harness run failures:\n" + "\n".join(failures)

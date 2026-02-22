@@ -30,6 +30,7 @@ def test_opencode_engine_invokes_opencode_run(monkeypatch: pytest.MonkeyPatch, t
         captured["cwd"] = kwargs.get("cwd")
         captured["input_text"] = kwargs.get("input_text")
         captured["on_output"] = kwargs.get("on_output")
+        captured["tracker_execution_id"] = kwargs.get("tracker_execution_id")
         callback = kwargs.get("on_output")
         if callable(callback):
             callback("stdout", "opencode started\n")
@@ -55,7 +56,7 @@ def test_opencode_engine_invokes_opencode_run(monkeypatch: pytest.MonkeyPatch, t
         working_dir=str(tmp_path),
         sandbox=SandboxMode.WORKSPACE_WRITE,
         timeout=10,
-        extra={"output_format": "text"},
+        extra={"output_format": "text", "cli_execution_id": "exec-123"},
     )
     result = engine.execute(req)
     assert result.success is True
@@ -68,6 +69,7 @@ def test_opencode_engine_invokes_opencode_run(monkeypatch: pytest.MonkeyPatch, t
     assert captured.get("cwd") == tmp_path
     assert captured.get("input_text") is None
     assert callable(captured.get("on_output"))
+    assert captured.get("tracker_execution_id") == "exec-123"
 
 
 def test_bootstrap_prefers_opencode_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
