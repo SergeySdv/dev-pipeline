@@ -13,13 +13,13 @@
 - Lint: `scripts/ci/lint.sh` (`ruff check devgodzilla windmill scripts tests --select E9,F63,F7,F82`).
 - Typecheck: `scripts/ci/typecheck.sh` (compileall + import smoke for key modules).
 - Tests: `scripts/ci/test.sh` (`pytest -q tests/test_devgodzilla_*.py`).
-- Docker infra stack: `docker compose up --build -d` (nginx + windmill + workers + db). Backend + frontend are intended to run locally on the host for development.
-- Local dev manager (hybrid): `scripts/run-local-dev.sh` starts backend + frontend on the host, and runs infra (db/redis/windmill/nginx/workers) in Docker.
-  - Infra only: `scripts/run-local-dev.sh up`
-  - Backend: `scripts/run-local-dev.sh backend start|stop|restart|status`
-  - Frontend: `scripts/run-local-dev.sh frontend start|stop|restart|status`
-  - Everything: `scripts/run-local-dev.sh dev` (restarts existing host dev servers instead of spawning duplicates)
-- Default Docker routing for local dev uses `nginx.local.conf` (proxies to `host.docker.internal` for backend/frontend).
+- Full stack (default): `docker compose up --build -d` starts everything — nginx, windmill, workers, db, devgodzilla-api, and frontend. Access the app at `http://localhost:8080/console`, Windmill at `http://localhost:8080`.
+- Local dev manager: `scripts/run-local-dev.sh` — `up` builds and starts the full Docker stack; `backend`/`frontend` subcommands still available for host-side iteration.
+  - Full stack: `scripts/run-local-dev.sh up`
+  - Backend on host: `scripts/run-local-dev.sh backend start|stop|restart|status`
+  - Frontend on host: `scripts/run-local-dev.sh frontend start|stop|restart|status`
+  - Host dev mode: `scripts/run-local-dev.sh dev` (runs backend + frontend on host against Docker infra)
+- Default Docker routing uses `nginx.devgodzilla.conf` (all services resolved by Docker's internal DNS; no `host.docker.internal` needed).
 - Windmill bootstrap import (one-shot): `scripts/run-local-dev.sh import` (or `docker compose -f docker-compose.devgodzilla.yml up --build -d windmill_import`).
 - Windmill JS transforms: `WINDMILL_FEATURES` defaults to `static_frontend python deno_core` (set `WINDMILL_FEATURES="static_frontend python"` to skip `deno_core`, but flows that use JavaScript `input_transforms` will not work).
 
