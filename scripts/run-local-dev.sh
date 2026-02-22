@@ -368,17 +368,26 @@ run_frontend_foreground() {
 windmill_import() {
   export_env
   local token_file="$DEVGODZILLA_WINDMILL_ENV_FILE"
-  if [[ ! -f "$token_file" ]]; then
+  local has_env_token="0"
+  if [[ -n "${DEVGODZILLA_WINDMILL_TOKEN:-}" || -n "${WINDMILL_TOKEN:-}" ]]; then
+    has_env_token="1"
+  fi
+  if [[ ! -f "$token_file" && "$has_env_token" != "1" ]]; then
     warn "Token file not found: $token_file"
     warn "Set DEVGODZILLA_WINDMILL_ENV_FILE or export DEVGODZILLA_WINDMILL_TOKEN."
   fi
   local py
   py="$(python_bin)"
-  "$py" windmill/import_to_windmill.py \
-    --url "$DEVGODZILLA_WINDMILL_URL" \
-    --workspace "$DEVGODZILLA_WINDMILL_WORKSPACE" \
-    --root "$DEVGODZILLA_WINDMILL_IMPORT_ROOT" \
-    --token-file "$token_file"
+  local import_args=(
+    windmill/import_to_windmill.py
+    --url "$DEVGODZILLA_WINDMILL_URL"
+    --workspace "$DEVGODZILLA_WINDMILL_WORKSPACE"
+    --root "$DEVGODZILLA_WINDMILL_IMPORT_ROOT"
+  )
+  if [[ -f "$token_file" ]]; then
+    import_args+=(--token-file "$token_file")
+  fi
+  "$py" "${import_args[@]}"
 
   local timeout_seconds="$WINDMILL_JOB_TIMEOUT_SECONDS"
   if [[ "$timeout_seconds" =~ ^[0-9]+$ ]]; then

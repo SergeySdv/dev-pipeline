@@ -50,6 +50,9 @@ jobs:
     timeout-minutes: 300
     env:
       DEVGODZILLA_RUN_E2E_HARNESS: "1"
+      # Allow either secret name; importer accepts both env vars.
+      DEVGODZILLA_WINDMILL_TOKEN: ${{ secrets.DEVGODZILLA_WINDMILL_TOKEN }}
+      WINDMILL_TOKEN: ${{ secrets.WINDMILL_TOKEN }}
       HARNESS_GITHUB_OWNER: "ilyafedotov-ops"
       HARNESS_GITHUB_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.harness_repos || 'test-glm5-demo,SimpleAdminReporter,demo-spring' }}
       HARNESS_SCENARIO: ${{ github.event_name == 'workflow_dispatch' && inputs.harness_scenario || '' }}
