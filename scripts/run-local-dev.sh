@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$PROJECT_DIR/docker-compose.local.yml"
+COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -308,7 +308,7 @@ print_usage() {
 Usage: scripts/run-local-dev.sh <command>
 
 Commands:
-  up          Start Docker infra (db, redis, windmill, nginx, workers)
+  up          Build and start full stack (infra + api + frontend)
   down        Stop Docker infra
   clean       Stop Docker infra and remove volumes
   status      Show Docker infra status
@@ -329,8 +329,8 @@ EOF
 
 infra_up() {
   ensure_docker
-  compose_cmd up -d db redis windmill windmill_worker windmill_worker_native lsp nginx
-  log "Infra started. Nginx: http://localhost:8080  Windmill: http://localhost:8001"
+  compose_cmd up -d --build
+  log "Stack started. App: http://localhost:8080/console  Windmill: http://localhost:8080"
 }
 
 infra_down() {

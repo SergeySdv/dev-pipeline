@@ -7,6 +7,8 @@ RUN npm install -g pnpm \
     && pnpm config set fetch-timeout 60000 \
     && pnpm config set network-timeout 600000 \
     && pnpm install --frozen-lockfile
+ARG NEXT_PUBLIC_API_BASE_URL=http://devgodzilla-api:8000
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY . .
 RUN pnpm build
 
