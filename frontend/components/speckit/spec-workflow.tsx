@@ -230,7 +230,7 @@ export function SpecWorkflow({
               <div key={step.key} className="relative">
                 {/* Connector line */}
                 {index < steps.length - 1 && (
-                  <div className="bg-muted absolute top-8 left-[calc(100%_-_8px)] hidden h-0.5 w-[calc(100%_-_16px)] md:block">
+                  <div className="bg-muted pointer-events-none absolute top-8 left-full hidden h-0.5 w-4 xl:block">
                     <div
                       className={cn(
                         "h-full transition-all",
