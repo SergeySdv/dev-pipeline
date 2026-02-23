@@ -14,11 +14,19 @@
   - design-solution-wizard: Uses StepIndicator and ClarificationDialog
   - implement-feature-wizard: Uses StepIndicator and ClarificationDialog
 - [x] Phase 3: Workflow state machine (`lib/workflow/`) created
-- [x] Phase 4.1: Inline error display added to wizards with dismiss buttons
+- [x] Phase 4: Error handling & loading states
+  - Added ErrorBoundary, AsyncErrorDisplay, LoadingErrorWrapper components
+  - Added wizard-specific skeleton loaders
+  - Replaced spinner loaders with skeleton UI in all wizards
+  - Added inline error alerts with dismiss buttons
+- [x] Phase 5: Accessibility improvements
+  - Added ARIA attributes to StepIndicator component
+  - Added keyboard navigation support (Arrow keys, Home, End)
+  - Used proper semantic HTML (nav, ol, li) for step navigation
+  - Added aria-current="step" for active step
+  - Added aria-label to step buttons with status information
 
-### In Progress
-- [ ] Phase 4: Add comprehensive error handling & loading states
-- [ ] Phase 5: Add accessibility improvements
+### All Phases Complete!
 
 ---
 
