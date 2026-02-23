@@ -177,6 +177,11 @@ services:
         condition: service_started
     volumes:
       - ./projects:/app/projects
+      # Optional: reuse your host OpenCode login inside Docker (recommended for local dev).
+      # Host paths (macOS/Linux): `opencode auth list` shows credentials in `~/.local/share/opencode/auth.json`.
+      - ${HOME}/.local/share/opencode:/root/.local/share/opencode:rw
+      - ${HOME}/.cache/opencode:/root/.cache/opencode:rw
+      - ${HOME}/.local/state/opencode:/root/.local/state/opencode:rw
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
       interval: 10s
