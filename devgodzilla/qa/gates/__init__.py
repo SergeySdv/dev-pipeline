@@ -29,6 +29,19 @@ if TYPE_CHECKING:
     )
     from devgodzilla.qa.gates.speckit import SpecKitChecklistGate
     from devgodzilla.qa.gates.prompt import PromptQAGate
+    from devgodzilla.qa.gates.library_first import (
+        LibraryFirstGate,
+        LibraryFirstSummaryGate,
+    )
+    from devgodzilla.qa.gates.simplicity import (
+        SimplicityGate,
+        SimplicitySummaryGate,
+    )
+    from devgodzilla.qa.gates.anti_abstraction import (
+        AntiAbstractionGate,
+        AntiAbstractionSummaryGate,
+    )
+    from devgodzilla.qa.gates.test_first import TestFirstGate
 
 __all__ = [
     # Interface
@@ -49,6 +62,15 @@ __all__ = [
     # Constitutional gates
     "ConstitutionalGate",
     "ConstitutionalSummaryGate",
+    # Article-specific constitutional gates
+    "LibraryFirstGate",
+    "LibraryFirstSummaryGate",
+    "SimplicityGate",
+    "SimplicitySummaryGate",
+    "AntiAbstractionGate",
+    "AntiAbstractionSummaryGate",
+    # Test-first gate
+    "TestFirstGate",
 ]
 
 _EXPORTS = {
@@ -67,6 +89,13 @@ _EXPORTS = {
     "ConstitutionalSummaryGate": "devgodzilla.qa.gates.constitutional",
     "SpecKitChecklistGate": "devgodzilla.qa.gates.speckit",
     "PromptQAGate": "devgodzilla.qa.gates.prompt",
+    "LibraryFirstGate": "devgodzilla.qa.gates.library_first",
+    "LibraryFirstSummaryGate": "devgodzilla.qa.gates.library_first",
+    "SimplicityGate": "devgodzilla.qa.gates.simplicity",
+    "SimplicitySummaryGate": "devgodzilla.qa.gates.simplicity",
+    "AntiAbstractionGate": "devgodzilla.qa.gates.anti_abstraction",
+    "AntiAbstractionSummaryGate": "devgodzilla.qa.gates.anti_abstraction",
+    "TestFirstGate": "devgodzilla.qa.gates.test_first",
 }
 
 

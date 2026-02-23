@@ -131,7 +131,11 @@ class Gate(ABC):
     @abstractmethod
     def run(self, context: GateContext) -> GateResult:
         """
-        Run the gate validation.
+        Execute the gate check. Legacy method name.
+        
+        .. deprecated::
+            Use evaluate() instead for consistency with specification naming.
+            This method will remain for backward compatibility.
         
         Args:
             context: Gate execution context
@@ -140,6 +144,21 @@ class Gate(ABC):
             GateResult with verdict and findings
         """
         ...
+
+    def evaluate(self, context: GateContext) -> GateResult:
+        """
+        Execute the gate check. Preferred method name.
+        
+        This is an alias for run() to match the specification naming.
+        New code should prefer evaluate() for consistency.
+        
+        Args:
+            context: Gate execution context
+            
+        Returns:
+            GateResult with verdict and findings
+        """
+        return self.run(context)
 
     def skip(self, reason: str = "Skipped") -> GateResult:
         """Return a skip result."""
