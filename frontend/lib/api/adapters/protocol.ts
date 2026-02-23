@@ -20,6 +20,7 @@ interface RawProtocolRun {
   windmill_flow_id: string | null;
   speckit_metadata: Record<string, unknown> | null;
   summary?: string | null;
+  linked_sprint_id?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,7 +54,13 @@ export function adaptProtocol(data: RawProtocolRun): ProtocolRun {
     worktree_path: data.worktree_path,
     windmill_flow_id: data.windmill_flow_id,
 
-    // Flatten speckit_metadata
+    // Summary from backend
+    summary: data.summary ?? null,
+
+    // Speckit metadata (raw, for frontend access)
+    speckit_metadata: data.speckit_metadata,
+
+    // Flatten speckit_metadata for backwards compatibility
     spec_hash: (meta.spec_hash as string) ?? null,
     spec_validation_status: (meta.validation_status as string) ?? null,
     spec_validated_at: (meta.validated_at as string) ?? null,
@@ -73,6 +80,9 @@ export function adaptProtocol(data: RawProtocolRun): ProtocolRun {
     policy_pack_version: (meta.policy_pack_version as string) ?? null,
     policy_effective_hash: (meta.policy_effective_hash as string) ?? null,
     policy_effective_json: (meta.policy_effective_json as Record<string, unknown>) ?? null,
+
+    // Linked sprint
+    linked_sprint_id: data.linked_sprint_id ?? null,
 
     created_at: data.created_at,
     updated_at: data.updated_at,

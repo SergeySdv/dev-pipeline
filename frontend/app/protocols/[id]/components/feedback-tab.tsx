@@ -26,17 +26,19 @@ interface FeedbackTabProps {
   protocolId: number;
 }
 
-const feedbackTypeConfig = {
+const feedbackActionConfig = {
   approve: { label: "Approve", icon: CheckCircle2, color: "text-green-600" },
   reject: { label: "Reject", icon: XCircle, color: "text-red-600" },
   clarify: { label: "Clarify", icon: HelpCircle, color: "text-amber-600" },
   retry: { label: "Retry", icon: RotateCcw, color: "text-blue-600" },
 } as const;
 
+type FeedbackAction = keyof typeof feedbackActionConfig;
+
 export function FeedbackTab({ protocolId }: FeedbackTabProps) {
   const { data: feedback, isLoading } = useProtocolFeedback(protocolId);
   const submitFeedback = useSubmitProtocolFeedback();
-  const [feedbackType, setFeedbackType] = useState<FeedbackCreate["feedback_type"]>("approve");
+  const [action, setAction] = useState<FeedbackAction>("approve");
   const [message, setMessage] = useState("");
 
   const handleSubmit = async () => {
@@ -47,7 +49,7 @@ export function FeedbackTab({ protocolId }: FeedbackTabProps) {
     try {
       await submitFeedback.mutateAsync({
         protocolId,
-        data: { feedback_type: feedbackType, message: message.trim() },
+        data: { action, message: message.trim() },
       });
       toast.success("Feedback submitted");
       setMessage("");
@@ -70,14 +72,14 @@ export function FeedbackTab({ protocolId }: FeedbackTabProps) {
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
             <Select
-              value={feedbackType}
-              onValueChange={(v) => setFeedbackType(v as FeedbackCreate["feedback_type"])}
+              value={action}
+              onValueChange={(v) => setAction(v as FeedbackAction)}
             >
               <SelectTrigger className="w-[160px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(feedbackTypeConfig).map(([key, config]) => {
+                {Object.entries(feedbackActionConfig).map(([key, config]) => {
                   const Icon = config.icon;
                   return (
                     <SelectItem key={key} value={key}>
@@ -123,8 +125,8 @@ export function FeedbackTab({ protocolId }: FeedbackTabProps) {
             <div className="space-y-3">
               {feedback.map((item) => {
                 const config =
-                  feedbackTypeConfig[item.feedback_type as keyof typeof feedbackTypeConfig] ||
-                  feedbackTypeConfig.clarify;
+                  feedbackActionConfig[item.feedback_type as keyof typeof feedbackActionConfig] ||
+                  feedbackActionConfig.clarify;
                 const Icon = config.icon;
                 return (
                   <div key={item.id} className="flex items-start gap-3 rounded-lg border p-3">

@@ -11,6 +11,7 @@ export type ProtocolStatus =
   | "running"
   | "paused"
   | "blocked"
+  | "needs_qa"
   | "failed"
   | "cancelled"
   | "completed";
@@ -23,7 +24,8 @@ export type StepStatus =
   | "failed"
   | "cancelled"
   | "blocked"
-  | "skipped";
+  | "skipped"
+  | "timeout";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -120,13 +122,24 @@ export interface ProtocolRun {
   description: string | null;
   template_config: Record<string, unknown> | null;
   template_source: string | null;
+  summary: string | null;
+  /** SpecKit metadata containing spec_hash, spec_validation_status, spec_validated_at */
+  speckit_metadata: {
+    spec_hash?: string | null;
+    spec_validation_status?: string | null;
+    spec_validated_at?: string | null;
+  } | null;
+  /** @deprecated Use speckit_metadata.spec_hash instead */
   spec_hash: string | null;
+  /** @deprecated Use speckit_metadata.spec_validation_status instead */
   spec_validation_status: string | null;
+  /** @deprecated Use speckit_metadata.spec_validated_at instead */
   spec_validated_at: string | null;
   policy_pack_key: string | null;
   policy_pack_version: string | null;
   policy_effective_hash: string | null;
   policy_effective_json: Record<string, unknown> | null;
+  linked_sprint_id: number | null;
   created_at: string;
   updated_at: string;
   // Joined fields
@@ -645,7 +658,10 @@ export interface Feedback {
 }
 
 export interface FeedbackCreate {
-  feedback_type: "approve" | "reject" | "clarify" | "retry";
+  /** @deprecated Use `action` instead - aligned with backend FeedbackRequest */
+  feedback_type?: "approve" | "reject" | "clarify" | "retry";
+  /** Action to take - matches backend FeedbackRequest.action */
+  action: "approve" | "reject" | "clarify" | "retry";
   message: string;
   step_run_id?: number;
   metadata?: Record<string, unknown>;

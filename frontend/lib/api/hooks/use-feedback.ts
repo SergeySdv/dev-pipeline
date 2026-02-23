@@ -143,17 +143,17 @@ export function useSubmitStepFeedback() {
   return useMutation({
     mutationFn: ({
       stepRunId,
-      feedbackType,
+      action,
       message,
       metadata,
     }: {
       stepRunId: string | number;
-      feedbackType: "approve" | "reject" | "clarify" | "retry";
+      action: "approve" | "reject" | "clarify" | "retry";
       message: string;
       metadata?: Record<string, unknown>;
     }) =>
       apiClient.post<FeedbackEvent>(`/steps/${stepRunId}/feedback`, {
-        feedback_type: feedbackType,
+        action,
         message,
         metadata,
       }),
