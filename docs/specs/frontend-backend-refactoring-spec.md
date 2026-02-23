@@ -844,6 +844,42 @@ export function DataTableToolbar({
 
 ---
 
+## Appendix C: Implementation Status
+
+### Phase 1: Critical Wiring Fixes ✅ COMPLETE
+
+| Task | Status | Files Changed |
+|------|--------|---------------|
+| Status enums extended | ✅ | `api/schemas.py` |
+| `/protocols/{id}/spec` endpoint | ✅ | `api/routes/protocols.py` |
+| `/protocols/{id}/runs` endpoint | ✅ | `api/routes/protocols.py` |
+| `open_pr` action endpoint | ✅ | `api/routes/protocols.py` |
+| Sidebar navigation fix | ✅ | `components/layout/sidebar.tsx` |
+| Frontend type adapters | ✅ | `lib/api/adapters/protocol.ts` |
+
+### Phase 2: Data Layer Improvements ✅ COMPLETE
+
+| Task | Status | Files Changed |
+|------|--------|---------------|
+| Error boundary component | ✅ | `components/ui/error-boundary.tsx` |
+| Confirmation dialogs | ✅ | `components/ui/confirm-dialog.tsx` |
+| Loading skeletons | ✅ | `components/skeletons/page-skeletons.tsx` |
+| API client retry logic | ✅ | `lib/api/client.ts` |
+| Toast mutation hooks | ✅ | `lib/api/hooks/use-toast-mutation.ts` |
+| Protocol action toasts | ✅ | `lib/api/hooks/use-protocols.ts` |
+
+### Phase 3: UX Enhancements ✅ COMPLETE
+
+| Task | Status | Files Changed |
+|------|--------|---------------|
+| List toolbar (search/filter) | ✅ | `components/ui/list-toolbar.tsx` |
+| Pagination component | ✅ | `components/ui/pagination.tsx` |
+| Enhanced command palette | ✅ | `components/layout/command-palette.tsx` |
+| Status pills improved | ✅ | `components/ui/status-pill.tsx` |
+| Refresh button component | ✅ | `components/ui/refresh-button.tsx` |
+
+---
+
 ## 7. Implementation Details
 
 ### 7.1 New Backend Endpoints
