@@ -34,7 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { StepIndicator } from "@/components/ui/step-indicator";
-import { ClarificationDialog } from "@/components/shared/clarification-dialog";
+import { ClarificationDialog, DesignSolutionWizardSkeleton } from "@/components/shared";
 import {
   Select,
   SelectContent,
@@ -264,9 +264,7 @@ export function DesignSolutionWizardModal({
 
           <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
             {isLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
-              </div>
+              <DesignSolutionWizardSkeleton />
             ) : (
               <>
                 {!isInitialized && (

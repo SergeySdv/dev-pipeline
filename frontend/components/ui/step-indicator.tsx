@@ -77,164 +77,225 @@ export function StepIndicator({
 
   const stepIndex = steps.findIndex((s) => s.id === currentStep);
 
+  // Keyboard navigation handler
+  const handleKeyDown = React.useCallback(
+    (event: React.KeyboardEvent, stepId: string) => {
+      if (!onStepClick) return;
+
+      const currentIndex = steps.findIndex((s) => s.id === stepId);
+      let targetIndex: number | null = null;
+
+      switch (event.key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          targetIndex = Math.min(currentIndex + 1, steps.length - 1);
+          break;
+        case "ArrowLeft":
+        case "ArrowUp":
+          targetIndex = Math.max(currentIndex - 1, 0);
+          break;
+        case "Home":
+          targetIndex = 0;
+          break;
+        case "End":
+          targetIndex = steps.length - 1;
+          break;
+        case "Enter":
+        case " ":
+          event.preventDefault();
+          onStepClick(stepId);
+          return;
+      }
+
+      if (targetIndex !== null) {
+        event.preventDefault();
+        const targetStep = steps[targetIndex];
+        const targetStatus = getStepStatus(targetStep.id);
+        const isTargetClickable =
+          targetStatus === "completed" || targetIndex <= stepIndex + 1;
+        if (isTargetClickable) {
+          onStepClick(targetStep.id);
+        }
+      }
+    },
+    [onStepClick, steps, stepIndex]
+  );
+
   if (variant === "compact") {
     return (
-      <div className={cn("flex items-center gap-2", className)}>
-        {steps.map((step, index) => {
-          const status = getStepStatus(step.id);
-          const Icon = step.icon;
-          const isClickable = onStepClick && (status === "completed" || index <= stepIndex + 1);
+      <nav
+        className={cn("flex items-center gap-2", className)}
+        role="navigation"
+        aria-label="Progress steps"
+      >
+        <ol className="flex items-center gap-2" role="list">
+          {steps.map((step, index) => {
+            const status = getStepStatus(step.id);
+            const Icon = step.icon;
+            const isClickable = onStepClick && (status === "completed" || index <= stepIndex + 1);
 
-          return (
-            <React.Fragment key={step.id}>
-              <button
-                type="button"
-                disabled={!isClickable}
-                onClick={() => onStepClick?.(step.id)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors",
-                  status === "completed" && "text-green-600 hover:bg-green-500/10",
-                  status === "active" && "text-primary font-medium hover:bg-primary/10",
-                  status === "loading" && "text-blue-600 hover:bg-blue-500/10",
-                  status === "error" && "text-destructive hover:bg-destructive/10",
-                  status === "pending" && "text-muted-foreground hover:bg-muted",
-                  isClickable && "cursor-pointer",
-                  !isClickable && "cursor-default"
+            return (
+              <li key={step.id} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!isClickable}
+                  onClick={() => onStepClick?.(step.id)}
+                  onKeyDown={(e) => handleKeyDown(e, step.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors",
+                    status === "completed" && "text-green-600 hover:bg-green-500/10",
+                    status === "active" && "text-primary font-medium hover:bg-primary/10",
+                    status === "loading" && "text-blue-600 hover:bg-blue-500/10",
+                    status === "error" && "text-destructive hover:bg-destructive/10",
+                    status === "pending" && "text-muted-foreground hover:bg-muted",
+                    isClickable && "cursor-pointer",
+                    !isClickable && "cursor-default"
+                  )}
+                  aria-current={status === "active" ? "step" : undefined}
+                  aria-label={`${step.label}${status === "completed" ? ", completed" : status === "active" ? ", current" : ""}`}
+                >
+                  {status === "completed" ? (
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  ) : Icon ? (
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Circle className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {showLabels && <span className="hidden sm:inline">{step.label}</span>}
+                </button>
+                {showConnectors && index < steps.length - 1 && (
+                  <div className="bg-muted h-0.5 w-4 flex-shrink-0" aria-hidden="true" />
                 )}
-                aria-current={status === "active" ? "step" : undefined}
-              >
-                {status === "completed" ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : Icon ? (
-                  <Icon className="h-4 w-4" />
-                ) : (
-                  <Circle className="h-4 w-4" />
-                )}
-                {showLabels && <span className="hidden sm:inline">{step.label}</span>}
-              </button>
-              {showConnectors && index < steps.length - 1 && (
-                <div className="bg-muted h-0.5 w-4 flex-shrink-0" />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
     );
   }
 
   if (variant === "vertical") {
     return (
-      <div className={cn("flex flex-col gap-4", className)} role="navigation" aria-label="Progress steps">
-        {steps.map((step, index) => {
-          const status = getStepStatus(step.id);
-          const Icon = step.icon;
-          const isClickable = onStepClick && (status === "completed" || index <= stepIndex + 1);
+      <nav
+        className={cn("flex flex-col gap-4", className)}
+        role="navigation"
+        aria-label="Progress steps"
+      >
+        <ol className="flex flex-col gap-4" role="list">
+          {steps.map((step, index) => {
+            const status = getStepStatus(step.id);
+            const Icon = step.icon;
+            const isClickable = onStepClick && (status === "completed" || index <= stepIndex + 1);
 
-          return (
-            <div key={step.id} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <button
-                  type="button"
-                  disabled={!isClickable}
-                  onClick={() => onStepClick?.(step.id)}
-                  className={cn(
-                    "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors",
-                    getStatusClasses(status),
-                    isClickable && "cursor-pointer hover:opacity-80",
-                    !isClickable && "cursor-default"
-                  )}
-                  aria-current={status === "active" ? "step" : undefined}
-                >
-                  {getStatusIcon(status, index + 1, Icon)}
-                </button>
-                {showConnectors && index < steps.length - 1 && (
-                  <div
+            return (
+              <li key={step.id} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <button
+                    type="button"
+                    disabled={!isClickable}
+                    onClick={() => onStepClick?.(step.id)}
+                    onKeyDown={(e) => handleKeyDown(e, step.id)}
                     className={cn(
-                      "my-2 w-0.5 flex-1",
-                      completedSteps.has(step.id) ? "bg-green-500" : "bg-muted"
+                      "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors",
+                      getStatusClasses(status),
+                      isClickable && "cursor-pointer hover:opacity-80",
+                      !isClickable && "cursor-default"
                     )}
-                  />
-                )}
-              </div>
-              <div className="flex-1 pb-4">
-                {showLabels && (
-                  <>
-                    <p
+                    aria-current={status === "active" ? "step" : undefined}
+                    aria-label={`${step.label}${status === "completed" ? ", completed" : status === "active" ? ", current" : ""}`}
+                  >
+                    {getStatusIcon(status, index + 1, Icon)}
+                  </button>
+                  {showConnectors && index < steps.length - 1 && (
+                    <div
                       className={cn(
-                        "text-sm font-medium",
-                        status === "active" && "text-primary",
-                        status === "pending" && "text-muted-foreground"
+                        "my-2 w-0.5 flex-1",
+                        completedSteps.has(step.id) ? "bg-green-500" : "bg-muted"
                       )}
-                    >
-                      {step.label}
-                    </p>
-                    {step.description && (
-                      <p className="text-muted-foreground text-xs">{step.description}</p>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                      aria-hidden="true"
+                    />
+                  )}
+                </div>
+                <div className="flex-1 pb-4">
+                  {showLabels && (
+                    <>
+                      <p
+                        className={cn(
+                          "text-sm font-medium",
+                          status === "active" && "text-primary",
+                          status === "pending" && "text-muted-foreground"
+                        )}
+                      >
+                        {step.label}
+                      </p>
+                      {step.description && (
+                        <p className="text-muted-foreground text-xs">{step.description}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
     );
   }
 
   // Horizontal (default)
   return (
-    <div
+    <nav
       className={cn("bg-muted/30 rounded-lg border p-4", className)}
       role="navigation"
       aria-label="Progress steps"
     >
-      <div className="flex items-center justify-between text-sm">
+      <ol className="flex items-center justify-between text-sm" role="list">
         {steps.map((step, index) => {
           const status = getStepStatus(step.id);
           const Icon = step.icon;
           const isClickable = onStepClick && (status === "completed" || index <= stepIndex + 1);
 
           return (
-            <React.Fragment key={step.id}>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={!isClickable}
-                  onClick={() => onStepClick?.(step.id)}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full border-2 transition-colors",
-                    getStatusClasses(status),
-                    isClickable && "cursor-pointer hover:opacity-80",
-                    !isClickable && "cursor-default"
-                  )}
-                  aria-current={status === "active" ? "step" : undefined}
-                  aria-label={`${step.label}${status === "completed" ? " (completed)" : status === "active" ? " (current)" : ""}`}
-                >
-                  {getStatusIcon(status, index + 1, Icon)}
-                </button>
-                {showLabels && (
-                  <span
-                    className={cn(
-                      status === "active" ? "font-medium" : "text-muted-foreground"
-                    )}
-                  >
-                    {step.label}
-                  </span>
+            <li key={step.id} className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={!isClickable}
+                onClick={() => onStepClick?.(step.id)}
+                onKeyDown={(e) => handleKeyDown(e, step.id)}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full border-2 transition-colors",
+                  getStatusClasses(status),
+                  isClickable && "cursor-pointer hover:opacity-80",
+                  !isClickable && "cursor-default"
                 )}
-              </div>
+                aria-current={status === "active" ? "step" : undefined}
+                aria-label={`${step.label}${status === "completed" ? " (completed)" : status === "active" ? " (current)" : ""}`}
+              >
+                {getStatusIcon(status, index + 1, Icon)}
+              </button>
+              {showLabels && (
+                <span
+                  className={cn(
+                    status === "active" ? "font-medium" : "text-muted-foreground"
+                  )}
+                >
+                  {step.label}
+                </span>
+              )}
               {showConnectors && index < steps.length - 1 && (
                 <div
                   className={cn(
                     "mx-2 h-0.5 flex-1",
                     completedSteps.has(step.id) ? "bg-green-500" : "bg-muted"
                   )}
+                  aria-hidden="true"
                 />
               )}
-            </React.Fragment>
+            </li>
           );
         })}
-      </div>
-    </div>
+      </ol>
+    </nav>
   );
 }
 

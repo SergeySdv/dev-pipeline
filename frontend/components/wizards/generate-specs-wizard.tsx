@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StepIndicator, useStepNavigation } from "@/components/ui/step-indicator";
 import { Textarea } from "@/components/ui/textarea";
-import { ClarificationDialog } from "@/components/shared/clarification-dialog";
+import { ClarificationDialog, GenerateSpecsWizardSkeleton } from "@/components/shared";
 import {
   useAnalyzeSpec,
   useClarifySpec,
@@ -348,9 +348,7 @@ export function GenerateSpecsWizardModal({
 
           <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-6">
             {isLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
-              </div>
+              <GenerateSpecsWizardSkeleton />
             ) : (
               <>
                 {!isInitialized && (
