@@ -5,6 +5,7 @@ Service for executing protocol steps via AI coding engines.
 Coordinates repository setup, engine invocation, and QA triggering.
 """
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,14 @@ from devgodzilla.engines import (
     get_registry,
 )
 from devgodzilla.engines.artifacts import ArtifactWriter
+from devgodzilla.engines.sandbox import (
+    SandboxRunner,
+    SandboxConfig,
+    SandboxType,
+    create_sandbox_runner,
+    get_default_sandbox_type,
+)
+from devgodzilla.engines.block_detector import BlockDetector, BlockInfo, BlockReason
 from devgodzilla.spec import get_step_spec as get_step_spec_from_template, resolve_spec_path
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.agent_config import AgentConfigService
@@ -110,6 +119,7 @@ class ExecutionService(Service):
     - Track execution costs and tokens
     - Handle errors and update step status
     - Trigger QA after successful execution
+    - Detect execution blocks requiring human intervention
     
     Example:
         execution = ExecutionService(context, db)
@@ -127,12 +137,48 @@ class ExecutionService(Service):
         git_service=None,
         quality_service=None,
         default_timeout: int = 600,  # Increased for real agent operations
+        sandbox_type: Optional[SandboxType] = None,
     ) -> None:
         super().__init__(context)
         self.db = db
         self.git_service = git_service
         self.quality_service = quality_service
         self.default_timeout = default_timeout
+        self._sandbox_type = sandbox_type
+        self._block_detector = BlockDetector()
+
+    def _create_sandbox_runner(
+        self,
+        workspace_dir: Path,
+        *,
+        allow_network: bool = False,
+    ) -> SandboxRunner:
+        """Create a sandbox runner for the workspace.
+        
+        Args:
+            workspace_dir: Working directory to allow writes
+            allow_network: Whether to allow network access
+            
+        Returns:
+            Configured SandboxRunner instance
+        """
+        sandbox_type = self._sandbox_type or get_default_sandbox_type()
+        return create_sandbox_runner(
+            workspace_dir,
+            sandbox_type=sandbox_type,
+            allow_network=allow_network,
+        )
+
+    def detect_block(self, output: str) -> Optional[BlockInfo]:
+        """Detect if output indicates blocked execution.
+        
+        Args:
+            output: Agent output to analyze
+            
+        Returns:
+            BlockInfo if a block is detected, None otherwise
+        """
+        return self._block_detector.detect(output)
 
     def execute_step(
         self,
@@ -562,6 +608,58 @@ class ExecutionService(Service):
             )
 
         if engine_result.success:
+            # Check for execution blocks in the output
+            combined_output = f"{engine_result.stdout}\n{engine_result.stderr}"
+            block_info = self.detect_block(combined_output)
+            
+            if block_info:
+                self.logger.warning(
+                    "execution_blocked_detected",
+                    extra=self.log_extra(
+                        step_run_id=step.id,
+                        block_reason=block_info.reason.value,
+                        confidence=block_info.confidence,
+                    ),
+                )
+                
+                # Mark as blocked and record block info
+                block_message = block_info.message
+                if block_info.suggested_question:
+                    block_message = f"{block_message}. {block_info.suggested_question}"
+                
+                self.db.update_step_status(
+                    step.id,
+                    StepStatus.BLOCKED,
+                    summary=block_message,
+                    model=resolution.model,
+                    engine_id=resolution.engine_id,
+                )
+                self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+                
+                # Store block info in metadata for retrieval
+                block_metadata = {
+                    "block_reason": block_info.reason.value,
+                    "block_message": block_info.message,
+                    "suggested_question": block_info.suggested_question,
+                    "confidence": block_info.confidence,
+                    "context": block_info.context,
+                }
+                
+                return ExecutionResult(
+                    success=False,
+                    step_run_id=step.id,
+                    engine_id=resolution.engine_id,
+                    model=resolution.model,
+                    tokens_used=engine_result.tokens_used,
+                    cost_cents=engine_result.cost_cents,
+                    duration_seconds=engine_result.duration_seconds,
+                    stdout=engine_result.stdout,
+                    stderr=engine_result.stderr,
+                    outputs_written=outputs_written,
+                    metadata={**engine_result.metadata, "block_info": block_metadata},
+                    error=block_info.message,
+                )
+            
             # Mark as needs QA (or completed if QA skipped)
             self.db.update_step_status(
                 step.id,
@@ -702,48 +800,85 @@ class ExecutionService(Service):
             outputs["error"] = writer.write_text("error", engine_result.error, kind="log", extension=".txt").path
 
         # Capture best-effort git status/diff if the workspace is a git repo.
+        # Use sandbox runner for safer git operations
         repo_root = resolution.workspace_root
         if (repo_root / ".git").exists():
             import subprocess
+            
+            # Try sandboxed execution first, fall back to direct execution
+            sandbox_runner = None
+            try:
+                sandbox_runner = self._create_sandbox_runner(repo_root)
+            except Exception as sandbox_err:
+                self.logger.warning(
+                    "sandbox_runner_creation_failed",
+                    extra=self.log_extra(
+                        step_run_id=step.id,
+                        error=str(sandbox_err),
+                    ),
+                )
+            
+            def run_git_command(cmd: List[str]) -> str:
+                """Run a git command, using sandbox if available."""
+                try:
+                    if sandbox_runner:
+                        result = sandbox_runner.run(
+                            cmd,
+                            cwd=repo_root,
+                            capture_output=True,
+                            timeout=30,
+                        )
+                        return result.stdout or ""
+                except Exception as sandbox_error:
+                    self.logger.warning(
+                        "sandbox_git_command_failed",
+                        extra=self.log_extra(
+                            step_run_id=step.id,
+                            command=" ".join(cmd),
+                            error=str(sandbox_error),
+                        ),
+                    )
+                # Fallback to direct execution
+                try:
+                    result = subprocess.run(  # noqa: S603
+                        cmd,
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    return result.stdout or ""
+                except Exception as e:
+                    self.logger.warning(
+                        "git_command_failed",
+                        extra=self.log_extra(
+                            step_run_id=step.id,
+                            command=" ".join(cmd),
+                            error=str(e),
+                        ),
+                    )
+                    return ""
 
-            status = subprocess.run(  # noqa: S603
-                ["git", "status", "--porcelain=v1"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            status_output = run_git_command(["git", "status", "--porcelain=v1"])
             outputs["git_status"] = writer.write_text(
                 "git-status",
-                (status.stdout or "").strip() + ("\n" if (status.stdout or "").strip() else ""),
+                status_output.strip() + ("\n" if status_output.strip() else ""),
                 kind="diff",
                 extension=".txt",
             ).path
 
-            diff = subprocess.run(  # noqa: S603
-                ["git", "diff"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            diff_output = run_git_command(["git", "diff"])
             outputs["git_diff"] = writer.write_text(
                 "changes",
-                diff.stdout or "",
+                diff_output,
                 kind="diff",
                 extension=".diff",
             ).path
 
-            diff_cached = subprocess.run(  # noqa: S603
-                ["git", "diff", "--cached"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            diff_cached_output = run_git_command(["git", "diff", "--cached"])
             outputs["git_diff_cached"] = writer.write_text(
                 "changes_cached",
-                diff_cached.stdout or "",
+                diff_cached_output,
                 kind="diff",
                 extension=".diff",
             ).path
