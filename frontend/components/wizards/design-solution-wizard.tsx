@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo,useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -33,8 +33,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { StepIndicator } from "@/components/ui/step-indicator";
+import { ClarificationDialog } from "@/components/shared/clarification-dialog";
 import {
   Select,
   SelectContent,
@@ -53,6 +53,13 @@ import {
   useRunImplement,
   useSpecKitStatus,
 } from "@/lib/api";
+
+const WORKFLOW_STEPS = [
+  { id: "spec", label: "Spec", description: "Specification ready" },
+  { id: "plan", label: "Plan", description: "Implementation plan" },
+  { id: "tasks", label: "Tasks", description: "Task breakdown" },
+  { id: "execution", label: "Execution", description: "Run implementation" },
+];
 
 interface DesignSolutionWizardProps {
   projectId: number;
@@ -80,9 +87,7 @@ export function DesignSolutionWizardModal({
   const [additionalContext, setAdditionalContext] = useState("");
   const [generatedPlanPath, setGeneratedPlanPath] = useState<string | null>(null);
   const [clarifyOpen, setClarifyOpen] = useState(false);
-  const [clarifyQuestion, setClarifyQuestion] = useState("");
-  const [clarifyAnswer, setClarifyAnswer] = useState("");
-  const [clarifyNotes, setClarifyNotes] = useState("");
+  const [wizardError, setWizardError] = useState<string | null>(null);
 
   const isLoading = projectLoading || statusLoading || specsLoading;
   const isInitialized = specKitStatus?.initialized ?? false;
@@ -101,10 +106,13 @@ export function DesignSolutionWizardModal({
 
   const handleGenerate = async () => {
     if (!selectedSpec) {
-      toast.error("Please select a specification to generate a plan for");
+      const errorMsg = "Please select a specification to generate a plan for";
+      setWizardError(errorMsg);
+      toast.error(errorMsg);
       return;
     }
 
+    setWizardError(null);
     try {
       const result = await generatePlan.mutateAsync({
         project_id: projectId,
@@ -121,49 +129,55 @@ export function DesignSolutionWizardModal({
         }
         onOpenChange(false);
       } else {
-        toast.error(result.error || "Failed to generate implementation plan");
+        const errorMsg = result.error || "Failed to generate implementation plan";
+        setWizardError(errorMsg);
+        toast.error(errorMsg);
       }
-    } catch {
-      toast.error("Failed to generate implementation plan");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to generate implementation plan";
+      setWizardError(errorMsg);
+      toast.error(errorMsg);
     }
   };
 
-  const handleClarify = async () => {
-    if (!selectedSpecPath) {
-      toast.error("Select a specification to clarify");
-      return;
-    }
-
-    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim();
-    const hasNotes = clarifyNotes.trim();
-
-    if (!hasEntry && !hasNotes) {
-      toast.error("Provide a question/answer or notes");
-      return;
-    }
-
-    try {
-      const result = await clarifySpec.mutateAsync({
-        project_id: projectId,
-        spec_path: selectedSpecPath,
-        entries: hasEntry
-          ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }]
-          : [],
-        notes: hasNotes ? clarifyNotes.trim() : undefined,
-        spec_run_id: selectedSpecRunId ?? undefined,
-      });
-      if (result.success) {
-        toast.success(`Clarifications added (${result.clarifications_added})`);
-        setClarifyOpen(false);
-        setClarifyQuestion("");
-        setClarifyAnswer("");
-        setClarifyNotes("");
-      } else {
-        toast.error(result.error || "Clarification failed");
+  const handleClarify = useCallback(
+    async (data: { entries: Array<{ question: string; answer: string }>; notes?: string }) => {
+      if (!selectedSpecPath) {
+        toast.error("Select a specification to clarify");
+        return;
       }
-    } catch {
-      toast.error("Clarification failed");
+
+      try {
+        const result = await clarifySpec.mutateAsync({
+          project_id: projectId,
+          spec_path: selectedSpecPath,
+          entries: data.entries,
+          notes: data.notes,
+          spec_run_id: selectedSpecRunId ?? undefined,
+        });
+        if (result.success) {
+          toast.success(`Clarifications added (${result.clarifications_added})`);
+          setClarifyOpen(false);
+        } else {
+          toast.error(result.error || "Clarification failed");
+        }
+      } catch {
+        toast.error("Clarification failed");
+      }
+    },
+    [selectedSpecPath, projectId, clarifySpec, selectedSpecRunId]
+  );
+
+  const handleOpenClarify = () => {
+    setWizardError(null);
+    setClarifyOpen(true);
+  };
+
+  const handleWizardClose = (newOpen: boolean) => {
+    if (!newOpen) {
+      setWizardError(null);
     }
+    onOpenChange(newOpen);
   };
 
   const handleChecklist = async () => {
@@ -235,7 +249,7 @@ export function DesignSolutionWizardModal({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleWizardClose}>
       <DialogContent size="5xl" className="h-[90vh] overflow-hidden p-0">
         <div className="flex h-full flex-col">
           <DialogHeader className="border-b px-6 py-4">
@@ -287,37 +301,23 @@ export function DesignSolutionWizardModal({
                   </Alert>
                 )}
 
-                <Card className="border-dashed">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="h-5 w-5 text-green-500" />
-                        <span className="font-medium">Specification</span>
-                      </div>
-                      <ArrowRight className="text-muted-foreground h-4 w-4" />
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
-                          2
-                        </div>
-                        <span className="font-medium text-amber-600">Implementation Plan</span>
-                      </div>
-                      <ArrowRight className="text-muted-foreground h-4 w-4" />
-                      <div className="text-muted-foreground flex items-center gap-2">
-                        <div className="bg-muted flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold">
-                          3
-                        </div>
-                        <span>Task List</span>
-                      </div>
-                      <ArrowRight className="text-muted-foreground h-4 w-4" />
-                      <div className="text-muted-foreground flex items-center gap-2">
-                        <div className="bg-muted flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold">
-                          4
-                        </div>
-                        <span>Execution</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <StepIndicator
+                  steps={WORKFLOW_STEPS}
+                  currentStep="plan"
+                  completedSteps={new Set(["spec"])}
+                />
+
+                {wizardError && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription className="flex items-center justify-between gap-4">
+                      <span>{wizardError}</span>
+                      <Button size="sm" variant="outline" onClick={() => setWizardError(null)}>
+                        Dismiss
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 <div className="space-y-6">
                   <Card>
@@ -451,7 +451,7 @@ export function DesignSolutionWizardModal({
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setClarifyOpen(true)}
+                          onClick={handleOpenClarify}
                           disabled={!selectedSpecPath}
                         >
                           <MessageSquare className="mr-2 h-4 w-4" />
@@ -507,54 +507,13 @@ export function DesignSolutionWizardModal({
           </div>
         </div>
 
-        <Dialog open={clarifyOpen} onOpenChange={setClarifyOpen}>
-          <DialogContent size="xl">
-            <DialogHeader>
-              <DialogTitle>Clarify Specification</DialogTitle>
-              <DialogDescription>
-                Add a clarification entry or notes to the selected spec.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="clarify-question">Question (optional)</Label>
-                <Input
-                  id="clarify-question"
-                  placeholder="What needs clarification?"
-                  value={clarifyQuestion}
-                  onChange={(event) => setClarifyQuestion(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="clarify-answer">Answer (optional)</Label>
-                <Input
-                  id="clarify-answer"
-                  placeholder="Provide the resolved answer"
-                  value={clarifyAnswer}
-                  onChange={(event) => setClarifyAnswer(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="clarify-notes">Notes (optional)</Label>
-                <Textarea
-                  id="clarify-notes"
-                  placeholder="Additional clarification notes"
-                  rows={4}
-                  value={clarifyNotes}
-                  onChange={(event) => setClarifyNotes(event.target.value)}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setClarifyOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleClarify} disabled={clarifySpec.isPending}>
-                  {clarifySpec.isPending ? "Saving..." : "Save Clarification"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <ClarificationDialog
+          open={clarifyOpen}
+          onOpenChange={setClarifyOpen}
+          onSubmit={handleClarify}
+          isLoading={clarifySpec.isPending}
+          specName={selectedSpecMeta?.name}
+        />
       </DialogContent>
     </Dialog>
   );
