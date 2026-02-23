@@ -9,11 +9,15 @@
 - [x] Phase 1.2: API hooks updated for type fixes
 - [x] Phase 2.1: Shared `StepIndicator` component created
 - [x] Phase 2.2: Shared `ClarificationDialog` component created
+- [x] Phase 2.3: All wizards updated to use shared components
+  - generate-specs-wizard: Uses StepIndicator with useStepNavigation
+  - design-solution-wizard: Uses StepIndicator and ClarificationDialog
+  - implement-feature-wizard: Uses StepIndicator and ClarificationDialog
 - [x] Phase 3: Workflow state machine (`lib/workflow/`) created
+- [x] Phase 4.1: Inline error display added to wizards with dismiss buttons
 
 ### In Progress
-- [ ] Phase 2.3: Update wizards to use shared components
-- [ ] Phase 4: Add error handling & loading states
+- [ ] Phase 4: Add comprehensive error handling & loading states
 - [ ] Phase 5: Add accessibility improvements
 
 ---
