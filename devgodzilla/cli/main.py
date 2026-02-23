@@ -442,6 +442,250 @@ def protocol_scaffold(ctx, protocol_id: int, steps: tuple[str, ...], overwrite: 
         sys.exit(1)
 
 
+@protocol.command("watch")
+@click.argument("protocol_id", type=int)
+@click.option("--follow", "-f", is_flag=True, help="Follow log output")
+@click.option("--timeout", type=int, default=3600, help="Max watch time in seconds")
+@click.pass_context
+def protocol_watch(ctx, protocol_id: int, follow: bool, timeout: int):
+    """Stream protocol execution logs in real-time.
+    
+    Shows step execution, QA results, and feedback loop events.
+    """
+    import time
+    
+    from rich.console import Console
+    from rich.live import Live
+    
+    console = Console()
+    db = get_db()
+    
+    # Verify protocol exists
+    run = db.get_protocol_run(protocol_id)
+    if not run:
+        console.print(f"[red]Protocol {protocol_id} not found[/red]")
+        raise SystemExit(1)
+    
+    start_time = time.time()
+    last_event_id = None
+    
+    console.print(f"[bold]Watching protocol {protocol_id}: {run.protocol_name}[/bold]")
+    console.print(f"[dim]Status: {run.status}[/dim]")
+    console.print()
+    
+    while True:
+        # Check timeout
+        if time.time() - start_time > timeout:
+            console.print("[yellow]Watch timeout reached[/yellow]")
+            break
+        
+        # Check protocol status
+        run = db.get_protocol_run(protocol_id)
+        
+        # Get events (if events API available)
+        events = []
+        if hasattr(db, 'list_events'):
+            try:
+                events = db.list_events(
+                    protocol_run_id=protocol_id,
+                    after_id=last_event_id
+                )
+            except Exception:
+                pass
+        
+        for event in events:
+            last_event_id = getattr(event, 'id', None)
+            
+            event_type = getattr(event, 'event_type', '')
+            
+            # Format based on event type
+            if event_type.startswith("step."):
+                _format_step_event(console, event)
+            elif event_type.startswith("qa."):
+                _format_qa_event(console, event)
+            elif event_type.startswith("feedback."):
+                _format_feedback_event(console, event)
+            elif event_type.startswith("protocol."):
+                _format_protocol_event(console, event)
+                
+                # Check for completion
+                if event_type in ("protocol.completed", "protocol.failed"):
+                    return
+        
+        # Check if protocol is still running
+        if run and run.status in ("completed", "failed", "cancelled"):
+            console.print(f"[dim]Protocol {run.status}[/dim]")
+            break
+        
+        time.sleep(1)  # Poll interval
+
+
+def _format_step_event(console, event):
+    """Format step events for display."""
+    event_type = getattr(event, 'event_type', '')
+    step_name = getattr(event, 'step_name', 'unknown')
+    step_id = getattr(event, 'step_id', '?')
+    
+    if event_type == "step.started":
+        console.print(f"[cyan]▶ Step {step_id} started: {step_name}[/cyan]")
+    elif event_type == "step.completed":
+        console.print(f"[green]✓ Step {step_id} completed: {step_name}[/green]")
+    elif event_type == "step.failed":
+        error = getattr(event, 'error', 'Unknown error')
+        console.print(f"[red]✗ Step {step_id} failed: {step_name}[/red]")
+        console.print(f"[red]  Error: {error}[/red]")
+    elif event_type == "step.blocked":
+        reason = getattr(event, 'reason', 'Unknown reason')
+        console.print(f"[yellow]⏸ Step {step_id} blocked: {step_name}[/yellow]")
+        console.print(f"[yellow]  Reason: {reason}[/yellow]")
+
+
+def _format_qa_event(console, event):
+    """Format QA events for display."""
+    event_type = getattr(event, 'event_type', '')
+    step_id = getattr(event, 'step_id', '?')
+    verdict = getattr(event, 'verdict', 'unknown')
+    
+    if event_type == "qa.started":
+        console.print(f"[dim]🔍 QA started for step {step_id}[/dim]")
+    elif event_type == "qa.completed":
+        if verdict in ("pass", "passed"):
+            console.print(f"[green]✓ QA passed for step {step_id}[/green]")
+        elif verdict in ("warn", "warning"):
+            console.print(f"[yellow]⚠ QA warning for step {step_id}[/yellow]")
+        else:
+            console.print(f"[red]✗ QA failed for step {step_id} (verdict: {verdict})[/red]")
+            findings = getattr(event, 'findings', [])
+            for finding in findings[:5]:
+                console.print(f"[red]    - {finding}[/red]")
+
+
+def _format_feedback_event(console, event):
+    """Format feedback loop events for display."""
+    event_type = getattr(event, 'event_type', '')
+    step_id = getattr(event, 'step_id', '?')
+    
+    if event_type == "feedback.clarification_requested":
+        question = getattr(event, 'question', '')
+        console.print(f"[magenta]❓ Clarification requested for step {step_id}[/magenta]")
+        console.print(f"[magenta]  Question: {question}[/magenta]")
+    elif event_type == "feedback.clarification_provided":
+        console.print(f"[dim]📝 Clarification provided for step {step_id}[/dim]")
+    elif event_type == "feedback.replan_triggered":
+        reason = getattr(event, 'reason', '')
+        console.print(f"[blue]🔄 Replan triggered for step {step_id}[/blue]")
+        console.print(f"[blue]  Reason: {reason}[/blue]")
+    elif event_type == "feedback.retry_scheduled":
+        attempt = getattr(event, 'attempt', 1)
+        delay = getattr(event, 'delay_seconds', 0)
+        console.print(f"[yellow]⏳ Retry scheduled for step {step_id} (attempt {attempt}, delay {delay}s)[/yellow]")
+
+
+def _format_protocol_event(console, event):
+    """Format protocol state change events for display."""
+    event_type = getattr(event, 'event_type', '')
+    
+    if event_type == "protocol.started":
+        console.print("[bold green]🚀 Protocol started[/bold green]")
+    elif event_type == "protocol.completed":
+        console.print("[bold green]✓ Protocol completed successfully[/bold green]")
+    elif event_type == "protocol.failed":
+        error = getattr(event, 'error', 'Unknown error')
+        console.print(f"[bold red]✗ Protocol failed: {error}[/bold red]")
+    elif event_type == "protocol.cancelled":
+        console.print("[bold yellow]⏹ Protocol cancelled[/bold yellow]")
+    elif event_type == "protocol.paused":
+        console.print("[yellow]⏸ Protocol paused[/yellow]")
+    elif event_type == "protocol.resumed":
+        console.print("[cyan]▶ Protocol resumed[/cyan]")
+
+
+@protocol.command("pause")
+@click.argument("protocol_id", type=int)
+@click.pass_context
+def protocol_pause(ctx, protocol_id: int):
+    """Pause a running protocol."""
+    try:
+        context = get_service_context()
+        db = get_db()
+        
+        from devgodzilla.services.orchestrator import OrchestratorService
+        
+        orchestrator = OrchestratorService(context=context, db=db)
+        
+        # Check if protocol exists and is running
+        run = db.get_protocol_run(protocol_id)
+        if not run:
+            click.echo(f"✗ Protocol {protocol_id} not found", err=True)
+            sys.exit(1)
+        
+        if run.status != "running":
+            click.echo(f"✗ Protocol {protocol_id} is not running (status: {run.status})", err=True)
+            sys.exit(1)
+        
+        # Pause the protocol
+        result = orchestrator.pause_protocol(protocol_id)
+        
+        if ctx.obj and ctx.obj.get("JSON"):
+            click.echo(json.dumps({
+                'success': result.success if hasattr(result, 'success') else True,
+                'message': result.message if hasattr(result, 'message') else 'Protocol paused',
+            }))
+        else:
+            if hasattr(result, 'success') and not result.success:
+                click.echo(f"✗ Failed: {result.error or result.message}", err=True)
+                sys.exit(1)
+            click.echo(f"✓ Paused protocol {protocol_id}")
+                
+    except Exception as e:
+        logger.exception("Failed to pause protocol")
+        click.echo(f"✗ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@protocol.command("resume")
+@click.argument("protocol_id", type=int)
+@click.pass_context
+def protocol_resume(ctx, protocol_id: int):
+    """Resume a paused protocol."""
+    try:
+        context = get_service_context()
+        db = get_db()
+        
+        from devgodzilla.services.orchestrator import OrchestratorService
+        
+        orchestrator = OrchestratorService(context=context, db=db)
+        
+        # Check if protocol exists and is paused
+        run = db.get_protocol_run(protocol_id)
+        if not run:
+            click.echo(f"✗ Protocol {protocol_id} not found", err=True)
+            sys.exit(1)
+        
+        if run.status != "paused":
+            click.echo(f"✗ Protocol {protocol_id} is not paused (status: {run.status})", err=True)
+            sys.exit(1)
+        
+        # Resume the protocol
+        result = orchestrator.resume_protocol(protocol_id)
+        
+        if ctx.obj and ctx.obj.get("JSON"):
+            click.echo(json.dumps({
+                'success': result.success if hasattr(result, 'success') else True,
+                'message': result.message if hasattr(result, 'message') else 'Protocol resumed',
+            }))
+        else:
+            if hasattr(result, 'success') and not result.success:
+                click.echo(f"✗ Failed: {result.error or result.message}", err=True)
+                sys.exit(1)
+            click.echo(f"✓ Resumed protocol {protocol_id}")
+                
+    except Exception as e:
+        logger.exception("Failed to resume protocol")
+        click.echo(f"✗ Error: {e}", err=True)
+        sys.exit(1)
+
+
 @protocol.command("plan")
 @click.argument("protocol_id", type=int)
 @click.pass_context
