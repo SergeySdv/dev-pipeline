@@ -1,0 +1,57 @@
+# DevGodzilla Orchestration Configuration
+
+# Queue settings
+queue:
+  max_depth: 1000
+  priority_levels:
+    idle: 0
+    low: 25
+    normal: 50
+    high: 75
+    critical: 100
+
+# Retry configuration
+retry:
+  max_attempts: 3
+  initial_delay_seconds: 10
+  max_delay_seconds: 300
+  backoff_multiplier: 2.0
+  jitter: true
+  
+  # Per-error-type overrides
+  overrides:
+    transient:
+      max_attempts: 5
+      initial_delay_seconds: 5
+    timeout:
+      max_attempts: 2
+      initial_delay_seconds: 30
+    agent_unavailable:
+      max_attempts: 1
+    specification_error:
+      max_attempts: 0  # Don't retry
+
+# Circuit breaker
+circuit_breaker:
+  enabled: true
+  failure_threshold: 5
+  recovery_timeout_seconds: 60
+  half_open_max_calls: 3
+
+# Timeout settings
+timeouts:
+  default_step_seconds: 300
+  max_step_seconds: 3600
+  qa_check_seconds: 120
+  planning_seconds: 600
+  
+# Parallelism
+parallelism:
+  max_concurrent_steps: 4
+  max_concurrent_protocols: 10
+
+# Feedback loop
+feedback:
+  max_clarification_loops: 3
+  max_replan_attempts: 2
+  auto_retry_transient: true
