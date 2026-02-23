@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         ConstitutionalGate,
         ConstitutionalSummaryGate,
         PromptQAGate,
+        TestFirstGate,
     )
     from devgodzilla.qa.feedback import (
         FeedbackRouter,
@@ -31,6 +32,16 @@ if TYPE_CHECKING:
         RoutedFeedback,
         ErrorCategory,
         classify_error,
+    )
+    from devgodzilla.qa.report_generator import (
+        ReportGenerator,
+        QAReport,
+        ReportSection,
+    )
+    from devgodzilla.qa.checklist_validator import (
+        ChecklistValidator,
+        ChecklistItem,
+        ValidationResult,
     )
 
 __all__ = [
@@ -51,6 +62,7 @@ __all__ = [
     "ConstitutionalGate",
     "ConstitutionalSummaryGate",
     "PromptQAGate",
+    "TestFirstGate",
     # Feedback routing
     "FeedbackRouter",
     "FeedbackAction",
@@ -58,6 +70,14 @@ __all__ = [
     "RoutedFeedback",
     "ErrorCategory",
     "classify_error",
+    # Report generation
+    "ReportGenerator",
+    "QAReport",
+    "ReportSection",
+    # Checklist validation
+    "ChecklistValidator",
+    "ChecklistItem",
+    "ValidationResult",
 ]
 
 _GATE_EXPORTS = {
@@ -75,6 +95,7 @@ _GATE_EXPORTS = {
     "ConstitutionalGate",
     "ConstitutionalSummaryGate",
     "PromptQAGate",
+    "TestFirstGate",
 }
 _FEEDBACK_EXPORTS = {
     "FeedbackRouter",
@@ -83,6 +104,16 @@ _FEEDBACK_EXPORTS = {
     "RoutedFeedback",
     "ErrorCategory",
     "classify_error",
+}
+_REPORT_EXPORTS = {
+    "ReportGenerator",
+    "QAReport",
+    "ReportSection",
+}
+_VALIDATOR_EXPORTS = {
+    "ChecklistValidator",
+    "ChecklistItem",
+    "ValidationResult",
 }
 
 
@@ -93,6 +124,12 @@ def __getattr__(name: str):
     if name in _FEEDBACK_EXPORTS:
         from devgodzilla.qa import feedback as feedback_module
         return getattr(feedback_module, name)
+    if name in _REPORT_EXPORTS:
+        from devgodzilla.qa import report_generator as report_module
+        return getattr(report_module, name)
+    if name in _VALIDATOR_EXPORTS:
+        from devgodzilla.qa import checklist_validator as validator_module
+        return getattr(validator_module, name)
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
 

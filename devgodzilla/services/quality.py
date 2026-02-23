@@ -33,6 +33,9 @@ from devgodzilla.qa.gates import (
     ConstitutionalGate,
     PromptQAGate,
 )
+from devgodzilla.qa.gate_registry import GateRegistry, create_default_registry
+from devgodzilla.qa.smart_context import SmartContextManager, ArtifactContext
+from devgodzilla.qa.report_generator import ReportGenerator, QAReport
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.constitution import ConstitutionService
 from devgodzilla.services.events import get_event_bus, QAStarted, QAPassed, QAFailed
@@ -123,10 +126,11 @@ class QualityService(Service):
     Service for quality assurance and validation.
     
     Responsibilities:
-    - Run composable QA gates
+    - Run composable QA gates via GateRegistry
     - Aggregate gate results into verdicts
     - Update step status based on QA results
     - Support auto-fix for certain error types
+    - Handle large files via SmartContextManager
     
     Example:
         quality = QualityService(context, db)
@@ -147,10 +151,67 @@ class QualityService(Service):
         db,
         *,
         default_gates: Optional[List[Gate]] = None,
+        registry: Optional[GateRegistry] = None,
+        smart_context: Optional[SmartContextManager] = None,
     ) -> None:
         super().__init__(context)
         self.db = db
         self.default_gates = default_gates or []
+        
+        # Initialize or use provided registry
+        self._registry = registry
+        self._smart_context = smart_context or SmartContextManager()
+        self.report_generator = ReportGenerator(format="markdown")
+    
+    @property
+    def registry(self) -> GateRegistry:
+        """Get or create the gate registry."""
+        if self._registry is None:
+            self._registry = create_default_registry()
+            # Register any default gates passed to constructor
+            for gate in self.default_gates:
+                self._registry.register(gate, category="custom")
+        return self._registry
+    
+    def register_gate(self, gate: Gate, category: str = "custom") -> None:
+        """Register a gate with the service.
+        
+        Args:
+            gate: Gate instance to register
+            category: Category for the gate
+        """
+        self.registry.register(gate, category=category)
+    
+    def unregister_gate(self, gate_id: str) -> Optional[Gate]:
+        """Unregister a gate from the service.
+        
+        Args:
+            gate_id: ID of gate to unregister
+            
+        Returns:
+            The removed gate, or None if not found
+        """
+        return self.registry.unregister(gate_id)
+    
+    def build_artifact_context(
+        self,
+        files: List[Path],
+        query: str,
+    ) -> ArtifactContext:
+        """Build artifact context from files for large file handling.
+        
+        Args:
+            files: List of file paths
+            query: Query for relevance scoring
+            
+        Returns:
+            ArtifactContext with chunked file contents
+        """
+        artifact_ctx = ArtifactContext()
+        for file_path in files:
+            if file_path.exists() and file_path.is_file():
+                artifact_ctx.add_file(self._smart_context, file_path)
+        return artifact_ctx
 
     def _qa_prompt_path(self) -> Path:
         repo_root = Path(__file__).resolve().parents[2]
@@ -782,7 +843,7 @@ class QualityService(Service):
         include_findings: bool = True,
     ) -> Path:
         """
-        Generate a quality-report.md file.
+        Generate a quality-report.md file using ReportGenerator.
         
         Args:
             qa_result: QA result to report on
@@ -793,73 +854,47 @@ class QualityService(Service):
         Returns:
             Path to generated report
         """
-        import datetime
-        
-        report_path = output_path / "quality-report.md"
-        
-        lines = [
-            "# Quality Assurance Report",
-            "",
-            f"> Generated: {datetime.datetime.now().isoformat()}",
-            f"> Step: {step_name or 'N/A'}",
-            "",
-            "---",
-            "",
-            f"## Verdict: **{qa_result.verdict.value.upper()}**",
-            "",
-            f"- Duration: {qa_result.duration_seconds:.2f}s" if qa_result.duration_seconds else "",
-            f"- Total findings: {len(qa_result.all_findings)}",
-            f"- Blocking findings: {len(qa_result.blocking_findings)}",
-            "",
-            "---",
-            "",
-            "## Gate Results",
-            "",
-        ]
-        
-        for gate_result in qa_result.gate_results:
-            verdict_icon = "✅" if gate_result.verdict == GateVerdict.PASS else \
-                          "⚠️" if gate_result.verdict == GateVerdict.WARN else \
-                          "❌" if gate_result.verdict == GateVerdict.FAIL else "⏭️"
-            lines.append(f"### {verdict_icon} {gate_result.gate_id}")
-            lines.append("")
-            lines.append(f"**Verdict:** {gate_result.verdict.value if hasattr(gate_result.verdict, 'value') else gate_result.verdict}")
-            summary = None
-            if gate_result.error:
-                summary = gate_result.error
-            elif gate_result.metadata:
-                summary = gate_result.metadata.get("summary")
-            if summary:
-                lines.append(f"**Summary:** {summary}")
-            lines.append(f"**Findings:** {len(gate_result.findings)}")
-            lines.append("")
-
-            if gate_result.gate_id == "prompt_qa":
-                report_text = (gate_result.metadata or {}).get("report_text")
-                if report_text:
-                    lines.append("**Prompt QA Report:**")
-                    lines.append("")
-                    lines.append(report_text.strip())
-                    lines.append("")
+        # Create a simple verdict object compatible with ReportGenerator
+        class VerdictWrapper:
+            def __init__(self, qa_result: QAResult):
+                self._qa_result = qa_result
             
-            if include_findings and gate_result.findings:
-                lines.append("| Severity | Message | File | Line |")
-                lines.append("|----------|---------|------|------|")
-                for finding in gate_result.findings[:20]:  # Limit to 20 per gate
-                    lines.append(
-                        f"| {finding.severity} | {finding.message[:50]}... | "
-                        f"{finding.file_path or 'N/A'} | {finding.line_number or ''} |"
-                    )
-                lines.append("")
+            @property
+            def passed(self) -> bool:
+                return self._qa_result.passed
+            
+            @property
+            def score(self) -> float:
+                # Calculate score from gate results
+                if not self._qa_result.gate_results:
+                    return 1.0
+                passed = sum(1 for g in self._qa_result.gate_results if g.passed)
+                return passed / len(self._qa_result.gate_results)
         
-        lines.extend([
-            "---",
-            "",
-            "*Generated by DevGodzilla QualityService*",
-        ])
+        # Create a simple step_run wrapper
+        class StepRunWrapper:
+            def __init__(self, qa_result: QAResult, step_name: Optional[str]):
+                self.step_name = step_name or "Unknown Step"
+                self.step_id = str(qa_result.step_run_id)
         
+        step_run = StepRunWrapper(qa_result, step_name)
+        verdict = VerdictWrapper(qa_result)
+        
+        # Generate report using ReportGenerator
+        report = self.report_generator.generate(
+            step_run=step_run,
+            gate_results=qa_result.gate_results,
+            checklist_result=None,
+            verdict=verdict,
+        )
+        
+        # Render to markdown
+        markdown_content = self.report_generator.render(report)
+        
+        # Write to file
         output_path.mkdir(parents=True, exist_ok=True)
-        report_path.write_text("\n".join(lines))
+        report_path = output_path / "quality-report.md"
+        report_path.write_text(markdown_content)
         
         self.logger.info(
             "quality_report_generated",
