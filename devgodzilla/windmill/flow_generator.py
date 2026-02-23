@@ -29,32 +29,153 @@ class DAG:
     """Directed acyclic graph of execution tasks."""
     nodes: Dict[str, DAGNode]
     edges: List[Tuple[str, str]]  # (from_id, to_id)
-    
+
     def get_dependencies(self, node_id: str) -> List[str]:
         """Get IDs of nodes this node depends on."""
         return [edge[0] for edge in self.edges if edge[1] == node_id]
-    
+
     def get_dependents(self, node_id: str) -> List[str]:
         """Get IDs of nodes that depend on this node."""
         return [edge[1] for edge in self.edges if edge[0] == node_id]
-    
+
     def get_roots(self) -> List[str]:
         """Get nodes with no dependencies."""
         all_nodes = set(self.nodes.keys())
         nodes_with_deps = {edge[1] for edge in self.edges}
         return sorted(all_nodes - nodes_with_deps)
 
+    def _tarjan_scc(self, nodes: dict, edges: list) -> list[list[str]]:
+        """Find strongly connected components using Tarjan's algorithm.
+
+        Returns list of SCCs, where each SCC is a list of node IDs.
+        SCCs with more than one node indicate cycles.
+        """
+        index_counter = [0]
+        stack = []
+        lowlinks = {}
+        index = {}
+        on_stack = {}
+        sccs = []
+
+        def strongconnect(node_id):
+            # Set the depth index for this node
+            index[node_id] = index_counter[0]
+            lowlinks[node_id] = index_counter[0]
+            index_counter[0] += 1
+            stack.append(node_id)
+            on_stack[node_id] = True
+
+            # Find successors
+            for edge in edges:
+                if edge[0] == node_id:
+                    successor = edge[1]
+                    if successor not in index:
+                        strongconnect(successor)
+                        lowlinks[node_id] = min(lowlinks[node_id], lowlinks[successor])
+                    elif on_stack.get(successor, False):
+                        lowlinks[node_id] = min(lowlinks[node_id], index[successor])
+
+            # If node is root of SCC, pop the SCC
+            if lowlinks[node_id] == index[node_id]:
+                scc = []
+                while True:
+                    w = stack.pop()
+                    on_stack[w] = False
+                    scc.append(w)
+                    if w == node_id:
+                        break
+                sccs.append(scc)
+
+        for node_id in nodes:
+            if node_id not in index:
+                strongconnect(node_id)
+
+        return sccs
+
+    def detect_cycles_tarjan(self) -> list[list[str]]:
+        """Detect cycles using Tarjan's algorithm.
+
+        Returns list of cycles found (each cycle is a list of node IDs).
+        More efficient than DFS for large graphs.
+        """
+        sccs = self._tarjan_scc(self.nodes, self.edges)
+        # SCCs with more than one node are cycles
+        return [scc for scc in sccs if len(scc) > 1]
+
+    def _detect_cycles_dfs(self) -> list[list[str]]:
+        """Detect cycles using DFS (fallback method)."""
+        visited = set()
+        rec_stack = set()
+        cycles = []
+
+        def dfs(node_id: str, path: List[str]) -> bool:
+            visited.add(node_id)
+            rec_stack.add(node_id)
+            path.append(node_id)
+
+            for dep_id in self.get_dependents(node_id):
+                if dep_id not in visited:
+                    if dfs(dep_id, path):
+                        return True
+                elif dep_id in rec_stack:
+                    # Found cycle
+                    cycle_start = path.index(dep_id)
+                    cycles.append(path[cycle_start:] + [dep_id])
+                    return True
+
+            path.pop()
+            rec_stack.remove(node_id)
+            return False
+
+        for node_id in self.nodes:
+            if node_id not in visited:
+                dfs(node_id, [])
+
+        return cycles
+
+    def detect_cycles(self, method: str = "tarjan") -> list[list[str]]:
+        """Detect cycles in the DAG.
+
+        Args:
+            method: "tarjan" for Tarjan's SCC algorithm (default),
+                    "dfs" for depth-first search
+
+        Returns:
+            List of cycles found (each cycle is a list of node IDs)
+        """
+        if method == "tarjan":
+            return self.detect_cycles_tarjan()
+        else:
+            return self._detect_cycles_dfs()
+
 
 class DAGBuilder:
     """
     Builds execution DAG from step data.
-    
+
     Example:
         builder = DAGBuilder()
         dag = builder.build_from_steps(steps)
         cycles = builder.detect_cycles(dag)
         groups = builder.compute_parallel_groups(dag)
     """
+
+    def __init__(self):
+        """Initialize builder with empty nodes and edges."""
+        self._nodes: Dict[str, DAGNode] = {}
+        self._edges: List[Tuple[str, str]] = []
+
+    def add_node(self, node: DAGNode) -> None:
+        """Add a node to the DAG."""
+        self._nodes[node.id] = node
+
+    def add_edge(self, from_id: str, to_id: str) -> None:
+        """Add an edge between two nodes."""
+        self._edges.append((from_id, to_id))
+
+    def build(self) -> DAG:
+        """Build and return the DAG."""
+        return DAG(nodes=dict(self._nodes), edges=list(self._edges))
 
     def build_from_steps(self, steps: List[Dict[str, Any]]) -> DAG:
         """
@@ -87,40 +208,18 @@ class DAGBuilder:
         
         return DAG(nodes=nodes, edges=edges)
 
-    def detect_cycles(self, dag: DAG) -> List[List[str]]:
+    def detect_cycles(self, dag: DAG, method: str = "tarjan") -> List[List[str]]:
         """
-        Detect cycles in the DAG using DFS.
-        
+        Detect cycles in the DAG.
+
+        Args:
+            dag: The DAG to check for cycles
+            method: "tarjan" for Tarjan's SCC algorithm (default),
+                    "dfs" for depth-first search
+
         Returns list of cycles found (empty if no cycles).
         """
-        visited = set()
-        rec_stack = set()
-        cycles = []
-        
-        def dfs(node_id: str, path: List[str]) -> bool:
-            visited.add(node_id)
-            rec_stack.add(node_id)
-            path.append(node_id)
-            
-            for dep_id in dag.get_dependents(node_id):
-                if dep_id not in visited:
-                    if dfs(dep_id, path):
-                        return True
-                elif dep_id in rec_stack:
-                    # Found cycle
-                    cycle_start = path.index(dep_id)
-                    cycles.append(path[cycle_start:] + [dep_id])
-                    return True
-            
-            path.pop()
-            rec_stack.remove(node_id)
-            return False
-        
-        for node_id in dag.nodes:
-            if node_id not in visited:
-                dfs(node_id, [])
-        
-        return cycles
+        return dag.detect_cycles(method=method)
 
     def compute_parallel_groups(self, dag: DAG) -> Dict[str, List[str]]:
         """

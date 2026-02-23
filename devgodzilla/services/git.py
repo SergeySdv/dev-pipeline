@@ -6,12 +6,13 @@ branch operations, PR/MR creation, and CI triggering.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import httpx
 
@@ -24,6 +25,37 @@ from devgodzilla.services.base import Service, ServiceContext
 logger = get_logger(__name__)
 
 T = TypeVar("T")
+
+
+@dataclass
+class PRResult:
+    """Result of a PR/MR creation operation."""
+    
+    provider: str  # "github" or "gitlab"
+    pr_number: int
+    pr_url: str
+    status: str  # "open", "draft", "closed"
+    title: Optional[str] = None
+    body: Optional[str] = None
+    source_branch: Optional[str] = None
+    target_branch: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "provider": self.provider,
+            "pr_number": self.pr_number,
+            "pr_url": self.pr_url,
+            "status": self.status,
+            "title": self.title,
+            "source_branch": self.source_branch,
+            "target_branch": self.target_branch,
+        }
+
+
+class PRError(Exception):
+    """Error during PR/MR creation."""
+    pass
 
 
 def run_process(
@@ -906,3 +938,510 @@ class GitService(Service):
         if not owner or not repo:
             return None
         return owner, repo
+
+    def _parse_gitlab_url(self, git_url: str) -> Optional[tuple[str, str]]:
+        """
+        Parse GitLab URL to extract instance URL and project path.
+        
+        Args:
+            git_url: GitLab repository URL
+            
+        Returns:
+            Tuple of (gitlab_instance_url, project_path) or None if not GitLab
+            - gitlab_instance_url: Base URL of GitLab instance (e.g., "https://gitlab.com")
+            - project_path: URL-encoded project path (e.g., "group%2Fproject")
+        """
+        if "gitlab" not in git_url:
+            return None
+        
+        # Handle HTTPS URLs: https://gitlab.com/group/project.git
+        if git_url.startswith("https://") or git_url.startswith("http://"):
+            # Extract protocol and domain
+            match = re.match(r'(https?://[^/]+)/(.+?)(?:\.git)?/?$', git_url)
+            if match:
+                instance_url = match.group(1)
+                project_path = match.group(2).rstrip("/")
+                # URL-encode the project path for API (group/project -> group%2Fproject)
+                encoded_path = project_path.replace("/", "%2F")
+                return instance_url, encoded_path
+        
+        # Handle SSH URLs: git@gitlab.com:group/project.git
+        elif git_url.startswith("git@"):
+            match = re.match(r'git@([^:]+):(.+?)(?:\.git)?$', git_url)
+            if match:
+                domain = match.group(1)
+                project_path = match.group(2)
+                instance_url = f"https://{domain}"
+                encoded_path = project_path.replace("/", "%2F")
+                return instance_url, encoded_path
+        
+        return None
+
+    def _parse_gitlab_remote(self, repo_root: Path) -> Optional[tuple[str, str]]:
+        """
+        Parse origin remote into (instance_url, project_path) for GitLab URLs.
+        
+        Args:
+            repo_root: Path to the repository
+            
+        Returns:
+            Tuple of (gitlab_instance_url, project_path) or None if not GitLab
+        """
+        try:
+            result = run_process(
+                ["git", "config", "--get", "remote.origin.url"],
+                cwd=repo_root,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+        except Exception:
+            return None
+
+        url = result.stdout.strip()
+        return self._parse_gitlab_url(url)
+
+    async def _resolve_gitlab_users(
+        self,
+        client: httpx.AsyncClient,
+        gitlab_url: str,
+        token: str,
+        usernames: Optional[List[str]],
+    ) -> List[int]:
+        """
+        Resolve GitLab usernames to user IDs.
+        
+        Args:
+            client: httpx async client
+            gitlab_url: GitLab instance URL
+            token: GitLab private token
+            usernames: List of usernames to resolve
+            
+        Returns:
+            List of GitLab user IDs
+        """
+        if not usernames:
+            return []
+        
+        user_ids: List[int] = []
+        
+        for username in usernames:
+            try:
+                response = await client.get(
+                    f"{gitlab_url}/api/v4/users",
+                    headers={"PRIVATE-TOKEN": token},
+                    params={"username": username},
+                )
+                
+                if response.status_code == 200:
+                    users = response.json()
+                    if users:
+                        user_ids.append(users[0]["id"])
+            except Exception as exc:
+                self.logger.warning(
+                    "gitlab_user_resolve_failed",
+                    extra={
+                        "username": username,
+                        "error": str(exc),
+                    },
+                )
+        
+        return user_ids
+
+    def detect_git_provider(self, repo_root: Path) -> str:
+        """
+        Detect the Git provider (github, gitlab, or unknown) for a repository.
+        
+        Args:
+            repo_root: Path to the repository
+            
+        Returns:
+            Provider string: "github", "gitlab", or "unknown"
+        """
+        try:
+            result = run_process(
+                ["git", "config", "--get", "remote.origin.url"],
+                cwd=repo_root,
+                check=False,
+            )
+            if result.returncode != 0:
+                return "unknown"
+        except Exception:
+            return "unknown"
+
+        url = result.stdout.strip().lower()
+        
+        if "github.com" in url:
+            return "github"
+        elif "gitlab" in url:
+            return "gitlab"
+        elif "bitbucket" in url:
+            return "bitbucket"
+        
+        return "unknown"
+
+    async def open_gitlab_mr(
+        self,
+        repo_root: Path,
+        title: str,
+        body: str,
+        source_branch: str,
+        target_branch: str = "main",
+        draft: bool = False,
+        labels: Optional[List[str]] = None,
+        assignees: Optional[List[str]] = None,
+        milestone_id: Optional[int] = None,
+        remove_source_branch: bool = True,
+        squash: bool = False,
+        *,
+        gitlab_token: Optional[str] = None,
+    ) -> PRResult:
+        """
+        Open a GitLab merge request via API.
+        
+        Args:
+            repo_root: Path to the repository
+            title: MR title
+            body: MR description
+            source_branch: Branch with changes
+            target_branch: Target branch for merge (default: main)
+            draft: Create as draft MR
+            labels: List of labels to apply
+            assignees: List of GitLab usernames to assign
+            milestone_id: GitLab milestone ID
+            remove_source_branch: Remove source branch after merge
+            squash: Squash commits on merge
+            gitlab_token: Optional GitLab token (falls back to env var)
+            
+        Returns:
+            PRResult with MR details
+            
+        Raises:
+            PRError: If MR creation fails
+        """
+        parsed = self._parse_gitlab_remote(repo_root)
+        if not parsed:
+            raise PRError("Not a GitLab repository or could not parse URL")
+        
+        gitlab_url, project_path = parsed
+        
+        # Get token from parameter or environment
+        token = gitlab_token or os.environ.get("GITLAB_TOKEN")
+        if not token:
+            raise PRError(
+                "No GitLab token found. Set GITLAB_TOKEN environment variable "
+                "or pass gitlab_token parameter."
+            )
+        
+        mr_title = f"Draft: {title}" if draft else title
+        
+        payload: Dict[str, Any] = {
+            "source_branch": source_branch,
+            "target_branch": target_branch,
+            "title": mr_title,
+            "description": body,
+            "remove_source_branch": remove_source_branch,
+            "squash": squash,
+        }
+        
+        if labels:
+            payload["labels"] = ",".join(labels)
+        
+        if milestone_id:
+            payload["milestone_id"] = milestone_id
+        
+        self.logger.info(
+            "creating_gitlab_mr",
+            extra={
+                "gitlab_url": gitlab_url,
+                "project_path": project_path,
+                "source_branch": source_branch,
+                "target_branch": target_branch,
+                "draft": draft,
+            },
+        )
+        
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Resolve assignees if provided
+            if assignees:
+                assignee_ids = await self._resolve_gitlab_users(
+                    client, gitlab_url, token, assignees
+                )
+                if assignee_ids:
+                    payload["assignee_ids"] = assignee_ids
+            
+            # Create MR
+            response = await client.post(
+                f"{gitlab_url}/api/v4/projects/{project_path}/merge_requests",
+                headers={"PRIVATE-TOKEN": token},
+                json=payload,
+            )
+            
+            if response.status_code in (200, 201):
+                data = response.json()
+                self.logger.info(
+                    "gitlab_mr_created",
+                    extra={
+                        "mr_iid": data["iid"],
+                        "mr_url": data["web_url"],
+                    },
+                )
+                return PRResult(
+                    provider="gitlab",
+                    pr_number=data["iid"],
+                    pr_url=data["web_url"],
+                    status="draft" if draft else "open",
+                    title=title,
+                    body=body,
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                )
+            elif response.status_code == 409:
+                # MR already exists - try to find and return it
+                self.logger.info(
+                    "gitlab_mr_exists",
+                    extra={
+                        "source_branch": source_branch,
+                        "target_branch": target_branch,
+                    },
+                )
+                # Query for existing MR
+                list_response = await client.get(
+                    f"{gitlab_url}/api/v4/projects/{project_path}/merge_requests",
+                    headers={"PRIVATE-TOKEN": token},
+                    params={
+                        "source_branch": source_branch,
+                        "target_branch": target_branch,
+                        "state": "opened",
+                    },
+                )
+                if list_response.status_code == 200:
+                    mrs = list_response.json()
+                    if mrs:
+                        existing = mrs[0]
+                        return PRResult(
+                            provider="gitlab",
+                            pr_number=existing["iid"],
+                            pr_url=existing["web_url"],
+                            status=existing.get("draft", False) and "draft" or "open",
+                            title=existing.get("title"),
+                            source_branch=source_branch,
+                            target_branch=target_branch,
+                        )
+                
+                raise PRError("GitLab MR already exists but could not retrieve it")
+            else:
+                error_detail = response.text
+                self.logger.error(
+                    "gitlab_mr_creation_failed",
+                    extra={
+                        "status_code": response.status_code,
+                        "error": error_detail,
+                    },
+                )
+                raise PRError(
+                    f"GitLab MR creation failed (status {response.status_code}): {error_detail}"
+                )
+
+    async def open_pr_async(
+        self,
+        repo_root: Path,
+        title: str,
+        body: str,
+        source_branch: str,
+        target_branch: str = "main",
+        draft: bool = False,
+        labels: Optional[List[str]] = None,
+        assignees: Optional[List[str]] = None,
+    ) -> PRResult:
+        """
+        Open a PR/MR asynchronously using the appropriate provider API.
+        
+        Automatically detects whether to use GitHub or GitLab based on the
+        repository's remote origin.
+        
+        Args:
+            repo_root: Path to the repository
+            title: PR/MR title
+            body: PR/MR description
+            source_branch: Branch with changes
+            target_branch: Target branch (default: main)
+            draft: Create as draft PR/MR
+            labels: List of labels to apply
+            assignees: List of usernames to assign
+            
+        Returns:
+            PRResult with PR/MR details
+            
+        Raises:
+            PRError: If PR/MR creation fails
+        """
+        provider = self.detect_git_provider(repo_root)
+        
+        if provider == "gitlab":
+            return await self.open_gitlab_mr(
+                repo_root=repo_root,
+                title=title,
+                body=body,
+                source_branch=source_branch,
+                target_branch=target_branch,
+                draft=draft,
+                labels=labels,
+                assignees=assignees,
+            )
+        elif provider == "github":
+            return await self.open_github_pr_async(
+                repo_root=repo_root,
+                title=title,
+                body=body,
+                head=source_branch,
+                base=target_branch,
+                draft=draft,
+                labels=labels,
+                assignees=assignees,
+            )
+        else:
+            raise PRError(f"Unsupported Git provider: {provider}")
+
+    async def open_github_pr_async(
+        self,
+        repo_root: Path,
+        title: str,
+        body: str,
+        head: str,
+        base: str = "main",
+        draft: bool = False,
+        labels: Optional[List[str]] = None,
+        assignees: Optional[List[str]] = None,
+    ) -> PRResult:
+        """
+        Open a GitHub Pull Request via API asynchronously.
+        
+        Args:
+            repo_root: Path to the repository
+            title: PR title
+            body: PR description
+            head: Source branch
+            base: Target branch (default: main)
+            draft: Create as draft PR
+            labels: List of labels to apply
+            assignees: List of GitHub usernames to assign
+            
+        Returns:
+            PRResult with PR details
+            
+        Raises:
+            PRError: If PR creation fails
+        """
+        owner_repo = self._parse_github_remote(repo_root)
+        if not owner_repo:
+            raise PRError("Not a GitHub repository or could not parse URL")
+        
+        owner, repo = owner_repo
+        gh_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if not gh_token:
+            raise PRError(
+                "No GitHub token found. Set GITHUB_TOKEN or GH_TOKEN environment variable."
+            )
+        
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+        headers = {
+            "Authorization": f"Bearer {gh_token}",
+            "Accept": "application/vnd.github+json",
+        }
+        payload: Dict[str, Any] = {
+            "title": title,
+            "head": head,
+            "base": base,
+            "body": body,
+            "draft": draft,
+            "maintainer_can_modify": True,
+        }
+        
+        self.logger.info(
+            "creating_github_pr",
+            extra={
+                "owner": owner,
+                "repo": repo,
+                "head": head,
+                "base": base,
+                "draft": draft,
+            },
+        )
+        
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            
+            if response.status_code == 201:
+                data = response.json()
+                pr_number = data["number"]
+                pr_url = data["html_url"]
+                
+                # Apply labels and assignees if provided
+                if labels or assignees:
+                    issue_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}"
+                    issue_payload = {}
+                    if labels:
+                        issue_payload["labels"] = labels
+                    if assignees:
+                        issue_payload["assignees"] = assignees
+                    
+                    await client.patch(issue_url, headers=headers, json=issue_payload)
+                
+                self.logger.info(
+                    "github_pr_created",
+                    extra={
+                        "pr_number": pr_number,
+                        "pr_url": pr_url,
+                    },
+                )
+                
+                return PRResult(
+                    provider="github",
+                    pr_number=pr_number,
+                    pr_url=pr_url,
+                    status="draft" if draft else "open",
+                    title=title,
+                    body=body,
+                    source_branch=head,
+                    target_branch=base,
+                )
+            elif response.status_code == 422:
+                # PR already exists - try to find and return it
+                self.logger.info(
+                    "github_pr_exists",
+                    extra={"head": head, "base": base},
+                )
+                list_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+                list_response = await client.get(
+                    list_url,
+                    headers=headers,
+                    params={"head": f"{owner}:{head}", "state": "open"},
+                )
+                if list_response.status_code == 200:
+                    prs = list_response.json()
+                    if prs:
+                        existing = prs[0]
+                        return PRResult(
+                            provider="github",
+                            pr_number=existing["number"],
+                            pr_url=existing["html_url"],
+                            status=existing.get("draft", False) and "draft" or "open",
+                            title=existing.get("title"),
+                            source_branch=head,
+                            target_branch=base,
+                        )
+                
+                raise PRError("GitHub PR already exists but could not retrieve it")
+            else:
+                error_detail = response.text
+                self.logger.error(
+                    "github_pr_creation_failed",
+                    extra={
+                        "status_code": response.status_code,
+                        "error": error_detail,
+                    },
+                )
+                raise PRError(
+                    f"GitHub PR creation failed (status {response.status_code}): {error_detail}"
+                )
