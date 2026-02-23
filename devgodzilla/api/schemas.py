@@ -15,8 +15,10 @@ class ProjectStatus(str, Enum):
 class ProtocolStatus(str, Enum):
     PENDING = "pending"
     PLANNING = "planning"
+    PLANNED = "planned"
     RUNNING = "running"
     PAUSED = "paused"
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -24,10 +26,12 @@ class ProtocolStatus(str, Enum):
 class StepStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    NEEDS_QA = "needs_qa"
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 # =============================================================================
 # Base Models

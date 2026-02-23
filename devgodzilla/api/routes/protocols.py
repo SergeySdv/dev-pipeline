@@ -257,6 +257,146 @@ def list_protocol_steps(
     return db.list_step_runs(protocol_id)
 
 
+# Response models for new endpoints
+class ProtocolSpecOut(BaseModel):
+    spec_hash: Optional[str] = None
+    validation_status: Optional[str] = None
+    validated_at: Optional[str] = None
+    spec: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OpenPRRequest(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    draft: bool = False
+
+
+class OpenPRResponse(BaseModel):
+    pr_url: Optional[str] = None
+    pr_number: Optional[int] = None
+    message: str
+    status: str = "created"
+
+
+@router.get("/protocols/{protocol_id}/spec", response_model=ProtocolSpecOut)
+def get_protocol_spec(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Get spec associated with a protocol run from speckit_metadata."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    
+    meta = run.speckit_metadata or {}
+    return ProtocolSpecOut(
+        spec_hash=meta.get("spec_hash"),
+        validation_status=meta.get("validation_status"),
+        validated_at=meta.get("validated_at"),
+        spec=meta.get("spec", {}),
+    )
+
+
+@router.get("/protocols/{protocol_id}/runs", response_model=List[schemas.JobRunOut])
+def list_protocol_runs(
+    protocol_id: int,
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 200,
+    db: Database = Depends(get_db),
+):
+    """List job runs for a specific protocol."""
+    try:
+        db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    
+    runs = db.list_job_runs(
+        protocol_run_id=protocol_id,
+        status=status,
+        job_type=job_type,
+        limit=limit,
+    )
+    return [schemas.JobRunOut.model_validate(r) for r in runs]
+
+
+@router.post("/protocols/{protocol_id}/actions/open_pr", response_model=OpenPRResponse)
+def open_protocol_pr(
+    protocol_id: int,
+    request: OpenPRRequest = OpenPRRequest(),
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
+):
+    """Open a pull request for a completed protocol.
+    
+    Creates a PR from the protocol's worktree branch to the base branch.
+    Only works for protocols in 'completed' or 'running' status.
+    """
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    
+    if run.status not in ["completed", "running"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot open PR for protocol in '{run.status}' state. Protocol must be completed or running."
+        )
+    
+    project = db.get_project(run.project_id)
+    
+    # Determine branch name from worktree or protocol name
+    branch_name = None
+    if run.worktree_path:
+        # Extract branch name from worktree path or use protocol_name
+        branch_name = run.protocol_name
+    
+    if not branch_name:
+        return OpenPRResponse(
+            pr_url=None,
+            pr_number=None,
+            message="No branch associated with this protocol",
+            status="error",
+        )
+    
+    # Get git provider from context if available
+    git_provider = getattr(ctx, 'git_provider', None)
+    
+    if git_provider:
+        try:
+            # Attempt to create PR via git provider
+            pr_info = git_provider.create_pull_request(
+                repo_path=project.local_path,
+                title=request.title or f"[Protocol] {run.protocol_name}",
+                body=request.body or run.summary or "",
+                head_branch=branch_name,
+                base_branch=run.base_branch,
+                draft=request.draft,
+            )
+            return OpenPRResponse(
+                pr_url=pr_info.get("url"),
+                pr_number=pr_info.get("number"),
+                message="Pull request created successfully",
+                status="created",
+            )
+        except Exception as exc:
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message=f"Failed to create PR: {str(exc)}",
+                status="error",
+            )
+    
+    # No git provider available - return placeholder response
+    return OpenPRResponse(
+        pr_url=None,
+        pr_number=None,
+        message="PR creation not available - no git provider configured. Use CLI to create PR.",
+        status="unavailable",
+    )
+
+
 @router.get("/protocols/{protocol_id}/events", response_model=List[schemas.EventOut])
 def list_protocol_events(
     protocol_id: int,
