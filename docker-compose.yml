@@ -161,6 +161,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_AGENT_CLIS: "1"
     restart: unless-stopped
     expose:
       - "8000"
@@ -173,6 +175,15 @@ services:
       - DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH=u/devgodzilla/project_onboard_api
       - DEVGODZILLA_WINDMILL_IMPORT_ROOT=windmill
       - DEVGODZILLA_PROJECTS_ROOT=/app/projects
+      # Agent CLIs (Codex / Claude Code / OpenCode) read provider keys from env.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - DEVGODZILLA_ASSUME_AGENT_AUTH=${DEVGODZILLA_ASSUME_AGENT_AUTH:-}
+      - DEVGODZILLA_OPENCODE_MODEL=${DEVGODZILLA_OPENCODE_MODEL:-}
+      - DEVGODZILLA_CODEX_MODEL=${DEVGODZILLA_CODEX_MODEL:-}
+      - DEVGODZILLA_CLAUDE_MODEL=${DEVGODZILLA_CLAUDE_MODEL:-}
     depends_on:
       db:
         condition: service_healthy

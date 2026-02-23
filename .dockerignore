@@ -1,0 +1,33 @@
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Large local artifacts / caches
+.devgodzilla.sqlite
+runs/
+archive/
+
+# Rust build outputs
+**/target/
+
+# Node build outputs / deps
+**/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+
+# Vendored upstream sources (not needed in API image build context)
+Origins/
+
+# Misc
+*.log
