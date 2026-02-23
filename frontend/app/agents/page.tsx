@@ -6,12 +6,14 @@ import {
   Activity,
   Bot,
   Circle,
+  CheckCircle2,
   Info,
   Layers,
   Plus,
   RefreshCw,
   Settings,
   TrendingUp,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -51,8 +53,15 @@ import {
   useUpdateAgentAssignments,
   useUpdateAgentConfig,
   useUpdateAgentPrompt,
+  useTestAgentSetup,
 } from "@/lib/api";
-import type { Agent, AgentAssignments, AgentPromptTemplate, AgentUpdate } from "@/lib/api/types";
+import type {
+  Agent,
+  AgentAssignments,
+  AgentPromptTemplate,
+  AgentTestResult,
+  AgentUpdate,
+} from "@/lib/api/types";
 
 type AgentCard = Agent & {
   enabled: boolean;
@@ -143,11 +152,13 @@ export default function AgentsPage() {
   const updateAgent = useUpdateAgentConfig();
   const updateAssignments = useUpdateAgentAssignments();
   const updatePrompt = useUpdateAgentPrompt();
+  const testAgentSetup = useTestAgentSetup();
 
   const [selectedAgent, setSelectedAgent] = useState<AgentDraft | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState<PromptDraft | null>(null);
   const [isPromptOpen, setIsPromptOpen] = useState(false);
+  const [agentTestResult, setAgentTestResult] = useState<AgentTestResult | null>(null);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AssignmentsDraft>({});
   const [inheritGlobalOverride, setInheritGlobalOverride] = useState<boolean | null>(null);
 
@@ -292,6 +303,7 @@ export default function AgentsPage() {
   }
 
   const openAgentConfig = (agent: AgentCard) => {
+    setAgentTestResult(null);
     setSelectedAgent({
       id: agent.id,
       name: agent.name,
@@ -358,6 +370,42 @@ export default function AgentsPage() {
       setIsConfigOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update agent");
+    }
+  };
+
+  const handleTestAgentSetup = async () => {
+    if (!selectedAgent) return;
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null);
+    const toNumber = (value: string) => (value.trim().length > 0 ? Number(value) : null);
+
+    const overrides: AgentUpdate = {
+      name: toNullable(selectedAgent.name),
+      kind: toNullable(selectedAgent.kind),
+      enabled: selectedAgent.enabled,
+      default_model: toNullable(selectedAgent.default_model),
+      command: toNullable(selectedAgent.command),
+      command_dir: toNullable(selectedAgent.command_dir),
+      endpoint: toNullable(selectedAgent.endpoint),
+      sandbox: toNullable(selectedAgent.sandbox),
+      format: toNullable(selectedAgent.format),
+      capabilities: selectedAgent.capabilities
+        .split(",")
+        .map((cap) => cap.trim())
+        .filter(Boolean),
+      timeout_seconds: toNumber(selectedAgent.timeout_seconds),
+      max_retries: toNumber(selectedAgent.max_retries),
+    };
+
+    try {
+      const res = await testAgentSetup.mutateAsync({
+        agentId: selectedAgent.id,
+        projectId,
+        overrides,
+      });
+      setAgentTestResult(res);
+      toast.success(res.ok ? "Agent setup looks good" : "Agent setup check failed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to test agent setup");
     }
   };
 
@@ -891,16 +939,73 @@ export default function AgentsPage() {
                   }
                 />
               </div>
+
+              {agentTestResult && (
+                <div className="rounded-lg border p-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    {agentTestResult.ok ? (
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-500" />
+                    ) : (
+                      <XCircle className="text-destructive mt-0.5 h-5 w-5" />
+                    )}
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium">
+                          {agentTestResult.ok ? "Setup looks good" : "Setup needs attention"}
+                        </p>
+                        {typeof agentTestResult.duration_ms === "number" && (
+                          <span className="text-muted-foreground text-xs">
+                            {Math.round(agentTestResult.duration_ms)}ms
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {agentTestResult.checks.map((check) => (
+                          <div key={check.name} className="space-y-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground text-xs">{check.name}</span>
+                              <Badge variant={check.ok ? "secondary" : "destructive"}>
+                                {check.ok ? "OK" : "Failed"}
+                              </Badge>
+                            </div>
+                            {check.error && (
+                              <p className="text-destructive text-xs">{check.error}</p>
+                            )}
+                            {check.details && (
+                              <p className="text-muted-foreground truncate text-xs">
+                                {Object.entries(check.details)
+                                  .filter(([, v]) => v !== null && v !== undefined && v !== "")
+                                  .slice(0, 3)
+                                  .map(([k, v]) => `${k}=${String(v)}`)
+                                  .join(" • ")}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
-              Cancel
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <Button
+              variant="outline"
+              onClick={handleTestAgentSetup}
+              disabled={!selectedAgent || testAgentSetup.isPending}
+            >
+              {testAgentSetup.isPending ? "Testing..." : "Test Setup"}
             </Button>
-            <Button onClick={handleSaveAgent} disabled={updateAgent.isPending}>
-              Save Changes
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveAgent} disabled={updateAgent.isPending}>
+                Save Changes
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

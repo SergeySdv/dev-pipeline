@@ -164,3 +164,48 @@ projects:
                 assert metrics["alpha"]["total_steps"] == 2
         finally:
             app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_agents_api_test_setup_endpoint(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  alpha:
+    name: Alpha Agent
+    kind: cli
+    command: python3
+    capabilities: [code_gen]
+    enabled: true
+defaults:
+  exec: alpha
+""".strip()
+        )
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        db_path = tmp_path / "test.db"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        from devgodzilla.api.dependencies import get_db
+
+        app.dependency_overrides[get_db] = lambda: db
+
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.post("/agents/alpha/test", json={"overrides": {}})
+                assert resp.status_code == 200
+                payload = resp.json()
+                assert payload["agent_id"] == "alpha"
+                assert "checks" in payload
+                assert any(c["name"] == "version" for c in payload["checks"])
+
+                resp = client.post("/agents/does-not-exist/test", json={"overrides": {}})
+                assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.clear()

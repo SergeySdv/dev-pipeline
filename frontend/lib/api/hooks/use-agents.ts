@@ -11,6 +11,7 @@ import type {
   AgentOverrides,
   AgentPromptTemplate,
   AgentPromptUpdate,
+  AgentTestResult,
   AgentUpdate,
 } from "../types";
 
@@ -164,6 +165,25 @@ export function useUpdateProjectAgentOverrides() {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(variables.projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.defaults(variables.projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.prompts(variables.projectId) });
+    },
+  });
+}
+
+export function useTestAgentSetup() {
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      projectId,
+      overrides,
+    }: {
+      agentId: string;
+      projectId?: number;
+      overrides?: AgentUpdate;
+    }) => {
+      const suffix = projectId ? `?project_id=${projectId}` : "";
+      return apiClient.post<AgentTestResult>(`/agents/${agentId}/test${suffix}`, {
+        overrides: overrides || {},
+      });
     },
   });
 }

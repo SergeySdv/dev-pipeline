@@ -291,6 +291,25 @@ class AgentHealthOut(BaseModel):
     error: Optional[str] = None
     response_time_ms: Optional[float] = None
 
+
+class AgentTestCheckOut(BaseModel):
+    name: str
+    ok: bool
+    error: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTestRequest(BaseModel):
+    # Optional overrides from the UI modal; these are not persisted.
+    overrides: Optional[AgentConfigUpdate] = None
+
+
+class AgentTestOut(BaseModel):
+    agent_id: str
+    ok: bool
+    checks: List[AgentTestCheckOut] = Field(default_factory=list)
+    duration_ms: Optional[float] = None
+
 class AgentMetricsOut(BaseModel):
     agent_id: str
     active_steps: int = 0
