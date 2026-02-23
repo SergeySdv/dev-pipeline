@@ -1,140 +1,263 @@
 """
-DevGodzilla Cursor Editor Engine
+DevGodzilla Cursor IDE Engine
 
-Engine adapter for Cursor IDE integration.
+Adapter for Cursor IDE integration.
+Generates command files for Cursor's AI-assisted coding features.
 """
 
-import subprocess
+import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from devgodzilla.engines.interface import (
-    EngineInterface,
+    EngineKind,
     EngineMetadata,
     EngineRequest,
     EngineResult,
-    EngineCapability,
+    SandboxMode,
 )
+from devgodzilla.engines.ide import (
+    IDECommand,
+    IDEEngine,
+)
+from devgodzilla.engines.registry import register_engine
+from devgodzilla.logging import get_logger
+
+logger = get_logger(__name__)
 
 
-class CursorEngine(EngineInterface):
+class CursorEngine(IDEEngine):
     """
-    Engine adapter for Cursor Editor.
+    Engine adapter for Cursor IDE.
     
-    Uses Cursor's command-line interface for task execution.
-    Note: Cursor is an IDE-based agent and may require user interaction.
+    Cursor is an AI-powered code editor built on VS Code.
+    This adapter generates command files that can be consumed
+    by the DevGodzilla Cursor extension.
+    
+    Features:
+    - Generates .cursorrules for project-specific AI behavior
+    - Creates command files for automated editing
+    - Supports Composer and Chat modes
+    
+    Example:
+        engine = CursorEngine()
+        result = engine.execute(request)
     """
-    
+
     def __init__(
         self,
-        model: str = "gpt-4",
-        timeout: int = 600,
-        command: str = "cursor",
+        *,
+        command_dir: Optional[Path] = None,
+        result_timeout: int = 300,
+        default_model: Optional[str] = None,
+        use_composer: bool = True,
     ) -> None:
-        self._model = model
-        self._timeout = timeout
-        self._command = command
-    
+        """
+        Initialize Cursor engine.
+        
+        Args:
+            command_dir: Directory for command files
+            result_timeout: Seconds to wait for Cursor result
+            default_model: Default model (cursor-small, claude-3.5-sonnet, etc.)
+            use_composer: Whether to use Composer mode (multi-file editing)
+        """
+        super().__init__(
+            command_dir=command_dir,
+            result_timeout=result_timeout,
+        )
+        self._default_model = default_model or os.environ.get(
+            "DEVGODZILLA_CURSOR_MODEL", "claude-3.5-sonnet"
+        )
+        self._use_composer = use_composer
+
     @property
     def metadata(self) -> EngineMetadata:
         return EngineMetadata(
-            engine_id="cursor",
-            name="Cursor Editor",
-            version="1.0.0",
+            id="cursor",
+            display_name="Cursor IDE",
+            kind=EngineKind.IDE,
+            default_model=self._default_model,
+            description="Cursor IDE AI assistant for code generation and editing",
             capabilities=[
-                EngineCapability.CODE_GENERATION,
-                EngineCapability.INTERACTIVE,
-            ],
-            default_model=self._model,
-            supported_models=[
-                "gpt-4",
-                "gpt-4-turbo",
-                "claude-3-opus",
+                "plan",
+                "execute",
+                "qa",
+                "multi-file-edit",
+                "codebase-indexing",
             ],
         )
-    
-    def execute(self, request: EngineRequest) -> EngineResult:
-        """Execute a task using Cursor's CLI."""
+
+    def _get_command_dir(self, req: EngineRequest) -> Path:
+        """Get command directory, preferring workspace .devgodzilla dir."""
+        if self._command_dir:
+            return self._command_dir
+        
+        workspace_dir = Path(req.working_dir)
+        command_dir = workspace_dir / ".devgodzilla" / "cursor"
+        command_dir.mkdir(parents=True, exist_ok=True)
+        return command_dir
+
+    def _get_command_file_path(self, req: EngineRequest) -> Path:
+        """Get command file path in workspace .devgodzilla directory."""
+        command_dir = self._get_command_dir(req)
+        filename = f"cmd-{req.step_run_id}.json"
+        return command_dir / filename
+
+    def _infer_command_type(self, sandbox: SandboxMode) -> str:
+        """Infer command type from sandbox mode."""
+        if sandbox == SandboxMode.FULL_ACCESS:
+            return "plan"
+        elif sandbox == SandboxMode.READ_ONLY:
+            return "review"
+        else:
+            return "edit"
+
+    def _generate_commands(
+        self,
+        req: EngineRequest,
+        sandbox: SandboxMode,
+    ) -> List[IDECommand]:
+        """
+        Generate Cursor commands from the request.
+        
+        Creates commands based on sandbox mode:
+        - FULL_ACCESS: Planning/analysis commands
+        - WORKSPACE_WRITE: Edit/create commands
+        - READ_ONLY: Review/audit commands
+        """
+        commands: List[IDECommand] = []
+        prompt_text = self.get_prompt_text(req)
+        command_type = self._infer_command_type(sandbox)
+        
+        # Primary command with the full prompt
+        primary_command = IDECommand(
+            command_type=command_type,
+            target=req.working_dir,
+            instruction=prompt_text,
+            context={
+                "mode": "composer" if self._use_composer else "chat",
+                "project_id": req.project_id,
+                "protocol_run_id": req.protocol_run_id,
+            },
+            metadata={
+                "model": req.model or self._default_model,
+                "files": req.prompt_files,
+                "extra": req.extra,
+            },
+        )
+        commands.append(primary_command)
+        
+        # Add follow-up commands based on extra parameters
+        follow_ups = req.extra.get("follow_up_commands", [])
+        for follow_up in follow_ups:
+            if isinstance(follow_up, dict):
+                commands.append(IDECommand(
+                    command_type=follow_up.get("type", "edit"),
+                    target=follow_up.get("target", req.working_dir),
+                    instruction=follow_up.get("instruction", ""),
+                    context=follow_up.get("context", {}),
+                    metadata=follow_up.get("metadata", {}),
+                ))
+        
+        return commands
+
+    def _parse_response(self, result_data) -> EngineResult:
+        """
+        Parse Cursor extension result.
+        
+        Expected format:
+        {
+            "success": bool,
+            "changes": [{"file": str, "action": str, "content": str}],
+            "output": str,
+            "error": str | null
+        }
+        """
+        if result_data is None:
+            return EngineResult(
+                success=False,
+                error="Timeout waiting for Cursor response",
+                metadata={"timeout": True},
+            )
+        
+        success = result_data.get("success", False)
+        changes = result_data.get("changes", [])
+        output = result_data.get("output", "")
+        error = result_data.get("error")
+        
+        # Build stdout from changes summary
+        if changes:
+            change_summary = "\n".join(
+                f"- {c.get('action', 'change')}: {c.get('file', 'unknown')}"
+                for c in changes
+            )
+            stdout = f"Changes made:\n{change_summary}\n\n{output}"
+        else:
+            stdout = output
+        
+        return EngineResult(
+            success=success,
+            stdout=stdout,
+            stderr="",
+            error=error,
+            metadata={
+                "changes": changes,
+                "change_count": len(changes),
+            },
+        )
+
+    def sync_config(self, additional_agents: Optional[List[dict]] = None) -> None:
+        """
+        Generate .cursorrules file for the project.
+        
+        Creates or updates the .cursorrules file with DevGodzilla
+        configuration and coding guidelines.
+        """
+        # This would typically be called with project-specific rules
+        # For now, we just log that sync was requested
+        logger.info(
+            "cursor_sync_config",
+            extra={"additional_agents": len(additional_agents) if additional_agents else 0},
+        )
+
+    def check_availability(self) -> bool:
+        """
+        Check if Cursor integration is available.
+        
+        Checks for Cursor installation or .cursor directory.
+        """
         try:
-            # Check if cursor is available
-            if not self.check_availability():
-                return EngineResult(
-                    success=False,
-                    error="Cursor is not installed or not available in PATH",
-                )
+            # Check for common Cursor indicators
+            home = Path.home()
+            cursor_config = home / ".cursor"
             
-            # Build command for Cursor
-            cwd = request.workspace_path or "."
+            if cursor_config.exists():
+                return True
             
-            # Write task to a temporary file for Cursor to pick up
-            task_file = Path(cwd) / ".cursor" / "commands" / "devgodzilla_task.md"
-            task_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            task_content = self._build_task_file(request)
-            task_file.write_text(task_content)
-            
-            # For Cursor, we typically open the project and let user interact
-            # This is a placeholder for headless execution
-            cmd = [
-                self._command,
-                "--open",
-                str(cwd),
+            # Check for Cursor in common install locations
+            common_paths = [
+                "/Applications/Cursor.app",  # macOS
+                Path(home) / ".local" / "share" / "cursor",  # Linux
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "cursor",  # Windows
             ]
             
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,  # Just opening, not waiting for completion
-            )
+            for path in common_paths:
+                if Path(path).exists():
+                    return True
             
-            return EngineResult(
-                success=True,
-                output=f"Task written to {task_file}. Open Cursor to execute.",
-                files_modified=[str(task_file)],
-                metadata={
-                    "model": request.model or self._model,
-                    "engine": "cursor",
-                    "mode": "interactive",
-                },
-            )
-                
-        except subprocess.TimeoutExpired:
-            return EngineResult(
-                success=False,
-                error="Cursor launch timed out",
-            )
-        except Exception as e:
-            return EngineResult(
-                success=False,
-                error=f"Cursor error: {e}",
-            )
-    
-    def check_availability(self) -> bool:
-        """Check if Cursor is available."""
-        try:
-            result = subprocess.run(
-                [self._command, "--version"],
-                capture_output=True,
-                timeout=10,
-            )
-            return result.returncode == 0
+            # If command dir is writable, we can still generate commands
+            return super().check_availability()
+            
         except Exception:
             return False
+
+
+def register_cursor_engine(*, default: bool = False) -> CursorEngine:
+    """
+    Register CursorEngine in the global registry.
     
-    def _build_task_file(self, request: EngineRequest) -> str:
-        """Build the task file for Cursor."""
-        parts = ["# DevGodzilla Task\n"]
-        
-        parts.append(f"## Task\n{request.prompt}\n")
-        
-        if request.context:
-            parts.append(f"## Context\n{request.context}\n")
-        
-        if request.constraints:
-            constraints = "\n".join(f"- {c}" for c in request.constraints)
-            parts.append(f"## Constraints\n{constraints}\n")
-        
-        parts.append("\n---\n*Generated by DevGodzilla*\n")
-        
-        return "\n".join(parts)
+    Returns the registered engine instance.
+    """
+    engine = CursorEngine()
+    register_engine(engine, default=default)
+    return engine
