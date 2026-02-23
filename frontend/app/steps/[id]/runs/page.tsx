@@ -1,25 +1,27 @@
-"use client"
+"use client";
 
-import { useStepRuns } from "@/lib/api"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { DataTable } from "@/components/ui/data-table"
-import { StatusPill } from "@/components/ui/status-pill"
-import { ArrowLeft, ExternalLink } from "lucide-react"
-import Link from "next/link"
-import { formatDate } from "@/lib/format"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { CodexRun } from "@/lib/api/types"
+import Link from "next/link";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { ArrowLeft, ExternalLink } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { useStepRuns } from "@/lib/api";
+import type { CodexRun } from "@/lib/api/types";
+import { formatDate } from "@/lib/format";
 
 export default function StepRunsPage({ params }: { params: { id: string } }) {
-  const { id } = params
-  const stepId = Number.parseInt(id)
-  const { data: runs, isLoading } = useStepRuns(stepId)
+  const { id } = params;
+  const stepId = Number.parseInt(id);
+  const { data: runs, isLoading } = useStepRuns(stepId);
 
   if (isLoading) {
-    return <LoadingState />
+    return <LoadingState />;
   }
 
   const columns: ColumnDef<CodexRun>[] = [
@@ -27,7 +29,10 @@ export default function StepRunsPage({ params }: { params: { id: string } }) {
       accessorKey: "run_id",
       header: "Run ID",
       cell: ({ row }) => (
-        <Link href={`/runs/${row.original.run_id}`} className="text-primary hover:underline flex items-center gap-1">
+        <Link
+          href={`/runs/${row.original.run_id}`}
+          className="text-primary flex items-center gap-1 hover:underline"
+        >
           {row.original.run_id.slice(0, 8)}
           <ExternalLink className="h-3 w-3" />
         </Link>
@@ -56,26 +61,33 @@ export default function StepRunsPage({ params }: { params: { id: string } }) {
       header: "Started",
       cell: ({ row }) => formatDate(row.original.started_at),
     },
-  ]
+  ];
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link href={`/steps/${id}`}>
           <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4 mr-2" />
+            <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Step
           </Button>
         </Link>
         <div>
           <h1 className="text-2xl font-bold">Step Runs</h1>
-          <p className="text-sm text-muted-foreground">Step #{stepId}</p>
+          <p className="text-muted-foreground text-sm">Step #{stepId}</p>
         </div>
       </div>
 
       {runs && runs.length > 0 ? (
         <Card>
-          <DataTable columns={columns} data={runs} enableSearch enableExport enableColumnFilters exportFilename={`step-${id}-runs.csv`} />
+          <DataTable
+            columns={columns}
+            data={runs}
+            enableSearch
+            enableExport
+            enableColumnFilters
+            exportFilename={`step-${id}-runs.csv`}
+          />
         </Card>
       ) : (
         <Card className="p-12">
@@ -83,5 +95,5 @@ export default function StepRunsPage({ params }: { params: { id: string } }) {
         </Card>
       )}
     </div>
-  )
+  );
 }

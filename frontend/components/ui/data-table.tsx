@@ -1,32 +1,40 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
+import { useMemo, useState } from "react";
 
 import {
+  type ColumnDef,
   flexRender,
   getCoreRowModel,
   getSortedRowModel,
-  useReactTable,
-  type ColumnDef,
   type SortingState,
-} from "@tanstack/react-table"
-import { useMemo, useState } from "react"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ArrowUpDown, Download, Filter, Search, X } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
+  useReactTable,
+} from "@tanstack/react-table";
+import { ArrowUpDown, Download, Filter, Search, X } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[]
-  data: TData[]
-  onRowClick?: (row: TData) => void
-  className?: string
-  enableSearch?: boolean
-  searchPlaceholder?: string
-  enableExport?: boolean
-  exportFilename?: string
-  enableColumnFilters?: boolean
+  columns: ColumnDef<TData, TValue>[];
+  data: TData[];
+  onRowClick?: (row: TData) => void;
+  className?: string;
+  enableSearch?: boolean;
+  searchPlaceholder?: string;
+  enableExport?: boolean;
+  exportFilename?: string;
+  enableColumnFilters?: boolean;
 }
 
 export function DataTable<TData, TValue>({
@@ -40,50 +48,50 @@ export function DataTable<TData, TValue>({
   exportFilename = "export.csv",
   enableColumnFilters = false,
 }: DataTableProps<TData, TValue>) {
-  const [sorting, setSorting] = useState<SortingState>([])
-  const [search, setSearch] = useState("")
-  const [showFilters, setShowFilters] = useState(false)
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [search, setSearch] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
 
   const filterableColumns = useMemo(() => {
     return columns
       .map((col) => {
-        const accessorKey = (col as unknown as { accessorKey?: unknown }).accessorKey
-        if (typeof accessorKey !== "string") return null
-        const id = (col as unknown as { id?: unknown }).id
-        const columnId = typeof id === "string" ? id : accessorKey
-        return { columnId, accessorKey }
+        const accessorKey = (col as unknown as { accessorKey?: unknown }).accessorKey;
+        if (typeof accessorKey !== "string") return null;
+        const id = (col as unknown as { id?: unknown }).id;
+        const columnId = typeof id === "string" ? id : accessorKey;
+        return { columnId, accessorKey };
       })
-      .filter((v): v is { columnId: string; accessorKey: string } => v != null)
-  }, [columns])
+      .filter((v): v is { columnId: string; accessorKey: string } => v != null);
+  }, [columns]);
 
   const accessorKeyByColumnId = useMemo(() => {
-    return new Map(filterableColumns.map((c) => [c.columnId, c.accessorKey] as const))
-  }, [filterableColumns])
+    return new Map(filterableColumns.map((c) => [c.columnId, c.accessorKey] as const));
+  }, [filterableColumns]);
 
   const getRowValue = (row: unknown, accessorKey: string) => {
-    if (!row || typeof row !== "object") return undefined
-    if (!accessorKey.includes(".")) return (row as Record<string, unknown>)[accessorKey]
+    if (!row || typeof row !== "object") return undefined;
+    if (!accessorKey.includes(".")) return (row as Record<string, unknown>)[accessorKey];
     return accessorKey.split(".").reduce<unknown>((acc, key) => {
-      if (!acc || typeof acc !== "object") return undefined
-      return (acc as Record<string, unknown>)[key]
-    }, row)
-  }
+      if (!acc || typeof acc !== "object") return undefined;
+      return (acc as Record<string, unknown>)[key];
+    }, row);
+  };
 
   const filteredData = useMemo(() => {
-    const query = search.trim().toLowerCase()
+    const query = search.trim().toLowerCase();
     const activeColumnFilters = Object.entries(columnFilters)
       .map(([columnId, value]) => ({ columnId, value: value.trim().toLowerCase() }))
-      .filter((f) => f.value.length > 0)
+      .filter((f) => f.value.length > 0);
 
-    if (!query && activeColumnFilters.length === 0) return data
+    if (!query && activeColumnFilters.length === 0) return data;
 
     return data.filter((row) => {
       if (activeColumnFilters.length > 0) {
         for (const f of activeColumnFilters) {
-          const accessorKey = accessorKeyByColumnId.get(f.columnId)
-          if (!accessorKey) continue
-          const value = getRowValue(row, accessorKey)
+          const accessorKey = accessorKeyByColumnId.get(f.columnId);
+          if (!accessorKey) continue;
+          const value = getRowValue(row, accessorKey);
           const asString =
             typeof value === "string"
               ? value
@@ -91,21 +99,21 @@ export function DataTable<TData, TValue>({
                 ? ""
                 : typeof value === "number" || typeof value === "boolean"
                   ? String(value)
-                  : JSON.stringify(value)
+                  : JSON.stringify(value);
           if (!asString.toLowerCase().includes(f.value)) {
-            return false
+            return false;
           }
         }
       }
 
-      if (!query) return true
+      if (!query) return true;
       try {
-        return JSON.stringify(row).toLowerCase().includes(query)
+        return JSON.stringify(row).toLowerCase().includes(query);
       } catch {
-        return false
+        return false;
       }
-    })
-  }, [accessorKeyByColumnId, columnFilters, data, search])
+    });
+  }, [accessorKeyByColumnId, columnFilters, data, search]);
 
   const table = useReactTable({
     data: filteredData,
@@ -116,66 +124,70 @@ export function DataTable<TData, TValue>({
     state: {
       sorting,
     },
-  })
+  });
 
   const exportToCsv = () => {
     const exportCols = columns
       .map((col) => {
-        const accessorKey = (col as unknown as { accessorKey?: unknown }).accessorKey
-        if (typeof accessorKey !== "string") return null
-        const header = (col as unknown as { header?: unknown }).header
+        const accessorKey = (col as unknown as { accessorKey?: unknown }).accessorKey;
+        if (typeof accessorKey !== "string") return null;
+        const header = (col as unknown as { header?: unknown }).header;
         return {
           accessorKey,
           header: typeof header === "string" ? header : accessorKey,
-        }
+        };
       })
-      .filter((c): c is { accessorKey: string; header: string } => c != null)
+      .filter((c): c is { accessorKey: string; header: string } => c != null);
 
     const escape = (value: unknown) => {
-      if (value == null) return ""
-      const asString = typeof value === "string" ? value : JSON.stringify(value)
+      if (value == null) return "";
+      const asString = typeof value === "string" ? value : JSON.stringify(value);
       if (/[",\n]/.test(asString)) {
-        return `"${asString.replaceAll('"', '""')}"`
+        return `"${asString.replaceAll('"', '""')}"`;
       }
-      return asString
-    }
+      return asString;
+    };
 
     if (exportCols.length === 0) {
-      const blob = new Blob([JSON.stringify(filteredData, null, 2)], { type: "application/json;charset=utf-8" })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = exportFilename.replace(/\.csv$/i, ".json")
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      return
+      const blob = new Blob([JSON.stringify(filteredData, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = exportFilename.replace(/\.csv$/i, ".json");
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return;
     }
 
-    const rows = filteredData as unknown as Array<Record<string, unknown>>
-    const headerLine = exportCols.map((c) => escape(c.header)).join(",")
-    const dataLines = rows.map((row) => exportCols.map((c) => escape(row[c.accessorKey])).join(","))
-    const csv = [headerLine, ...dataLines].join("\n")
+    const rows = filteredData as unknown as Array<Record<string, unknown>>;
+    const headerLine = exportCols.map((c) => escape(c.header)).join(",");
+    const dataLines = rows.map((row) =>
+      exportCols.map((c) => escape(row[c.accessorKey])).join(",")
+    );
+    const csv = [headerLine, ...dataLines].join("\n");
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = exportFilename || "export.csv"
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFilename || "export.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className={cn("rounded-md border", className)}>
       {(enableSearch || enableExport || enableColumnFilters) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 p-2">
+        <div className="bg-muted/30 flex flex-wrap items-center justify-between gap-2 border-b p-2">
           {enableSearch ? (
             <div className="relative w-full sm:w-80">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Search className="text-muted-foreground absolute top-2.5 left-2 h-4 w-4" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -186,7 +198,7 @@ export function DataTable<TData, TValue>({
                 <button
                   type="button"
                   onClick={() => setSearch("")}
-                  className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
+                  className="text-muted-foreground hover:text-foreground absolute top-2.5 right-2"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -214,8 +226,8 @@ export function DataTable<TData, TValue>({
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  setSearch("")
-                  setColumnFilters({})
+                  setSearch("");
+                  setColumnFilters({});
                 }}
                 disabled={!search && Object.keys(columnFilters).length === 0}
               >
@@ -223,7 +235,12 @@ export function DataTable<TData, TValue>({
               </Button>
             )}
             {enableExport && (
-              <Button variant="outline" size="sm" onClick={exportToCsv} disabled={filteredData.length === 0}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportToCsv}
+                disabled={filteredData.length === 0}
+              >
                 <Download className="mr-2 h-4 w-4" />
                 Export CSV
               </Button>
@@ -241,12 +258,14 @@ export function DataTable<TData, TValue>({
                     <div
                       className={cn(
                         "flex items-center gap-1",
-                        header.column.getCanSort() && "cursor-pointer select-none",
+                        header.column.getCanSort() && "cursor-pointer select-none"
                       )}
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       {flexRender(header.column.columnDef.header, header.getContext())}
-                      {header.column.getCanSort() && <ArrowUpDown className="h-3 w-3 text-muted-foreground" />}
+                      {header.column.getCanSort() && (
+                        <ArrowUpDown className="text-muted-foreground h-3 w-3" />
+                      )}
                     </div>
                   )}
                 </TableHead>
@@ -255,24 +274,31 @@ export function DataTable<TData, TValue>({
           ))}
           {enableColumnFilters && showFilters && (
             <TableRow>
-              {(table.getHeaderGroups()[table.getHeaderGroups().length - 1]?.headers ?? []).map((header) => {
-                const accessorKey = (header.column.columnDef as unknown as { accessorKey?: unknown }).accessorKey
-                const canFilter = typeof accessorKey === "string"
-                return (
-                  <TableHead key={`${header.id}-filter`} className="py-2">
-                    {canFilter ? (
-                      <Input
-                        value={columnFilters[header.column.id] || ""}
-                        onChange={(e) =>
-                          setColumnFilters((prev) => ({ ...prev, [header.column.id]: e.target.value }))
-                        }
-                        placeholder="Filter…"
-                        className="h-7 text-xs"
-                      />
-                    ) : null}
-                  </TableHead>
-                )
-              })}
+              {(table.getHeaderGroups()[table.getHeaderGroups().length - 1]?.headers ?? []).map(
+                (header) => {
+                  const accessorKey = (
+                    header.column.columnDef as unknown as { accessorKey?: unknown }
+                  ).accessorKey;
+                  const canFilter = typeof accessorKey === "string";
+                  return (
+                    <TableHead key={`${header.id}-filter`} className="py-2">
+                      {canFilter ? (
+                        <Input
+                          value={columnFilters[header.column.id] || ""}
+                          onChange={(e) =>
+                            setColumnFilters((prev) => ({
+                              ...prev,
+                              [header.column.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Filter…"
+                          className="h-7 text-xs"
+                        />
+                      ) : null}
+                    </TableHead>
+                  );
+                }
+              )}
             </TableRow>
           )}
         </TableHeader>
@@ -282,11 +308,13 @@ export function DataTable<TData, TValue>({
               <TableRow
                 key={row.id}
                 data-state={row.getIsSelected() && "selected"}
-                className={cn(onRowClick && "cursor-pointer hover:bg-muted/50")}
+                className={cn(onRowClick && "hover:bg-muted/50 cursor-pointer")}
                 onClick={() => onRowClick?.(row.original)}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
+                  <TableCell key={cell.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
                 ))}
               </TableRow>
             ))
@@ -300,9 +328,9 @@ export function DataTable<TData, TValue>({
         </TableBody>
       </Table>
     </div>
-  )
+  );
 }
 
 export function SortableHeader({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-center gap-1">{children}</div>
+  return <div className="flex items-center gap-1">{children}</div>;
 }

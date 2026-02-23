@@ -1,33 +1,41 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { Check, Copy } from "lucide-react"
+import { useState } from "react";
+
+import { Check, Copy } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface CodeBlockProps {
-  code: string | object
-  language?: string
-  title?: string
-  className?: string
-  maxHeight?: string
+  code: string | object;
+  language?: string;
+  title?: string;
+  className?: string;
+  maxHeight?: string;
 }
 
-export function CodeBlock({ code, language = "json", title, className, maxHeight = "400px" }: CodeBlockProps) {
-  const [copied, setCopied] = useState(false)
-  const codeString = typeof code === "string" ? code : JSON.stringify(code, null, 2)
+export function CodeBlock({
+  code,
+  language = "json",
+  title,
+  className,
+  maxHeight = "400px",
+}: CodeBlockProps) {
+  const [copied, setCopied] = useState(false);
+  const codeString = typeof code === "string" ? code : JSON.stringify(code, null, 2);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(codeString)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+    await navigator.clipboard.writeText(codeString);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
-    <div className={cn("rounded-lg border bg-muted/50", className)}>
+    <div className={cn("bg-muted/50 rounded-lg border", className)}>
       {title && (
         <div className="flex items-center justify-between border-b px-4 py-2">
-          <span className="text-sm font-medium text-muted-foreground">{title}</span>
+          <span className="text-muted-foreground text-sm font-medium">{title}</span>
           <Button variant="ghost" size="sm" onClick={handleCopy}>
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
           </Button>
@@ -35,12 +43,12 @@ export function CodeBlock({ code, language = "json", title, className, maxHeight
       )}
       <pre className={cn("overflow-auto p-4 text-sm", !title && "relative")} style={{ maxHeight }}>
         {!title && (
-          <Button variant="ghost" size="sm" className="absolute right-2 top-2" onClick={handleCopy}>
+          <Button variant="ghost" size="sm" className="absolute top-2 right-2" onClick={handleCopy}>
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
           </Button>
         )}
         <code className={`language-${language} text-foreground`}>{codeString}</code>
       </pre>
     </div>
-  )
+  );
 }

@@ -1,50 +1,51 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useParams } from "next/navigation"
-import { useRunDetail, useRunArtifacts } from "@/lib/api"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { DataTable } from "@/components/ui/data-table"
-import { ArrowLeft, Download, Eye, FileText, GitCompare } from "lucide-react"
-import Link from "next/link"
-import { formatBytes, formatDate } from "@/lib/format"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { CodeBlock } from "@/components/ui/code-block"
-import { DiffViewer } from "@/components/ui/diff-viewer"
-import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { RunArtifact } from "@/lib/api/types"
+import { useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { ArrowLeft, Download, Eye, FileText, GitCompare } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DiffViewer } from "@/components/ui/diff-viewer";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useRunArtifacts,useRunDetail } from "@/lib/api";
+import type { RunArtifact } from "@/lib/api/types";
+import { formatBytes, formatDate } from "@/lib/format";
 
 export default function RunArtifactsPage() {
-  const params = useParams()
-  const runIdParam = params?.runId
-  const runId = Array.isArray(runIdParam) ? runIdParam[0] : runIdParam
-  const { data: run, isLoading: runLoading } = useRunDetail(runId)
-  const { data: artifacts, isLoading: artifactsLoading } = useRunArtifacts(runId)
-  const [viewingArtifact, setViewingArtifact] = useState<RunArtifact | null>(null)
-  const [filterKind, setFilterKind] = useState<"all" | "file" | "diff">("all")
+  const params = useParams();
+  const runIdParam = params?.runId;
+  const runId = Array.isArray(runIdParam) ? runIdParam[0] : runIdParam;
+  const { data: run, isLoading: runLoading } = useRunDetail(runId);
+  const { data: artifacts, isLoading: artifactsLoading } = useRunArtifacts(runId);
+  const [viewingArtifact, setViewingArtifact] = useState<RunArtifact | null>(null);
+  const [filterKind, setFilterKind] = useState<"all" | "file" | "diff">("all");
 
   if (!runId || runLoading || artifactsLoading) {
-    return <LoadingState />
+    return <LoadingState />;
   }
 
   if (!run) {
-    return <EmptyState title="Run not found" description="This run may have been deleted." />
+    return <EmptyState title="Run not found" description="This run may have been deleted." />;
   }
 
   const filteredArtifacts = artifacts?.filter((artifact) => {
-    if (filterKind === "all") return true
-    if (filterKind === "file") return artifact.content_type !== "diff"
-    if (filterKind === "diff") return artifact.content_type === "diff"
-    return true
-  })
+    if (filterKind === "all") return true;
+    if (filterKind === "file") return artifact.content_type !== "diff";
+    if (filterKind === "diff") return artifact.content_type === "diff";
+    return true;
+  });
 
-  const fileCount = artifacts?.filter((a) => a.content_type !== "diff").length || 0
-  const diffCount = artifacts?.filter((a) => a.content_type === "diff").length || 0
+  const fileCount = artifacts?.filter((a) => a.content_type !== "diff").length || 0;
+  const diffCount = artifacts?.filter((a) => a.content_type === "diff").length || 0;
 
   const columns: ColumnDef<RunArtifact>[] = [
     {
@@ -53,9 +54,9 @@ export default function RunArtifactsPage() {
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           {row.original.content_type === "diff" ? (
-            <GitCompare className="h-4 w-4 text-muted-foreground" />
+            <GitCompare className="text-muted-foreground h-4 w-4" />
           ) : (
-            <FileText className="h-4 w-4 text-muted-foreground" />
+            <FileText className="text-muted-foreground h-4 w-4" />
           )}
           <span>{row.original.name}</span>
           {row.original.content_type === "diff" && (
@@ -79,14 +80,14 @@ export default function RunArtifactsPage() {
       accessorKey: "diff_stats",
       header: "Changes",
       cell: ({ row }) => {
-        if (row.original.content_type !== "diff" || !row.original.diff_data) return null
-        const { additions, deletions } = row.original.diff_data
+        if (row.original.content_type !== "diff" || !row.original.diff_data) return null;
+        const { additions, deletions } = row.original.diff_data;
         return (
           <div className="flex items-center gap-2 text-xs">
             <span className="text-green-600 dark:text-green-400">+{additions}</span>
             <span className="text-red-600 dark:text-red-400">-{deletions}</span>
           </div>
-        )
+        );
       },
     },
     {
@@ -100,34 +101,36 @@ export default function RunArtifactsPage() {
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setViewingArtifact(row.original)}>
-            <Eye className="h-4 w-4 mr-1" />
+            <Eye className="mr-1 h-4 w-4" />
             View
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => window.open(`/runs/${runId}/artifacts/${row.original.id}/content`, "_blank")}
+            onClick={() =>
+              window.open(`/runs/${runId}/artifacts/${row.original.id}/content`, "_blank")
+            }
           >
-            <Download className="h-4 w-4 mr-1" />
+            <Download className="mr-1 h-4 w-4" />
             Download
           </Button>
         </div>
       ),
     },
-  ]
+  ];
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link href={`/runs/${runId}`}>
           <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4 mr-2" />
+            <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Run
           </Button>
         </Link>
         <div>
           <h1 className="text-2xl font-bold">Run Artifacts</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {run.job_type} • {run.run_kind}
           </p>
         </div>
@@ -139,7 +142,7 @@ export default function RunArtifactsPage() {
             value={filterKind}
             onValueChange={(v) => {
               if (v === "all" || v === "file" || v === "diff") {
-                setFilterKind(v)
+                setFilterKind(v);
               }
             }}
           >
@@ -168,7 +171,7 @@ export default function RunArtifactsPage() {
       )}
 
       <Dialog open={!!viewingArtifact} onOpenChange={() => setViewingArtifact(null)}>
-        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {viewingArtifact?.content_type === "diff" ? (
@@ -189,14 +192,16 @@ export default function RunArtifactsPage() {
               hunks={viewingArtifact.diff_data.hunks}
             />
           ) : (
-            <div className="p-4 text-sm text-muted-foreground">
+            <div className="text-muted-foreground p-4 text-sm">
               <p>Artifact: {viewingArtifact?.name}</p>
-              <p className="mt-2">Path: <code className="font-mono">{viewingArtifact?.path}</code></p>
+              <p className="mt-2">
+                Path: <code className="font-mono">{viewingArtifact?.path}</code>
+              </p>
               <p className="mt-4">Use the Download button to view the full content.</p>
             </div>
           )}
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }

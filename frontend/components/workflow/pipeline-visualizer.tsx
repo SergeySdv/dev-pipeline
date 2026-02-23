@@ -1,12 +1,26 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { StatusPill } from "@/components/ui/status-pill"
-import { Play, Pause, CheckCircle, XCircle, Clock, Bot, ArrowRight, Settings, Maximize2, Download, List, GitBranch } from "lucide-react"
-import { cn } from "@/lib/utils"
-import type { StepRun, ProtocolRun } from "@/lib/api/types"
+import { useCallback,useState } from "react";
+
+import {
+  ArrowRight,
+  Bot,
+  CheckCircle,
+  Clock,
+  Download,
+  GitBranch,
+  List,
+  Maximize2,
+  Pause,
+  Play,
+  Settings,
+  XCircle,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -14,31 +28,38 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useState, useCallback } from "react"
-import { toast } from "sonner"
-import { PipelineDag } from "@/components/visualizations/pipeline-dag"
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { StatusPill } from "@/components/ui/status-pill";
+import { PipelineDag } from "@/components/visualizations/pipeline-dag";
+import type { ProtocolRun,StepRun } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 
 // View mode type for toggle between linear and DAG views
-export type ViewMode = "linear" | "dag"
+export type ViewMode = "linear" | "dag";
 
 interface PipelineVisualizerProps {
-  protocol: ProtocolRun
-  steps: StepRun[]
-  onStepClick?: (step: StepRun) => void
-  onAssignAgent?: (stepId: number, agentId: string) => void
+  protocol: ProtocolRun;
+  steps: StepRun[];
+  onStepClick?: (step: StepRun) => void;
+  onAssignAgent?: (stepId: number, agentId: string) => void;
   /** Initial view mode - defaults to "linear" */
-  initialViewMode?: ViewMode
+  initialViewMode?: ViewMode;
   /** Controlled view mode - when provided, component becomes controlled */
-  viewMode?: ViewMode
+  viewMode?: ViewMode;
   /** Callback when view mode changes */
-  onViewModeChange?: (mode: ViewMode) => void
+  onViewModeChange?: (mode: ViewMode) => void;
   /** Currently selected step ID - preserved across view mode changes */
-  selectedStepId?: number | null
+  selectedStepId?: number | null;
   /** Callback when step selection changes */
-  onStepSelect?: (stepId: number | null) => void
+  onStepSelect?: (stepId: number | null) => void;
 }
 
 const availableAgents = [
@@ -48,71 +69,77 @@ const availableAgents = [
   { id: "grok-4", name: "Grok 4", provider: "xAI", speed: "fast" },
   { id: "llama-4-70b", name: "Llama 4 70B", provider: "Meta", speed: "medium" },
   { id: "mistral-large", name: "Mistral Large", provider: "Mistral", speed: "fast" },
-]
+];
 
-export function PipelineVisualizer({ 
-  protocol, 
-  steps, 
-  onStepClick, 
+export function PipelineVisualizer({
+  protocol,
+  steps,
+  onStepClick,
   onAssignAgent,
   initialViewMode = "linear",
   viewMode: controlledViewMode,
   onViewModeChange,
   selectedStepId: controlledSelectedStepId,
-  onStepSelect
+  onStepSelect,
 }: PipelineVisualizerProps) {
   // Internal state for uncontrolled mode
-  const [internalViewMode, setInternalViewMode] = useState<ViewMode>(initialViewMode)
-  const [internalSelectedStepId, setInternalSelectedStepId] = useState<number | null>(null)
+  const [internalViewMode, setInternalViewMode] = useState<ViewMode>(initialViewMode);
+  const [internalSelectedStepId, setInternalSelectedStepId] = useState<number | null>(null);
 
   // Use controlled or uncontrolled state
-  const viewMode = controlledViewMode ?? internalViewMode
-  const selectedStepId = controlledSelectedStepId ?? internalSelectedStepId
+  const viewMode = controlledViewMode ?? internalViewMode;
+  const selectedStepId = controlledSelectedStepId ?? internalSelectedStepId;
 
   // Handle view mode change - preserves step selection per Requirements 4.4
-  const handleViewModeChange = useCallback((mode: ViewMode) => {
-    if (onViewModeChange) {
-      onViewModeChange(mode)
-    } else {
-      setInternalViewMode(mode)
-    }
-    // Step selection is preserved automatically since we don't reset it
-  }, [onViewModeChange])
+  const handleViewModeChange = useCallback(
+    (mode: ViewMode) => {
+      if (onViewModeChange) {
+        onViewModeChange(mode);
+      } else {
+        setInternalViewMode(mode);
+      }
+      // Step selection is preserved automatically since we don't reset it
+    },
+    [onViewModeChange]
+  );
 
   // Handle step click - updates selection and calls external handler
-  const handleStepClick = useCallback((step: StepRun) => {
-    if (onStepSelect) {
-      onStepSelect(step.id)
-    } else {
-      setInternalSelectedStepId(step.id)
-    }
-    onStepClick?.(step)
-  }, [onStepClick, onStepSelect])
+  const handleStepClick = useCallback(
+    (step: StepRun) => {
+      if (onStepSelect) {
+        onStepSelect(step.id);
+      } else {
+        setInternalSelectedStepId(step.id);
+      }
+      onStepClick?.(step);
+    },
+    [onStepClick, onStepSelect]
+  );
 
   const getStepIcon = (status: string) => {
     switch (status) {
       case "completed":
-        return <CheckCircle className="h-5 w-5 text-green-500" />
+        return <CheckCircle className="h-5 w-5 text-green-500" />;
       case "running":
-        return <Play className="h-5 w-5 text-blue-500 animate-pulse" />
+        return <Play className="h-5 w-5 animate-pulse text-blue-500" />;
       case "failed":
-        return <XCircle className="h-5 w-5 text-red-500" />
+        return <XCircle className="h-5 w-5 text-red-500" />;
       case "cancelled":
-        return <XCircle className="h-5 w-5 text-gray-500" />
+        return <XCircle className="h-5 w-5 text-gray-500" />;
       case "paused":
-        return <Pause className="h-5 w-5 text-yellow-500" />
+        return <Pause className="h-5 w-5 text-yellow-500" />;
       default:
-        return <Clock className="h-5 w-5 text-muted-foreground" />
+        return <Clock className="text-muted-foreground h-5 w-5" />;
     }
-  }
+  };
 
   // View mode toggle component per Requirements 4.1
   const ViewModeToggle = () => (
-    <div className="flex items-center gap-1 rounded-lg border p-1 bg-muted/30">
+    <div className="bg-muted/30 flex items-center gap-1 rounded-lg border p-1">
       <Button
         variant={viewMode === "linear" ? "secondary" : "ghost"}
         size="sm"
-        className="gap-2 h-8"
+        className="h-8 gap-2"
         onClick={() => handleViewModeChange("linear")}
         aria-label="Linear view"
       >
@@ -122,7 +149,7 @@ export function PipelineVisualizer({
       <Button
         variant={viewMode === "dag" ? "secondary" : "ghost"}
         size="sm"
-        className="gap-2 h-8"
+        className="h-8 gap-2"
         onClick={() => handleViewModeChange("dag")}
         aria-label="DAG view"
       >
@@ -130,41 +157,41 @@ export function PipelineVisualizer({
         DAG
       </Button>
     </div>
-  )
+  );
 
   // Linear view content (existing implementation)
   const linearContent = (
     <div className="relative">
-      <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-border" />
+      <div className="bg-border absolute top-0 bottom-0 left-8 w-0.5" />
 
       <div className="space-y-4">
         {steps.map((step, index) => (
           <div key={step.id} className="relative">
             <div
               className={cn(
-                "flex items-start gap-4 p-4 rounded-lg border-2 transition-all cursor-pointer hover:border-primary/50",
+                "hover:border-primary/50 flex cursor-pointer items-start gap-4 rounded-lg border-2 p-4 transition-all",
                 step.status === "running" && "border-blue-500/50 bg-blue-500/5",
                 step.status === "completed" && "border-green-500/30 bg-green-500/5",
                 step.status === "failed" && "border-red-500/50 bg-red-500/5",
                 step.status === "pending" && "border-border bg-card",
-                selectedStepId === step.id && "ring-2 ring-primary ring-offset-2",
+                selectedStepId === step.id && "ring-primary ring-2 ring-offset-2"
               )}
               onClick={() => handleStepClick(step)}
             >
               <div className="relative z-10 flex-shrink-0">{getStepIcon(step.status)}</div>
 
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-2">
-                      <Badge variant="outline" className="text-xs font-mono">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-2 flex items-center gap-3">
+                      <Badge variant="outline" className="font-mono text-xs">
                         Step {step.step_index}
                       </Badge>
-                      <h4 className="font-semibold truncate">{step.step_name}</h4>
+                      <h4 className="truncate font-semibold">{step.step_name}</h4>
                       <StatusPill status={step.status} size="sm" />
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground mb-3">
+                    <div className="text-muted-foreground mb-3 flex items-center gap-4 text-xs">
                       <span className="capitalize">Type: {step.step_type}</span>
                       {step.model && (
                         <>
@@ -181,10 +208,16 @@ export function PipelineVisualizer({
                     </div>
 
                     {step.summary && (
-                      <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{step.summary}</p>
+                      <p className="text-muted-foreground mb-3 line-clamp-2 text-sm">
+                        {step.summary}
+                      </p>
                     )}
 
-                    <AssignAgentButton stepId={step.id} currentAgent={step.engine_id} onAssign={onAssignAgent} />
+                    <AssignAgentButton
+                      stepId={step.id}
+                      currentAgent={step.engine_id}
+                      onAssign={onAssignAgent}
+                    />
                   </div>
                 </div>
               </div>
@@ -192,14 +225,14 @@ export function PipelineVisualizer({
 
             {index < steps.length - 1 && (
               <div className="flex items-center justify-center py-2">
-                <ArrowRight className="h-5 w-5 text-muted-foreground" />
+                <ArrowRight className="text-muted-foreground h-5 w-5" />
               </div>
             )}
           </div>
         ))}
       </div>
     </div>
-  )
+  );
 
   // DAG view content per Requirements 4.2
   const dagContent = (
@@ -209,36 +242,38 @@ export function PipelineVisualizer({
       className="min-h-[400px]"
       selectedStepId={selectedStepId}
     />
-  )
+  );
 
   const content = (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold">Workflow Pipeline</h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {steps.filter((s) => s.status === "completed").length} / {steps.length} steps completed
           </p>
         </div>
         <div className="flex items-center gap-2">
           <ViewModeToggle />
           <Button variant="outline" size="sm">
-            <Download className="h-4 w-4 mr-2" />
+            <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
           <Dialog>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">
-                <Maximize2 className="h-4 w-4 mr-2" />
+                <Maximize2 className="mr-2 h-4 w-4" />
                 Fullscreen
               </Button>
             </DialogTrigger>
             <DialogContent size="7xl" className="h-[90vh]">
               <DialogHeader>
                 <DialogTitle>Pipeline Workflow - {protocol.protocol_name}</DialogTitle>
-                <DialogDescription>Full workflow visualization with agent assignments</DialogDescription>
+                <DialogDescription>
+                  Full workflow visualization with agent assignments
+                </DialogDescription>
               </DialogHeader>
-              <div className="overflow-auto h-full">
+              <div className="h-full overflow-auto">
                 <PipelineVisualizer
                   protocol={protocol}
                   steps={steps}
@@ -258,7 +293,7 @@ export function PipelineVisualizer({
       {/* Render appropriate view based on viewMode per Requirements 4.2, 4.3 */}
       {viewMode === "dag" ? dagContent : linearContent}
     </div>
-  )
+  );
 
   return (
     <Card>
@@ -268,7 +303,7 @@ export function PipelineVisualizer({
       </CardHeader>
       <CardContent>{content}</CardContent>
     </Card>
-  )
+  );
 }
 
 function AssignAgentButton({
@@ -276,22 +311,22 @@ function AssignAgentButton({
   currentAgent,
   onAssign,
 }: {
-  stepId: number
-  currentAgent: string | null
-  onAssign?: (stepId: number, agentId: string) => void
+  stepId: number;
+  currentAgent: string | null;
+  onAssign?: (stepId: number, agentId: string) => void;
 }) {
-  const [selectedAgent, setSelectedAgent] = useState(currentAgent || "")
-  const [open, setOpen] = useState(false)
+  const [selectedAgent, setSelectedAgent] = useState(currentAgent || "");
+  const [open, setOpen] = useState(false);
 
   const handleAssign = () => {
     if (selectedAgent && onAssign) {
-      onAssign(stepId, selectedAgent)
-      toast.success(`Agent ${selectedAgent} assigned to step`)
-      setOpen(false)
+      onAssign(stepId, selectedAgent);
+      toast.success(`Agent ${selectedAgent} assigned to step`);
+      setOpen(false);
     }
-  }
+  };
 
-  const currentAgentInfo = availableAgents.find((a) => a.id === currentAgent)
+  const currentAgentInfo = availableAgents.find((a) => a.id === currentAgent);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -305,7 +340,7 @@ function AssignAgentButton({
           ) : (
             <span className="text-xs">Assign Agent</span>
           )}
-          <Settings className="h-3 w-3 ml-1" />
+          <Settings className="ml-1 h-3 w-3" />
         </Button>
       </DialogTrigger>
       <DialogContent>
@@ -323,7 +358,7 @@ function AssignAgentButton({
               <SelectContent>
                 {availableAgents.map((agent) => (
                   <SelectItem key={agent.id} value={agent.id}>
-                    <div className="flex items-center justify-between gap-3 w-full">
+                    <div className="flex w-full items-center justify-between gap-3">
                       <span className="font-medium">{agent.name}</span>
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary" className="text-xs">
@@ -335,7 +370,7 @@ function AssignAgentButton({
                             "text-xs",
                             agent.speed === "very-fast" && "border-green-500 text-green-600",
                             agent.speed === "fast" && "border-blue-500 text-blue-600",
-                            agent.speed === "medium" && "border-yellow-500 text-yellow-600",
+                            agent.speed === "medium" && "border-yellow-500 text-yellow-600"
                           )}
                         >
                           {agent.speed}
@@ -349,12 +384,12 @@ function AssignAgentButton({
           </div>
 
           {selectedAgent && (
-            <div className="p-3 bg-muted rounded-lg space-y-2">
+            <div className="bg-muted space-y-2 rounded-lg p-3">
               <p className="text-sm font-medium">Agent Details</p>
               {availableAgents
                 .filter((a) => a.id === selectedAgent)
                 .map((agent) => (
-                  <div key={agent.id} className="text-xs text-muted-foreground space-y-1">
+                  <div key={agent.id} className="text-muted-foreground space-y-1 text-xs">
                     <p>Provider: {agent.provider}</p>
                     <p>Speed: {agent.speed}</p>
                   </div>
@@ -372,5 +407,5 @@ function AssignAgentButton({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

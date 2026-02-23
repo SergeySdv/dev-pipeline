@@ -1,50 +1,52 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { useProject, useUpdateProject } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { LoadingState } from "@/components/ui/loading-state"
-import { Save } from "lucide-react"
-import { toast } from "sonner"
+import { useEffect,useState } from "react";
+
+import { Save } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import { useProject, useUpdateProject } from "@/lib/api";
 
 interface SettingsTabProps {
-  projectId: number
+  projectId: number;
 }
 
 export function SettingsTab({ projectId }: SettingsTabProps) {
-  const { data: project, isLoading } = useProject(projectId)
-  const updateProject = useUpdateProject()
-  const [name, setName] = useState("")
-  const [gitUrl, setGitUrl] = useState("")
-  const [baseBranch, setBaseBranch] = useState("")
+  const { data: project, isLoading } = useProject(projectId);
+  const updateProject = useUpdateProject();
+  const [name, setName] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
+  const [baseBranch, setBaseBranch] = useState("");
 
   useEffect(() => {
     if (project) {
-      setName(project.name)
-      setGitUrl(project.git_url)
-      setBaseBranch(project.base_branch)
+      setName(project.name);
+      setGitUrl(project.git_url);
+      setBaseBranch(project.base_branch);
     }
-  }, [project])
+  }, [project]);
 
-  if (isLoading || !project) return <LoadingState message="Loading settings..." />
+  if (isLoading || !project) return <LoadingState message="Loading settings..." />;
 
   const hasChanges =
-    name !== project.name || gitUrl !== project.git_url || baseBranch !== project.base_branch
+    name !== project.name || gitUrl !== project.git_url || baseBranch !== project.base_branch;
 
   const handleSave = async () => {
     try {
       await updateProject.mutateAsync({
         projectId,
         data: { name, git_url: gitUrl, base_branch: baseBranch },
-      })
-      toast.success("Project updated")
+      });
+      toast.success("Project updated");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update project")
+      toast.error(err instanceof Error ? err.message : "Failed to update project");
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
@@ -56,11 +58,7 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="project-name">Project Name</Label>
-            <Input
-              id="project-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+            <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="git-url">Git URL</Label>
@@ -81,7 +79,7 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
             />
           </div>
           <Button onClick={handleSave} disabled={updateProject.isPending || !hasChanges}>
-            <Save className="h-4 w-4 mr-2" />
+            <Save className="mr-2 h-4 w-4" />
             {updateProject.isPending ? "Saving..." : "Save Changes"}
           </Button>
         </CardContent>
@@ -90,7 +88,9 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
       <Card>
         <CardHeader>
           <CardTitle>Policy Configuration</CardTitle>
-          <CardDescription>Current policy settings (read-only, edit via Policy tab)</CardDescription>
+          <CardDescription>
+            Current policy settings (read-only, edit via Policy tab)
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -104,7 +104,9 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
             </div>
             <div>
               <span className="text-muted-foreground">Enforcement:</span>
-              <span className="ml-2 font-medium capitalize">{project.policy_enforcement_mode || "off"}</span>
+              <span className="ml-2 font-medium capitalize">
+                {project.policy_enforcement_mode || "off"}
+              </span>
             </div>
             <div>
               <span className="text-muted-foreground">Effective Hash:</span>
@@ -114,5 +116,5 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

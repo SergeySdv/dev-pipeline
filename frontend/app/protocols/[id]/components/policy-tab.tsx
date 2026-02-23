@@ -1,23 +1,24 @@
-"use client"
+"use client";
 
-import { useProtocolPolicyFindings, useProtocolPolicySnapshot } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { CodeBlock } from "@/components/ui/code-block"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { AlertCircle, AlertTriangle, Info, Shield } from "lucide-react"
-import { truncateHash } from "@/lib/format"
-import type { PolicyFinding } from "@/lib/api/types"
+import { AlertCircle, AlertTriangle, Info, Shield } from "lucide-react";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { useProtocolPolicyFindings, useProtocolPolicySnapshot } from "@/lib/api";
+import type { PolicyFinding } from "@/lib/api/types";
+import { truncateHash } from "@/lib/format";
 
 interface PolicyTabProps {
-  protocolId: number
+  protocolId: number;
 }
 
 export function PolicyTab({ protocolId }: PolicyTabProps) {
-  const { data: findings, isLoading: findingsLoading } = useProtocolPolicyFindings(protocolId)
-  const { data: snapshot, isLoading: snapshotLoading } = useProtocolPolicySnapshot(protocolId)
+  const { data: findings, isLoading: findingsLoading } = useProtocolPolicyFindings(protocolId);
+  const { data: snapshot, isLoading: snapshotLoading } = useProtocolPolicySnapshot(protocolId);
 
-  if (findingsLoading || snapshotLoading) return <LoadingState message="Loading policy..." />
+  if (findingsLoading || snapshotLoading) return <LoadingState message="Loading policy..." />;
 
   return (
     <div className="space-y-6">
@@ -51,7 +52,7 @@ export function PolicyTab({ protocolId }: PolicyTabProps) {
         />
       )}
     </div>
-  )
+  );
 }
 
 function FindingsList({ findings }: { findings: PolicyFinding[] }) {
@@ -60,22 +61,26 @@ function FindingsList({ findings }: { findings: PolicyFinding[] }) {
       {findings.map((finding, index) => (
         <div key={index} className="flex items-start gap-3 rounded-lg border p-3">
           {finding.severity === "error" ? (
-            <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+            <AlertCircle className="text-destructive mt-0.5 h-5 w-5" />
           ) : finding.severity === "warning" ? (
-            <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5" />
+            <AlertTriangle className="mt-0.5 h-5 w-5 text-yellow-500" />
           ) : (
-            <Info className="h-5 w-5 text-blue-500 mt-0.5" />
+            <Info className="mt-0.5 h-5 w-5 text-blue-500" />
           )}
-          <div className="flex-1 min-w-0">
-            <p className="font-mono text-sm text-muted-foreground">{finding.code}</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-muted-foreground font-mono text-sm">{finding.code}</p>
             <p className="mt-1">{finding.message}</p>
-            {finding.location && <p className="text-sm text-muted-foreground mt-1">Location: {finding.location}</p>}
+            {finding.location && (
+              <p className="text-muted-foreground mt-1 text-sm">Location: {finding.location}</p>
+            )}
             {finding.suggested_fix && (
-              <p className="text-sm text-muted-foreground mt-1">Suggested fix: {finding.suggested_fix}</p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Suggested fix: {finding.suggested_fix}
+              </p>
             )}
           </div>
         </div>
       ))}
     </div>
-  )
+  );
 }

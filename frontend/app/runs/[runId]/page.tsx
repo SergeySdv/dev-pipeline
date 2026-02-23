@@ -1,25 +1,33 @@
-"use client"
+"use client";
 
-import Link from "next/link"
-import { useParams } from "next/navigation"
-import { useRun, useRunLogs, useRunArtifacts } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { CodeBlock } from "@/components/ui/code-block"
-import { ArrowLeft, FileText, Package, ExternalLink, ListTodo, Target } from "lucide-react"
-import { formatDateTime, formatDuration, formatTokens, formatCost, formatBytes } from "@/lib/format"
+import Link from "next/link";
+import { useParams } from "next/navigation";
+
+import { ArrowLeft, ExternalLink, FileText, ListTodo, Package, Target } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useRun, useRunArtifacts,useRunLogs } from "@/lib/api";
+import {
+  formatBytes,
+  formatCost,
+  formatDateTime,
+  formatDuration,
+  formatTokens,
+} from "@/lib/format";
 
 export default function RunDetailPage() {
-  const params = useParams()
-  const runIdParam = params?.runId
-  const runId = Array.isArray(runIdParam) ? runIdParam[0] : runIdParam
-  const { data: run, isLoading: runLoading, error: runError } = useRun(runId)
-  const { data: logs, isLoading: logsLoading } = useRunLogs(run ? runId : undefined)
-  const { data: artifacts, isLoading: artifactsLoading } = useRunArtifacts(run ? runId : undefined)
+  const params = useParams();
+  const runIdParam = params?.runId;
+  const runId = Array.isArray(runIdParam) ? runIdParam[0] : runIdParam;
+  const { data: run, isLoading: runLoading, error: runError } = useRun(runId);
+  const { data: logs, isLoading: logsLoading } = useRunLogs(run ? runId : undefined);
+  const { data: artifacts, isLoading: artifactsLoading } = useRunArtifacts(run ? runId : undefined);
 
   const linkedTask = {
     id: 42,
@@ -27,25 +35,25 @@ export default function RunDetailPage() {
     sprint: "Sprint 3",
     status: "in_progress",
     storyPoints: 5,
-  }
+  };
 
-  if (!runId || runLoading) return <LoadingState message="Loading run..." />
+  if (!runId || runLoading) return <LoadingState message="Loading run..." />;
   if (runError) {
-    const message = runError instanceof Error ? runError.message : "Run not found"
+    const message = runError instanceof Error ? runError.message : "Run not found";
     return (
       <div className="container py-8">
         <EmptyState title="Run not found" description={message} />
       </div>
-    )
+    );
   }
-  if (!run) return <LoadingState message="Run not found" />
+  if (!run) return <LoadingState message="Run not found" />;
 
   return (
     <div className="container py-8">
       <div className="mb-6">
         <Link
           href="/runs"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
+          className="text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1 text-sm"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Runs
@@ -53,11 +61,11 @@ export default function RunDetailPage() {
 
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-3">
+            <h1 className="flex items-center gap-3 text-2xl font-bold">
               <span className="font-mono">{run.run_id.slice(0, 16)}...</span>
               <StatusPill status={run.status} />
             </h1>
-            <p className="text-muted-foreground flex items-center gap-2 mt-1">
+            <p className="text-muted-foreground mt-1 flex items-center gap-2">
               <span className="font-mono">{run.job_type}</span>
               <span className="text-muted-foreground">•</span>
               <span className="capitalize">{run.run_kind}</span>
@@ -71,7 +79,10 @@ export default function RunDetailPage() {
             <div className="mt-2 flex items-center gap-2 text-sm">
               <ListTodo className="h-4 w-4 text-blue-400" />
               <span className="text-muted-foreground">Linked Task:</span>
-              <Link href={`/sprints?task=${linkedTask.id}`} className="text-blue-400 hover:underline">
+              <Link
+                href={`/sprints?task=${linkedTask.id}`}
+                className="text-blue-400 hover:underline"
+              >
                 {linkedTask.title}
               </Link>
               <span className="text-muted-foreground">•</span>
@@ -110,7 +121,7 @@ export default function RunDetailPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-6 mb-8">
+      <div className="mb-8 grid gap-4 md:grid-cols-6">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Status</CardDescription>
@@ -140,7 +151,9 @@ export default function RunDetailPage() {
             <CardDescription>Duration</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="font-medium">{run.started_at ? formatDuration(run.started_at, run.finished_at) : "-"}</p>
+            <p className="font-medium">
+              {run.started_at ? formatDuration(run.started_at, run.finished_at) : "-"}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -161,7 +174,7 @@ export default function RunDetailPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 mb-8 text-sm">
+      <div className="mb-8 grid gap-4 text-sm md:grid-cols-3">
         <div>
           <span className="text-muted-foreground">Created:</span> {formatDateTime(run.created_at)}
         </div>
@@ -187,7 +200,9 @@ export default function RunDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>Parameters</CardTitle>
-              {run.prompt_version && <CardDescription>Prompt Version: {run.prompt_version}</CardDescription>}
+              {run.prompt_version && (
+                <CardDescription>Prompt Version: {run.prompt_version}</CardDescription>
+              )}
             </CardHeader>
             <CardContent>
               {run.params ? (
@@ -221,7 +236,7 @@ export default function RunDetailPage() {
                 <CardTitle className="text-destructive">Error</CardTitle>
               </CardHeader>
               <CardContent>
-                <pre className="whitespace-pre-wrap text-sm text-destructive bg-destructive/10 p-4 rounded-lg">
+                <pre className="text-destructive bg-destructive/10 rounded-lg p-4 text-sm whitespace-pre-wrap">
                   {run.error}
                 </pre>
               </CardContent>
@@ -239,7 +254,7 @@ export default function RunDetailPage() {
               {logsLoading ? (
                 <LoadingState message="Loading logs..." />
               ) : logs?.content ? (
-                <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg overflow-auto max-h-96 font-mono">
+                <pre className="bg-muted max-h-96 overflow-auto rounded-lg p-4 font-mono text-sm whitespace-pre-wrap">
                   {logs.content}
                 </pre>
               ) : (
@@ -263,16 +278,23 @@ export default function RunDetailPage() {
               {artifactsLoading ? (
                 <LoadingState message="Loading artifacts..." />
               ) : !artifacts || artifacts.length === 0 ? (
-                <EmptyState icon={Package} title="No artifacts" description="No artifacts for this run." />
+                <EmptyState
+                  icon={Package}
+                  title="No artifacts"
+                  description="No artifacts for this run."
+                />
               ) : (
                 <div className="space-y-2">
                   {artifacts.map((artifact) => (
-                    <div key={artifact.id} className="flex items-center justify-between p-3 rounded-lg border">
+                    <div
+                      key={artifact.id}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
                       <div className="flex items-center gap-3">
-                        <Package className="h-4 w-4 text-muted-foreground" />
+                        <Package className="text-muted-foreground h-4 w-4" />
                         <div>
                           <p className="font-medium">{artifact.name}</p>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-muted-foreground text-sm">
                             {artifact.kind} • {formatBytes(artifact.bytes)}
                           </p>
                         </div>
@@ -295,7 +317,7 @@ export default function RunDetailPage() {
               <CardDescription>Sprint and task information for this run</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-lg border bg-muted/50 p-4">
+              <div className="bg-muted/50 rounded-lg border p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <ListTodo className="h-5 w-5 text-blue-400" />
                   <h3 className="font-semibold">Linked Task</h3>
@@ -303,7 +325,10 @@ export default function RunDetailPage() {
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Title:</span>
-                    <Link href={`/sprints?task=${linkedTask.id}`} className="text-blue-400 hover:underline">
+                    <Link
+                      href={`/sprints?task=${linkedTask.id}`}
+                      className="text-blue-400 hover:underline"
+                    >
                       {linkedTask.title}
                     </Link>
                   </div>
@@ -344,5 +369,5 @@ export default function RunDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }

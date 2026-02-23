@@ -1,22 +1,30 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import Link from "next/link"
-import { useRuns } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Input } from "@/components/ui/input"
-import { DataTable } from "@/components/ui/data-table"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { CLIExecutionsList } from "@/components/cli-executions-list"
-import { ExternalLink, PlayCircle, RefreshCw, ListTodo } from "lucide-react"
-import { formatRelativeTime, formatTokens, formatCost, truncateHash } from "@/lib/format"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { CodexRun, RunFilters } from "@/lib/api/types"
-import { CostAnalyticsChart } from "@/components/visualizations/cost-analytics-chart"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useState } from "react";
+import Link from "next/link";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { ExternalLink, ListTodo,PlayCircle, RefreshCw } from "lucide-react";
+
+import { CLIExecutionsList } from "@/components/cli-executions-list";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { StatusPill } from "@/components/ui/status-pill";
+import { CostAnalyticsChart } from "@/components/visualizations/cost-analytics-chart";
+import { useRuns } from "@/lib/api";
+import type { CodexRun, RunFilters } from "@/lib/api/types";
+import { formatCost, formatRelativeTime, formatTokens, truncateHash } from "@/lib/format";
 
 const columns: ColumnDef<CodexRun>[] = [
   {
@@ -33,8 +41,8 @@ const columns: ColumnDef<CodexRun>[] = [
     header: "Sprint/Task",
     cell: () => {
       // In real app, this would come from joined data
-      const hasTask = Math.random() > 0.5
-      const sprintName = hasTask ? `Sprint ${Math.floor(Math.random() * 5) + 1}` : null
+      const hasTask = Math.random() > 0.5;
+      const sprintName = hasTask ? `Sprint ${Math.floor(Math.random() * 5) + 1}` : null;
 
       return hasTask ? (
         <div className="flex items-center gap-1 text-xs">
@@ -42,8 +50,8 @@ const columns: ColumnDef<CodexRun>[] = [
           <span className="text-muted-foreground">{sprintName}</span>
         </div>
       ) : (
-        <span className="text-xs text-muted-foreground">-</span>
-      )
+        <span className="text-muted-foreground text-xs">-</span>
+      );
     },
   },
   {
@@ -68,17 +76,23 @@ const columns: ColumnDef<CodexRun>[] = [
   {
     accessorKey: "cost_tokens",
     header: "Tokens",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatTokens(row.original.cost_tokens)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatTokens(row.original.cost_tokens)}</span>
+    ),
   },
   {
     accessorKey: "cost_cents",
     header: "Cost",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatCost(row.original.cost_cents)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatCost(row.original.cost_cents)}</span>
+    ),
   },
   {
     accessorKey: "created_at",
     header: "Created",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatRelativeTime(row.original.created_at)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatRelativeTime(row.original.created_at)}</span>
+    ),
   },
   {
     id: "actions",
@@ -90,21 +104,23 @@ const columns: ColumnDef<CodexRun>[] = [
       </Link>
     ),
   },
-]
+];
 
 export default function RunsPage() {
   const [filters, setFilters] = useState<RunFilters>({
     limit: 100,
-  })
+  });
 
-  const { data: runs, isLoading, refetch } = useRuns(filters)
+  const { data: runs, isLoading, refetch } = useRuns(filters);
 
   return (
-    <div className="container py-8 space-y-8">
+    <div className="container space-y-8 py-8">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Runs Explorer</h1>
-          <p className="text-muted-foreground">Browse and inspect execution runs across all projects</p>
+          <p className="text-muted-foreground">
+            Browse and inspect execution runs across all projects
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" size="sm" asChild>
@@ -131,29 +147,35 @@ export default function RunsPage() {
           <h2 className="text-lg font-semibold tracking-tight">Job History</h2>
         </div>
 
-        <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3 text-sm">
+        <div className="bg-card flex items-center gap-4 rounded-lg border px-4 py-3 text-sm">
           <div className="flex items-center gap-2">
             <ListTodo className="h-4 w-4 text-blue-400" />
             <span className="font-medium">Linked to Tasks:</span>
-            <span className="text-muted-foreground">{runs ? Math.floor(runs.length * 0.6) : 0}</span>
+            <span className="text-muted-foreground">
+              {runs ? Math.floor(runs.length * 0.6) : 0}
+            </span>
           </div>
-          <div className="h-4 w-px bg-border" />
+          <div className="bg-border h-4 w-px" />
           <div className="flex items-center gap-2">
             <PlayCircle className="h-4 w-4 text-green-400" />
             <span className="font-medium">Active Executions:</span>
             <span className="text-muted-foreground">3</span>
           </div>
-          <div className="h-4 w-px bg-border" />
+          <div className="bg-border h-4 w-px" />
           <div className="flex items-center gap-2">
             <span className="font-medium">Execution Runs:</span>
-            <span className="text-muted-foreground">{runs ? Math.floor(runs.length * 0.4) : 0}</span>
+            <span className="text-muted-foreground">
+              {runs ? Math.floor(runs.length * 0.4) : 0}
+            </span>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-4">
           <Select
             value={filters.job_type || "all"}
-            onValueChange={(v) => setFilters((f) => ({ ...f, job_type: v === "all" ? undefined : v }))}
+            onValueChange={(v) =>
+              setFilters((f) => ({ ...f, job_type: v === "all" ? undefined : v }))
+            }
           >
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Job Type" />
@@ -169,7 +191,10 @@ export default function RunsPage() {
           <Select
             value={filters.status || "all"}
             onValueChange={(v) =>
-              setFilters((f) => ({ ...f, status: v === "all" ? undefined : (v as RunFilters["status"]) }))
+              setFilters((f) => ({
+                ...f,
+                status: v === "all" ? undefined : (v as RunFilters["status"]),
+              }))
             }
           >
             <SelectTrigger className="w-40">
@@ -187,7 +212,9 @@ export default function RunsPage() {
 
           <Select
             value={filters.run_kind || "all"}
-            onValueChange={(v) => setFilters((f) => ({ ...f, run_kind: v === "all" ? undefined : v }))}
+            onValueChange={(v) =>
+              setFilters((f) => ({ ...f, run_kind: v === "all" ? undefined : v }))
+            }
           >
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Kind" />
@@ -211,7 +238,11 @@ export default function RunsPage() {
         {isLoading ? (
           <LoadingState message="Loading runs..." />
         ) : !runs || runs.length === 0 ? (
-          <EmptyState icon={PlayCircle} title="No runs found" description="No runs match your filter criteria." />
+          <EmptyState
+            icon={PlayCircle}
+            title="No runs found"
+            description="No runs match your filter criteria."
+          />
         ) : (
           <div className="space-y-4">
             <Card>
@@ -223,10 +254,17 @@ export default function RunsPage() {
                 <CostAnalyticsChart runs={runs} />
               </CardContent>
             </Card>
-            <DataTable columns={columns} data={runs} enableSearch enableExport enableColumnFilters exportFilename="runs.csv" />
+            <DataTable
+              columns={columns}
+              data={runs}
+              enableSearch
+              enableExport
+              enableColumnFilters
+              exportFilename="runs.csv"
+            />
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }

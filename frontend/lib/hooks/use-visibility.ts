@@ -1,22 +1,22 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
+import { useEffect, useState } from "react";
 
 export function useVisibility() {
   const [isVisible, setIsVisible] = useState(() => {
-    if (typeof document === "undefined") return true
-    return !document.hidden
-  })
+    if (typeof document === "undefined") return true;
+    return !document.hidden;
+  });
 
   useEffect(() => {
-    if (typeof document === "undefined") return
+    if (typeof document === "undefined") return;
     const handleVisibilityChange = () => {
-      setIsVisible(!document.hidden)
-    }
+      setIsVisible(!document.hidden);
+    };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange)
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
-  }, [])
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
-  return isVisible
+  return isVisible;
 }

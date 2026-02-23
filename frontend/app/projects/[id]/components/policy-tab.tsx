@@ -1,39 +1,47 @@
-"use client"
+"use client";
 
-import { useMemo, useState } from "react"
+import { useMemo, useState } from "react";
+
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, Save, Wand2 } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import { JsonEditor } from "@/components/ui/json-editor";
+import { JsonTree } from "@/components/ui/json-tree";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
 import {
-  useProjectPolicy,
-  useUpdateProjectPolicy,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import {
   useEffectivePolicy,
   usePolicyFindings,
   usePolicyPacks,
-} from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import { CodeBlock } from "@/components/ui/code-block"
-import { LoadingState } from "@/components/ui/loading-state"
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, Save, Wand2 } from "lucide-react"
-import { toast } from "sonner"
-import { truncateHash } from "@/lib/format"
-import type { EffectivePolicy, PolicyConfig, PolicyFinding, PolicyPack } from "@/lib/api/types"
-import { JsonEditor } from "@/components/ui/json-editor"
-import { JsonTree } from "@/components/ui/json-tree"
+  useProjectPolicy,
+  useUpdateProjectPolicy,
+} from "@/lib/api";
+import type { EffectivePolicy, PolicyConfig, PolicyFinding, PolicyPack } from "@/lib/api/types";
+import { truncateHash } from "@/lib/format";
 
 interface PolicyTabProps {
-  projectId: number
+  projectId: number;
 }
 
 export function PolicyTab({ projectId }: PolicyTabProps) {
-  const { data: policy, isLoading: policyLoading } = useProjectPolicy(projectId)
-  const { data: packs, isLoading: packsLoading } = usePolicyPacks()
-  const { data: effective } = useEffectivePolicy(projectId)
-  const { data: findings } = usePolicyFindings(projectId)
-  const updatePolicy = useUpdateProjectPolicy()
+  const { data: policy, isLoading: policyLoading } = useProjectPolicy(projectId);
+  const { data: packs, isLoading: packsLoading } = usePolicyPacks();
+  const { data: effective } = useEffectivePolicy(projectId);
+  const { data: findings } = usePolicyFindings(projectId);
+  const updatePolicy = useUpdateProjectPolicy();
 
-  if (policyLoading || packsLoading) return <LoadingState message="Loading policy..." />
+  if (policyLoading || packsLoading) return <LoadingState message="Loading policy..." />;
 
   return (
     <PolicyForm
@@ -45,96 +53,103 @@ export function PolicyTab({ projectId }: PolicyTabProps) {
       findings={findings}
       updatePolicy={updatePolicy}
     />
-  )
+  );
 }
 
-type UpdatePolicyMutation = ReturnType<typeof useUpdateProjectPolicy>
+type UpdatePolicyMutation = ReturnType<typeof useUpdateProjectPolicy>;
 
 interface PolicyFormProps {
-  projectId: number
-  policy: PolicyConfig | undefined
-  packs: PolicyPack[]
-  effective: EffectivePolicy | undefined
-  findings: PolicyFinding[] | undefined
-  updatePolicy: UpdatePolicyMutation
+  projectId: number;
+  policy: PolicyConfig | undefined;
+  packs: PolicyPack[];
+  effective: EffectivePolicy | undefined;
+  findings: PolicyFinding[] | undefined;
+  updatePolicy: UpdatePolicyMutation;
 }
 
-function PolicyForm({ projectId, policy, packs, effective, findings, updatePolicy }: PolicyFormProps) {
+function PolicyForm({
+  projectId,
+  policy,
+  packs,
+  effective,
+  findings,
+  updatePolicy,
+}: PolicyFormProps) {
   const [formData, setFormData] = useState<Partial<PolicyConfig>>(() => ({
     policy_pack_key: policy?.policy_pack_key ?? null,
     policy_pack_version: policy?.policy_pack_version ?? null,
     policy_overrides: policy?.policy_overrides ?? null,
     policy_repo_local_enabled: policy?.policy_repo_local_enabled ?? false,
     policy_enforcement_mode: policy?.policy_enforcement_mode ?? "warn",
-  }))
-  const [overridesJson, setOverridesJson] = useState(
-    () => (policy?.policy_overrides ? JSON.stringify(policy.policy_overrides, null, 2) : "{}"),
-  )
+  }));
+  const [overridesJson, setOverridesJson] = useState(() =>
+    policy?.policy_overrides ? JSON.stringify(policy.policy_overrides, null, 2) : "{}"
+  );
 
   const packsByKey = useMemo(() => {
-    const map = new Map<string, PolicyPack[]>()
+    const map = new Map<string, PolicyPack[]>();
     for (const pack of packs) {
-      if (!pack.key) continue
-      const list = map.get(pack.key) ?? []
-      list.push(pack)
-      map.set(pack.key, list)
+      if (!pack.key) continue;
+      const list = map.get(pack.key) ?? [];
+      list.push(pack);
+      map.set(pack.key, list);
     }
     for (const [key, list] of map.entries()) {
-      list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-      map.set(key, list)
+      list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      map.set(key, list);
     }
-    return map
-  }, [packs])
+    return map;
+  }, [packs]);
 
-  const selectedPackKey = formData.policy_pack_key ?? null
-  const selectedPackVersion = formData.policy_pack_version ?? null
+  const selectedPackKey = formData.policy_pack_key ?? null;
+  const selectedPackVersion = formData.policy_pack_version ?? null;
   const selectedPack = useMemo(() => {
-    if (!selectedPackKey) return null
-    const candidates = packsByKey.get(selectedPackKey) ?? []
-    if (!selectedPackVersion) return candidates[0] ?? null
-    return candidates.find((p) => p.version === selectedPackVersion) ?? candidates[0] ?? null
-  }, [packsByKey, selectedPackKey, selectedPackVersion])
+    if (!selectedPackKey) return null;
+    const candidates = packsByKey.get(selectedPackKey) ?? [];
+    if (!selectedPackVersion) return candidates[0] ?? null;
+    return candidates.find((p) => p.version === selectedPackVersion) ?? candidates[0] ?? null;
+  }, [packsByKey, selectedPackKey, selectedPackVersion]);
 
   const parsedOverrides = useMemo(() => {
-    const raw = (overridesJson ?? "").trim()
+    const raw = (overridesJson ?? "").trim();
     if (!raw || raw === "{}") {
-      return { value: null as Record<string, unknown> | null, error: null as string | null }
+      return { value: null as Record<string, unknown> | null, error: null as string | null };
     }
     try {
-      const value = JSON.parse(raw) as Record<string, unknown>
+      const value = JSON.parse(raw) as Record<string, unknown>;
       if (value == null || typeof value !== "object" || Array.isArray(value)) {
-        return { value: null, error: "Overrides must be a JSON object." }
+        return { value: null, error: "Overrides must be a JSON object." };
       }
-      return { value, error: null }
+      return { value, error: null };
     } catch (e) {
-      return { value: null, error: e instanceof Error ? e.message : "Invalid JSON" }
+      return { value: null, error: e instanceof Error ? e.message : "Invalid JSON" };
     }
-  }, [overridesJson])
+  }, [overridesJson]);
 
   const handleFormatJson = () => {
     try {
-      const raw = (overridesJson ?? "").trim()
+      const raw = (overridesJson ?? "").trim();
       if (!raw) {
-        setOverridesJson("{}")
-        return
+        setOverridesJson("{}");
+        return;
       }
-      const value = JSON.parse(raw)
-      setOverridesJson(JSON.stringify(value, null, 2))
-      toast.success("Formatted JSON")
+      const value = JSON.parse(raw);
+      setOverridesJson(JSON.stringify(value, null, 2));
+      toast.success("Formatted JSON");
     } catch {
-      toast.error("Cannot format: invalid JSON")
+      toast.error("Cannot format: invalid JSON");
     }
-  }
+  };
 
   const handleSave = async () => {
     try {
       if (parsedOverrides.error) {
-        toast.error(`Overrides JSON invalid: ${parsedOverrides.error}`)
-        return
+        toast.error(`Overrides JSON invalid: ${parsedOverrides.error}`);
+        return;
       }
-      let overrides = null
+      let overrides = null;
       if (parsedOverrides.value) {
-        overrides = parsedOverrides.value
+        overrides = parsedOverrides.value;
       }
       await updatePolicy.mutateAsync({
         projectId,
@@ -142,12 +157,12 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
           ...formData,
           policy_overrides: overrides,
         },
-      })
-      toast.success("Policy updated successfully")
+      });
+      toast.success("Policy updated successfully");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update policy")
+      toast.error(err instanceof Error ? err.message : "Failed to update policy");
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
@@ -165,11 +180,11 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
                 onValueChange={(v) =>
                   setFormData((p) => {
                     if (!v || v === "none") {
-                      return { ...p, policy_pack_key: null, policy_pack_version: null }
+                      return { ...p, policy_pack_key: null, policy_pack_version: null };
                     }
-                    const candidates = packsByKey.get(v) ?? []
-                    const defaultVersion = candidates[0]?.version ?? null
-                    return { ...p, policy_pack_key: v, policy_pack_version: defaultVersion }
+                    const candidates = packsByKey.get(v) ?? [];
+                    const defaultVersion = candidates[0]?.version ?? null;
+                    return { ...p, policy_pack_key: v, policy_pack_version: defaultVersion };
                   })
                 }
               >
@@ -181,10 +196,10 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
                   {packs
                     .filter((pack) => Boolean(pack.key))
                     .map((pack) => (
-                    <SelectItem key={`${pack.key}:${pack.version}`} value={pack.key as string}>
-                      {pack.name} ({pack.key}) • {pack.version}
-                    </SelectItem>
-                  ))}
+                      <SelectItem key={`${pack.key}:${pack.version}`} value={pack.key as string}>
+                        {pack.name} ({pack.key}) • {pack.version}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -193,15 +208,19 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
               <Label>Policy Pack Version</Label>
               <Select
                 value={formData.policy_pack_version || "latest"}
-                onValueChange={(v) => setFormData((p) => ({ ...p, policy_pack_version: v === "latest" ? null : v }))}
+                onValueChange={(v) =>
+                  setFormData((p) => ({ ...p, policy_pack_version: v === "latest" ? null : v }))
+                }
                 disabled={!selectedPackKey}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={selectedPackKey ? "Select version" : "Select a policy pack first"} />
+                  <SelectValue
+                    placeholder={selectedPackKey ? "Select version" : "Select a policy pack first"}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="latest">Latest</SelectItem>
-                  {(selectedPackKey ? packsByKey.get(selectedPackKey) ?? [] : []).map((pack) => (
+                  {(selectedPackKey ? (packsByKey.get(selectedPackKey) ?? []) : []).map((pack) => (
                     <SelectItem key={`${pack.key}:${pack.version}`} value={pack.version}>
                       {pack.version} • {pack.status}
                     </SelectItem>
@@ -259,26 +278,32 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
                     Valid
                   </div>
                 )}
-                <Button type="button" variant="outline" size="sm" onClick={handleFormatJson} className="h-7 px-2">
-                  <Wand2 className="h-3.5 w-3.5 mr-1" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleFormatJson}
+                  className="h-7 px-2"
+                >
+                  <Wand2 className="mr-1 h-3.5 w-3.5" />
                   Format
                 </Button>
               </div>
             </div>
-            <JsonEditor
-              value={overridesJson}
-              onChange={setOverridesJson}
-              height={280}
-            />
+            <JsonEditor value={overridesJson} onChange={setOverridesJson} height={280} />
             {parsedOverrides.error && (
               <div className="text-xs text-red-600">Parse error: {parsedOverrides.error}</div>
             )}
-            <div className="text-xs text-muted-foreground">
-              Example: <span className="font-mono">{`{ "defaults": { "models": { "exec": "codex-5.1-max" } } }`}</span>
+            <div className="text-muted-foreground text-xs">
+              Example:{" "}
+              <span className="font-mono">{`{ "defaults": { "models": { "exec": "codex-5.1-max" } } }`}</span>
             </div>
           </div>
 
-          <Button onClick={handleSave} disabled={updatePolicy.isPending || Boolean(parsedOverrides.error)}>
+          <Button
+            onClick={handleSave}
+            disabled={updatePolicy.isPending || Boolean(parsedOverrides.error)}
+          >
             <Save className="mr-2 h-4 w-4" />
             {updatePolicy.isPending ? "Saving..." : "Save Policy"}
           </Button>
@@ -294,7 +319,9 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {selectedPack.description && <p className="text-sm text-muted-foreground">{selectedPack.description}</p>}
+            {selectedPack.description && (
+              <p className="text-muted-foreground text-sm">{selectedPack.description}</p>
+            )}
             <CodeBlock code={selectedPack.pack} title="Pack Contents" maxHeight="300px" />
           </CardContent>
         </Card>
@@ -336,7 +363,7 @@ function PolicyForm({ projectId, policy, packs, effective, findings, updatePolic
         </Card>
       )}
     </div>
-  )
+  );
 }
 
 function FindingsList({ findings }: { findings: PolicyFinding[] }) {
@@ -345,22 +372,26 @@ function FindingsList({ findings }: { findings: PolicyFinding[] }) {
       {findings.map((finding, index) => (
         <div key={index} className="flex items-start gap-3 rounded-lg border p-3">
           {finding.severity === "error" ? (
-            <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+            <AlertCircle className="text-destructive mt-0.5 h-5 w-5" />
           ) : finding.severity === "warning" ? (
-            <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5" />
+            <AlertTriangle className="mt-0.5 h-5 w-5 text-yellow-500" />
           ) : (
-            <Info className="h-5 w-5 text-blue-500 mt-0.5" />
+            <Info className="mt-0.5 h-5 w-5 text-blue-500" />
           )}
-          <div className="flex-1 min-w-0">
-            <p className="font-mono text-sm text-muted-foreground">{finding.code}</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-muted-foreground font-mono text-sm">{finding.code}</p>
             <p className="mt-1">{finding.message}</p>
-            {finding.location && <p className="text-sm text-muted-foreground mt-1">Location: {finding.location}</p>}
+            {finding.location && (
+              <p className="text-muted-foreground mt-1 text-sm">Location: {finding.location}</p>
+            )}
             {finding.suggested_fix && (
-              <p className="text-sm text-muted-foreground mt-1">Suggested fix: {finding.suggested_fix}</p>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Suggested fix: {finding.suggested_fix}
+              </p>
             )}
           </div>
         </div>
       ))}
     </div>
-  )
+  );
 }

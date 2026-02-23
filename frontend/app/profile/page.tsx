@@ -1,45 +1,46 @@
-"use client"
+"use client";
 
-import { useProfile } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { LoadingState } from "@/components/ui/loading-state"
-import { Shield, Clock, Activity, type LucideIcon } from "lucide-react"
+import { Activity, Clock, type LucideIcon,Shield } from "lucide-react";
+
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useProfile } from "@/lib/api";
 
 export default function ProfilePage() {
-  const { data: user, isLoading } = useProfile()
+  const { data: user, isLoading } = useProfile();
 
   if (isLoading) {
-    return <LoadingState message="Loading profile..." />
+    return <LoadingState message="Loading profile..." />;
   }
 
   const iconMap: Record<string, LucideIcon> = {
     activity: Activity,
-  }
+  };
 
   return (
     <div className="container max-w-5xl py-8">
-      <div className="flex items-start gap-6 mb-8">
+      <div className="mb-8 flex items-start gap-6">
         <Avatar className="h-24 w-24">
           <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
             {user?.name.slice(0, 2).toUpperCase() || "DU"}
           </AvatarFallback>
         </Avatar>
         <div className="flex-1">
-          <h1 className="text-3xl font-bold mb-2">{user?.name}</h1>
+          <h1 className="mb-2 text-3xl font-bold">{user?.name}</h1>
           <p className="text-muted-foreground mb-4">{user?.email}</p>
           <div className="flex gap-2">
             <Badge variant="secondary">
-              <Shield className="h-3 w-3 mr-1" />
+              <Shield className="mr-1 h-3 w-3" />
               {user?.role}
             </Badge>
             <Badge variant="outline">
-              <Clock className="h-3 w-3 mr-1" />
+              <Clock className="mr-1 h-3 w-3" />
               Member since {user?.member_since}
             </Badge>
           </div>
@@ -84,19 +85,22 @@ export default function ProfilePage() {
             <CardContent>
               <div className="space-y-4">
                 {user?.activity.map((item) => {
-                  const Icon = iconMap[item.icon] || Activity
+                  const Icon = iconMap[item.icon] || Activity;
                   return (
-                    <div key={item.id} className="flex items-start gap-4 pb-4 border-b last:border-0 last:pb-0">
-                      <div className="mt-1 h-8 w-8 rounded-full bg-muted flex items-center justify-center">
+                    <div
+                      key={item.id}
+                      className="flex items-start gap-4 border-b pb-4 last:border-0 last:pb-0"
+                    >
+                      <div className="bg-muted mt-1 flex h-8 w-8 items-center justify-center rounded-full">
                         <Icon className="h-4 w-4" />
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-medium">{item.action}</p>
-                        <p className="text-sm text-muted-foreground">{item.target}</p>
+                        <p className="text-muted-foreground text-sm">{item.target}</p>
                       </div>
-                      <span className="text-xs text-muted-foreground">{item.time}</span>
+                      <span className="text-muted-foreground text-xs">{item.time}</span>
                     </div>
-                  )
+                  );
                 })}
               </div>
             </CardContent>
@@ -105,5 +109,5 @@ export default function ProfilePage() {
         {/* Other tabs omitted for brevity */}
       </Tabs>
     </div>
-  )
+  );
 }

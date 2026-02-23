@@ -1,84 +1,81 @@
-"use client"
+"use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { apiClient } from "../client"
-import { queryKeys } from "../query-keys"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+
+import { apiClient } from "../client";
+import { queryKeys } from "../query-keys";
 import type {
-  ProtocolRun,
-  ProtocolCreate,
-  ProtocolSpec,
-  ProtocolFromSpecRequest,
-  ProtocolFromSpecResponse,
-  StepRun,
-  Event,
-  CodexRun,
-  PolicyFinding,
-  Clarification,
   ActionResponse,
-  RunFilters,
-  ProtocolArtifact,
+  Clarification,
+  CodexRun,
   Feedback,
   FeedbackCreate,
+  OpenPRResponse,
+  PolicyFinding,
+  ProtocolArtifact,
+  ProtocolCreate,
   ProtocolFlowInfo,
+  ProtocolFromSpecRequest,
+  ProtocolFromSpecResponse,
+  ProtocolRun,
+  ProtocolSpec,
+  RunFilters,
   Sprint,
-} from "../types"
+  StepRun,
+} from "../types";
 
 const useConditionalRefetchInterval = (baseInterval: number) => {
-  if (typeof document === "undefined") return false
-  return document.hidden ? false : baseInterval
-}
+  if (typeof document === "undefined") return false;
+  return document.hidden ? false : baseInterval;
+};
 
 // List all Protocols across all projects
 export function useProtocols() {
-  const refetchInterval = useConditionalRefetchInterval(10000)
+  const refetchInterval = useConditionalRefetchInterval(10000);
   return useQuery({
     queryKey: queryKeys.protocols.all,
     queryFn: () => apiClient.get<ProtocolRun[]>("/protocols"),
     refetchInterval,
-  })
+  });
 }
 
 // List Protocols for Project
 export function useProjectProtocols(projectId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.projects.protocols(projectId!),
+    queryKey: queryKeys.projects.protocols(projectId as number),
     queryFn: () => apiClient.get<ProtocolRun[]>(`/projects/${projectId}/protocols`),
     enabled: !!projectId,
-  })
+  });
 }
 
 // Get Protocol Detail
 export function useProtocol(id: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.detail(id!),
+    queryKey: queryKeys.protocols.detail(id as number),
     queryFn: () => apiClient.get<ProtocolRun>(`/protocols/${id}`),
     enabled: !!id,
-  })
+  });
 }
 
-export const useProtocolDetail = useProtocol
+export const useProtocolDetail = useProtocol;
 
 // Create Protocol
 export function useCreateProtocol() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      projectId,
-      data,
-    }: {
-      projectId: number
-      data: ProtocolCreate
-    }) => apiClient.post<ProtocolRun>(`/projects/${projectId}/protocols`, data),
+    mutationFn: ({ projectId, data }: { projectId: number; data: ProtocolCreate }) =>
+      apiClient.post<ProtocolRun>(`/projects/${projectId}/protocols`, data),
     onSuccess: (_, { projectId }) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.protocols(projectId),
-      })
+      });
     },
-  })
+  });
 }
 
 export function useCreateProtocolFromSpec() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (request: ProtocolFromSpecRequest) =>
       apiClient.post<ProtocolFromSpecResponse>("/protocols/from-spec", request),
@@ -86,189 +83,225 @@ export function useCreateProtocolFromSpec() {
       if (response.protocol?.project_id) {
         queryClient.invalidateQueries({
           queryKey: queryKeys.projects.protocols(response.protocol.project_id),
-        })
+        });
       }
       queryClient.invalidateQueries({
         queryKey: queryKeys.specifications.all,
-      })
+      });
       if (variables.project_id) {
         queryClient.invalidateQueries({
           queryKey: queryKeys.projects.detail(variables.project_id),
-        })
+        });
       }
     },
-  })
+  });
 }
 
 // Protocol Steps
 export function useProtocolSteps(protocolId: number | undefined, enabled = true) {
-  const refetchInterval = useConditionalRefetchInterval(5000)
+  const refetchInterval = useConditionalRefetchInterval(5000);
   return useQuery({
-    queryKey: queryKeys.protocols.steps(protocolId!),
+    queryKey: queryKeys.protocols.steps(protocolId as number),
     queryFn: () => apiClient.get<StepRun[]>(`/protocols/${protocolId}/steps`),
     enabled: !!protocolId && enabled,
     refetchInterval,
-  })
+  });
 }
 
 // Protocol Runs
 export function useProtocolRuns(protocolId: number | undefined, filters?: RunFilters) {
   return useQuery({
-    queryKey: queryKeys.protocols.runs(protocolId!, filters),
+    queryKey: queryKeys.protocols.runs(protocolId as number, filters),
     queryFn: () => {
-      const params = new URLSearchParams()
-      if (filters?.job_type) params.set("job_type", filters.job_type)
-      if (filters?.status) params.set("status", filters.status)
-      if (filters?.run_kind) params.set("run_kind", filters.run_kind)
-      if (filters?.limit) params.set("limit", String(filters.limit))
-      const queryString = params.toString()
-      return apiClient.get<CodexRun[]>(`/protocols/${protocolId}/runs${queryString ? `?${queryString}` : ""}`)
+      const params = new URLSearchParams();
+      if (filters?.job_type) params.set("job_type", filters.job_type);
+      if (filters?.status) params.set("status", filters.status);
+      if (filters?.run_kind) params.set("run_kind", filters.run_kind);
+      if (filters?.limit) params.set("limit", String(filters.limit));
+      const queryString = params.toString();
+      return apiClient.get<CodexRun[]>(
+        `/protocols/${protocolId}/runs${queryString ? `?${queryString}` : ""}`
+      );
     },
     enabled: !!protocolId,
-  })
+  });
 }
 
 // Protocol Spec
 export function useProtocolSpec(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.spec(protocolId!),
+    queryKey: queryKeys.protocols.spec(protocolId as number),
     queryFn: () => apiClient.get<ProtocolSpec>(`/protocols/${protocolId}/spec`),
     enabled: !!protocolId,
-  })
+  });
 }
 
 // Protocol Policy
 export function useProtocolPolicyFindings(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.policyFindings(protocolId!),
+    queryKey: queryKeys.protocols.policyFindings(protocolId as number),
     queryFn: () => apiClient.get<PolicyFinding[]>(`/protocols/${protocolId}/policy/findings`),
     enabled: !!protocolId,
-  })
+  });
 }
 
 export function useProtocolPolicySnapshot(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.policySnapshot(protocolId!),
+    queryKey: queryKeys.protocols.policySnapshot(protocolId as number),
     queryFn: () =>
-      apiClient.get<{ hash: string; policy: Record<string, unknown> }>(`/protocols/${protocolId}/policy/snapshot`),
+      apiClient.get<{ hash: string; policy: Record<string, unknown> }>(
+        `/protocols/${protocolId}/policy/snapshot`
+      ),
     enabled: !!protocolId,
-  })
+  });
 }
 
 // Protocol Clarifications
 export function useProtocolClarifications(protocolId: number | undefined, status?: string) {
   return useQuery({
-    queryKey: queryKeys.protocols.clarifications(protocolId!, status),
+    queryKey: queryKeys.protocols.clarifications(protocolId as number, status),
     queryFn: () =>
-      apiClient.get<Clarification[]>(`/protocols/${protocolId}/clarifications${status ? `?status=${status}` : ""}`),
+      apiClient.get<Clarification[]>(
+        `/protocols/${protocolId}/clarifications${status ? `?status=${status}` : ""}`
+      ),
     enabled: !!protocolId,
-  })
+  });
 }
 
 // Protocol Actions
 export function useProtocolAction() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       protocolId,
       action,
     }: {
-      protocolId: number
-      action: "start" | "pause" | "resume" | "cancel" | "run_next_step" | "retry_latest" | "open_pr"
-    }) => apiClient.post<ActionResponse>(`/protocols/${protocolId}/actions/${action}`),
-    onSuccess: (_, { protocolId }) => {
+      protocolId: number;
+      action:
+        | "start"
+        | "pause"
+        | "resume"
+        | "cancel"
+        | "run_next_step"
+        | "retry_latest"
+        | "open_pr";
+    }) =>
+      apiClient.post<ActionResponse | OpenPRResponse>(`/protocols/${protocolId}/actions/${action}`),
+    onSuccess: (data, { protocolId, action }) => {
+      // Show success toast
+      const actionMessages: Record<string, string> = {
+        start: "Protocol started",
+        pause: "Protocol paused",
+        resume: "Protocol resumed",
+        cancel: "Protocol cancelled",
+        run_next_step: "Next step triggered",
+        retry_latest: "Step retry initiated",
+        open_pr: "Pull request created",
+      };
+      toast.success(actionMessages[action] || "Action completed");
+      
+      // Invalidate queries
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.detail(protocolId),
-      })
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.steps(protocolId),
-      })
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.events(protocolId),
-      })
+      });
     },
-  })
+    onError: (error, { action }) => {
+      const actionLabels: Record<string, string> = {
+        start: "start protocol",
+        pause: "pause protocol",
+        resume: "resume protocol",
+        cancel: "cancel protocol",
+        run_next_step: "run next step",
+        retry_latest: "retry step",
+        open_pr: "create pull request",
+      };
+      toast.error(`Failed to ${actionLabels[action] || "perform action"}`, {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    },
+  });
 }
 
 // Protocol Artifacts
 export function useProtocolArtifacts(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.artifacts(protocolId!),
+    queryKey: queryKeys.protocols.artifacts(protocolId as number),
     queryFn: () => apiClient.get<ProtocolArtifact[]>(`/protocols/${protocolId}/artifacts`),
     enabled: !!protocolId,
-  })
+  });
 }
 
 // Protocol Feedback
 export function useProtocolFeedback(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.feedback(protocolId!),
+    queryKey: queryKeys.protocols.feedback(protocolId as number),
     queryFn: () => apiClient.get<Feedback[]>(`/protocols/${protocolId}/feedback`),
     enabled: !!protocolId,
-  })
+  });
 }
 
 export function useSubmitProtocolFeedback() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      protocolId,
-      data,
-    }: {
-      protocolId: number
-      data: FeedbackCreate
-    }) => apiClient.post<Feedback>(`/protocols/${protocolId}/feedback`, data),
+    mutationFn: ({ protocolId, data }: { protocolId: number; data: FeedbackCreate }) =>
+      apiClient.post<Feedback>(`/protocols/${protocolId}/feedback`, data),
     onSuccess: (_, { protocolId }) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.feedback(protocolId),
-      })
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.detail(protocolId),
-      })
+      });
     },
-  })
+  });
 }
 
 // Protocol Flow
 export function useProtocolFlow(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.flow(protocolId!),
+    queryKey: queryKeys.protocols.flow(protocolId as number),
     queryFn: () => apiClient.get<ProtocolFlowInfo>(`/protocols/${protocolId}/flow`),
     enabled: !!protocolId,
-  })
+  });
 }
 
 export function useCreateProtocolFlow() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (protocolId: number) =>
       apiClient.post<ProtocolFlowInfo>(`/protocols/${protocolId}/flow`),
     onSuccess: (_, protocolId) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.flow(protocolId),
-      })
+      });
     },
-  })
+  });
 }
 
 // Protocol Sprint
 export function useProtocolSprint(protocolId: number | undefined) {
   return useQuery({
-    queryKey: queryKeys.protocols.sprint(protocolId!),
+    queryKey: queryKeys.protocols.sprint(protocolId as number),
     queryFn: () => apiClient.get<Sprint>(`/protocols/${protocolId}/sprint`),
     enabled: !!protocolId,
-  })
+  });
 }
 
 export function useSyncProtocolToSprint() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (protocolId: number) =>
       apiClient.post<ActionResponse>(`/protocols/${protocolId}/actions/sync-to-sprint`),
     onSuccess: (_, protocolId) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.sprint(protocolId),
-      })
+      });
     },
-  })
+  });
 }

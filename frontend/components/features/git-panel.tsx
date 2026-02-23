@@ -1,35 +1,44 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { GitBranch, GitCommit, GitPullRequest, ExternalLink, CheckCircle2, XCircle, Clock } from "lucide-react"
+import {
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  GitBranch,
+  GitCommit,
+  GitPullRequest,
+  XCircle,
+} from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface GitPanelProps {
-  className?: string
+  className?: string;
 }
 
 interface Branch {
-  name: string
-  commit: string
-  isProtected: boolean
-  lastUpdated: string
+  name: string;
+  commit: string;
+  isProtected: boolean;
+  lastUpdated: string;
 }
 
 interface PullRequest {
-  id: string
-  title: string
-  branch: string
-  status: "open" | "merged" | "closed"
-  checks: "passing" | "failing" | "pending"
-  url: string
+  id: string;
+  title: string;
+  branch: string;
+  status: "open" | "merged" | "closed";
+  checks: "passing" | "failing" | "pending";
+  url: string;
 }
 
 const mockBranches: Branch[] = [
   { name: "main", commit: "abc123f", isProtected: true, lastUpdated: "2 hours ago" },
   { name: "feature/user-auth", commit: "def456a", isProtected: false, lastUpdated: "5 hours ago" },
   { name: "bugfix/login-error", commit: "ghi789b", isProtected: false, lastUpdated: "1 day ago" },
-]
+];
 
 const mockPRs: PullRequest[] = [
   {
@@ -48,7 +57,7 @@ const mockPRs: PullRequest[] = [
     checks: "pending",
     url: "#",
   },
-]
+];
 
 export function GitPanel({ className }: GitPanelProps) {
   return (
@@ -64,7 +73,10 @@ export function GitPanel({ className }: GitPanelProps) {
         <CardContent>
           <div className="space-y-3">
             {mockBranches.map((branch) => (
-              <div key={branch.name} className="flex items-center justify-between rounded-lg border p-3">
+              <div
+                key={branch.name}
+                className="flex items-center justify-between rounded-lg border p-3"
+              >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium">{branch.name}</p>
@@ -74,8 +86,8 @@ export function GitPanel({ className }: GitPanelProps) {
                       </Badge>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    <GitCommit className="inline h-3 w-3 mr-1" />
+                  <p className="text-muted-foreground text-xs">
+                    <GitCommit className="mr-1 inline h-3 w-3" />
                     {branch.commit} • {branch.lastUpdated}
                   </p>
                 </div>
@@ -97,15 +109,18 @@ export function GitPanel({ className }: GitPanelProps) {
           <div className="space-y-3">
             {mockPRs.map((pr) => (
               <div key={pr.id} className="flex items-start justify-between rounded-lg border p-3">
-                <div className="space-y-1 flex-1">
+                <div className="flex-1 space-y-1">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium">{pr.title}</p>
-                    <Badge variant={pr.status === "open" ? "default" : "secondary"} className="text-xs">
+                    <Badge
+                      variant={pr.status === "open" ? "default" : "secondary"}
+                      className="text-xs"
+                    >
                       {pr.status}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground">{pr.branch}</p>
-                  <div className="flex items-center gap-2 mt-2">
+                  <p className="text-muted-foreground text-xs">{pr.branch}</p>
+                  <div className="mt-2 flex items-center gap-2">
                     {pr.checks === "passing" && (
                       <div className="flex items-center gap-1 text-xs text-green-600">
                         <CheckCircle2 className="h-3 w-3" />
@@ -137,5 +152,5 @@ export function GitPanel({ className }: GitPanelProps) {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

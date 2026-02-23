@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation"
+import { redirect } from "next/navigation";
 
 export default function SprintBoardRedirect({ params }: { params: { id: string } }) {
-  redirect(`/projects/${params.id}/execution`)
+  redirect(`/projects/${params.id}/execution`);
 }

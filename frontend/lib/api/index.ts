@@ -1,26 +1,30 @@
 // Re-export all API utilities
-export * from "./client"
-export * from "./types"
-export * from "./query-keys"
+export * from "./client";
+export * from "./query-keys";
+export * from "./types";
+
+// Re-export adapters
+export * from "./adapters";
 
 // Re-export hooks
-export * from "./hooks/use-projects"
-export * from "./hooks/use-protocols"
-export * from "./hooks/use-events"
-export * from "./hooks/use-steps"
-export * from "./hooks/use-runs"
-export * from "./hooks/use-ops"
-export * from "./hooks/use-queues"
-export * from "./hooks/use-logs"
-export * from "./hooks/use-policy-packs"
-export * from "./hooks/use-sprints"
-export * from "./hooks/use-agents"
-export * from "./hooks/use-agent-health"
-export * from "./hooks/use-clarifications"
-export * from "./hooks/use-specifications"
-export * from "./hooks/use-speckit"
-export * from "./hooks/use-quality"
-export * from "./hooks/use-profile"
-export * from "./hooks/use-constitution"
-export * from "./hooks/use-feedback"
-export * from "./hooks/use-templates"
+export * from "./hooks/use-agent-health";
+export * from "./hooks/use-agents";
+export * from "./hooks/use-clarifications";
+export * from "./hooks/use-constitution";
+export * from "./hooks/use-events";
+export * from "./hooks/use-feedback";
+export * from "./hooks/use-logs";
+export * from "./hooks/use-ops";
+export * from "./hooks/use-policy-packs";
+export * from "./hooks/use-profile";
+export * from "./hooks/use-projects";
+export * from "./hooks/use-protocols";
+export * from "./hooks/use-quality";
+export * from "./hooks/use-queues";
+export * from "./hooks/use-runs";
+export * from "./hooks/use-specifications";
+export * from "./hooks/use-speckit";
+export * from "./hooks/use-sprints";
+export * from "./hooks/use-steps";
+export * from "./hooks/use-templates";
+export * from "./hooks/use-toast-mutation";

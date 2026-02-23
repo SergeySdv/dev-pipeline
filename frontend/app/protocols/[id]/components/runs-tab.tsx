@@ -1,19 +1,21 @@
-"use client"
+"use client";
 
-import Link from "next/link"
-import { useProtocolRuns } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { DataTable } from "@/components/ui/data-table"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { ExternalLink, PlayCircle } from "lucide-react"
-import { formatRelativeTime, formatTokens, truncateHash } from "@/lib/format"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { CodexRun } from "@/lib/api/types"
+import Link from "next/link";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { ExternalLink, PlayCircle } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { useProtocolRuns } from "@/lib/api";
+import type { CodexRun } from "@/lib/api/types";
+import { formatRelativeTime, formatTokens, truncateHash } from "@/lib/format";
 
 interface RunsTabProps {
-  protocolId: number
+  protocolId: number;
 }
 
 const columns: ColumnDef<CodexRun>[] = [
@@ -49,12 +51,16 @@ const columns: ColumnDef<CodexRun>[] = [
   {
     accessorKey: "cost_tokens",
     header: "Tokens",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatTokens(row.original.cost_tokens)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatTokens(row.original.cost_tokens)}</span>
+    ),
   },
   {
     accessorKey: "created_at",
     header: "Created",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatRelativeTime(row.original.created_at)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatRelativeTime(row.original.created_at)}</span>
+    ),
   },
   {
     id: "actions",
@@ -66,12 +72,12 @@ const columns: ColumnDef<CodexRun>[] = [
       </Link>
     ),
   },
-]
+];
 
 export function RunsTab({ protocolId }: RunsTabProps) {
-  const { data: runs, isLoading } = useProtocolRuns(protocolId)
+  const { data: runs, isLoading } = useProtocolRuns(protocolId);
 
-  if (isLoading) return <LoadingState message="Loading runs..." />
+  if (isLoading) return <LoadingState message="Loading runs..." />;
 
   if (!runs || runs.length === 0) {
     return (
@@ -80,16 +86,23 @@ export function RunsTab({ protocolId }: RunsTabProps) {
         title="No runs yet"
         description="Execution runs will appear here when steps are executed."
       />
-    )
+    );
   }
 
   return (
     <div className="space-y-4">
       <div>
         <h3 className="text-lg font-semibold">Execution Runs</h3>
-        <p className="text-sm text-muted-foreground">{runs.length} run(s)</p>
+        <p className="text-muted-foreground text-sm">{runs.length} run(s)</p>
       </div>
-      <DataTable columns={columns} data={runs} enableSearch enableExport enableColumnFilters exportFilename={`protocol-${protocolId}-runs.csv`} />
+      <DataTable
+        columns={columns}
+        data={runs}
+        enableSearch
+        enableExport
+        enableColumnFilters
+        exportFilename={`protocol-${protocolId}-runs.csv`}
+      />
     </div>
-  )
+  );
 }

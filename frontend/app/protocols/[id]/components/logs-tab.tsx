@@ -1,31 +1,48 @@
-"use client"
+"use client";
 
-import { useMemo, useState } from "react"
-import Link from "next/link"
-import { useProtocolRuns } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { ExternalLink, Activity } from "lucide-react"
-import { StreamingLogs } from "@/components/features/streaming-logs"
+import { useMemo, useState } from "react";
+import Link from "next/link";
+
+import { Activity,ExternalLink } from "lucide-react";
+
+import { StreamingLogs } from "@/components/features/streaming-logs";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useProtocolRuns } from "@/lib/api";
 
 interface LogsTabProps {
-  protocolId: number
+  protocolId: number;
 }
 
 export function LogsTab({ protocolId }: LogsTabProps) {
-  const { data: runs, isLoading } = useProtocolRuns(protocolId)
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const { data: runs, isLoading } = useProtocolRuns(protocolId);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  const resolvedRunId = selectedRunId ?? runs?.[0]?.run_id ?? null
+  const resolvedRunId = selectedRunId ?? runs?.[0]?.run_id ?? null;
 
-  const selectedRun = useMemo(() => runs?.find((run) => run.run_id === resolvedRunId), [runs, resolvedRunId])
+  const selectedRun = useMemo(
+    () => runs?.find((run) => run.run_id === resolvedRunId),
+    [runs, resolvedRunId]
+  );
 
-  if (isLoading) return <LoadingState message="Loading runs..." />
+  if (isLoading) return <LoadingState message="Loading runs..." />;
 
   if (!runs || runs.length === 0) {
-    return <EmptyState icon={Activity} title="No runs" description="No runs available for log streaming." />
+    return (
+      <EmptyState
+        icon={Activity}
+        title="No runs"
+        description="No runs available for log streaming."
+      />
+    );
   }
 
   return (
@@ -47,7 +64,7 @@ export function LogsTab({ protocolId }: LogsTabProps) {
         {selectedRun && (
           <Link href={`/runs/${selectedRun.run_id}`} className="inline-flex items-center">
             <Button variant="outline" size="sm">
-              <ExternalLink className="h-4 w-4 mr-2" />
+              <ExternalLink className="mr-2 h-4 w-4" />
               Run Details
             </Button>
           </Link>
@@ -60,5 +77,5 @@ export function LogsTab({ protocolId }: LogsTabProps) {
         </div>
       )}
     </div>
-  )
+  );
 }

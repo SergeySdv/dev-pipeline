@@ -1,39 +1,40 @@
-"use client"
-import { use } from "react"
+"use client";
+import { use } from "react";
+import Link from "next/link";
 
-import Link from "next/link"
-import { usePolicyPacks } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { CodeBlock } from "@/components/ui/code-block"
-import { StatusPill } from "@/components/ui/status-pill"
-import { ArrowLeft, Edit } from "lucide-react"
-import { formatDateTime } from "@/lib/format"
+import { ArrowLeft, Edit } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { usePolicyPacks } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 
 export default function PolicyPackDetailPage({ params }: { params: Promise<{ key: string }> }) {
-  const { key } = use(params)
-  const { data: packs, isLoading, error } = usePolicyPacks()
+  const { key } = use(params);
+  const { data: packs, isLoading, error } = usePolicyPacks();
 
-  if (isLoading) return <LoadingState message="Loading policy pack..." />
+  if (isLoading) return <LoadingState message="Loading policy pack..." />;
   if (error) {
-    const message = error instanceof Error ? error.message : "Failed to load policy pack"
+    const message = error instanceof Error ? error.message : "Failed to load policy pack";
     return (
       <div className="container py-8">
         <EmptyState title="Error loading policy pack" description={message} />
       </div>
-    )
+    );
   }
 
-  const pack = packs?.find((p) => p.key === key)
+  const pack = packs?.find((p) => p.key === key);
 
   if (!pack) {
     return (
       <div className="container py-8">
         <p className="text-muted-foreground">Policy pack not found</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -41,7 +42,7 @@ export default function PolicyPackDetailPage({ params }: { params: Promise<{ key
       <div className="mb-6">
         <Link
           href="/policy-packs"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
+          className="text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1 text-sm"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Policy Packs
@@ -49,7 +50,7 @@ export default function PolicyPackDetailPage({ params }: { params: Promise<{ key
 
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold font-mono">{pack.key}</h1>
+            <h1 className="font-mono text-2xl font-bold">{pack.key}</h1>
             <p className="text-muted-foreground mt-1">{pack.name}</p>
           </div>
           <Button variant="outline" asChild>
@@ -61,7 +62,7 @@ export default function PolicyPackDetailPage({ params }: { params: Promise<{ key
         </div>
       </div>
 
-      <div className="grid gap-6 mb-6 md:grid-cols-3">
+      <div className="mb-6 grid gap-6 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Version</CardDescription>
@@ -111,5 +112,5 @@ export default function PolicyPackDetailPage({ params }: { params: Promise<{ key
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

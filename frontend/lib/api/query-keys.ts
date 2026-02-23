@@ -1,5 +1,5 @@
 // Query key factory for TanStack Query
-import type { RunFilters, EventFilters, AppLogFilters } from "./types"
+import type { AppLogFilters,EventFilters, RunFilters } from "./types";
 
 export const queryKeys = {
   // Health
@@ -33,7 +33,8 @@ export const queryKeys = {
     events: (id: number) => [...queryKeys.protocols.all, "events", id] as const,
     qualitySummary: (id: number) => [...queryKeys.protocols.all, "qualitySummary", id] as const,
     qualityGates: (id: number) => [...queryKeys.protocols.all, "qualityGates", id] as const,
-    runs: (id: number, filters?: RunFilters) => [...queryKeys.protocols.all, "runs", id, filters] as const,
+    runs: (id: number, filters?: RunFilters) =>
+      [...queryKeys.protocols.all, "runs", id, filters] as const,
     spec: (id: number) => [...queryKeys.protocols.all, "spec", id] as const,
     policyFindings: (id: number) => [...queryKeys.protocols.all, "policyFindings", id] as const,
     policySnapshot: (id: number) => [...queryKeys.protocols.all, "policySnapshot", id] as const,
@@ -91,7 +92,8 @@ export const queryKeys = {
 
   tasks: {
     all: ["tasks"] as const,
-    byProject: (projectId: number, sprintId?: number | null) => ["tasks", "project", projectId, { sprintId }] as const,
+    byProject: (projectId: number, sprintId?: number | null) =>
+      ["tasks", "project", projectId, { sprintId }] as const,
     detail: (id: number) => ["tasks", "detail", id] as const,
   },
 
@@ -100,11 +102,16 @@ export const queryKeys = {
     all: ["agents"] as const,
     list: (projectId?: number) => [...queryKeys.agents.all, "list", projectId ?? "global"] as const,
     detail: (id: string) => [...queryKeys.agents.all, "detail", id] as const,
-    defaults: (projectId?: number) => [...queryKeys.agents.all, "defaults", projectId ?? "global"] as const,
-    assignments: (projectId?: number) => [...queryKeys.agents.all, "assignments", projectId ?? "global"] as const,
-    prompts: (projectId?: number) => [...queryKeys.agents.all, "prompts", projectId ?? "global"] as const,
-    health: (projectId?: number) => [...queryKeys.agents.all, "health", projectId ?? "global"] as const,
-    metrics: (projectId?: number) => [...queryKeys.agents.all, "metrics", projectId ?? "global"] as const,
+    defaults: (projectId?: number) =>
+      [...queryKeys.agents.all, "defaults", projectId ?? "global"] as const,
+    assignments: (projectId?: number) =>
+      [...queryKeys.agents.all, "assignments", projectId ?? "global"] as const,
+    prompts: (projectId?: number) =>
+      [...queryKeys.agents.all, "prompts", projectId ?? "global"] as const,
+    health: (projectId?: number) =>
+      [...queryKeys.agents.all, "health", projectId ?? "global"] as const,
+    metrics: (projectId?: number) =>
+      [...queryKeys.agents.all, "metrics", projectId ?? "global"] as const,
     project: (projectId: number) => [...queryKeys.agents.all, "project", projectId] as const,
     overrides: (projectId: number) => [...queryKeys.agents.all, "overrides", projectId] as const,
   },
@@ -118,7 +125,8 @@ export const queryKeys = {
   // Specifications
   specifications: {
     all: ["specifications"] as const,
-    list: (projectId?: number, filters?: Record<string, unknown>) => [...queryKeys.specifications.all, "list", { projectId, ...filters }] as const,
+    list: (projectId?: number, filters?: Record<string, unknown>) =>
+      [...queryKeys.specifications.all, "list", { projectId, ...filters }] as const,
     detail: (id: number) => [...queryKeys.specifications.all, "detail", id] as const,
     content: (id: number) => [...queryKeys.specifications.all, "content", id] as const,
   },
@@ -128,9 +136,12 @@ export const queryKeys = {
     status: (projectId: number) => ["speckit", "status", projectId] as const,
     constitution: (projectId: number) => ["speckit", "constitution", projectId] as const,
     specs: (projectId: number) => ["speckit", "specs", projectId] as const,
-    checklist: (projectId: number, specPath?: string) => ["speckit", "checklist", projectId, specPath] as const,
-    analysis: (projectId: number, specPath?: string) => ["speckit", "analysis", projectId, specPath] as const,
-    implement: (projectId: number, specPath?: string) => ["speckit", "implement", projectId, specPath] as const,
+    checklist: (projectId: number, specPath?: string) =>
+      ["speckit", "checklist", projectId, specPath] as const,
+    analysis: (projectId: number, specPath?: string) =>
+      ["speckit", "analysis", projectId, specPath] as const,
+    implement: (projectId: number, specPath?: string) =>
+      ["speckit", "implement", projectId, specPath] as const,
   },
 
   // Quality
@@ -144,4 +155,4 @@ export const queryKeys = {
     all: ["profile"] as const,
     me: () => [...queryKeys.profile.all, "me"] as const,
   },
-}
+};

@@ -1,35 +1,46 @@
-"use client"
+"use client";
 
-import { useState, useMemo } from "react"
-import Link from "next/link"
-import { useProjects, useRuns } from "@/lib/api"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Button } from "@/components/ui/button"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ExternalLink, Activity } from "lucide-react"
-import { LogsConsole } from "@/components/features/logs-console"
-import { StreamingLogs } from "@/components/features/streaming-logs"
+import { useMemo,useState } from "react";
+import Link from "next/link";
+
+import { Activity,ExternalLink } from "lucide-react";
+
+import { LogsConsole } from "@/components/features/logs-console";
+import { StreamingLogs } from "@/components/features/streaming-logs";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useProjects, useRuns } from "@/lib/api";
 
 export default function LogsPage() {
-  const [selectedProjectId, setSelectedProjectId] = useState<number | undefined>(undefined)
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [selectedProjectId, setSelectedProjectId] = useState<number | undefined>(undefined);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  const { data: projects } = useProjects()
+  const { data: projects } = useProjects();
   const { data: runs, isLoading: runsLoading } = useRuns({
     project_id: selectedProjectId,
     limit: 50,
-  })
+  });
 
-  const selectedRun = useMemo(() => runs?.find((run) => run.run_id === selectedRunId), [runs, selectedRunId])
+  const selectedRun = useMemo(
+    () => runs?.find((run) => run.run_id === selectedRunId),
+    [runs, selectedRunId]
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">System Logs</h2>
-          <p className="text-sm text-muted-foreground">Application and execution logs</p>
+          <p className="text-muted-foreground text-sm">Application and execution logs</p>
         </div>
       </div>
 
@@ -45,8 +56,8 @@ export default function LogsPage() {
             <Select
               value={selectedProjectId?.toString() || "all"}
               onValueChange={(v) => {
-                setSelectedProjectId(v === "all" ? undefined : Number(v))
-                setSelectedRunId(null)
+                setSelectedProjectId(v === "all" ? undefined : Number(v));
+                setSelectedRunId(null);
               }}
             >
               <SelectTrigger className="w-48">
@@ -78,7 +89,7 @@ export default function LogsPage() {
             {selectedRun && (
               <Link href={`/runs/${selectedRun.run_id}`} className="inline-flex items-center">
                 <Button variant="outline" size="sm">
-                  <ExternalLink className="h-4 w-4 mr-2" />
+                  <ExternalLink className="mr-2 h-4 w-4" />
                   Run Details
                 </Button>
               </Link>
@@ -88,13 +99,21 @@ export default function LogsPage() {
           {runsLoading ? (
             <LoadingState message="Loading runs..." />
           ) : !runs || runs.length === 0 ? (
-            <EmptyState icon={Activity} title="No runs" description="No runs available for log streaming." />
+            <EmptyState
+              icon={Activity}
+              title="No runs"
+              description="No runs available for log streaming."
+            />
           ) : selectedRunId ? (
             <div className="h-[calc(100vh-24rem)]">
               <StreamingLogs runId={selectedRunId} />
             </div>
           ) : (
-            <EmptyState icon={Activity} title="Select a run" description="Select a run from the dropdown to view its logs." />
+            <EmptyState
+              icon={Activity}
+              title="Select a run"
+              description="Select a run from the dropdown to view its logs."
+            />
           )}
         </TabsContent>
 
@@ -107,5 +126,5 @@ export default function LogsPage() {
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }

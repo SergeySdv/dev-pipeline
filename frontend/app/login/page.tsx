@@ -1,57 +1,58 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
+import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-import { useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Layers } from "lucide-react"
-import { useAuth } from "@/lib/auth/context"
-import { toast } from "sonner"
+import { Layers } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useAuth } from "@/lib/auth/context";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("demo@devgodzilla.dev")
-  const [password, setPassword] = useState("demo")
-  const [isLoading, setIsLoading] = useState(false)
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const { login, loginWithSSO } = useAuth()
-  const redirect = searchParams.get("redirect") || "/projects"
+  const [email, setEmail] = useState("demo@devgodzilla.dev");
+  const [password, setPassword] = useState("demo");
+  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { login, loginWithSSO } = useAuth();
+  const redirect = searchParams.get("redirect") || "/projects";
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
+    e.preventDefault();
+    setIsLoading(true);
 
     try {
-      await login(email, password)
-      toast.success("Successfully logged in")
-      router.push(redirect)
+      await login(email, password);
+      toast.success("Successfully logged in");
+      router.push(redirect);
     } catch {
-      toast.error("Login failed. Please try again.")
+      toast.error("Login failed. Please try again.");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   const handleSSOLogin = async () => {
-    setIsLoading(true)
+    setIsLoading(true);
     try {
-      await loginWithSSO()
+      await loginWithSSO();
     } catch {
-      toast.error("SSO login failed")
-      setIsLoading(false)
+      toast.error("SSO login failed");
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background to-muted p-4">
+    <div className="from-background to-muted flex min-h-screen items-center justify-center bg-gradient-to-br p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-primary">
-            <Layers className="h-7 w-7 text-primary-foreground" />
+          <div className="bg-primary mx-auto flex h-12 w-12 items-center justify-center rounded-lg">
+            <Layers className="text-primary-foreground h-7 w-7" />
           </div>
           <CardTitle className="text-2xl">Welcome to DevGodzilla</CardTitle>
           <CardDescription>Sign in to access the control console</CardDescription>
@@ -90,7 +91,7 @@ export default function LoginPage() {
                 <span className="w-full border-t" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                <span className="bg-card text-muted-foreground px-2">Or continue with</span>
               </div>
             </div>
             <Button
@@ -106,5 +107,5 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

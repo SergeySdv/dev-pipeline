@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { NextResponse } from "next/server";
 
 export async function GET() {
   // In production, this would validate HttpOnly cookie session
@@ -12,7 +12,7 @@ export async function GET() {
     role: "admin",
     avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=demo",
     scopes: ["read:projects", "write:projects", "read:protocols", "write:protocols"],
-  }
+  };
 
-  return NextResponse.json(user)
+  return NextResponse.json(user);
 }

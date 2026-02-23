@@ -1,14 +1,25 @@
-"use client"
+"use client";
 
-import { useState, useCallback, useMemo } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
+import { useCallback, useMemo,useState } from "react";
+
+import {
+  AlertCircle,
+  CheckSquare,
+  Copy,
+  Download,
+  Edit,
+  Eye,
+  FileText,
+  ListTodo,
+  Plus,
+  Search,
+  Trash2,
+  Workflow,
+} from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -16,74 +27,62 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { LoadingState } from "@/components/ui/loading-state";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  FileText,
-  Plus,
-  Search,
-  Trash2,
-  Copy,
-  Download,
-  Upload,
-  Eye,
-  Edit,
-  AlertCircle,
-  CheckSquare,
-  ListTodo,
-  Workflow,
-} from "lucide-react"
-import { cn } from "@/lib/utils"
-import {
-  useTemplates,
-  useTemplate,
-  useCreateTemplate,
-  useUpdateTemplate,
-  useDeleteTemplate,
-  useDuplicateTemplate,
-  useRenderTemplate,
-  getCategoryDisplayName,
-  validateTemplateId,
   generateTemplateId,
   type Template,
   type TemplateCreate,
   type TemplateUpdate,
-} from "@/lib/api/hooks/use-templates"
+  useCreateTemplate,
+  useDeleteTemplate,
+  useDuplicateTemplate,
+  useRenderTemplate,
+  useTemplate,
+  useTemplates,
+  useUpdateTemplate,
+  validateTemplateId,
+} from "@/lib/api/hooks/use-templates";
+import { cn } from "@/lib/utils";
 
 // =============================================================================
 // Types
 // =============================================================================
 
 export interface TemplateManagerProps {
-  className?: string
-  defaultCategory?: string
-  onTemplateSelect?: (template: Template) => void
-  onSelectMode?: boolean
+  className?: string;
+  defaultCategory?: string;
+  onTemplateSelect?: (template: Template) => void;
+  onSelectMode?: boolean;
 }
 
 export interface TemplateListProps {
-  category?: string
-  search?: string
-  onSelect?: (template: Template) => void
-  onSelectMode?: boolean
-  selectedId?: string
+  category?: string;
+  search?: string;
+  onSelect?: (template: Template) => void;
+  onSelectMode?: boolean;
+  selectedId?: string;
 }
 
 export interface TemplateEditorProps {
-  templateId?: string
-  onSave?: (template: Template) => void
-  onCancel?: () => void
+  templateId?: string;
+  onSave?: (template: Template) => void;
+  onCancel?: () => void;
 }
 
 export interface TemplatePreviewProps {
-  templateId: string
-  variables?: Record<string, unknown>
+  templateId: string;
+  variables?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -96,9 +95,9 @@ function CategoryIcon({ category, className }: { category: string; className?: s
     plan: ListTodo,
     protocol: Workflow,
     checklist: CheckSquare,
-  }
-  const Icon = icons[category] || FileText
-  return <Icon className={className} />
+  };
+  const Icon = icons[category] || FileText;
+  return <Icon className={className} />;
 }
 
 // =============================================================================
@@ -112,10 +111,10 @@ export function TemplateList({
   onSelectMode,
   selectedId,
 }: TemplateListProps) {
-  const { data, isLoading, error } = useTemplates({ category, search })
+  const { data, isLoading, error } = useTemplates({ category, search });
 
   if (isLoading) {
-    return <LoadingState message="Loading templates..." />
+    return <LoadingState message="Loading templates..." />;
   }
 
   if (error) {
@@ -125,7 +124,7 @@ export function TemplateList({
         title="Error loading templates"
         description={error instanceof Error ? error.message : "An unknown error occurred"}
       />
-    )
+    );
   }
 
   if (!data?.items?.length) {
@@ -134,12 +133,10 @@ export function TemplateList({
         icon={FileText}
         title="No templates found"
         description={
-          search
-            ? `No templates match "${search}"`
-            : "Create your first template to get started"
+          search ? `No templates match "${search}"` : "Create your first template to get started"
         }
       />
-    )
+    );
   }
 
   return (
@@ -148,28 +145,28 @@ export function TemplateList({
         <Card
           key={template.id}
           className={cn(
-            "cursor-pointer transition-colors hover:border-primary/50",
+            "hover:border-primary/50 cursor-pointer transition-colors",
             selectedId === template.id && "border-primary bg-primary/5"
           )}
           onClick={() => onSelect?.(template)}
         >
           <CardContent className="p-4">
             <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 min-w-0">
+              <div className="flex min-w-0 items-start gap-3">
                 <CategoryIcon
                   category={template.category}
-                  className="h-5 w-5 mt-0.5 text-muted-foreground shrink-0"
+                  className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
                 />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-medium truncate">{template.name}</h3>
+                    <h3 className="truncate font-medium">{template.name}</h3>
                     {template.is_default && (
                       <Badge variant="secondary" className="text-xs">
                         Default
                       </Badge>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground truncate">
+                  <p className="text-muted-foreground truncate text-sm">
                     {template.description || template.id}
                   </p>
                 </div>
@@ -184,21 +181,17 @@ export function TemplateList({
         </Card>
       ))}
     </div>
-  )
+  );
 }
 
 // =============================================================================
 // Template Editor Component
 // =============================================================================
 
-export function TemplateEditor({
-  templateId,
-  onSave,
-  onCancel,
-}: TemplateEditorProps) {
-  const { data: existingTemplate, isLoading } = useTemplate(templateId || "")
-  const createMutation = useCreateTemplate()
-  const updateMutation = useUpdateTemplate()
+export function TemplateEditor({ templateId, onSave, onCancel }: TemplateEditorProps) {
+  const { data: existingTemplate, isLoading } = useTemplate(templateId || "");
+  const createMutation = useCreateTemplate();
+  const updateMutation = useUpdateTemplate();
 
   const [formData, setFormData] = useState<TemplateCreate>({
     id: "",
@@ -207,8 +200,8 @@ export function TemplateEditor({
     category: "specification",
     content: "",
     variables: {},
-  })
-  const [idError, setIdError] = useState<string | null>(null)
+  });
+  const [idError, setIdError] = useState<string | null>(null);
 
   // Initialize form when existing template loads
   useState(() => {
@@ -220,37 +213,40 @@ export function TemplateEditor({
         category: existingTemplate.category,
         content: existingTemplate.content,
         variables: existingTemplate.variables,
-      })
+      });
     }
-  })
+  });
 
-  const isEditing = !!templateId
-  const isPending = createMutation.isPending || updateMutation.isPending
+  const isEditing = !!templateId;
+  const isPending = createMutation.isPending || updateMutation.isPending;
 
   const handleIdChange = useCallback((value: string) => {
-    setFormData((prev) => ({ ...prev, id: value }))
-    const validation = validateTemplateId(value)
-    setIdError(validation.valid ? null : validation.error || null)
-  }, [])
+    setFormData((prev) => ({ ...prev, id: value }));
+    const validation = validateTemplateId(value);
+    setIdError(validation.valid ? null : validation.error || null);
+  }, []);
 
-  const handleNameChange = useCallback((value: string) => {
-    setFormData((prev) => {
-      const updates = { ...prev, name: value }
-      // Auto-generate ID if creating new and ID is empty
-      if (!templateId && !prev.id) {
-        updates.id = generateTemplateId(value)
-      }
-      return updates
-    })
-  }, [templateId])
+  const handleNameChange = useCallback(
+    (value: string) => {
+      setFormData((prev) => {
+        const updates = { ...prev, name: value };
+        // Auto-generate ID if creating new and ID is empty
+        if (!templateId && !prev.id) {
+          updates.id = generateTemplateId(value);
+        }
+        return updates;
+      });
+    },
+    [templateId]
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!isEditing && idError) {
-      return
+      return;
     }
 
     try {
-      let result: Template
+      let result: Template;
       if (isEditing) {
         const updates: TemplateUpdate = {
           name: formData.name,
@@ -258,22 +254,22 @@ export function TemplateEditor({
           category: formData.category,
           content: formData.content,
           variables: formData.variables,
-        }
+        };
         result = await updateMutation.mutateAsync({
           id: templateId!,
           updates,
-        })
+        });
       } else {
-        result = await createMutation.mutateAsync(formData)
+        result = await createMutation.mutateAsync(formData);
       }
-      onSave?.(result)
+      onSave?.(result);
     } catch (error) {
-      console.error("Failed to save template:", error)
+      console.error("Failed to save template:", error);
     }
-  }, [formData, isEditing, templateId, idError, createMutation, updateMutation, onSave])
+  }, [formData, isEditing, templateId, idError, createMutation, updateMutation, onSave]);
 
   if (isLoading) {
-    return <LoadingState message="Loading template..." />
+    return <LoadingState message="Loading template..." />;
   }
 
   return (
@@ -297,9 +293,7 @@ export function TemplateEditor({
               placeholder="template-id"
               className={idError ? "border-destructive" : ""}
             />
-            {idError && (
-              <p className="text-xs text-destructive">{idError}</p>
-            )}
+            {idError && <p className="text-destructive text-xs">{idError}</p>}
           </div>
         )}
 
@@ -330,9 +324,7 @@ export function TemplateEditor({
           <label className="text-sm font-medium">Description</label>
           <Input
             value={formData.description}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, description: e.target.value }))
-            }
+            onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
             placeholder="Brief description of the template"
           />
         </div>
@@ -341,13 +333,11 @@ export function TemplateEditor({
           <label className="text-sm font-medium">Content</label>
           <Textarea
             value={formData.content}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, content: e.target.value }))
-            }
+            onChange={(e) => setFormData((prev) => ({ ...prev, content: e.target.value }))}
             placeholder="# Template Content&#10;&#10;Use {variable_name} for placeholders"
             className="min-h-[300px] font-mono text-sm"
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             Use {"{variable_name}"} syntax for variables
           </p>
         </div>
@@ -364,35 +354,32 @@ export function TemplateEditor({
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 // =============================================================================
 // Template Preview Component
 // =============================================================================
 
-export function TemplatePreview({
-  templateId,
-  variables = {},
-}: TemplatePreviewProps) {
-  const { data: template, isLoading } = useTemplate(templateId)
-  const renderMutation = useRenderTemplate()
+export function TemplatePreview({ templateId, variables = {} }: TemplatePreviewProps) {
+  const { data: template, isLoading } = useTemplate(templateId);
+  const renderMutation = useRenderTemplate();
 
   const renderedContent = useMemo(() => {
-    if (!template) return ""
-    
+    if (!template) return "";
+
     // If variables provided, render server-side
     if (Object.keys(variables).length > 0) {
-      renderMutation.mutate({ templateId, variables })
-      return null
+      renderMutation.mutate({ templateId, variables });
+      return null;
     }
-    
+
     // Otherwise show raw template
-    return template.content
-  }, [template, templateId, variables])
+    return template.content;
+  }, [template, templateId, variables]);
 
   if (isLoading) {
-    return <LoadingState message="Loading preview..." />
+    return <LoadingState message="Loading preview..." />;
   }
 
   if (!template) {
@@ -402,7 +389,7 @@ export function TemplatePreview({
         title="No template selected"
         description="Select a template to preview"
       />
-    )
+    );
   }
 
   return (
@@ -415,12 +402,12 @@ export function TemplatePreview({
         <CardDescription>{template.description}</CardDescription>
       </CardHeader>
       <CardContent>
-        <pre className="whitespace-pre-wrap font-mono text-sm bg-muted/30 p-4 rounded-md overflow-auto max-h-[400px]">
+        <pre className="bg-muted/30 max-h-[400px] overflow-auto rounded-md p-4 font-mono text-sm whitespace-pre-wrap">
           {renderMutation.data?.content || renderedContent}
         </pre>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 // =============================================================================
@@ -433,66 +420,64 @@ export function TemplateManager({
   onTemplateSelect,
   onSelectMode,
 }: TemplateManagerProps) {
-  const [searchQuery, setSearchQuery] = useState("")
-  const [selectedCategory, setSelectedCategory] = useState<string>(
-    defaultCategory || "all"
-  )
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
-  const [isCreating, setIsCreating] = useState(false)
-  const [isEditing, setIsEditing] = useState(false)
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string>(defaultCategory || "all");
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  const deleteMutation = useDeleteTemplate()
-  const duplicateMutation = useDuplicateTemplate()
+  const deleteMutation = useDeleteTemplate();
+  const duplicateMutation = useDuplicateTemplate();
 
   const handleSelectTemplate = useCallback(
     (template: Template) => {
       if (onSelectMode) {
-        onTemplateSelect?.(template)
+        onTemplateSelect?.(template);
       } else {
-        setSelectedTemplate(template)
-        setIsEditing(false)
+        setSelectedTemplate(template);
+        setIsEditing(false);
       }
     },
     [onSelectMode, onTemplateSelect]
-  )
+  );
 
   const handleEdit = useCallback(() => {
-    setIsEditing(true)
-  }, [])
+    setIsEditing(true);
+  }, []);
 
   const handleDuplicate = useCallback(async () => {
-    if (!selectedTemplate) return
-    
+    if (!selectedTemplate) return;
+
     try {
-      const newId = `${selectedTemplate.id}-copy`
+      const newId = `${selectedTemplate.id}-copy`;
       await duplicateMutation.mutateAsync({
         templateId: selectedTemplate.id,
         newId,
         newName: `${selectedTemplate.name} (Copy)`,
-      })
+      });
     } catch (error) {
-      console.error("Failed to duplicate template:", error)
+      console.error("Failed to duplicate template:", error);
     }
-  }, [selectedTemplate, duplicateMutation])
+  }, [selectedTemplate, duplicateMutation]);
 
   const handleDelete = useCallback(async () => {
-    if (!selectedTemplate) return
-    
-    try {
-      await deleteMutation.mutateAsync(selectedTemplate.id)
-      setShowDeleteDialog(false)
-      setSelectedTemplate(null)
-    } catch (error) {
-      console.error("Failed to delete template:", error)
-    }
-  }, [selectedTemplate, deleteMutation])
+    if (!selectedTemplate) return;
 
-  const handleCloseDetail = useCallback(() => {
-    setSelectedTemplate(null)
-    setIsEditing(false)
-    setIsCreating(false)
-  }, [])
+    try {
+      await deleteMutation.mutateAsync(selectedTemplate.id);
+      setShowDeleteDialog(false);
+      setSelectedTemplate(null);
+    } catch (error) {
+      console.error("Failed to delete template:", error);
+    }
+  }, [selectedTemplate, deleteMutation]);
+
+  const _handleCloseDetail = useCallback(() => {
+    setSelectedTemplate(null);
+    setIsEditing(false);
+    setIsCreating(false);
+  }, []);
 
   return (
     <div className={cn("grid gap-6", className)}>
@@ -506,7 +491,7 @@ export function TemplateManager({
         </div>
         {!onSelectMode && (
           <Button onClick={() => setIsCreating(true)}>
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus className="mr-2 h-4 w-4" />
             New Template
           </Button>
         )}
@@ -519,7 +504,7 @@ export function TemplateManager({
           {/* Filters */}
           <div className="flex gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
               <Input
                 placeholder="Search templates..."
                 value={searchQuery}
@@ -527,10 +512,7 @@ export function TemplateManager({
                 className="pl-9"
               />
             </div>
-            <Select
-              value={selectedCategory}
-              onValueChange={setSelectedCategory}
-            >
+            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Category" />
               </SelectTrigger>
@@ -560,14 +542,12 @@ export function TemplateManager({
             <Card>
               <CardHeader>
                 <CardTitle>Create Template</CardTitle>
-                <CardDescription>
-                  Create a new reusable template
-                </CardDescription>
+                <CardDescription>Create a new reusable template</CardDescription>
               </CardHeader>
               <CardContent>
                 <TemplateEditor
                   onSave={() => {
-                    setIsCreating(false)
+                    setIsCreating(false);
                   }}
                   onCancel={() => setIsCreating(false)}
                 />
@@ -578,22 +558,13 @@ export function TemplateManager({
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <CategoryIcon
-                      category={selectedTemplate.category}
-                      className="h-5 w-5"
-                    />
-                    <CardTitle>
-                      {isEditing ? "Edit Template" : selectedTemplate.name}
-                    </CardTitle>
+                    <CategoryIcon category={selectedTemplate.category} className="h-5 w-5" />
+                    <CardTitle>{isEditing ? "Edit Template" : selectedTemplate.name}</CardTitle>
                   </div>
-                  {selectedTemplate.is_default && (
-                    <Badge variant="secondary">Default</Badge>
-                  )}
+                  {selectedTemplate.is_default && <Badge variant="secondary">Default</Badge>}
                 </div>
                 <CardDescription>
-                  {isEditing
-                    ? `Editing ${selectedTemplate.id}`
-                    : selectedTemplate.description}
+                  {isEditing ? `Editing ${selectedTemplate.id}` : selectedTemplate.description}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -601,7 +572,7 @@ export function TemplateManager({
                   <TemplateEditor
                     templateId={selectedTemplate.id}
                     onSave={() => {
-                      setIsEditing(false)
+                      setIsEditing(false);
                     }}
                     onCancel={() => setIsEditing(false)}
                   />
@@ -609,10 +580,8 @@ export function TemplateManager({
                   <>
                     {/* Preview */}
                     <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        Content Preview
-                      </label>
-                      <pre className="whitespace-pre-wrap font-mono text-xs bg-muted/30 p-3 rounded-md overflow-auto max-h-[300px]">
+                      <label className="mb-2 block text-sm font-medium">Content Preview</label>
+                      <pre className="bg-muted/30 max-h-[300px] overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap">
                         {selectedTemplate.content}
                       </pre>
                     </div>
@@ -620,45 +589,31 @@ export function TemplateManager({
                     {/* Variables */}
                     {Object.keys(selectedTemplate.variables).length > 0 && (
                       <div>
-                        <label className="text-sm font-medium mb-2 block">
-                          Variables
-                        </label>
+                        <label className="mb-2 block text-sm font-medium">Variables</label>
                         <div className="space-y-2">
-                          {Object.entries(selectedTemplate.variables).map(
-                            ([name, config]) => (
-                              <div
-                                key={name}
-                                className="flex items-center justify-between text-sm"
-                              >
-                                <span className="font-mono">{name}</span>
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline" className="text-xs">
-                                    {config.type}
+                          {Object.entries(selectedTemplate.variables).map(([name, config]) => (
+                            <div key={name} className="flex items-center justify-between text-sm">
+                              <span className="font-mono">{name}</span>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-xs">
+                                  {config.type}
+                                </Badge>
+                                {config.required && (
+                                  <Badge variant="destructive" className="text-xs">
+                                    Required
                                   </Badge>
-                                  {config.required && (
-                                    <Badge
-                                      variant="destructive"
-                                      className="text-xs"
-                                    >
-                                      Required
-                                    </Badge>
-                                  )}
-                                </div>
+                                )}
                               </div>
-                            )
-                          )}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
 
                     {/* Actions */}
-                    <div className="flex flex-wrap gap-2 pt-4 border-t">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleEdit}
-                      >
-                        <Edit className="h-4 w-4 mr-1" />
+                    <div className="flex flex-wrap gap-2 border-t pt-4">
+                      <Button variant="outline" size="sm" onClick={handleEdit}>
+                        <Edit className="mr-1 h-4 w-4" />
                         Edit
                       </Button>
                       <Button
@@ -667,7 +622,7 @@ export function TemplateManager({
                         onClick={handleDuplicate}
                         disabled={duplicateMutation.isPending}
                       >
-                        <Copy className="h-4 w-4 mr-1" />
+                        <Copy className="mr-1 h-4 w-4" />
                         Duplicate
                       </Button>
                       <Button
@@ -675,13 +630,10 @@ export function TemplateManager({
                         size="sm"
                         onClick={() => {
                           // Export logic
-                          window.open(
-                            `/templates/${selectedTemplate.id}/export`,
-                            "_blank"
-                          )
+                          window.open(`/templates/${selectedTemplate.id}/export`, "_blank");
                         }}
                       >
-                        <Download className="h-4 w-4 mr-1" />
+                        <Download className="mr-1 h-4 w-4" />
                         Export
                       </Button>
                       {!selectedTemplate.is_default && (
@@ -690,7 +642,7 @@ export function TemplateManager({
                           size="sm"
                           onClick={() => setShowDeleteDialog(true)}
                         >
-                          <Trash2 className="h-4 w-4 mr-1" />
+                          <Trash2 className="mr-1 h-4 w-4" />
                           Delete
                         </Button>
                       )}
@@ -719,15 +671,12 @@ export function TemplateManager({
           <DialogHeader>
             <DialogTitle>Delete Template</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{selectedTemplate?.name}"? This
-              action cannot be undone.
+              Are you sure you want to delete "{selectedTemplate?.name}"? This action cannot be
+              undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowDeleteDialog(false)}
-            >
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
               Cancel
             </Button>
             <Button
@@ -741,7 +690,7 @@ export function TemplateManager({
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }
 
-export default TemplateManager
+export default TemplateManager;

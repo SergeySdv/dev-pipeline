@@ -1,12 +1,19 @@
-"use client"
+"use client";
 
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Separator } from "@/components/ui/separator"
-import { Command } from "lucide-react"
+import { Command } from "lucide-react";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 
 interface KeyboardShortcutsProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 const shortcuts = [
@@ -37,7 +44,7 @@ const shortcuts = [
       { keys: ["Tab"], description: "Navigate between fields" },
     ],
   },
-]
+];
 
 export function KeyboardShortcuts({ open, onOpenChange }: KeyboardShortcutsProps) {
   return (
@@ -54,7 +61,7 @@ export function KeyboardShortcuts({ open, onOpenChange }: KeyboardShortcutsProps
         <div className="space-y-6 py-4">
           {shortcuts.map((section) => (
             <div key={section.category}>
-              <h3 className="text-sm font-semibold mb-3">{section.category}</h3>
+              <h3 className="mb-3 text-sm font-semibold">{section.category}</h3>
               <div className="space-y-2">
                 {section.items.map((item, index) => (
                   <div key={index} className="flex items-center justify-between py-2 text-sm">
@@ -63,7 +70,7 @@ export function KeyboardShortcuts({ open, onOpenChange }: KeyboardShortcutsProps
                       {item.keys.map((key, keyIndex) => (
                         <kbd
                           key={keyIndex}
-                          className="pointer-events-none inline-flex h-6 select-none items-center gap-1 rounded border bg-muted px-2 font-mono text-xs font-medium text-muted-foreground"
+                          className="bg-muted text-muted-foreground pointer-events-none inline-flex h-6 items-center gap-1 rounded border px-2 font-mono text-xs font-medium select-none"
                         >
                           {key}
                         </kbd>
@@ -72,11 +79,13 @@ export function KeyboardShortcuts({ open, onOpenChange }: KeyboardShortcutsProps
                   </div>
                 ))}
               </div>
-              {section.category !== shortcuts[shortcuts.length - 1].category && <Separator className="mt-4" />}
+              {section.category !== shortcuts[shortcuts.length - 1].category && (
+                <Separator className="mt-4" />
+              )}
             </div>
           ))}
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

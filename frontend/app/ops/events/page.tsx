@@ -1,17 +1,25 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { useRecentEvents, useProjects } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Input } from "@/components/ui/input"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { RefreshCw, Activity } from "lucide-react"
-import { formatTime, formatRelativeTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
-import type { EventFilters } from "@/lib/api/types"
+import { useEffect, useState } from "react";
+
+import { Activity,RefreshCw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useProjects,useRecentEvents } from "@/lib/api";
+import type { EventFilters } from "@/lib/api/types";
+import { formatRelativeTime,formatTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const eventTypeColors: Record<string, string> = {
   onboarding_enqueued: "text-blue-500",
@@ -55,7 +63,7 @@ const eventTypeColors: Record<string, string> = {
   ci_webhook_github_pull_request: "text-purple-500",
   ci_webhook_gitlab_pipeline: "text-purple-500",
   ci_webhook_gitlab_merge_request: "text-purple-500",
-}
+};
 
 const categoryLabels: Record<string, string> = {
   onboarding: "Onboarding",
@@ -67,7 +75,7 @@ const categoryLabels: Record<string, string> = {
   speckit: "SpecKit",
   ci_webhook: "CI/Webhook",
   other: "Other",
-}
+};
 
 const categoryColors: Record<string, string> = {
   onboarding: "text-sky-500",
@@ -79,7 +87,7 @@ const categoryColors: Record<string, string> = {
   speckit: "text-cyan-500",
   ci_webhook: "text-fuchsia-500",
   other: "text-muted-foreground",
-}
+};
 
 const eventTypeOptions = [
   "onboarding_enqueued",
@@ -121,7 +129,7 @@ const eventTypeOptions = [
   "ci_webhook_github_pull_request",
   "ci_webhook_gitlab_pipeline",
   "ci_webhook_gitlab_merge_request",
-]
+];
 
 const categoryOptions = [
   "onboarding",
@@ -133,78 +141,84 @@ const categoryOptions = [
   "speckit",
   "ci_webhook",
   "other",
-]
+];
 
-const PRESETS_STORAGE_KEY = "devgodzilla_ops_events_presets_v1"
-const SETTINGS_STORAGE_KEY = "devgodzilla_ops_events_settings_v1"
-const DEFAULT_REFRESH_MS = 10000
+const PRESETS_STORAGE_KEY = "devgodzilla_ops_events_presets_v1";
+const SETTINGS_STORAGE_KEY = "devgodzilla_ops_events_settings_v1";
+const DEFAULT_REFRESH_MS = 10000;
 
 export default function EventsPage() {
-  const [filters, setFilters] = useState<EventFilters>({ limit: 50, categories: [] })
-  const [presetName, setPresetName] = useState("")
-  const [selectedPreset, setSelectedPreset] = useState<string>("")
-  const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(new Set())
+  const [filters, setFilters] = useState<EventFilters>({ limit: 50, categories: [] });
+  const [presetName, setPresetName] = useState("");
+  const [selectedPreset, setSelectedPreset] = useState<string>("");
+  const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(new Set());
   const [presets, setPresets] = useState<Array<{ name: string; filters: EventFilters }>>(() => {
-    if (typeof window === "undefined") return []
+    if (typeof window === "undefined") return [];
     try {
-      const stored = localStorage.getItem(PRESETS_STORAGE_KEY)
-      if (!stored) return []
-      const parsed = JSON.parse(stored) as Array<{ name: string; filters: EventFilters }>
-      return Array.isArray(parsed) ? parsed.filter((preset) => preset?.name) : []
+      const stored = localStorage.getItem(PRESETS_STORAGE_KEY);
+      if (!stored) return [];
+      const parsed = JSON.parse(stored) as Array<{ name: string; filters: EventFilters }>;
+      return Array.isArray(parsed) ? parsed.filter((preset) => preset?.name) : [];
     } catch {
-      return []
+      return [];
     }
-  })
+  });
   const [refreshIntervalMs, setRefreshIntervalMs] = useState<number>(() => {
-    if (typeof window === "undefined") return DEFAULT_REFRESH_MS
+    if (typeof window === "undefined") return DEFAULT_REFRESH_MS;
     try {
-      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
-      if (!stored) return DEFAULT_REFRESH_MS
-      const parsed = JSON.parse(stored) as { refreshIntervalMs?: number }
-      return typeof parsed.refreshIntervalMs === "number" ? parsed.refreshIntervalMs : DEFAULT_REFRESH_MS
+      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!stored) return DEFAULT_REFRESH_MS;
+      const parsed = JSON.parse(stored) as { refreshIntervalMs?: number };
+      return typeof parsed.refreshIntervalMs === "number"
+        ? parsed.refreshIntervalMs
+        : DEFAULT_REFRESH_MS;
     } catch {
-      return DEFAULT_REFRESH_MS
+      return DEFAULT_REFRESH_MS;
     }
-  })
+  });
 
-  const { data: events, isLoading, refetch } = useRecentEvents(filters, { refetchIntervalMs: refreshIntervalMs })
-  const { data: projects } = useProjects()
+  const {
+    data: events,
+    isLoading,
+    refetch,
+  } = useRecentEvents(filters, { refetchIntervalMs: refreshIntervalMs });
+  const { data: projects } = useProjects();
 
   useEffect(() => {
-    if (typeof window === "undefined") return
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ refreshIntervalMs }))
-  }, [refreshIntervalMs])
+    if (typeof window === "undefined") return;
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ refreshIntervalMs }));
+  }, [refreshIntervalMs]);
 
   const toggleCategory = (category: string) => {
     setFilters((current) => {
-      const next = new Set(current.categories ?? [])
+      const next = new Set(current.categories ?? []);
       if (next.has(category)) {
-        next.delete(category)
+        next.delete(category);
       } else {
-        next.add(category)
+        next.add(category);
       }
-      return { ...current, categories: Array.from(next).sort() }
-    })
-  }
+      return { ...current, categories: Array.from(next).sort() };
+    });
+  };
 
   const toggleEventDetails = (eventId: number) => {
     setExpandedEventIds((current) => {
-      const next = new Set(current)
+      const next = new Set(current);
       if (next.has(eventId)) {
-        next.delete(eventId)
+        next.delete(eventId);
       } else {
-        next.add(eventId)
+        next.add(eventId);
       }
-      return next
-    })
-  }
+      return next;
+    });
+  };
 
   const persistPresets = (nextPresets: Array<{ name: string; filters: EventFilters }>) => {
-    setPresets(nextPresets)
+    setPresets(nextPresets);
     if (typeof window !== "undefined") {
-      localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(nextPresets))
+      localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(nextPresets));
     }
-  }
+  };
 
   const normalizeFilters = (value: EventFilters): EventFilters => ({
     project_id: typeof value.project_id === "number" ? value.project_id : undefined,
@@ -212,43 +226,43 @@ export default function EventsPage() {
     event_type: typeof value.event_type === "string" ? value.event_type : undefined,
     categories: Array.isArray(value.categories) ? value.categories.filter(Boolean).sort() : [],
     limit: typeof value.limit === "number" ? value.limit : 50,
-  })
+  });
 
   const handleSavePreset = () => {
-    const name = presetName.trim()
-    if (!name) return
-    const normalized = normalizeFilters(filters)
-    const updated = presets.filter((preset) => preset.name !== name)
-    updated.unshift({ name, filters: normalized })
-    persistPresets(updated.slice(0, 20))
-    setSelectedPreset(name)
-  }
+    const name = presetName.trim();
+    if (!name) return;
+    const normalized = normalizeFilters(filters);
+    const updated = presets.filter((preset) => preset.name !== name);
+    updated.unshift({ name, filters: normalized });
+    persistPresets(updated.slice(0, 20));
+    setSelectedPreset(name);
+  };
 
   const handleApplyPreset = (name: string) => {
     if (name === "none") {
-      setSelectedPreset("")
-      return
+      setSelectedPreset("");
+      return;
     }
-    setSelectedPreset(name)
-    const preset = presets.find((item) => item.name === name)
+    setSelectedPreset(name);
+    const preset = presets.find((item) => item.name === name);
     if (preset) {
-      setFilters(normalizeFilters(preset.filters))
-      setPresetName(preset.name)
+      setFilters(normalizeFilters(preset.filters));
+      setPresetName(preset.name);
     }
-  }
+  };
 
   const handleDeletePreset = () => {
-    if (!selectedPreset) return
-    const updated = presets.filter((preset) => preset.name !== selectedPreset)
-    persistPresets(updated)
-    setSelectedPreset("")
-  }
+    if (!selectedPreset) return;
+    const updated = presets.filter((preset) => preset.name !== selectedPreset);
+    persistPresets(updated);
+    setSelectedPreset("");
+  };
 
   const resetFilters = () => {
-    setFilters({ limit: 50, categories: [] })
-    setSelectedPreset("")
-    setPresetName("")
-  }
+    setFilters({ limit: 50, categories: [] });
+    setSelectedPreset("");
+    setPresetName("");
+  };
 
   return (
     <div className="space-y-6">
@@ -316,7 +330,9 @@ export default function EventsPage() {
 
         <Select
           value={filters.event_type || "all"}
-          onValueChange={(v) => setFilters((f) => ({ ...f, event_type: v === "all" ? undefined : v }))}
+          onValueChange={(v) =>
+            setFilters((f) => ({ ...f, event_type: v === "all" ? undefined : v }))
+          }
         >
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Event Type" />
@@ -339,7 +355,10 @@ export default function EventsPage() {
           onChange={(e) => setFilters((f) => ({ ...f, limit: Number(e.target.value) || 50 }))}
         />
 
-        <Select value={String(refreshIntervalMs)} onValueChange={(v) => setRefreshIntervalMs(Number(v))}>
+        <Select
+          value={String(refreshIntervalMs)}
+          onValueChange={(v) => setRefreshIntervalMs(Number(v))}
+        >
           <SelectTrigger className="w-36">
             <SelectValue placeholder="Refresh" />
           </SelectTrigger>
@@ -355,7 +374,7 @@ export default function EventsPage() {
 
       <div className="flex flex-wrap gap-2">
         {categoryOptions.map((category) => {
-          const selected = filters.categories?.includes(category)
+          const selected = filters.categories?.includes(category);
           return (
             <Button
               key={category}
@@ -365,14 +384,18 @@ export default function EventsPage() {
             >
               {categoryLabels[category] ?? category}
             </Button>
-          )
+          );
         })}
       </div>
 
       {isLoading ? (
         <LoadingState message="Loading events..." />
       ) : !events || events.length === 0 ? (
-        <EmptyState icon={Activity} title="No events" description="No events match your filter criteria." />
+        <EmptyState
+          icon={Activity}
+          title="No events"
+          description="No events match your filter criteria."
+        />
       ) : (
         <Card>
           <CardHeader>
@@ -381,34 +404,36 @@ export default function EventsPage() {
           <CardContent>
             <div className="space-y-4">
               {events.map((event) => {
-                const category = event.event_category || "other"
+                const category = event.event_category || "other";
                 const color =
-                  eventTypeColors[event.event_type] || categoryColors[category] || "text-muted-foreground"
-                const hasMetadata = event.metadata && Object.keys(event.metadata).length > 0
-                const isExpanded = expandedEventIds.has(event.id)
+                  eventTypeColors[event.event_type] ||
+                  categoryColors[category] ||
+                  "text-muted-foreground";
+                const hasMetadata = event.metadata && Object.keys(event.metadata).length > 0;
+                const isExpanded = expandedEventIds.has(event.id);
 
                 return (
-                  <div key={event.id} className="flex gap-4 items-start">
-                    <div className="text-sm text-muted-foreground min-w-24 font-mono">
+                  <div key={event.id} className="flex items-start gap-4">
+                    <div className="text-muted-foreground min-w-24 font-mono text-sm">
                       {formatTime(event.created_at)}
                     </div>
                     <div className="relative flex-shrink-0">
-                      <div className="h-3 w-3 rounded-full bg-muted border-2 border-background" />
-                      <div className="absolute top-3 bottom-0 left-1/2 -translate-x-1/2 w-px bg-border h-full" />
+                      <div className="bg-muted border-background h-3 w-3 rounded-full border-2" />
+                      <div className="bg-border absolute top-3 bottom-0 left-1/2 h-full w-px -translate-x-1/2" />
                     </div>
                     <div className="flex-1 pb-4">
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className={cn("font-mono text-sm", color)}>{event.event_type}</span>
-                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                        <span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 text-xs">
                           {categoryLabels[category] ?? category}
                         </span>
                         {event.project_name && (
-                          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          <span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 text-xs">
                             {event.project_name}
                           </span>
                         )}
                         {event.protocol_name && (
-                          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          <span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 text-xs">
                             {event.protocol_name}
                           </span>
                         )}
@@ -416,27 +441,29 @@ export default function EventsPage() {
                           <button
                             type="button"
                             onClick={() => toggleEventDetails(event.id)}
-                            className="text-xs text-muted-foreground hover:text-foreground"
+                            className="text-muted-foreground hover:text-foreground text-xs"
                           >
                             {isExpanded ? "Hide details" : "Details"}
                           </button>
                         )}
                       </div>
-                      <p className="text-sm mt-1">{event.message}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{formatRelativeTime(event.created_at)}</p>
+                      <p className="mt-1 text-sm">{event.message}</p>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        {formatRelativeTime(event.created_at)}
+                      </p>
                       {hasMetadata && isExpanded && (
-                        <pre className="mt-3 text-xs bg-muted rounded p-3 whitespace-pre-wrap break-words">
+                        <pre className="bg-muted mt-3 rounded p-3 text-xs break-words whitespace-pre-wrap">
                           {JSON.stringify(event.metadata, null, 2)}
                         </pre>
                       )}
                     </div>
                   </div>
-                )
+                );
               })}
             </div>
           </CardContent>
         </Card>
       )}
     </div>
-  )
+  );
 }

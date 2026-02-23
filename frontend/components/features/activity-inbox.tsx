@@ -1,23 +1,25 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Bell, Check, Clock, AlertCircle, GitPullRequest, X } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
+import { useState } from "react";
+
+import { AlertCircle, Bell, Check, Clock, GitPullRequest, X } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 interface Notification {
-  id: string
-  type: "protocol" | "clarification" | "job" | "pr" | "ci"
-  title: string
-  message: string
-  timestamp: string
-  read: boolean
-  link?: string
+  id: string;
+  type: "protocol" | "clarification" | "job" | "pr" | "ci";
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  link?: string;
 }
 
-const NOW = Date.now()
+const NOW = Date.now();
 
 const DEFAULT_NOTIFICATIONS: Notification[] = [
   {
@@ -52,45 +54,45 @@ const DEFAULT_NOTIFICATIONS: Notification[] = [
     timestamp: new Date(NOW - 60 * 60000).toISOString(),
     read: true,
   },
-]
+];
 
 export function ActivityInbox() {
-  const [notifications, setNotifications] = useState<Notification[]>(DEFAULT_NOTIFICATIONS)
+  const [notifications, setNotifications] = useState<Notification[]>(DEFAULT_NOTIFICATIONS);
 
-  const unreadCount = notifications.filter((n) => !n.read).length
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const markAsRead = (id: string) => {
-    setNotifications(notifications.map((n) => (n.id === id ? { ...n, read: true } : n)))
-  }
+    setNotifications(notifications.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  };
 
   const markAllAsRead = () => {
-    setNotifications(notifications.map((n) => ({ ...n, read: true })))
-  }
+    setNotifications(notifications.map((n) => ({ ...n, read: true })));
+  };
 
   const dismissNotification = (id: string) => {
-    setNotifications(notifications.filter((n) => n.id !== id))
-  }
+    setNotifications(notifications.filter((n) => n.id !== id));
+  };
 
   const getIcon = (type: Notification["type"]) => {
     switch (type) {
       case "protocol":
-        return Clock
+        return Clock;
       case "clarification":
-        return AlertCircle
+        return AlertCircle;
       case "job":
-        return AlertCircle
+        return AlertCircle;
       case "pr":
-        return GitPullRequest
+        return GitPullRequest;
       case "ci":
-        return Check
+        return Check;
       default:
-        return Bell
+        return Bell;
     }
-  }
+  };
 
   return (
-    <div className="flex flex-col h-full w-96 border-l bg-background">
-      <div className="flex items-center justify-between p-4 border-b">
+    <div className="bg-background flex h-full w-96 flex-col border-l">
+      <div className="flex items-center justify-between border-b p-4">
         <div className="flex items-center gap-2">
           <Bell className="h-5 w-5" />
           <h2 className="font-semibold">Notifications</h2>
@@ -110,11 +112,14 @@ export function ActivityInbox() {
       <ScrollArea className="flex-1">
         <div className="divide-y">
           {notifications.map((notification) => {
-            const Icon = getIcon(notification.type)
+            const Icon = getIcon(notification.type);
             return (
               <div
                 key={notification.id}
-                className={cn("p-4 hover:bg-muted/50 transition-colors group", !notification.read && "bg-blue-500/5")}
+                className={cn(
+                  "hover:bg-muted/50 group p-4 transition-colors",
+                  !notification.read && "bg-blue-500/5"
+                )}
               >
                 <div className="flex gap-3">
                   <div
@@ -123,26 +128,28 @@ export function ActivityInbox() {
                       notification.type === "job" && "text-red-500",
                       notification.type === "clarification" && "text-yellow-500",
                       notification.type === "protocol" && "text-blue-500",
-                      notification.type === "pr" && "text-green-500",
+                      notification.type === "pr" && "text-green-500"
                     )}
                   >
                     <Icon className="h-5 w-5" />
                   </div>
                   <div className="flex-1 space-y-1">
                     <div className="flex items-start justify-between">
-                      <p className={cn("text-sm font-medium", !notification.read && "font-semibold")}>
+                      <p
+                        className={cn("text-sm font-medium", !notification.read && "font-semibold")}
+                      >
                         {notification.title}
                       </p>
                       <button
                         onClick={() => dismissNotification(notification.id)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="opacity-0 transition-opacity group-hover:opacity-100"
                       >
-                        <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                        <X className="text-muted-foreground hover:text-foreground h-4 w-4" />
                       </button>
                     </div>
-                    <p className="text-sm text-muted-foreground">{notification.message}</p>
+                    <p className="text-muted-foreground text-sm">{notification.message}</p>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-muted-foreground text-xs">
                         {new Date(notification.timestamp).toLocaleTimeString()}
                       </span>
                       {!notification.read && (
@@ -159,10 +166,10 @@ export function ActivityInbox() {
                   </div>
                 </div>
               </div>
-            )
+            );
           })}
         </div>
       </ScrollArea>
     </div>
-  )
+  );
 }

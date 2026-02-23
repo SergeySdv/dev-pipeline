@@ -1,41 +1,47 @@
-"use client"
+"use client";
 
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  Bug,
+  AlertTriangle,
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
   BookOpen,
-  Zap,
+  Bug,
   CheckSquare,
   Layers,
-  AlertTriangle,
-  ArrowUp,
-  ArrowRight,
-  ArrowDown,
-} from "lucide-react"
-import type {
-  AgileTaskCreate,
-  TaskType,
+  Zap,
+} from "lucide-react";
+
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import type { AgileTaskCreate, TaskBoardStatus,TaskPriority, TaskType } from "@/lib/api/types";
+
+export const taskTypeConfig: Record<TaskType, { icon: typeof Bug; label: string; color: string }> =
+  {
+    bug: { icon: Bug, label: "Bug", color: "text-red-500" },
+    story: { icon: BookOpen, label: "Story", color: "text-blue-500" },
+    task: { icon: CheckSquare, label: "Task", color: "text-green-500" },
+    spike: { icon: Zap, label: "Spike", color: "text-purple-500" },
+    epic: { icon: Layers, label: "Epic", color: "text-amber-500" },
+  };
+
+export const priorityConfig: Record<
   TaskPriority,
-  TaskBoardStatus,
-} from "@/lib/api/types"
-
-export const taskTypeConfig: Record<TaskType, { icon: typeof Bug; label: string; color: string }> = {
-  bug: { icon: Bug, label: "Bug", color: "text-red-500" },
-  story: { icon: BookOpen, label: "Story", color: "text-blue-500" },
-  task: { icon: CheckSquare, label: "Task", color: "text-green-500" },
-  spike: { icon: Zap, label: "Spike", color: "text-purple-500" },
-  epic: { icon: Layers, label: "Epic", color: "text-amber-500" },
-}
-
-export const priorityConfig: Record<TaskPriority, { icon: typeof AlertTriangle; label: string; color: string }> = {
+  { icon: typeof AlertTriangle; label: string; color: string }
+> = {
   critical: { icon: AlertTriangle, label: "Critical", color: "text-red-500" },
   high: { icon: ArrowUp, label: "High", color: "text-orange-500" },
   medium: { icon: ArrowRight, label: "Medium", color: "text-yellow-500" },
   low: { icon: ArrowDown, label: "Low", color: "text-blue-500" },
-}
+};
 
 export const statusOptions: { value: TaskBoardStatus; label: string }[] = [
   { value: "backlog", label: "Backlog" },
@@ -44,30 +50,30 @@ export const statusOptions: { value: TaskBoardStatus; label: string }[] = [
   { value: "review", label: "Review" },
   { value: "testing", label: "Testing" },
   { value: "done", label: "Done" },
-]
+];
 
 export interface TaskFormProps {
-  formData: AgileTaskCreate
-  onFormChange: (data: AgileTaskCreate) => void
-  isReadOnly?: boolean
+  formData: AgileTaskCreate;
+  onFormChange: (data: AgileTaskCreate) => void;
+  isReadOnly?: boolean;
 }
 
 export interface TaskFormValidationResult {
-  isValid: boolean
-  errors: Record<string, string>
+  isValid: boolean;
+  errors: Record<string, string>;
 }
 
 export function validateTaskForm(formData: AgileTaskCreate): TaskFormValidationResult {
-  const errors: Record<string, string> = {}
-  
+  const errors: Record<string, string> = {};
+
   if (!formData.title || !formData.title.trim()) {
-    errors.title = "Title is required"
+    errors.title = "Title is required";
   }
-  
+
   return {
     isValid: Object.keys(errors).length === 0,
     errors,
-  }
+  };
 }
 
 export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFormProps) {
@@ -109,7 +115,7 @@ export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFor
           </SelectTrigger>
           <SelectContent>
             {Object.entries(taskTypeConfig).map(([key, config]) => {
-              const Icon = config.icon
+              const Icon = config.icon;
               return (
                 <SelectItem key={key} value={key}>
                   <div className="flex items-center gap-2">
@@ -117,7 +123,7 @@ export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFor
                     {config.label}
                   </div>
                 </SelectItem>
-              )
+              );
             })}
           </SelectContent>
         </Select>
@@ -135,7 +141,7 @@ export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFor
           </SelectTrigger>
           <SelectContent>
             {Object.entries(priorityConfig).map(([key, config]) => {
-              const Icon = config.icon
+              const Icon = config.icon;
               return (
                 <SelectItem key={key} value={key}>
                   <div className="flex items-center gap-2">
@@ -143,7 +149,7 @@ export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFor
                     {config.label}
                   </div>
                 </SelectItem>
-              )
+              );
             })}
           </SelectContent>
         </Select>
@@ -153,7 +159,9 @@ export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFor
         <Label>Status</Label>
         <Select
           value={formData.board_status}
-          onValueChange={(value: TaskBoardStatus) => onFormChange({ ...formData, board_status: value })}
+          onValueChange={(value: TaskBoardStatus) =>
+            onFormChange({ ...formData, board_status: value })
+          }
           disabled={isReadOnly}
         >
           <SelectTrigger>
@@ -169,5 +177,5 @@ export function TaskForm({ formData, onFormChange, isReadOnly = false }: TaskFor
         </Select>
       </div>
     </div>
-  )
+  );
 }

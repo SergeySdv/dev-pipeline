@@ -1,27 +1,32 @@
-"use client"
+"use client";
 
-import { useProtocolSpec } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { CodeBlock } from "@/components/ui/code-block"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { FileJson } from "lucide-react"
-import { truncateHash, formatDateTime } from "@/lib/format"
+import { FileJson } from "lucide-react";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { useProtocolSpec } from "@/lib/api";
+import { formatDateTime,truncateHash } from "@/lib/format";
 
 interface SpecTabProps {
-  protocolId: number
+  protocolId: number;
 }
 
 export function SpecTab({ protocolId }: SpecTabProps) {
-  const { data: spec, isLoading } = useProtocolSpec(protocolId)
+  const { data: spec, isLoading } = useProtocolSpec(protocolId);
 
-  if (isLoading) return <LoadingState message="Loading spec..." />
+  if (isLoading) return <LoadingState message="Loading spec..." />;
 
   if (!spec) {
     return (
-      <EmptyState icon={FileJson} title="No spec available" description="Protocol spec has not been generated yet." />
-    )
+      <EmptyState
+        icon={FileJson}
+        title="No spec available"
+        description="Protocol spec has not been generated yet."
+      />
+    );
   }
 
   return (
@@ -53,5 +58,5 @@ export function SpecTab({ protocolId }: SpecTabProps) {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

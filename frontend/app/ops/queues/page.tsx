@@ -1,24 +1,34 @@
-"use client"
+"use client";
 
-import { useQueueStats, useQueueJobs } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { DataTable } from "@/components/ui/data-table"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { RefreshCw, Inbox } from "lucide-react"
-import { formatRelativeTime } from "@/lib/format"
-import { useState } from "react"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { QueueJob } from "@/lib/api/types"
+import { useState } from "react";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { Inbox,RefreshCw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { StatusPill } from "@/components/ui/status-pill";
+import { useQueueJobs,useQueueStats } from "@/lib/api";
+import type { QueueJob } from "@/lib/api/types";
+import { formatRelativeTime } from "@/lib/format";
 
 const jobColumns: ColumnDef<QueueJob>[] = [
   {
     accessorKey: "job_id",
     header: "Job ID",
-    cell: ({ row }) => <span className="font-mono text-sm">{row.original.job_id.slice(0, 12)}...</span>,
+    cell: ({ row }) => (
+      <span className="font-mono text-sm">{row.original.job_id.slice(0, 12)}...</span>
+    ),
   },
   {
     accessorKey: "job_type",
@@ -33,7 +43,9 @@ const jobColumns: ColumnDef<QueueJob>[] = [
   {
     accessorKey: "enqueued_at",
     header: "Enqueued",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatRelativeTime(row.original.enqueued_at)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatRelativeTime(row.original.enqueued_at)}</span>
+    ),
   },
   {
     accessorKey: "started_at",
@@ -44,21 +56,21 @@ const jobColumns: ColumnDef<QueueJob>[] = [
       </span>
     ),
   },
-]
+];
 
 export default function QueuesPage() {
-  const [statusFilter, setStatusFilter] = useState<string>("all")
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useQueueStats()
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useQueueStats();
   const {
     data: jobs,
     isLoading: jobsLoading,
     refetch: refetchJobs,
-  } = useQueueJobs(statusFilter === "all" ? undefined : statusFilter)
+  } = useQueueJobs(statusFilter === "all" ? undefined : statusFilter);
 
   const handleRefresh = () => {
-    refetchStats()
-    refetchJobs()
-  }
+    refetchStats();
+    refetchJobs();
+  };
 
   return (
     <div className="space-y-6">
@@ -75,8 +87,9 @@ export default function QueuesPage() {
       ) : stats && stats.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-3">
           {stats.map((queue) => {
-            const total = queue.queued + queue.started + queue.failed
-            const healthPercent = total > 0 ? Math.round(((queue.queued + queue.started) / total) * 100) : 100
+            const total = queue.queued + queue.started + queue.failed;
+            const healthPercent =
+              total > 0 ? Math.round(((queue.queued + queue.started) / total) * 100) : 100;
 
             return (
               <Card key={queue.name}>
@@ -94,14 +107,14 @@ export default function QueuesPage() {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Failed</span>
-                    <span className="font-medium text-destructive">{queue.failed}</span>
+                    <span className="text-destructive font-medium">{queue.failed}</span>
                   </div>
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">Health</span>
                       <span>{healthPercent}%</span>
                     </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="bg-muted h-2 overflow-hidden rounded-full">
                       <div
                         className={`h-full transition-all ${healthPercent > 80 ? "bg-green-500" : healthPercent > 50 ? "bg-yellow-500" : "bg-destructive"}`}
                         style={{ width: `${healthPercent}%` }}
@@ -110,7 +123,7 @@ export default function QueuesPage() {
                   </div>
                 </CardContent>
               </Card>
-            )
+            );
           })}
         </div>
       ) : (
@@ -136,11 +149,22 @@ export default function QueuesPage() {
         {jobsLoading ? (
           <LoadingState message="Loading jobs..." />
         ) : !jobs || jobs.length === 0 ? (
-          <EmptyState icon={Inbox} title="No jobs" description="No jobs match your filter criteria." />
+          <EmptyState
+            icon={Inbox}
+            title="No jobs"
+            description="No jobs match your filter criteria."
+          />
         ) : (
-          <DataTable columns={jobColumns} data={jobs} enableSearch enableExport enableColumnFilters exportFilename="queue-jobs.csv" />
+          <DataTable
+            columns={jobColumns}
+            data={jobs}
+            enableSearch
+            enableExport
+            enableColumnFilters
+            exportFilename="queue-jobs.csv"
+          />
         )}
       </div>
     </div>
-  )
+  );
 }

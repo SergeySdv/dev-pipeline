@@ -1,98 +1,119 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import Link from "next/link"
-import { useRouter } from "next/navigation"
-import { toast } from "sonner"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Separator } from "@/components/ui/separator"
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+
 import {
-  Wand2,
-  ListTodo,
-  FileText,
-  CheckCircle2,
   AlertCircle,
-  Loader2,
   ArrowRight,
-  Target,
-  Kanban,
-  MessageSquare,
-  ClipboardList,
+  CheckCircle2,
   ClipboardCheck,
+  ClipboardList,
   FileSearch,
+  FileText,
+  Kanban,
+  ListTodo,
+  Loader2,
+  MessageSquare,
   PlayCircle,
-} from "lucide-react"
+  Target,
+  Wand2,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  useProject,
-  useSpecKitStatus,
-  useGenerateTasks,
-  useProjectSpecs,
-  useSprints,
-  useImportTasksToSprint,
-  useClarifySpec,
-  useGenerateChecklist,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import {
   useAnalyzeSpec,
-  useRunImplement,
+  useClarifySpec,
   useCreateProtocolFromSpec,
-} from "@/lib/api"
+  useGenerateChecklist,
+  useGenerateTasks,
+  useImportTasksToSprint,
+  useProject,
+  useProjectSpecs,
+  useRunImplement,
+  useSpecKitStatus,
+  useSprints,
+} from "@/lib/api";
 
 interface ImplementFeatureWizardProps {
-  projectId: number
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  projectId: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: ImplementFeatureWizardProps) {
-  const router = useRouter()
+export function ImplementFeatureWizardModal({
+  projectId,
+  open,
+  onOpenChange,
+}: ImplementFeatureWizardProps) {
+  const router = useRouter();
 
-  const { data: project, isLoading: projectLoading } = useProject(projectId)
-  const { data: specKitStatus, isLoading: statusLoading } = useSpecKitStatus(projectId)
-  const { data: specs, isLoading: specsLoading } = useProjectSpecs(projectId)
-  const { data: sprints, isLoading: sprintsLoading } = useSprints(projectId)
+  const { data: project, isLoading: projectLoading } = useProject(projectId);
+  const { data: specKitStatus, isLoading: statusLoading } = useSpecKitStatus(projectId);
+  const { data: specs, isLoading: specsLoading } = useProjectSpecs(projectId);
+  const { data: sprints, isLoading: sprintsLoading } = useSprints(projectId);
 
-  const generateTasks = useGenerateTasks()
-  const importTasks = useImportTasksToSprint(projectId)
-  const clarifySpec = useClarifySpec()
-  const generateChecklist = useGenerateChecklist()
-  const analyzeSpec = useAnalyzeSpec()
-  const runImplement = useRunImplement()
-  const createProtocolFromSpec = useCreateProtocolFromSpec()
+  const generateTasks = useGenerateTasks();
+  const importTasks = useImportTasksToSprint(projectId);
+  const clarifySpec = useClarifySpec();
+  const generateChecklist = useGenerateChecklist();
+  const analyzeSpec = useAnalyzeSpec();
+  const runImplement = useRunImplement();
+  const createProtocolFromSpec = useCreateProtocolFromSpec();
 
-  const [selectedSpec, setSelectedSpec] = useState<string>("")
-  const noSprintValue = "__backlog__"
-  const [targetSprint, setTargetSprint] = useState<string>(noSprintValue)
-  const [generatedTasksPath, setGeneratedTasksPath] = useState<string | null>(null)
-  const [clarifyOpen, setClarifyOpen] = useState(false)
-  const [clarifyQuestion, setClarifyQuestion] = useState("")
-  const [clarifyAnswer, setClarifyAnswer] = useState("")
-  const [clarifyNotes, setClarifyNotes] = useState("")
+  const [selectedSpec, setSelectedSpec] = useState<string>("");
+  const noSprintValue = "__backlog__";
+  const [targetSprint, setTargetSprint] = useState<string>(noSprintValue);
+  const [generatedTasksPath, setGeneratedTasksPath] = useState<string | null>(null);
+  const [clarifyOpen, setClarifyOpen] = useState(false);
+  const [clarifyQuestion, setClarifyQuestion] = useState("");
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
+  const [clarifyNotes, setClarifyNotes] = useState("");
 
-  const isLoading = projectLoading || statusLoading || specsLoading || sprintsLoading
-  const isInitialized = specKitStatus?.initialized ?? false
+  const isLoading = projectLoading || statusLoading || specsLoading || sprintsLoading;
+  const isInitialized = specKitStatus?.initialized ?? false;
 
   const availableSpecs =
-    specs?.filter((spec) => spec.status !== "cleaned" && spec.has_plan && !!spec.plan_path && !spec.has_tasks) || []
-  const specsWithTasks = specs?.filter((spec) => spec.status !== "cleaned" && spec.has_tasks) || []
-  const activeSprints = sprints?.filter((sprint) => sprint.status === "active" || sprint.status === "planning") || []
-  const defaultSpec = availableSpecs[0]?.plan_path || ""
-  const effectiveSpec = selectedSpec || defaultSpec
-  const selectedSpecMeta = specs?.find((spec) => spec.plan_path === effectiveSpec) || null
-  const selectedSpecPath = selectedSpecMeta?.spec_path || ""
-  const selectedTasksPath = selectedSpecMeta?.tasks_path || generatedTasksPath || null
-  const selectedSpecRunId = selectedSpecMeta?.spec_run_id ?? null
+    specs?.filter(
+      (spec) => spec.status !== "cleaned" && spec.has_plan && !!spec.plan_path && !spec.has_tasks
+    ) || [];
+  const specsWithTasks = specs?.filter((spec) => spec.status !== "cleaned" && spec.has_tasks) || [];
+  const activeSprints =
+    sprints?.filter((sprint) => sprint.status === "active" || sprint.status === "planning") || [];
+  const defaultSpec = availableSpecs[0]?.plan_path || "";
+  const effectiveSpec = selectedSpec || defaultSpec;
+  const selectedSpecMeta = specs?.find((spec) => spec.plan_path === effectiveSpec) || null;
+  const selectedSpecPath = selectedSpecMeta?.spec_path || "";
+  const selectedTasksPath = selectedSpecMeta?.tasks_path || generatedTasksPath || null;
+  const selectedSpecRunId = selectedSpecMeta?.spec_run_id ?? null;
 
   const handleGenerate = async () => {
     if (!effectiveSpec) {
-      toast.error("Please select a specification to generate tasks for")
-      return
+      toast.error("Please select a specification to generate tasks for");
+      return;
     }
 
     try {
@@ -100,81 +121,85 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         project_id: projectId,
         plan_path: effectiveSpec,
         spec_run_id: selectedSpecRunId ?? undefined,
-      })
+      });
 
       if (result.success) {
-        toast.success(`Generated ${result.task_count} tasks (${result.parallelizable_count} parallelizable)`)
+        toast.success(
+          `Generated ${result.task_count} tasks (${result.parallelizable_count} parallelizable)`
+        );
         if (result.tasks_path) {
-          setGeneratedTasksPath(result.tasks_path)
+          setGeneratedTasksPath(result.tasks_path);
         }
 
         if (targetSprint !== noSprintValue && result.tasks_path) {
           try {
             await importTasks.mutateAsync(Number.parseInt(targetSprint, 10), {
               spec_path: result.tasks_path,
-            })
-            toast.success("Tasks imported to execution sprint")
-            router.push(`/projects/${projectId}/execution?sprint=${targetSprint}`)
-            onOpenChange(false)
+            });
+            toast.success("Tasks imported to execution sprint");
+            router.push(`/projects/${projectId}/execution?sprint=${targetSprint}`);
+            onOpenChange(false);
           } catch {
-            toast.error("Tasks generated, but execution import failed")
-            router.push(`/projects/${projectId}?tab=spec&tasks=${result.tasks_path}`)
-            onOpenChange(false)
+            toast.error("Tasks generated, but execution import failed");
+            router.push(`/projects/${projectId}?tab=spec&tasks=${result.tasks_path}`);
+            onOpenChange(false);
           }
-          return
+          return;
         }
         if (result.tasks_path) {
-          router.push(`/projects/${projectId}?tab=spec&tasks=${result.tasks_path}`)
+          router.push(`/projects/${projectId}?tab=spec&tasks=${result.tasks_path}`);
         }
-        onOpenChange(false)
+        onOpenChange(false);
       } else {
-        toast.error(result.error || "Failed to generate tasks")
+        toast.error(result.error || "Failed to generate tasks");
       }
     } catch {
-      toast.error("Failed to generate tasks")
+      toast.error("Failed to generate tasks");
     }
-  }
+  };
 
   const handleClarify = async () => {
     if (!selectedSpecPath) {
-      toast.error("Select a specification to clarify")
-      return
+      toast.error("Select a specification to clarify");
+      return;
     }
 
-    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim()
-    const hasNotes = clarifyNotes.trim()
+    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim();
+    const hasNotes = clarifyNotes.trim();
 
     if (!hasEntry && !hasNotes) {
-      toast.error("Provide a question/answer or notes")
-      return
+      toast.error("Provide a question/answer or notes");
+      return;
     }
 
     try {
       const result = await clarifySpec.mutateAsync({
         project_id: projectId,
         spec_path: selectedSpecPath,
-        entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
+        entries: hasEntry
+          ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }]
+          : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
         spec_run_id: selectedSpecRunId ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success(`Clarifications added (${result.clarifications_added})`)
-        setClarifyOpen(false)
-        setClarifyQuestion("")
-        setClarifyAnswer("")
-        setClarifyNotes("")
+        toast.success(`Clarifications added (${result.clarifications_added})`);
+        setClarifyOpen(false);
+        setClarifyQuestion("");
+        setClarifyAnswer("");
+        setClarifyNotes("");
       } else {
-        toast.error(result.error || "Clarification failed")
+        toast.error(result.error || "Clarification failed");
       }
     } catch {
-      toast.error("Clarification failed")
+      toast.error("Clarification failed");
     }
-  }
+  };
 
   const handleChecklist = async () => {
     if (!selectedSpecPath) {
-      toast.error("Select a specification to run checklist")
-      return
+      toast.error("Select a specification to run checklist");
+      return;
     }
 
     try {
@@ -182,21 +207,21 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         project_id: projectId,
         spec_path: selectedSpecPath,
         spec_run_id: selectedSpecRunId ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success(`Checklist generated (${result.item_count} items)`)
+        toast.success(`Checklist generated (${result.item_count} items)`);
       } else {
-        toast.error(result.error || "Checklist generation failed")
+        toast.error(result.error || "Checklist generation failed");
       }
     } catch {
-      toast.error("Checklist generation failed")
+      toast.error("Checklist generation failed");
     }
-  }
+  };
 
   const handleAnalyze = async () => {
     if (!selectedSpecPath) {
-      toast.error("Select a specification to analyze")
-      return
+      toast.error("Select a specification to analyze");
+      return;
     }
 
     try {
@@ -206,21 +231,21 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         plan_path: effectiveSpec || undefined,
         tasks_path: selectedTasksPath || undefined,
         spec_run_id: selectedSpecRunId ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success("Analysis report generated")
+        toast.success("Analysis report generated");
       } else {
-        toast.error(result.error || "Analysis failed")
+        toast.error(result.error || "Analysis failed");
       }
     } catch {
-      toast.error("Analysis failed")
+      toast.error("Analysis failed");
     }
-  }
+  };
 
   const handleImplement = async () => {
     if (!selectedSpecPath) {
-      toast.error("Select a specification to implement")
-      return
+      toast.error("Select a specification to implement");
+      return;
     }
 
     try {
@@ -228,21 +253,21 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         project_id: projectId,
         spec_path: selectedSpecPath,
         spec_run_id: selectedSpecRunId ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success("Implementation run initialized")
+        toast.success("Implementation run initialized");
       } else {
-        toast.error(result.error || "Implement init failed")
+        toast.error(result.error || "Implement init failed");
       }
     } catch {
-      toast.error("Implement init failed")
+      toast.error("Implement init failed");
     }
-  }
+  };
 
   const handleCreateProtocol = async () => {
     if (!selectedTasksPath) {
-      toast.error("Generate tasks before creating a protocol")
-      return
+      toast.error("Generate tasks before creating a protocol");
+      return;
     }
     try {
       const result = await createProtocolFromSpec.mutateAsync({
@@ -250,21 +275,21 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         spec_path: selectedSpecPath || undefined,
         tasks_path: selectedTasksPath,
         spec_run_id: selectedSpecRunId ?? undefined,
-      })
+      });
       if (result.success && result.protocol) {
-        toast.success(`Protocol created with ${result.step_count} steps`)
-        router.push(`/protocols/${result.protocol.id}`)
+        toast.success(`Protocol created with ${result.step_count} steps`);
+        router.push(`/protocols/${result.protocol.id}`);
       } else {
-        toast.error(result.error || "Protocol creation failed")
+        toast.error(result.error || "Protocol creation failed");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Protocol creation failed")
+      toast.error(error instanceof Error ? error.message : "Protocol creation failed");
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="6xl" className="h-[90vh] p-0 overflow-hidden">
+      <DialogContent size="6xl" className="h-[90vh] overflow-hidden p-0">
         <div className="flex h-full flex-col">
           <DialogHeader className="border-b px-6 py-4">
             <DialogTitle className="flex items-center gap-2">
@@ -276,10 +301,10 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+          <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
             {isLoading ? (
               <div className="flex items-center justify-center py-16">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
               </div>
             ) : (
               <>
@@ -288,7 +313,10 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     <AlertDescription>
                       SpecKit is not initialized.{" "}
-                      <Link href={`/projects/${projectId}?wizard=generate-specs`} className="underline">
+                      <Link
+                        href={`/projects/${projectId}?wizard=generate-specs`}
+                        className="underline"
+                      >
                         Start with a specification
                       </Link>
                     </AlertDescription>
@@ -300,7 +328,10 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                     <FileText className="h-4 w-4 text-blue-500" />
                     <AlertDescription>
                       No implementation plans found.{" "}
-                      <Link href={`/projects/${projectId}?wizard=design-solution`} className="underline">
+                      <Link
+                        href={`/projects/${projectId}?wizard=design-solution`}
+                        className="underline"
+                      >
                         Create a plan first
                       </Link>
                     </AlertDescription>
@@ -310,25 +341,25 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                 <Card className="border-dashed">
                   <CardContent className="pt-6">
                     <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2 text-muted-foreground">
+                      <div className="text-muted-foreground flex items-center gap-2">
                         <CheckCircle2 className="h-5 w-5 text-green-500" />
                         <span>Specification</span>
                       </div>
-                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                      <div className="flex items-center gap-2 text-muted-foreground">
+                      <ArrowRight className="text-muted-foreground h-4 w-4" />
+                      <div className="text-muted-foreground flex items-center gap-2">
                         <CheckCircle2 className="h-5 w-5 text-green-500" />
                         <span>Plan</span>
                       </div>
-                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                      <ArrowRight className="text-muted-foreground h-4 w-4" />
                       <div className="flex items-center gap-2">
-                        <div className="h-5 w-5 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs font-bold">
+                        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-purple-500 text-xs font-bold text-white">
                           3
                         </div>
                         <span className="font-medium text-purple-600">Task List</span>
                       </div>
-                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-bold">
+                      <ArrowRight className="text-muted-foreground h-4 w-4" />
+                      <div className="text-muted-foreground flex items-center gap-2">
+                        <div className="bg-muted flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold">
                           4
                         </div>
                         <span>Execution</span>
@@ -345,7 +376,9 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                           <ListTodo className="h-5 w-5" />
                           Select Implementation Plan
                         </CardTitle>
-                        <CardDescription>Choose a specification that already has a plan</CardDescription>
+                        <CardDescription>
+                          Choose a specification that already has a plan
+                        </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-4">
                         {availableSpecs.length > 0 ? (
@@ -368,11 +401,11 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                             </SelectContent>
                           </Select>
                         ) : (
-                          <div className="text-center py-6 text-muted-foreground">
-                            <ListTodo className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <div className="text-muted-foreground py-6 text-center">
+                            <ListTodo className="mx-auto mb-2 h-8 w-8 opacity-50" />
                             <p>No plans available for task generation</p>
                             {specsWithTasks.length > 0 && (
-                              <p className="text-sm mt-1">
+                              <p className="mt-1 text-sm">
                                 All {specsWithTasks.length} plans already have tasks generated
                               </p>
                             )}
@@ -380,8 +413,8 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                         )}
 
                         {specsWithTasks.length > 0 && (
-                          <div className="mt-4 pt-4 border-t">
-                            <p className="text-sm font-medium mb-2">Specs with existing tasks:</p>
+                          <div className="mt-4 border-t pt-4">
+                            <p className="mb-2 text-sm font-medium">Specs with existing tasks:</p>
                             <div className="flex flex-wrap gap-2">
                               {specsWithTasks.map((spec) => (
                                 <Badge key={spec.path} variant="outline">
@@ -401,7 +434,9 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                           <ClipboardCheck className="h-5 w-5" />
                           SpecKit Actions
                         </CardTitle>
-                        <CardDescription>Run clarify/checklist/analyze/implement on the selected spec</CardDescription>
+                        <CardDescription>
+                          Run clarify/checklist/analyze/implement on the selected spec
+                        </CardDescription>
                       </CardHeader>
                       <CardContent>
                         <div className="flex flex-wrap gap-2">
@@ -457,7 +492,9 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                           <Kanban className="h-5 w-5" />
                           Assign to Execution (Optional)
                         </CardTitle>
-                        <CardDescription>Optionally assign generated tasks directly to an execution sprint</CardDescription>
+                        <CardDescription>
+                          Optionally assign generated tasks directly to an execution sprint
+                        </CardDescription>
                       </CardHeader>
                       <CardContent>
                         <Select value={targetSprint} onValueChange={setTargetSprint}>
@@ -465,14 +502,18 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                             <SelectValue placeholder="No execution (create in backlog)" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={noSprintValue}>No execution (create in backlog)</SelectItem>
+                            <SelectItem value={noSprintValue}>
+                              No execution (create in backlog)
+                            </SelectItem>
                             <Separator className="my-1" />
                             {activeSprints.map((sprint) => (
                               <SelectItem key={sprint.id} value={sprint.id.toString()}>
                                 <div className="flex items-center gap-2">
                                   <Target className="h-4 w-4 text-purple-500" />
                                   {sprint.name}
-                                  <Badge variant={sprint.status === "active" ? "default" : "secondary"}>
+                                  <Badge
+                                    variant={sprint.status === "active" ? "default" : "secondary"}
+                                  >
                                     {sprint.status}
                                   </Badge>
                                 </div>
@@ -481,7 +522,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                           </SelectContent>
                         </Select>
                         {activeSprints.length === 0 && (
-                          <p className="text-xs text-muted-foreground mt-2">
+                          <p className="text-muted-foreground mt-2 text-xs">
                             No active or planning executions.{" "}
                             <Link href={`/projects/${projectId}/execution`} className="underline">
                               Create an execution sprint first
@@ -491,13 +532,13 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
                       </CardContent>
                     </Card>
 
-                    <Card className="bg-purple-500/5 border-purple-500/20">
+                    <Card className="border-purple-500/20 bg-purple-500/5">
                       <CardContent className="pt-6">
                         <div className="flex items-start gap-4">
-                          <Wand2 className="h-6 w-6 text-purple-500 mt-0.5" />
+                          <Wand2 className="mt-0.5 h-6 w-6 text-purple-500" />
                           <div className="flex-1">
-                            <p className="font-medium mb-2">AI-Powered Task Generation</p>
-                            <p className="text-sm text-muted-foreground mb-4">
+                            <p className="mb-2 font-medium">AI-Powered Task Generation</p>
+                            <p className="text-muted-foreground mb-4 text-sm">
                               SpecKit will analyze the implementation plan and break it down into:
                             </p>
                             <div className="grid gap-2">
@@ -528,7 +569,7 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
             )}
           </div>
 
-          <div className="border-t px-6 py-4 flex justify-between">
+          <div className="flex justify-between border-t px-6 py-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
@@ -598,5 +639,5 @@ export function ImplementFeatureWizardModal({ projectId, open, onOpenChange }: I
         </Dialog>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

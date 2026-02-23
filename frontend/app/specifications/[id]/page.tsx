@@ -1,29 +1,35 @@
-"use client"
-import { use } from "react"
+"use client";
+import { use } from "react";
+import Link from "next/link";
 
-import { useSpecification, useSpecificationContent } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { CodeBlock } from "@/components/ui/code-block"
-import { ArrowLeft, FileText, Play, ListTodo, Target, TrendingUp, ExternalLink, ClipboardCheck } from "lucide-react"
-import Link from "next/link"
+import {
+  ArrowLeft,
+  ClipboardCheck,
+  ExternalLink,
+  FileText,
+  ListTodo,
+  Play,
+  Target,
+  TrendingUp,
+} from "lucide-react";
 
-export default function SpecificationDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
-  const resolvedParams = use(params)
-  const id = Number.parseInt(resolvedParams.id)
-  const { data: spec, isLoading } = useSpecification(id)
-  const { data: specContent, isLoading: contentLoading } = useSpecificationContent(id)
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription,CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useSpecification, useSpecificationContent } from "@/lib/api";
+
+export default function SpecificationDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(params);
+  const id = Number.parseInt(resolvedParams.id);
+  const { data: spec, isLoading } = useSpecification(id);
+  const { data: specContent, isLoading: contentLoading } = useSpecificationContent(id);
 
   if (isLoading) {
-    return <LoadingState message="Loading specification..." />
+    return <LoadingState message="Loading specification..." />;
   }
 
   if (!spec) {
@@ -46,7 +52,7 @@ export default function SpecificationDetailPage({
           }
         />
       </div>
-    )
+    );
   }
 
   const statusColors: Record<string, string> = {
@@ -54,7 +60,7 @@ export default function SpecificationDetailPage({
     "in-progress": "bg-blue-500",
     completed: "bg-green-500",
     failed: "bg-red-500",
-  }
+  };
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
@@ -69,11 +75,14 @@ export default function SpecificationDetailPage({
           <FileText className="h-5 w-5 text-blue-500" />
           <div>
             <h1 className="text-2xl font-semibold">{spec.title}</h1>
-            <p className="text-sm text-muted-foreground">{spec.path}</p>
+            <p className="text-muted-foreground text-sm">{spec.path}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Badge variant="secondary" className={`${statusColors[spec.status] || "bg-gray-500"} text-white`}>
+          <Badge
+            variant="secondary"
+            className={`${statusColors[spec.status] || "bg-gray-500"} text-white`}
+          >
             {spec.status}
           </Badge>
           {spec.protocol_id && (
@@ -87,7 +96,7 @@ export default function SpecificationDetailPage({
         </div>
       </div>
 
-      <div className="flex items-center gap-4 rounded-lg border bg-card px-4 py-3 text-sm">
+      <div className="bg-card flex items-center gap-4 rounded-lg border px-4 py-3 text-sm">
         {spec.sprint_name && (
           <>
             <div className="flex items-center gap-2">
@@ -95,7 +104,7 @@ export default function SpecificationDetailPage({
               <span className="font-medium">Execution:</span>
               <span className="text-purple-400">{spec.sprint_name}</span>
             </div>
-            <div className="h-4 w-px bg-border" />
+            <div className="bg-border h-4 w-px" />
           </>
         )}
         <div className="flex items-center gap-2">
@@ -105,13 +114,13 @@ export default function SpecificationDetailPage({
             {spec.completed_tasks}/{spec.linked_tasks}
           </span>
         </div>
-        <div className="h-4 w-px bg-border" />
+        <div className="bg-border h-4 w-px" />
         <div className="flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-green-400" />
           <span className="font-medium">Story Points:</span>
           <span className="text-muted-foreground">{spec.story_points}</span>
         </div>
-        <div className="h-4 w-px bg-border" />
+        <div className="bg-border h-4 w-px" />
         <div className="flex items-center gap-2">
           <span className="font-medium">Project:</span>
           <span className="text-muted-foreground">{spec.project_name}</span>
@@ -137,21 +146,21 @@ export default function SpecificationDetailPage({
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Path</p>
+                  <p className="text-muted-foreground text-sm">Path</p>
                   <p className="font-mono text-sm">{spec.path}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
+                  <p className="text-muted-foreground text-sm">Status</p>
                   <Badge className={`${statusColors[spec.status] || "bg-gray-500"} text-white`}>
                     {spec.status}
                   </Badge>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Tasks Generated</p>
+                  <p className="text-muted-foreground text-sm">Tasks Generated</p>
                   <p className="text-sm">{spec.tasks_generated ? "Yes" : "No"}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Story Points</p>
+                  <p className="text-muted-foreground text-sm">Story Points</p>
                   <p className="text-sm">{spec.story_points}</p>
                 </div>
               </div>
@@ -169,7 +178,7 @@ export default function SpecificationDetailPage({
             </CardHeader>
             <CardContent>
               {spec.linked_tasks === 0 ? (
-                <div className="text-sm text-muted-foreground py-4">
+                <div className="text-muted-foreground py-4 text-sm">
                   No tasks have been generated for this specification yet.
                 </div>
               ) : (
@@ -177,10 +186,12 @@ export default function SpecificationDetailPage({
                   <p className="text-sm">
                     {spec.completed_tasks} of {spec.linked_tasks} tasks completed
                   </p>
-                  <div className="h-2 rounded-full bg-muted">
+                  <div className="bg-muted h-2 rounded-full">
                     <div
                       className="h-2 rounded-full bg-green-500 transition-all"
-                      style={{ width: `${spec.linked_tasks > 0 ? (spec.completed_tasks / spec.linked_tasks) * 100 : 0}%` }}
+                      style={{
+                        width: `${spec.linked_tasks > 0 ? (spec.completed_tasks / spec.linked_tasks) * 100 : 0}%`,
+                      }}
                     />
                   </div>
                   {spec.sprint_id && (
@@ -211,7 +222,7 @@ export default function SpecificationDetailPage({
               ) : specContent?.spec_content ? (
                 <CodeBlock code={specContent.spec_content} language="markdown" maxHeight="600px" />
               ) : (
-                <div className="text-sm text-muted-foreground">No spec content available yet.</div>
+                <div className="text-muted-foreground text-sm">No spec content available yet.</div>
               )}
             </CardContent>
           </Card>
@@ -229,7 +240,7 @@ export default function SpecificationDetailPage({
               ) : specContent?.plan_content ? (
                 <CodeBlock code={specContent.plan_content} language="markdown" maxHeight="600px" />
               ) : (
-                <div className="text-sm text-muted-foreground">No plan content available yet.</div>
+                <div className="text-muted-foreground text-sm">No plan content available yet.</div>
               )}
             </CardContent>
           </Card>
@@ -247,7 +258,7 @@ export default function SpecificationDetailPage({
               ) : specContent?.tasks_content ? (
                 <CodeBlock code={specContent.tasks_content} language="markdown" maxHeight="600px" />
               ) : (
-                <div className="text-sm text-muted-foreground">No tasks content available yet.</div>
+                <div className="text-muted-foreground text-sm">No tasks content available yet.</div>
               )}
             </CardContent>
           </Card>
@@ -264,9 +275,13 @@ export default function SpecificationDetailPage({
             </CardHeader>
             <CardContent>
               {specContent?.checklist_content ? (
-                <CodeBlock code={specContent.checklist_content} language="markdown" maxHeight="600px" />
+                <CodeBlock
+                  code={specContent.checklist_content}
+                  language="markdown"
+                  maxHeight="600px"
+                />
               ) : (
-                <div className="text-sm text-muted-foreground">
+                <div className="text-muted-foreground text-sm">
                   No checklist generated yet. Run the checklist action from the SpecKit workspace.
                 </div>
               )}
@@ -288,12 +303,12 @@ export default function SpecificationDetailPage({
                   </Button>
                 </div>
               ) : (
-                <div className="text-sm text-muted-foreground">No protocol created yet</div>
+                <div className="text-muted-foreground text-sm">No protocol created yet</div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }

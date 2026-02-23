@@ -1,55 +1,54 @@
-"use client"
-import { use } from "react"
+"use client";
+import type React from "react";
+import { use , useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-import type React from "react"
+import { ArrowLeft, Save } from "lucide-react";
+import { toast } from "sonner";
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
-import { useCreatePolicyPack, usePolicyPacks } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { ArrowLeft, Save } from "lucide-react"
-import { toast } from "sonner"
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import { Textarea } from "@/components/ui/textarea";
+import { useCreatePolicyPack, usePolicyPacks } from "@/lib/api";
 
 export default function EditPolicyPackPage({ params }: { params: Promise<{ key: string }> }) {
-  const { key } = use(params)
-  const router = useRouter()
-  const { data: packs, isLoading, error } = usePolicyPacks()
-  const upsertPack = useCreatePolicyPack()
+  const { key } = use(params);
+  const router = useRouter();
+  const { data: packs, isLoading, error } = usePolicyPacks();
+  const upsertPack = useCreatePolicyPack();
 
-  const pack = packs?.find((p) => p.key === key)
+  const pack = packs?.find((p) => p.key === key);
 
   const [formData, setFormData] = useState({
     name: "",
     description: "",
     version: "",
     pack: "",
-  })
+  });
 
   useEffect(() => {
-    if (!pack) return
+    if (!pack) return;
     setFormData({
       name: pack.name ?? "",
       description: pack.description ?? "",
       version: pack.version ?? "",
       pack: typeof pack.pack === "string" ? pack.pack : JSON.stringify(pack.pack ?? {}, null, 2),
-    })
-  }, [pack])
+    });
+  }, [pack]);
 
-  if (isLoading) return <LoadingState message="Loading policy pack..." />
+  if (isLoading) return <LoadingState message="Loading policy pack..." />;
   if (error) {
-    const message = error instanceof Error ? error.message : "Failed to load policy pack"
+    const message = error instanceof Error ? error.message : "Failed to load policy pack";
     return (
       <div className="container py-8">
         <EmptyState title="Error loading policy pack" description={message} />
       </div>
-    )
+    );
   }
 
   if (!pack) {
@@ -57,13 +56,13 @@ export default function EditPolicyPackPage({ params }: { params: Promise<{ key: 
       <div className="container py-8">
         <p className="text-muted-foreground">Policy pack not found</p>
       </div>
-    )
+    );
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     try {
-      const packJson = JSON.parse(formData.pack) // Validate JSON
+      const packJson = JSON.parse(formData.pack); // Validate JSON
       await upsertPack.mutateAsync({
         key,
         version: formData.version,
@@ -71,24 +70,24 @@ export default function EditPolicyPackPage({ params }: { params: Promise<{ key: 
         description: formData.description || undefined,
         status: pack.status,
         pack: packJson,
-      })
-      toast.success("Policy pack updated successfully")
-      router.push(`/policy-packs/${key}`)
+      });
+      toast.success("Policy pack updated successfully");
+      router.push(`/policy-packs/${key}`);
     } catch (err) {
       if (err instanceof SyntaxError) {
-        toast.error("Invalid JSON in pack configuration")
+        toast.error("Invalid JSON in pack configuration");
       } else {
-        toast.error(err instanceof Error ? err.message : "Failed to update policy pack")
+        toast.error(err instanceof Error ? err.message : "Failed to update policy pack");
       }
     }
-  }
+  };
 
   return (
     <div className="container py-8">
       <div className="mb-6">
         <Link
           href={`/policy-packs/${key}`}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
+          className="text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1 text-sm"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Pack
@@ -139,7 +138,7 @@ export default function EditPolicyPackPage({ params }: { params: Promise<{ key: 
               <Label htmlFor="pack">Pack Configuration (JSON)</Label>
               <Textarea
                 id="pack"
-                className="font-mono text-sm min-h-96"
+                className="min-h-96 font-mono text-sm"
                 value={formData.pack}
                 onChange={(e) => setFormData((p) => ({ ...p, pack: e.target.value }))}
                 required
@@ -148,7 +147,7 @@ export default function EditPolicyPackPage({ params }: { params: Promise<{ key: 
           </CardContent>
         </Card>
 
-        <div className="flex justify-end gap-2 mt-6">
+        <div className="mt-6 flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Cancel
           </Button>
@@ -159,5 +158,5 @@ export default function EditPolicyPackPage({ params }: { params: Promise<{ key: 
         </div>
       </form>
     </div>
-  )
+  );
 }

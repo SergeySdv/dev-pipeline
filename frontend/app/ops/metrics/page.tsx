@@ -1,25 +1,26 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Activity, TrendingUp, Zap, Clock, BarChart3, Loader2 } from "lucide-react"
-import { useMetricsSummary } from "@/lib/api"
+import { Activity, BarChart3, Clock, Loader2,TrendingUp, Zap } from "lucide-react";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useMetricsSummary } from "@/lib/api";
 
 function formatDuration(seconds: number | null): string {
-  if (seconds === null) return "N/A"
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
-  return `${(seconds / 3600).toFixed(1)}h`
+  if (seconds === null) return "N/A";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${(seconds / 3600).toFixed(1)}h`;
 }
 
 export default function MetricsPage() {
-  const { data: metrics, isLoading, error } = useMetricsSummary(24)
+  const { data: metrics, isLoading, error } = useMetricsSummary(24);
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -30,10 +31,10 @@ export default function MetricsPage() {
           <p className="text-destructive">Failed to load metrics: {error.message}</p>
         </div>
       </div>
-    )
+    );
   }
 
-  const jobMetrics = metrics?.job_type_metrics ?? []
+  const jobMetrics = metrics?.job_type_metrics ?? [];
 
   return (
     <div className="space-y-6">
@@ -52,7 +53,7 @@ export default function MetricsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics?.total_events ?? 0}</div>
-            <p className="text-xs text-muted-foreground">Recent events tracked</p>
+            <p className="text-muted-foreground text-xs">Recent events tracked</p>
           </CardContent>
         </Card>
 
@@ -65,7 +66,7 @@ export default function MetricsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics?.success_rate ?? 100}%</div>
-            <p className="text-xs text-muted-foreground">Protocol completion rate</p>
+            <p className="text-muted-foreground text-xs">Protocol completion rate</p>
           </CardContent>
         </Card>
 
@@ -78,7 +79,7 @@ export default function MetricsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics?.total_protocol_runs ?? 0}</div>
-            <p className="text-xs text-muted-foreground">Total protocols executed</p>
+            <p className="text-muted-foreground text-xs">Total protocols executed</p>
           </CardContent>
         </Card>
 
@@ -91,7 +92,7 @@ export default function MetricsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics?.total_step_runs ?? 0}</div>
-            <p className="text-xs text-muted-foreground">Total steps executed</p>
+            <p className="text-muted-foreground text-xs">Total steps executed</p>
           </CardContent>
         </Card>
       </div>
@@ -110,7 +111,7 @@ export default function MetricsPage() {
                 {jobMetrics.slice(0, 10).map((metric) => (
                   <div key={metric.job_type} className="flex items-center justify-between">
                     <span className="font-mono text-sm">{metric.job_type}</span>
-                    <div className="flex gap-4 text-sm text-muted-foreground">
+                    <div className="text-muted-foreground flex gap-4 text-sm">
                       <span>{metric.count} runs</span>
                       <span>avg {formatDuration(metric.avg_duration_seconds)}</span>
                     </div>
@@ -129,37 +130,43 @@ export default function MetricsPage() {
           <CardContent>
             <div className="space-y-4">
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="mb-1 flex items-center justify-between">
                   <span className="text-sm">Active Projects</span>
-                  <span className="text-sm text-muted-foreground">{metrics?.active_projects ?? 0}</span>
+                  <span className="text-muted-foreground text-sm">
+                    {metrics?.active_projects ?? 0}
+                  </span>
                 </div>
-                <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                <div className="bg-secondary h-2 overflow-hidden rounded-full">
                   <div
-                    className="h-full bg-primary transition-all"
+                    className="bg-primary h-full transition-all"
                     style={{ width: `${Math.min(100, (metrics?.active_projects ?? 0) * 10)}%` }}
                   />
                 </div>
               </div>
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="mb-1 flex items-center justify-between">
                   <span className="text-sm">Job Runs</span>
-                  <span className="text-sm text-muted-foreground">{metrics?.total_job_runs ?? 0}</span>
+                  <span className="text-muted-foreground text-sm">
+                    {metrics?.total_job_runs ?? 0}
+                  </span>
                 </div>
-                <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                <div className="bg-secondary h-2 overflow-hidden rounded-full">
                   <div
-                    className="h-full bg-primary transition-all"
-                    style={{ width: `${Math.min(100, (metrics?.total_job_runs ?? 0))}%` }}
+                    className="bg-primary h-full transition-all"
+                    style={{ width: `${Math.min(100, metrics?.total_job_runs ?? 0)}%` }}
                   />
                 </div>
               </div>
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="mb-1 flex items-center justify-between">
                   <span className="text-sm">Recent Events</span>
-                  <span className="text-sm text-muted-foreground">{metrics?.recent_events_count ?? 0}</span>
+                  <span className="text-muted-foreground text-sm">
+                    {metrics?.recent_events_count ?? 0}
+                  </span>
                 </div>
-                <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                <div className="bg-secondary h-2 overflow-hidden rounded-full">
                   <div
-                    className="h-full bg-primary transition-all"
+                    className="bg-primary h-full transition-all"
                     style={{ width: `${Math.min(100, (metrics?.recent_events_count ?? 0) / 5)}%` }}
                   />
                 </div>
@@ -178,26 +185,26 @@ export default function MetricsPage() {
           <CardDescription>System-wide statistics</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center p-4 bg-muted/50 rounded-lg">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="bg-muted/50 rounded-lg p-4 text-center">
               <div className="text-3xl font-bold">{metrics?.active_projects ?? 0}</div>
-              <div className="text-sm text-muted-foreground">Active Projects</div>
+              <div className="text-muted-foreground text-sm">Active Projects</div>
             </div>
-            <div className="text-center p-4 bg-muted/50 rounded-lg">
+            <div className="bg-muted/50 rounded-lg p-4 text-center">
               <div className="text-3xl font-bold">{metrics?.total_protocol_runs ?? 0}</div>
-              <div className="text-sm text-muted-foreground">Protocol Runs</div>
+              <div className="text-muted-foreground text-sm">Protocol Runs</div>
             </div>
-            <div className="text-center p-4 bg-muted/50 rounded-lg">
+            <div className="bg-muted/50 rounded-lg p-4 text-center">
               <div className="text-3xl font-bold">{metrics?.total_step_runs ?? 0}</div>
-              <div className="text-sm text-muted-foreground">Step Runs</div>
+              <div className="text-muted-foreground text-sm">Step Runs</div>
             </div>
-            <div className="text-center p-4 bg-muted/50 rounded-lg">
+            <div className="bg-muted/50 rounded-lg p-4 text-center">
               <div className="text-3xl font-bold">{metrics?.total_events ?? 0}</div>
-              <div className="text-sm text-muted-foreground">Events</div>
+              <div className="text-muted-foreground text-sm">Events</div>
             </div>
           </div>
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

@@ -1,17 +1,18 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { useCreatePolicyPack } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { ArrowLeft } from "lucide-react"
-import Link from "next/link"
+import { ArrowLeft } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useCreatePolicyPack } from "@/lib/api";
 
 const defaultPack = {
   meta: {
@@ -35,51 +36,53 @@ const defaultPack = {
   enforcement: {
     mode: "warn",
   },
-}
+};
 
 export default function NewPolicyPackPage() {
-  const router = useRouter()
-  const [key, setKey] = useState("")
-  const [version, setVersion] = useState("1.0")
-  const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [packJson, setPackJson] = useState(JSON.stringify(defaultPack, null, 2))
-  const [error, setError] = useState("")
+  const router = useRouter();
+  const [key, setKey] = useState("");
+  const [version, setVersion] = useState("1.0");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [packJson, setPackJson] = useState(JSON.stringify(defaultPack, null, 2));
+  const [error, setError] = useState("");
 
-  const createPack = useCreatePolicyPack()
+  const createPack = useCreatePolicyPack();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
+    e.preventDefault();
+    setError("");
 
     try {
-      const pack = JSON.parse(packJson)
+      const pack = JSON.parse(packJson);
       await createPack.mutateAsync({
         key,
         version,
         name,
         description,
         pack,
-      })
-      router.push("/policy-packs")
+      });
+      router.push("/policy-packs");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create policy pack")
+      setError(err instanceof Error ? err.message : "Failed to create policy pack");
     }
-  }
+  };
 
   return (
     <div className="container py-8">
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="mx-auto max-w-4xl space-y-6">
         <div className="flex items-center gap-4">
           <Link href="/policy-packs">
             <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-2" />
+              <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Policy Packs
             </Button>
           </Link>
           <div>
             <h1 className="text-2xl font-bold">Create Policy Pack</h1>
-            <p className="text-sm text-muted-foreground">Define a new policy pack for your projects</p>
+            <p className="text-muted-foreground text-sm">
+              Define a new policy pack for your projects
+            </p>
           </div>
         </div>
 
@@ -147,8 +150,8 @@ export default function NewPolicyPackPage() {
           </Card>
 
           {error && (
-            <Card className="p-4 border-destructive">
-              <p className="text-sm text-destructive">{error}</p>
+            <Card className="border-destructive p-4">
+              <p className="text-destructive text-sm">{error}</p>
             </Card>
           )}
 
@@ -165,5 +168,5 @@ export default function NewPolicyPackPage() {
         </form>
       </div>
     </div>
-  )
+  );
 }

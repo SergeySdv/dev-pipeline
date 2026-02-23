@@ -1,51 +1,36 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
+import { useMemo, useState } from "react";
+import Link from "next/link";
 
 import {
-  useProject,
-  useOnboarding,
-  useProjectProtocols,
-  useCreateProtocol,
-  useSpecKitStatus,
-  useClarifySpec,
-  useGenerateChecklist,
-  useAnalyzeSpec,
-  useRunImplement,
-  usePolicyFindings,
-  useProjectCommits,
-  useProjectPulls,
-} from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { LoadingState } from "@/components/ui/loading-state"
-import { StatusPill } from "@/components/ui/status-pill"
-import {
-  Wand2,
-  FileCode2,
-  Lightbulb,
-  AlertCircle,
   Activity,
-  Workflow,
-  Shield,
-  MessageCircle,
-  MessageSquare,
-  ClipboardCheck,
-  FileSearch,
-  PlayCircle,
-  GitCommit,
-  GitPullRequest,
-  FolderOpen,
-  Cloud,
+  AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  ClipboardCheck,
+  Cloud,
+  FileCode2,
+  FileSearch,
+  FolderOpen,
+  GitCommit,
+  GitPullRequest,
+  Lightbulb,
+  MessageCircle,
+  MessageSquare,
+  PlayCircle,
+  Shield,
+  Wand2,
+  Workflow,
   XCircle,
-} from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { toast } from "sonner"
-import Link from "next/link"
-import { formatRelativeTime } from "@/lib/format"
-import { useMemo, useState } from "react"
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { SpecWorkflow } from "@/components/speckit";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -53,50 +38,70 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Separator } from "@/components/ui/separator"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { SpecWorkflow } from "@/components/speckit"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { StatusPill } from "@/components/ui/status-pill";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  useAnalyzeSpec,
+  useClarifySpec,
+  useCreateProtocol,
+  useGenerateChecklist,
+  useOnboarding,
+  usePolicyFindings,
+  useProject,
+  useProjectCommits,
+  useProjectProtocols,
+  useProjectPulls,
+  useRunImplement,
+  useSpecKitStatus,
+} from "@/lib/api";
+import { formatRelativeTime } from "@/lib/format";
 
 interface OverviewTabProps {
-  projectId: number
+  projectId: number;
 }
 
 export function OverviewTab({ projectId }: OverviewTabProps) {
-  const { data: project, isLoading: projectLoading } = useProject(projectId)
-  const { data: onboarding, isLoading: onboardingLoading } = useOnboarding(projectId)
-  const { data: protocols } = useProjectProtocols(projectId)
-  const { data: specKitStatus } = useSpecKitStatus(projectId)
-  const { data: policyFindings } = usePolicyFindings(projectId)
-  const { data: commits } = useProjectCommits(projectId)
-  const { data: pulls } = useProjectPulls(projectId)
-  const [isCreateProtocolOpen, setIsCreateProtocolOpen] = useState(false)
-  const [selectedSpecPath, setSelectedSpecPath] = useState("")
-  const [clarifyOpen, setClarifyOpen] = useState(false)
-  const [clarifyQuestion, setClarifyQuestion] = useState("")
-  const [clarifyAnswer, setClarifyAnswer] = useState("")
-  const [clarifyNotes, setClarifyNotes] = useState("")
-  const clarifySpec = useClarifySpec()
-  const generateChecklist = useGenerateChecklist()
-  const analyzeSpec = useAnalyzeSpec()
-  const runImplement = useRunImplement()
+  const { data: project, isLoading: projectLoading } = useProject(projectId);
+  const { data: onboarding, isLoading: onboardingLoading } = useOnboarding(projectId);
+  const { data: protocols } = useProjectProtocols(projectId);
+  const { data: specKitStatus } = useSpecKitStatus(projectId);
+  const { data: policyFindings } = usePolicyFindings(projectId);
+  const { data: commits } = useProjectCommits(projectId);
+  const { data: pulls } = useProjectPulls(projectId);
+  const [isCreateProtocolOpen, setIsCreateProtocolOpen] = useState(false);
+  const [selectedSpecPath, setSelectedSpecPath] = useState("");
+  const [clarifyOpen, setClarifyOpen] = useState(false);
+  const [clarifyQuestion, setClarifyQuestion] = useState("");
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
+  const [clarifyNotes, setClarifyNotes] = useState("");
+  const clarifySpec = useClarifySpec();
+  const generateChecklist = useGenerateChecklist();
+  const analyzeSpec = useAnalyzeSpec();
+  const runImplement = useRunImplement();
 
   const specOptions = useMemo(
-    () => (specKitStatus?.specs ?? []).filter((s) => s.status !== "cleaned" && (s.spec_path || s.path)),
-    [specKitStatus],
-  )
+    () =>
+      (specKitStatus?.specs ?? []).filter((s) => s.status !== "cleaned" && (s.spec_path || s.path)),
+    [specKitStatus]
+  );
   const activeSpecPath =
-    selectedSpecPath ||
-    specOptions[0]?.spec_path ||
-    specOptions[0]?.path ||
-    ""
+    selectedSpecPath || specOptions[0]?.spec_path || specOptions[0]?.path || "";
   const workflowStatus = useMemo(() => {
-    const hasSpec = (specKitStatus?.spec_count || 0) > 0
-    const hasPlan = specOptions.some((spec) => spec.has_plan)
-    const hasTasks = specOptions.some((spec) => spec.has_tasks)
+    const hasSpec = (specKitStatus?.spec_count || 0) > 0;
+    const hasPlan = specOptions.some((spec) => spec.has_plan);
+    const hasTasks = specOptions.some((spec) => spec.has_tasks);
     return {
       spec: hasSpec ? "completed" : "pending",
       clarify: hasSpec ? "in-progress" : "pending",
@@ -106,78 +111,86 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
       analyze: hasTasks ? "in-progress" : "pending",
       implement: hasTasks ? "in-progress" : "pending",
       sprint: "pending",
-    } as const
-  }, [specKitStatus, specOptions])
+    } as const;
+  }, [specKitStatus, specOptions]);
 
-  if (projectLoading || onboardingLoading) return <LoadingState message="Loading overview..." />
+  if (projectLoading || onboardingLoading) return <LoadingState message="Loading overview..." />;
 
   const handleClarify = async () => {
     if (!activeSpecPath) {
-      toast.error("Select a specification to clarify")
-      return
+      toast.error("Select a specification to clarify");
+      return;
     }
 
-    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim()
-    const hasNotes = clarifyNotes.trim()
-    const specMeta = specOptions.find((spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath)
+    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim();
+    const hasNotes = clarifyNotes.trim();
+    const specMeta = specOptions.find(
+      (spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath
+    );
 
     if (!hasEntry && !hasNotes) {
-      toast.error("Provide a question/answer or notes")
-      return
+      toast.error("Provide a question/answer or notes");
+      return;
     }
 
     try {
       const result = await clarifySpec.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
-        entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
+        entries: hasEntry
+          ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }]
+          : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
         spec_run_id: specMeta?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success(`Clarifications added (${result.clarifications_added})`)
-        setClarifyOpen(false)
-        setClarifyQuestion("")
-        setClarifyAnswer("")
-        setClarifyNotes("")
+        toast.success(`Clarifications added (${result.clarifications_added})`);
+        setClarifyOpen(false);
+        setClarifyQuestion("");
+        setClarifyAnswer("");
+        setClarifyNotes("");
       } else {
-        toast.error(result.error || "Clarification failed")
+        toast.error(result.error || "Clarification failed");
       }
     } catch {
-      toast.error("Clarification failed")
+      toast.error("Clarification failed");
     }
-  }
+  };
 
   const handleChecklist = async () => {
     if (!activeSpecPath) {
-      toast.error("Select a specification to run checklist")
-      return
+      toast.error("Select a specification to run checklist");
+      return;
     }
 
-    const specMeta = specOptions.find((spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath)
+    const specMeta = specOptions.find(
+      (spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath
+    );
     try {
       const result = await generateChecklist.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
         spec_run_id: specMeta?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success(`Checklist generated (${result.item_count} items)`)
+        toast.success(`Checklist generated (${result.item_count} items)`);
       } else {
-        toast.error(result.error || "Checklist generation failed")
+        toast.error(result.error || "Checklist generation failed");
       }
     } catch {
-      toast.error("Checklist generation failed")
+      toast.error("Checklist generation failed");
     }
-  }
+  };
 
   const handleAnalyze = async () => {
     if (!activeSpecPath) {
-      toast.error("Select a specification to analyze")
-      return
+      toast.error("Select a specification to analyze");
+      return;
     }
 
-    const specMeta = specOptions.find((spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath)
+    const specMeta = specOptions.find(
+      (spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath
+    );
     try {
       const result = await analyzeSpec.mutateAsync({
         project_id: projectId,
@@ -185,50 +198,54 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
         plan_path: specMeta?.plan_path || undefined,
         tasks_path: specMeta?.tasks_path || undefined,
         spec_run_id: specMeta?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success("Analysis report generated")
+        toast.success("Analysis report generated");
       } else {
-        toast.error(result.error || "Analysis failed")
+        toast.error(result.error || "Analysis failed");
       }
     } catch {
-      toast.error("Analysis failed")
+      toast.error("Analysis failed");
     }
-  }
+  };
 
   const handleImplement = async () => {
     if (!activeSpecPath) {
-      toast.error("Select a specification to implement")
-      return
+      toast.error("Select a specification to implement");
+      return;
     }
 
-    const specMeta = specOptions.find((spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath)
+    const specMeta = specOptions.find(
+      (spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath
+    );
     try {
       const result = await runImplement.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
         spec_run_id: specMeta?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success("Implementation run initialized")
+        toast.success("Implementation run initialized");
       } else {
-        toast.error(result.error || "Implement init failed")
+        toast.error(result.error || "Implement init failed");
       }
     } catch {
-      toast.error("Implement init failed")
+      toast.error("Implement init failed");
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-6 p-4 bg-card/50 backdrop-blur rounded-lg border flex-wrap">
+      <div className="bg-card/50 flex flex-wrap items-center gap-6 rounded-lg border p-4 backdrop-blur">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-blue-500" />
-          <span className="text-xs text-muted-foreground uppercase tracking-wider">Onboarding:</span>
+          <span className="text-muted-foreground text-xs tracking-wider uppercase">
+            Onboarding:
+          </span>
           {onboarding ? (
             <StatusPill status={onboarding.status} size="sm" />
           ) : (
-            <span className="text-sm text-muted-foreground">not started</span>
+            <span className="text-muted-foreground text-sm">not started</span>
           )}
         </div>
 
@@ -236,7 +253,7 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
 
         <div className="flex items-center gap-2">
           <Workflow className="h-4 w-4 text-purple-500" />
-          <span className="text-xs text-muted-foreground uppercase tracking-wider">Protocols:</span>
+          <span className="text-muted-foreground text-xs tracking-wider uppercase">Protocols:</span>
           <span className="text-sm font-semibold">{protocols?.length || 0}</span>
         </div>
 
@@ -244,15 +261,19 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
 
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-green-500" />
-          <span className="text-xs text-muted-foreground uppercase tracking-wider">Policy Pack:</span>
-          <code className="text-xs font-mono px-1.5 py-0.5 bg-muted rounded">{project?.policy_pack_key || "none"}</code>
+          <span className="text-muted-foreground text-xs tracking-wider uppercase">
+            Policy Pack:
+          </span>
+          <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+            {project?.policy_pack_key || "none"}
+          </code>
         </div>
 
         <Separator orientation="vertical" className="h-6" />
 
         <div className="flex items-center gap-2">
           <MessageCircle className="h-4 w-4 text-amber-500" />
-          <span className="text-xs text-muted-foreground uppercase tracking-wider">Blockers:</span>
+          <span className="text-muted-foreground text-xs tracking-wider uppercase">Blockers:</span>
           <span className="text-sm font-semibold">{onboarding?.blocking_clarifications || 0}</span>
         </div>
 
@@ -262,56 +283,56 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
           {project?.local_path ? (
             <>
               <FolderOpen className="h-4 w-4 text-green-500" />
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">Repo:</span>
+              <span className="text-muted-foreground text-xs tracking-wider uppercase">Repo:</span>
               <span className="text-sm text-green-600">Local</span>
             </>
           ) : (
             <>
-              <Cloud className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">Repo:</span>
-              <span className="text-sm text-muted-foreground">Remote</span>
+              <Cloud className="text-muted-foreground h-4 w-4" />
+              <span className="text-muted-foreground text-xs tracking-wider uppercase">Repo:</span>
+              <span className="text-muted-foreground text-sm">Remote</span>
             </>
           )}
         </div>
       </div>
 
-      <SpecWorkflow
-        projectId={projectId}
-        stepStatus={workflowStatus}
-        showActions
-      />
+      <SpecWorkflow projectId={projectId} stepStatus={workflowStatus} showActions />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <GitCommit className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <GitCommit className="text-muted-foreground h-4 w-4" />
               Last Commit
             </CardTitle>
           </CardHeader>
           <CardContent>
             {commits && commits.length > 0 ? (
               <div className="space-y-1">
-                <p className="text-sm font-mono truncate">{commits[0].sha.slice(0, 7)}</p>
-                <p className="text-xs text-muted-foreground truncate">{commits[0].message}</p>
-                <p className="text-xs text-muted-foreground">{formatRelativeTime(commits[0].date)}</p>
+                <p className="truncate font-mono text-sm">{commits[0].sha.slice(0, 7)}</p>
+                <p className="text-muted-foreground truncate text-xs">{commits[0].message}</p>
+                <p className="text-muted-foreground text-xs">
+                  {formatRelativeTime(commits[0].date)}
+                </p>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">No commits</p>
+              <p className="text-muted-foreground text-xs">No commits</p>
             )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <GitPullRequest className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <GitPullRequest className="text-muted-foreground h-4 w-4" />
               Open PRs
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{pulls?.filter(p => p.status === "open").length || 0}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-2xl font-bold">
+              {pulls?.filter((p) => p.status === "open").length || 0}
+            </p>
+            <p className="text-muted-foreground text-xs">
               {pulls && pulls.length > 0 ? (
                 <Link href={`/projects/${projectId}?tab=branches`} className="hover:underline">
                   View all →
@@ -325,8 +346,8 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Shield className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Shield className="text-muted-foreground h-4 w-4" />
               Policy Status
             </CardTitle>
           </CardHeader>
@@ -334,9 +355,9 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
             {policyFindings && policyFindings.length > 0 ? (
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  {policyFindings.some(f => f.severity === "error") ? (
+                  {policyFindings.some((f) => f.severity === "error") ? (
                     <XCircle className="h-4 w-4 text-red-500" />
-                  ) : policyFindings.some(f => f.severity === "warning") ? (
+                  ) : policyFindings.some((f) => f.severity === "warning") ? (
                     <AlertTriangle className="h-4 w-4 text-amber-500" />
                   ) : (
                     <CheckCircle2 className="h-4 w-4 text-green-500" />
@@ -344,14 +365,14 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                   <span className="text-sm font-medium">{policyFindings.length} findings</span>
                 </div>
                 <div className="flex gap-2 text-xs">
-                  {policyFindings.filter(f => f.severity === "error").length > 0 && (
+                  {policyFindings.filter((f) => f.severity === "error").length > 0 && (
                     <Badge variant="destructive" className="h-5">
-                      {policyFindings.filter(f => f.severity === "error").length} errors
+                      {policyFindings.filter((f) => f.severity === "error").length} errors
                     </Badge>
                   )}
-                  {policyFindings.filter(f => f.severity === "warning").length > 0 && (
+                  {policyFindings.filter((f) => f.severity === "warning").length > 0 && (
                     <Badge variant="secondary" className="h-5">
-                      {policyFindings.filter(f => f.severity === "warning").length} warnings
+                      {policyFindings.filter((f) => f.severity === "warning").length} warnings
                     </Badge>
                   )}
                 </div>
@@ -367,15 +388,17 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Workflow className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Workflow className="text-muted-foreground h-4 w-4" />
               Running
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{protocols?.filter(p => p.status === "running").length || 0}</p>
-            <p className="text-xs text-muted-foreground">
-              {protocols?.filter(p => p.status === "failed").length || 0} failed
+            <p className="text-2xl font-bold">
+              {protocols?.filter((p) => p.status === "running").length || 0}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              {protocols?.filter((p) => p.status === "failed").length || 0} failed
             </p>
           </CardContent>
         </Card>
@@ -428,10 +451,7 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                     </SelectItem>
                   )}
                   {specOptions.map((spec) => (
-                    <SelectItem
-                      key={spec.path}
-                      value={spec.spec_path || spec.path}
-                    >
+                    <SelectItem key={spec.path} value={spec.spec_path || spec.path}>
                       {spec.name}
                     </SelectItem>
                   ))}
@@ -439,15 +459,30 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
               </Select>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => setClarifyOpen(true)} disabled={!activeSpecPath}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setClarifyOpen(true)}
+                disabled={!activeSpecPath}
+              >
                 <MessageSquare className="mr-2 h-4 w-4" />
                 Clarify
               </Button>
-              <Button variant="outline" size="sm" onClick={handleChecklist} disabled={!activeSpecPath}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleChecklist}
+                disabled={!activeSpecPath}
+              >
                 <ClipboardCheck className="mr-2 h-4 w-4" />
                 Checklist
               </Button>
-              <Button variant="outline" size="sm" onClick={handleAnalyze} disabled={!activeSpecPath}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAnalyze}
+                disabled={!activeSpecPath}
+              >
                 <FileSearch className="mr-2 h-4 w-4" />
                 Analyze
               </Button>
@@ -471,13 +506,15 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                   <Link
                     key={protocol.id}
                     href={`/protocols/${protocol.id}`}
-                    className="flex items-center justify-between p-2 rounded-lg hover:bg-accent transition-colors"
+                    className="hover:bg-accent flex items-center justify-between rounded-lg p-2 transition-colors"
                   >
                     <div className="flex items-center gap-3">
-                      <FileCode2 className="h-4 w-4 text-muted-foreground" />
+                      <FileCode2 className="text-muted-foreground h-4 w-4" />
                       <div>
-                        <p className="font-medium text-sm">{protocol.protocol_name}</p>
-                        <p className="text-xs text-muted-foreground">{formatRelativeTime(protocol.created_at)}</p>
+                        <p className="text-sm font-medium">{protocol.protocol_name}</p>
+                        <p className="text-muted-foreground text-xs">
+                          {formatRelativeTime(protocol.created_at)}
+                        </p>
                       </div>
                     </div>
                     <StatusPill status={protocol.status} size="sm" />
@@ -485,7 +522,7 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No protocols yet</p>
+              <p className="text-muted-foreground text-sm">No protocols yet</p>
             )}
           </CardContent>
         </Card>
@@ -566,7 +603,7 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }
 
 function CreateProtocolDialog({
@@ -574,19 +611,19 @@ function CreateProtocolDialog({
   open,
   onClose,
 }: {
-  projectId: number
-  open: boolean
-  onClose: () => void
+  projectId: number;
+  open: boolean;
+  onClose: () => void;
 }) {
-  const createProtocol = useCreateProtocol()
+  const createProtocol = useCreateProtocol();
   const [formData, setFormData] = useState({
     name: "",
     description: "",
     spec: "{}",
-  })
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     try {
       await createProtocol.mutateAsync({
         projectId: projectId,
@@ -594,13 +631,13 @@ function CreateProtocolDialog({
           protocol_name: formData.name,
           description: formData.description || undefined,
         },
-      })
-      toast.success("Protocol created successfully")
-      onClose()
+      });
+      toast.success("Protocol created successfully");
+      onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create protocol")
+      toast.error(err instanceof Error ? err.message : "Failed to create protocol");
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -634,7 +671,7 @@ function CreateProtocolDialog({
               <Label htmlFor="spec">Spec (JSON)</Label>
               <Textarea
                 id="spec"
-                className="font-mono text-sm min-h-48"
+                className="min-h-48 font-mono text-sm"
                 placeholder='{ "steps": [] }'
                 value={formData.spec}
                 onChange={(e) => setFormData((p) => ({ ...p, spec: e.target.value }))}
@@ -653,5 +690,5 @@ function CreateProtocolDialog({
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

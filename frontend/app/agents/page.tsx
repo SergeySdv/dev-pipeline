@@ -1,76 +1,101 @@
-"use client"
+"use client";
 
-import { useMemo, useState } from "react"
+import { useMemo, useState } from "react";
+
 import {
-  useAgents,
+  Activity,
+  Bot,
+  Circle,
+  Info,
+  Layers,
+  Plus,
+  RefreshCw,
+  Settings,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
   useAgentAssignments,
   useAgentHealth,
   useAgentMetrics,
   useAgentPrompts,
+  useAgents,
   useProjects,
-  useUpdateAgentConfig,
   useUpdateAgentAssignments,
+  useUpdateAgentConfig,
   useUpdateAgentPrompt,
-} from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Bot, Circle, Settings, Plus, Activity, TrendingUp, Zap, RefreshCw, Layers, Info } from "lucide-react"
-import { toast } from "sonner"
-import type { Agent, AgentAssignments, AgentPromptTemplate, AgentUpdate } from "@/lib/api/types"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+} from "@/lib/api";
+import type { Agent, AgentAssignments, AgentPromptTemplate, AgentUpdate } from "@/lib/api/types";
 
 type AgentCard = Agent & {
-  enabled: boolean
-  healthStatus: "available" | "unavailable" | "unknown" | "disabled"
-  healthDetail?: string
-  activeSteps: number
-  completedSteps: number
-}
+  enabled: boolean;
+  healthStatus: "available" | "unavailable" | "unknown" | "disabled";
+  healthDetail?: string;
+  activeSteps: number;
+  completedSteps: number;
+};
 
 type AgentDraft = {
-  id: string
-  name: string
-  kind: string
-  enabled: boolean
-  default_model: string
-  command: string
-  command_dir: string
-  endpoint: string
-  sandbox: string
-  format: string
-  capabilities: string
-  timeout_seconds: string
-  max_retries: string
-}
+  id: string;
+  name: string;
+  kind: string;
+  enabled: boolean;
+  default_model: string;
+  command: string;
+  command_dir: string;
+  endpoint: string;
+  sandbox: string;
+  format: string;
+  capabilities: string;
+  timeout_seconds: string;
+  max_retries: string;
+};
 
 type AssignmentDraft = {
-  agent_id?: string
-  prompt_id?: string
-}
+  agent_id?: string;
+  prompt_id?: string;
+};
 
-type AssignmentsDraft = Record<string, AssignmentDraft>
+type AssignmentsDraft = Record<string, AssignmentDraft>;
 
 type PromptDraft = {
-  id: string
-  name: string
-  path: string
-  kind: string
-  engine_id: string
-  model: string
-  tags: string
-  enabled: boolean
-  description: string
-}
+  id: string;
+  name: string;
+  path: string;
+  kind: string;
+  engine_id: string;
+  model: string;
+  tags: string;
+  enabled: boolean;
+  description: string;
+};
 
 const processAssignments = [
   {
@@ -98,57 +123,57 @@ const processAssignments = [
     label: "Validation / QA",
     description: "Quality gate prompt used for step review.",
   },
-]
+];
 
 export default function AgentsPage() {
-  const { data: projects } = useProjects()
-  const [scopeProjectId, setScopeProjectId] = useState("global")
-  const projectId = scopeProjectId === "global" ? undefined : Number(scopeProjectId)
+  const { data: projects } = useProjects();
+  const [scopeProjectId, setScopeProjectId] = useState("global");
+  const projectId = scopeProjectId === "global" ? undefined : Number(scopeProjectId);
 
-  const { data: agentsData, isLoading: agentsLoading } = useAgents(projectId)
-  const { data: assignmentsData } = useAgentAssignments(projectId)
-  const { data: promptsData } = useAgentPrompts(projectId)
+  const { data: agentsData, isLoading: agentsLoading } = useAgents(projectId);
+  const { data: assignmentsData } = useAgentAssignments(projectId);
+  const { data: promptsData } = useAgentPrompts(projectId);
   const {
     data: healthData,
     refetch: refreshHealth,
     isFetching: isRefreshingHealth,
-  } = useAgentHealth(projectId)
-  const { data: metricsData } = useAgentMetrics(projectId)
+  } = useAgentHealth(projectId);
+  const { data: metricsData } = useAgentMetrics(projectId);
 
-  const updateAgent = useUpdateAgentConfig()
-  const updateAssignments = useUpdateAgentAssignments()
-  const updatePrompt = useUpdateAgentPrompt()
+  const updateAgent = useUpdateAgentConfig();
+  const updateAssignments = useUpdateAgentAssignments();
+  const updatePrompt = useUpdateAgentPrompt();
 
-  const [selectedAgent, setSelectedAgent] = useState<AgentDraft | null>(null)
-  const [isConfigOpen, setIsConfigOpen] = useState(false)
-  const [selectedPrompt, setSelectedPrompt] = useState<PromptDraft | null>(null)
-  const [isPromptOpen, setIsPromptOpen] = useState(false)
-  const [assignmentsDraft, setAssignmentsDraft] = useState<AssignmentsDraft>({})
-  const [inheritGlobalOverride, setInheritGlobalOverride] = useState<boolean | null>(null)
+  const [selectedAgent, setSelectedAgent] = useState<AgentDraft | null>(null);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [selectedPrompt, setSelectedPrompt] = useState<PromptDraft | null>(null);
+  const [isPromptOpen, setIsPromptOpen] = useState(false);
+  const [assignmentsDraft, setAssignmentsDraft] = useState<AssignmentsDraft>({});
+  const [inheritGlobalOverride, setInheritGlobalOverride] = useState<boolean | null>(null);
 
   const healthById = useMemo(() => {
-    return new Map((healthData || []).map((health) => [health.agent_id, health]))
-  }, [healthData])
+    return new Map((healthData || []).map((health) => [health.agent_id, health]));
+  }, [healthData]);
 
   const metricsById = useMemo(() => {
-    return new Map((metricsData || []).map((metrics) => [metrics.agent_id, metrics]))
-  }, [metricsData])
+    return new Map((metricsData || []).map((metrics) => [metrics.agent_id, metrics]));
+  }, [metricsData]);
 
   const agents: AgentCard[] = useMemo(() => {
     return (agentsData || []).map((agent) => {
-      const enabled = agent.enabled ?? agent.status !== "unavailable"
-      const health = healthById.get(agent.id)
-      let healthStatus: AgentCard["healthStatus"] = "unknown"
-      let healthDetail: string | undefined
+      const enabled = agent.enabled ?? agent.status !== "unavailable";
+      const health = healthById.get(agent.id);
+      let healthStatus: AgentCard["healthStatus"] = "unknown";
+      let healthDetail: string | undefined;
       if (!enabled) {
-        healthStatus = "disabled"
+        healthStatus = "disabled";
       } else if (health) {
-        healthStatus = health.available ? "available" : "unavailable"
-        healthDetail = health.error || health.version || undefined
+        healthStatus = health.available ? "available" : "unavailable";
+        healthDetail = health.error || health.version || undefined;
       } else if (agent.status === "available") {
-        healthStatus = "available"
+        healthStatus = "available";
       }
-      const metrics = metricsById.get(agent.id)
+      const metrics = metricsById.get(agent.id);
       return {
         ...agent,
         enabled,
@@ -156,42 +181,42 @@ export default function AgentsPage() {
         healthDetail,
         activeSteps: metrics?.active_steps || 0,
         completedSteps: metrics?.completed_steps || 0,
-      }
-    })
-  }, [agentsData, healthById, metricsById])
+      };
+    });
+  }, [agentsData, healthById, metricsById]);
 
   const baselineAssignments = useMemo<AssignmentsDraft>(() => {
-    const nextDraft: AssignmentsDraft = {}
+    const nextDraft: AssignmentsDraft = {};
     processAssignments.forEach((process) => {
-      const assignment = assignmentsData?.assignments?.[process.key]
+      const assignment = assignmentsData?.assignments?.[process.key];
       nextDraft[process.key] = {
         agent_id: assignment?.agent_id || "",
         prompt_id: assignment?.prompt_id || "",
-      }
-    })
-    return nextDraft
-  }, [assignmentsData])
+      };
+    });
+    return nextDraft;
+  }, [assignmentsData]);
 
   const effectiveAssignments = useMemo<AssignmentsDraft>(() => {
-    const keys = new Set([...Object.keys(baselineAssignments), ...Object.keys(assignmentsDraft)])
-    const merged: AssignmentsDraft = {}
+    const keys = new Set([...Object.keys(baselineAssignments), ...Object.keys(assignmentsDraft)]);
+    const merged: AssignmentsDraft = {};
     keys.forEach((key) => {
-      const base = baselineAssignments[key] || {}
-      const draft = assignmentsDraft[key] || {}
+      const base = baselineAssignments[key] || {};
+      const draft = assignmentsDraft[key] || {};
       merged[key] = {
         agent_id: draft.agent_id ?? base.agent_id ?? "",
         prompt_id: draft.prompt_id ?? base.prompt_id ?? "",
-      }
-    })
-    return merged
-  }, [assignmentsDraft, baselineAssignments])
+      };
+    });
+    return merged;
+  }, [assignmentsDraft, baselineAssignments]);
 
   const statusColors = {
     available: { bg: "bg-green-500", text: "Available" },
     unavailable: { bg: "bg-red-500", text: "Unavailable" },
     disabled: { bg: "bg-slate-400", text: "Disabled" },
     unknown: { bg: "bg-amber-500", text: "Unknown" },
-  }
+  };
 
   const stats = {
     total: agents.length,
@@ -199,22 +224,22 @@ export default function AgentsPage() {
     available: agents.filter((agent) => agent.healthStatus === "available").length,
     activeSteps: agents.reduce((sum, agent) => sum + agent.activeSteps, 0),
     completedSteps: agents.reduce((sum, agent) => sum + agent.completedSteps, 0),
-  }
+  };
 
-  const inheritGlobal = inheritGlobalOverride ?? Boolean(assignmentsData?.inherit_global ?? true)
-  const inheritEnabled = projectId ? inheritGlobal : true
+  const inheritGlobal = inheritGlobalOverride ?? Boolean(assignmentsData?.inherit_global ?? true);
+  const inheritEnabled = projectId ? inheritGlobal : true;
 
-  const promptOptions = promptsData || []
-  const assignmentsReady = Boolean(assignmentsData)
+  const promptOptions = promptsData || [];
+  const assignmentsReady = Boolean(assignmentsData);
 
   const handleScopeChange = (value: string) => {
-    setScopeProjectId(value)
-    setAssignmentsDraft({})
-    setInheritGlobalOverride(null)
-  }
+    setScopeProjectId(value);
+    setAssignmentsDraft({});
+    setInheritGlobalOverride(null);
+  };
 
   const handleToggleInheritance = (value: boolean) => {
-    if (!projectId) return
+    if (!projectId) return;
     updateAssignments.mutate(
       {
         projectId,
@@ -225,17 +250,17 @@ export default function AgentsPage() {
       },
       {
         onSuccess: () => {
-          setInheritGlobalOverride(value)
+          setInheritGlobalOverride(value);
         },
         onError: (error) => {
-          toast.error(error instanceof Error ? error.message : "Failed to update inheritance")
+          toast.error(error instanceof Error ? error.message : "Failed to update inheritance");
         },
-      },
-    )
-  }
+      }
+    );
+  };
 
   if (agentsLoading) {
-    return <LoadingState message="Loading agents..." />
+    return <LoadingState message="Loading agents..." />;
   }
 
   if (!agents || agents.length === 0) {
@@ -244,7 +269,9 @@ export default function AgentsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Agents</h1>
-            <p className="text-sm text-muted-foreground">Manage AI agents and their configurations</p>
+            <p className="text-muted-foreground text-sm">
+              Manage AI agents and their configurations
+            </p>
           </div>
           <ScopeSelector
             projects={projects || []}
@@ -261,7 +288,7 @@ export default function AgentsPage() {
           description="Configure agents in your DevGodzilla setup to see them here."
         />
       </div>
-    )
+    );
   }
 
   const openAgentConfig = (agent: AgentCard) => {
@@ -279,9 +306,9 @@ export default function AgentsPage() {
       capabilities: agent.capabilities?.join(", ") || "",
       timeout_seconds: agent.timeout_seconds ? String(agent.timeout_seconds) : "",
       max_retries: agent.max_retries ? String(agent.max_retries) : "",
-    })
-    setIsConfigOpen(true)
-  }
+    });
+    setIsConfigOpen(true);
+  };
 
   const openPromptConfig = (prompt: AgentPromptTemplate) => {
     setSelectedPrompt({
@@ -294,14 +321,14 @@ export default function AgentsPage() {
       tags: prompt.tags?.join(", ") || "",
       enabled: prompt.enabled ?? true,
       description: prompt.description || "",
-    })
-    setIsPromptOpen(true)
-  }
+    });
+    setIsPromptOpen(true);
+  };
 
   const handleSaveAgent = async () => {
-    if (!selectedAgent) return
-    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null)
-    const toNumber = (value: string) => (value.trim().length > 0 ? Number(value) : null)
+    if (!selectedAgent) return;
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null);
+    const toNumber = (value: string) => (value.trim().length > 0 ? Number(value) : null);
 
     const payload: AgentUpdate = {
       name: toNullable(selectedAgent.name),
@@ -319,33 +346,33 @@ export default function AgentsPage() {
         .filter(Boolean),
       timeout_seconds: toNumber(selectedAgent.timeout_seconds),
       max_retries: toNumber(selectedAgent.max_retries),
-    }
+    };
 
     try {
       await updateAgent.mutateAsync({
         agentId: selectedAgent.id,
         data: payload,
         projectId,
-      })
-      toast.success("Agent updated")
-      setIsConfigOpen(false)
+      });
+      toast.success("Agent updated");
+      setIsConfigOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update agent")
+      toast.error(error instanceof Error ? error.message : "Failed to update agent");
     }
-  }
+  };
 
   const handleSaveAssignments = async () => {
-    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null)
-    const baseline = assignmentsData?.assignments || {}
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null);
+    const baseline = assignmentsData?.assignments || {};
     const assignments = Object.fromEntries(
       processAssignments.flatMap((process) => {
-        const draft = effectiveAssignments[process.key] || { agent_id: "", prompt_id: "" }
-        const nextAgent = toNullable(draft.agent_id ?? "")
-        const nextPrompt = toNullable(draft.prompt_id ?? "")
-        const currentAgent = toNullable(baseline[process.key]?.agent_id || "")
-        const currentPrompt = toNullable(baseline[process.key]?.prompt_id || "")
+        const draft = effectiveAssignments[process.key] || { agent_id: "", prompt_id: "" };
+        const nextAgent = toNullable(draft.agent_id ?? "");
+        const nextPrompt = toNullable(draft.prompt_id ?? "");
+        const currentAgent = toNullable(baseline[process.key]?.agent_id || "");
+        const currentPrompt = toNullable(baseline[process.key]?.prompt_id || "");
         if (nextAgent === currentAgent && nextPrompt === currentPrompt) {
-          return []
+          return [];
         }
         return [
           [
@@ -355,30 +382,30 @@ export default function AgentsPage() {
               prompt_id: nextPrompt,
             },
           ],
-        ]
-      }),
-    )
+        ];
+      })
+    );
     const payload: AgentAssignments = {
       assignments,
       inherit_global: projectId ? inheritGlobal : undefined,
-    }
+    };
 
     try {
       await updateAssignments.mutateAsync({
         projectId,
         assignments: payload,
-      })
-      toast.success("Assignments updated")
-      setAssignmentsDraft({})
-      setInheritGlobalOverride(null)
+      });
+      toast.success("Assignments updated");
+      setAssignmentsDraft({});
+      setInheritGlobalOverride(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update assignments")
+      toast.error(error instanceof Error ? error.message : "Failed to update assignments");
     }
-  }
+  };
 
   const handleSavePrompt = async () => {
-    if (!selectedPrompt) return
-    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null)
+    if (!selectedPrompt) return;
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null);
     const payload = {
       name: toNullable(selectedPrompt.name),
       path: toNullable(selectedPrompt.path),
@@ -391,27 +418,29 @@ export default function AgentsPage() {
         .filter(Boolean),
       enabled: selectedPrompt.enabled,
       description: toNullable(selectedPrompt.description),
-    }
+    };
 
     try {
       await updatePrompt.mutateAsync({
         projectId,
         promptId: selectedPrompt.id,
         data: payload,
-      })
-      toast.success("Prompt template updated")
-      setIsPromptOpen(false)
+      });
+      toast.success("Prompt template updated");
+      setIsPromptOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update prompt")
+      toast.error(error instanceof Error ? error.message : "Failed to update prompt");
     }
-  }
+  };
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Agents</h1>
-          <p className="text-sm text-muted-foreground">Manage AI agents, prompt templates, and assignments</p>
+          <p className="text-muted-foreground text-sm">
+            Manage AI agents, prompt templates, and assignments
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <ScopeSelector
@@ -422,7 +451,12 @@ export default function AgentsPage() {
             inheritEnabled={inheritEnabled}
             onToggleInheritance={handleToggleInheritance}
           />
-          <Button variant="outline" size="sm" onClick={() => refreshHealth()} disabled={isRefreshingHealth}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refreshHealth()}
+            disabled={isRefreshingHealth}
+          >
             <RefreshCw className="mr-2 h-4 w-4" />
             {isRefreshingHealth ? "Refreshing" : "Refresh Health"}
           </Button>
@@ -436,25 +470,55 @@ export default function AgentsPage() {
           <TabsTrigger value="prompts">Prompts</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="agents" className="space-y-6 mt-4">
-          <div className="bg-muted/50 border rounded-lg p-4">
+        <TabsContent value="agents" className="mt-4 space-y-6">
+          <div className="bg-muted/50 rounded-lg border p-4">
             <div className="flex flex-wrap items-center justify-between gap-6">
-              <StatBlock label="Total Agents" value={stats.total} icon={Bot} iconClass="text-blue-500" />
+              <StatBlock
+                label="Total Agents"
+                value={stats.total}
+                icon={Bot}
+                iconClass="text-blue-500"
+              />
               <Divider />
-              <StatBlock label="Enabled" value={stats.enabled} icon={Circle} iconClass="text-green-500" />
+              <StatBlock
+                label="Enabled"
+                value={stats.enabled}
+                icon={Circle}
+                iconClass="text-green-500"
+              />
               <Divider />
-              <StatBlock label="Available" value={stats.available} icon={Activity} iconClass="text-green-500" />
+              <StatBlock
+                label="Available"
+                value={stats.available}
+                icon={Activity}
+                iconClass="text-green-500"
+              />
               <Divider />
-              <StatBlock label="Active Steps" value={stats.activeSteps} icon={Zap} iconClass="text-amber-500" />
+              <StatBlock
+                label="Active Steps"
+                value={stats.activeSteps}
+                icon={Zap}
+                iconClass="text-amber-500"
+              />
               <Divider />
-              <StatBlock label="Completed" value={stats.completedSteps} icon={TrendingUp} iconClass="text-cyan-500" />
+              <StatBlock
+                label="Completed"
+                value={stats.completedSteps}
+                icon={TrendingUp}
+                iconClass="text-cyan-500"
+              />
             </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {agents.map((agent) => (
-              <Card key={agent.id} className="relative overflow-hidden hover:shadow-lg transition-shadow">
-                <div className={`absolute left-0 top-0 h-full w-1 ${statusColors[agent.healthStatus].bg}`} />
+              <Card
+                key={agent.id}
+                className="relative overflow-hidden transition-shadow hover:shadow-lg"
+              >
+                <div
+                  className={`absolute top-0 left-0 h-full w-1 ${statusColors[agent.healthStatus].bg}`}
+                />
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
@@ -465,7 +529,9 @@ export default function AgentsPage() {
                       <Circle
                         className={`h-2 w-2 fill-current ${statusColors[agent.healthStatus].bg.replace("bg-", "text-")}`}
                       />
-                      <span className="text-xs text-muted-foreground">{statusColors[agent.healthStatus].text}</span>
+                      <span className="text-muted-foreground text-xs">
+                        {statusColors[agent.healthStatus].text}
+                      </span>
                     </div>
                   </div>
                   <CardDescription className="text-xs">{agent.kind}</CardDescription>
@@ -474,17 +540,22 @@ export default function AgentsPage() {
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Model</span>
-                      <span className="font-mono text-xs truncate max-w-[140px]">{agent.default_model || "-"}</span>
+                      <span className="max-w-[140px] truncate font-mono text-xs">
+                        {agent.default_model || "-"}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Command / Endpoint</span>
-                      <span className="text-xs truncate max-w-[140px]">
+                      <span className="max-w-[140px] truncate text-xs">
                         {agent.command || agent.endpoint || "-"}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Active Steps</span>
-                      <Badge variant={agent.activeSteps > 0 ? "default" : "secondary"} className="text-xs">
+                      <Badge
+                        variant={agent.activeSteps > 0 ? "default" : "secondary"}
+                        className="text-xs"
+                      >
                         {agent.activeSteps}
                       </Badge>
                     </div>
@@ -493,7 +564,7 @@ export default function AgentsPage() {
                       <span className="text-xs">{agent.capabilities?.length || 0}</span>
                     </div>
                     {agent.healthDetail && (
-                      <p className="text-xs text-muted-foreground truncate">{agent.healthDetail}</p>
+                      <p className="text-muted-foreground truncate text-xs">{agent.healthDetail}</p>
                     )}
                   </div>
                   <Button
@@ -511,7 +582,7 @@ export default function AgentsPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="assignments" className="space-y-6 mt-4">
+        <TabsContent value="assignments" className="mt-4 space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Process Agent Assignments</CardTitle>
@@ -561,7 +632,10 @@ export default function AgentsPage() {
                 ))}
               </div>
               <div className="flex justify-end">
-                <Button onClick={handleSaveAssignments} disabled={updateAssignments.isPending || !assignmentsReady}>
+                <Button
+                  onClick={handleSaveAssignments}
+                  disabled={updateAssignments.isPending || !assignmentsReady}
+                >
                   Save Assignments
                 </Button>
               </div>
@@ -569,11 +643,13 @@ export default function AgentsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="prompts" className="space-y-6 mt-4">
+        <TabsContent value="prompts" className="mt-4 space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold">Prompt Templates</h2>
-              <p className="text-sm text-muted-foreground">Edit reusable prompts and per-project overrides.</p>
+              <p className="text-muted-foreground text-sm">
+                Edit reusable prompts and per-project overrides.
+              </p>
             </div>
             <Button
               size="sm"
@@ -616,7 +692,7 @@ export default function AgentsPage() {
                   <CardContent className="space-y-3 text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Path</span>
-                      <span className="text-xs truncate max-w-[180px]">{prompt.path}</span>
+                      <span className="max-w-[180px] truncate text-xs">{prompt.path}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Engine</span>
@@ -658,7 +734,9 @@ export default function AgentsPage() {
                     id="agent-name"
                     value={selectedAgent.name}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, name: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, name: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -668,7 +746,9 @@ export default function AgentsPage() {
                     id="agent-kind"
                     value={selectedAgent.kind}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, kind: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, kind: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -681,7 +761,9 @@ export default function AgentsPage() {
                     id="agent-command"
                     value={selectedAgent.command}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, command: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, command: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -691,7 +773,9 @@ export default function AgentsPage() {
                     id="agent-endpoint"
                     value={selectedAgent.endpoint}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, endpoint: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, endpoint: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -704,7 +788,9 @@ export default function AgentsPage() {
                     id="agent-default-model"
                     value={selectedAgent.default_model}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, default_model: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, default_model: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -714,7 +800,9 @@ export default function AgentsPage() {
                     id="agent-command-dir"
                     value={selectedAgent.command_dir}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, command_dir: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, command_dir: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -727,7 +815,9 @@ export default function AgentsPage() {
                     id="agent-sandbox"
                     value={selectedAgent.sandbox}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, sandbox: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, sandbox: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -737,7 +827,9 @@ export default function AgentsPage() {
                     id="agent-format"
                     value={selectedAgent.format}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, format: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, format: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -751,7 +843,9 @@ export default function AgentsPage() {
                     type="number"
                     value={selectedAgent.timeout_seconds}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, timeout_seconds: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, timeout_seconds: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -762,7 +856,9 @@ export default function AgentsPage() {
                     type="number"
                     value={selectedAgent.max_retries}
                     onChange={(event) =>
-                      setSelectedAgent((prev) => (prev ? { ...prev, max_retries: event.target.value } : prev))
+                      setSelectedAgent((prev) =>
+                        prev ? { ...prev, max_retries: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -775,7 +871,9 @@ export default function AgentsPage() {
                   rows={3}
                   value={selectedAgent.capabilities}
                   onChange={(event) =>
-                    setSelectedAgent((prev) => (prev ? { ...prev, capabilities: event.target.value } : prev))
+                    setSelectedAgent((prev) =>
+                      prev ? { ...prev, capabilities: event.target.value } : prev
+                    )
                   }
                   placeholder="code_gen, code_review"
                 />
@@ -784,7 +882,7 @@ export default function AgentsPage() {
               <div className="flex items-center justify-between rounded-lg border p-3">
                 <div>
                   <Label>Enabled</Label>
-                  <p className="text-xs text-muted-foreground">Disable to prevent assignment.</p>
+                  <p className="text-muted-foreground text-xs">Disable to prevent assignment.</p>
                 </div>
                 <Switch
                   checked={selectedAgent.enabled}
@@ -796,7 +894,7 @@ export default function AgentsPage() {
             </div>
           )}
 
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
               Cancel
             </Button>
@@ -828,7 +926,9 @@ export default function AgentsPage() {
                     id="prompt-id"
                     value={selectedPrompt.id}
                     onChange={(event) =>
-                      setSelectedPrompt((prev) => (prev ? { ...prev, id: event.target.value } : prev))
+                      setSelectedPrompt((prev) =>
+                        prev ? { ...prev, id: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -838,7 +938,9 @@ export default function AgentsPage() {
                     id="prompt-name"
                     value={selectedPrompt.name}
                     onChange={(event) =>
-                      setSelectedPrompt((prev) => (prev ? { ...prev, name: event.target.value } : prev))
+                      setSelectedPrompt((prev) =>
+                        prev ? { ...prev, name: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -850,7 +952,9 @@ export default function AgentsPage() {
                   id="prompt-path"
                   value={selectedPrompt.path}
                   onChange={(event) =>
-                    setSelectedPrompt((prev) => (prev ? { ...prev, path: event.target.value } : prev))
+                    setSelectedPrompt((prev) =>
+                      prev ? { ...prev, path: event.target.value } : prev
+                    )
                   }
                 />
               </div>
@@ -862,7 +966,9 @@ export default function AgentsPage() {
                     id="prompt-kind"
                     value={selectedPrompt.kind}
                     onChange={(event) =>
-                      setSelectedPrompt((prev) => (prev ? { ...prev, kind: event.target.value } : prev))
+                      setSelectedPrompt((prev) =>
+                        prev ? { ...prev, kind: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -872,7 +978,9 @@ export default function AgentsPage() {
                     id="prompt-engine"
                     value={selectedPrompt.engine_id}
                     onChange={(event) =>
-                      setSelectedPrompt((prev) => (prev ? { ...prev, engine_id: event.target.value } : prev))
+                      setSelectedPrompt((prev) =>
+                        prev ? { ...prev, engine_id: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -885,7 +993,9 @@ export default function AgentsPage() {
                     id="prompt-model"
                     value={selectedPrompt.model}
                     onChange={(event) =>
-                      setSelectedPrompt((prev) => (prev ? { ...prev, model: event.target.value } : prev))
+                      setSelectedPrompt((prev) =>
+                        prev ? { ...prev, model: event.target.value } : prev
+                      )
                     }
                   />
                 </div>
@@ -895,7 +1005,9 @@ export default function AgentsPage() {
                     id="prompt-tags"
                     value={selectedPrompt.tags}
                     onChange={(event) =>
-                      setSelectedPrompt((prev) => (prev ? { ...prev, tags: event.target.value } : prev))
+                      setSelectedPrompt((prev) =>
+                        prev ? { ...prev, tags: event.target.value } : prev
+                      )
                     }
                     placeholder="planning, qa"
                   />
@@ -909,7 +1021,9 @@ export default function AgentsPage() {
                   rows={3}
                   value={selectedPrompt.description}
                   onChange={(event) =>
-                    setSelectedPrompt((prev) => (prev ? { ...prev, description: event.target.value } : prev))
+                    setSelectedPrompt((prev) =>
+                      prev ? { ...prev, description: event.target.value } : prev
+                    )
                   }
                 />
               </div>
@@ -917,7 +1031,7 @@ export default function AgentsPage() {
               <div className="flex items-center justify-between rounded-lg border p-3">
                 <div>
                   <Label>Enabled</Label>
-                  <p className="text-xs text-muted-foreground">Disable to hide from assignments.</p>
+                  <p className="text-muted-foreground text-xs">Disable to hide from assignments.</p>
                 </div>
                 <Switch
                   checked={selectedPrompt.enabled}
@@ -929,7 +1043,7 @@ export default function AgentsPage() {
             </div>
           )}
 
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setIsPromptOpen(false)}>
               Cancel
             </Button>
@@ -940,7 +1054,7 @@ export default function AgentsPage() {
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }
 
 function ScopeSelector({
@@ -951,12 +1065,12 @@ function ScopeSelector({
   inheritEnabled,
   onToggleInheritance,
 }: {
-  projects: Array<{ id: number; name: string }>
-  value: string
-  onChange: (value: string) => void
-  showInheritance: boolean
-  inheritEnabled: boolean
-  onToggleInheritance: (value: boolean) => void
+  projects: Array<{ id: number; name: string }>;
+  value: string;
+  onChange: (value: string) => void;
+  showInheritance: boolean;
+  inheritEnabled: boolean;
+  onToggleInheritance: (value: boolean) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -980,7 +1094,7 @@ function ScopeSelector({
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function StatBlock({
@@ -989,26 +1103,26 @@ function StatBlock({
   icon: Icon,
   iconClass,
 }: {
-  label: string
-  value: number
-  icon: typeof Bot
-  iconClass: string
+  label: string;
+  value: number;
+  icon: typeof Bot;
+  iconClass: string;
 }) {
   return (
     <div className="flex items-center gap-2">
-      <div className={`h-8 w-8 rounded-md bg-muted flex items-center justify-center ${iconClass}`}>
+      <div className={`bg-muted flex h-8 w-8 items-center justify-center rounded-md ${iconClass}`}>
         <Icon className="h-4 w-4" />
       </div>
       <div>
-        <div className="text-sm font-medium text-muted-foreground">{label}</div>
+        <div className="text-muted-foreground text-sm font-medium">{label}</div>
         <div className="text-2xl font-bold">{value}</div>
       </div>
     </div>
-  )
+  );
 }
 
 function Divider() {
-  return <div className="h-12 w-px bg-border hidden md:block" />
+  return <div className="bg-border hidden h-12 w-px md:block" />;
 }
 
 function AssignmentSelect({
@@ -1017,10 +1131,10 @@ function AssignmentSelect({
   agents,
   onChange,
 }: {
-  label: string
-  value: string
-  agents: AgentCard[]
-  onChange: (value: string) => void
+  label: string;
+  value: string;
+  agents: AgentCard[];
+  onChange: (value: string) => void;
 }) {
   return (
     <div className="space-y-2">
@@ -1038,7 +1152,7 @@ function AssignmentSelect({
         </SelectContent>
       </Select>
     </div>
-  )
+  );
 }
 
 function PromptAssignmentSelect({
@@ -1048,11 +1162,11 @@ function PromptAssignmentSelect({
   onChange,
   description,
 }: {
-  label: string
-  value: string
-  prompts: AgentPromptTemplate[]
-  onChange: (value: string) => void
-  description?: string
+  label: string;
+  value: string;
+  prompts: AgentPromptTemplate[];
+  onChange: (value: string) => void;
+  description?: string;
 }) {
   return (
     <div className="space-y-2">
@@ -1063,7 +1177,7 @@ function PromptAssignmentSelect({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground rounded-full p-1 transition-colors"
                 aria-label={`${label} help`}
               >
                 <Info className="h-3.5 w-3.5" />
@@ -1088,5 +1202,5 @@ function PromptAssignmentSelect({
         </SelectContent>
       </Select>
     </div>
-  )
+  );
 }

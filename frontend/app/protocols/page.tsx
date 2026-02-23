@@ -1,45 +1,53 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import Link from "next/link"
-import { useProtocols } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Search, Filter, Play, Pause, CheckCircle, XCircle, AlertTriangle } from "lucide-react"
-import { formatRelativeTime } from "@/lib/format"
-import type { ProtocolRun } from "@/lib/api/types"
+import { useState } from "react";
+import Link from "next/link";
+
+import { AlertTriangle,CheckCircle, Filter, Pause, Play, Search, XCircle } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { StatusPill } from "@/components/ui/status-pill";
+import { useProtocols } from "@/lib/api";
+import type { ProtocolRun } from "@/lib/api/types";
+import { formatRelativeTime } from "@/lib/format";
 
 export default function ProtocolsPage() {
-  const { data: protocols, isLoading, error } = useProtocols()
-  const [search, setSearch] = useState("")
-  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const { data: protocols, isLoading, error } = useProtocols();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  if (isLoading) return <LoadingState message="Loading protocols..." />
-  if (error) return <EmptyState title="Error loading protocols" description={error.message} />
+  if (isLoading) return <LoadingState message="Loading protocols..." />;
+  if (error) return <EmptyState title="Error loading protocols" description={error.message} />;
 
   // Filter protocols
   const filteredProtocols = protocols?.filter((protocol) => {
     const matchesSearch =
       search === "" ||
       protocol.protocol_name.toLowerCase().includes(search.toLowerCase()) ||
-      protocol.id.toString().includes(search)
-    const matchesStatus = statusFilter === "all" || protocol.status === statusFilter
-    return matchesSearch && matchesStatus
-  })
+      protocol.id.toString().includes(search);
+    const matchesStatus = statusFilter === "all" || protocol.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   // Count by status
   const statusCounts = protocols?.reduce(
     (acc, p) => {
-      acc[p.status] = (acc[p.status] || 0) + 1
-      return acc
+      acc[p.status] = (acc[p.status] || 0) + 1;
+      return acc;
     },
-    {} as Record<string, number>,
-  )
+    {} as Record<string, number>
+  );
 
   return (
     <div className="container py-8">
@@ -49,18 +57,18 @@ export default function ProtocolsPage() {
       </div>
 
       {/* Status Overview */}
-      <div className="grid gap-4 md:grid-cols-5 mb-6">
+      <div className="mb-6 grid gap-4 md:grid-cols-5">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total</CardTitle>
+            <CardTitle className="text-muted-foreground text-sm font-medium">Total</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{protocols?.length || 0}</div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Running</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="text-muted-foreground text-sm font-medium">Running</CardTitle>
             <Play className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
@@ -68,8 +76,8 @@ export default function ProtocolsPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Paused</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="text-muted-foreground text-sm font-medium">Paused</CardTitle>
             <Pause className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
@@ -77,8 +85,8 @@ export default function ProtocolsPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="text-muted-foreground text-sm font-medium">Completed</CardTitle>
             <CheckCircle className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
@@ -86,8 +94,8 @@ export default function ProtocolsPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Failed</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="text-muted-foreground text-sm font-medium">Failed</CardTitle>
             <XCircle className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
@@ -97,9 +105,9 @@ export default function ProtocolsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-4 mb-6">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="mb-6 flex gap-4">
+        <div className="relative flex-1">
+          <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input
             placeholder="Search protocols by name or ID..."
             value={search}
@@ -138,8 +146,8 @@ export default function ProtocolsPage() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  setSearch("")
-                  setStatusFilter("all")
+                  setSearch("");
+                  setStatusFilter("all");
                 }}
               >
                 Clear Filters
@@ -155,17 +163,17 @@ export default function ProtocolsPage() {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function ProtocolCard({ protocol }: { protocol: ProtocolRun }) {
   return (
     <Link href={`/protocols/${protocol.id}`}>
-      <Card className="h-full transition-colors hover:border-primary/50">
+      <Card className="hover:border-primary/50 h-full transition-colors">
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <CardTitle className="text-lg truncate">{protocol.protocol_name}</CardTitle>
+            <div className="min-w-0 flex-1">
+              <CardTitle className="truncate text-lg">{protocol.protocol_name}</CardTitle>
               <CardDescription className="text-xs">ID: {protocol.id}</CardDescription>
             </div>
             <StatusPill status={protocol.status} />
@@ -179,17 +187,19 @@ function ProtocolCard({ protocol }: { protocol: ProtocolRun }) {
             </div>
             <div>
               <p className="text-muted-foreground text-xs">Branch</p>
-              <p className="font-medium truncate">{protocol.base_branch || "main"}</p>
+              <p className="truncate font-medium">{protocol.base_branch || "main"}</p>
             </div>
           </div>
 
           {protocol.description && (
-            <p className="text-xs text-muted-foreground line-clamp-2">{protocol.description}</p>
+            <p className="text-muted-foreground line-clamp-2 text-xs">{protocol.description}</p>
           )}
 
-          <p className="text-xs text-muted-foreground">Updated {formatRelativeTime(protocol.updated_at)}</p>
+          <p className="text-muted-foreground text-xs">
+            Updated {formatRelativeTime(protocol.updated_at)}
+          </p>
         </CardContent>
       </Card>
     </Link>
-  )
+  );
 }

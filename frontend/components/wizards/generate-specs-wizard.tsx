@@ -1,154 +1,175 @@
-"use client"
+"use client";
 
-import { useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
-import { toast } from "sonner"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Separator } from "@/components/ui/separator"
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
 import {
-  FileText,
-  Sparkles,
-  CheckCircle2,
   AlertCircle,
-  FolderOpen,
-  Loader2,
-  ListTodo,
-  FileCode,
-  Target,
-  MessageSquare,
-  ClipboardCheck,
-  FileSearch,
-  PlayCircle,
   ArrowRight,
-} from "lucide-react"
+  CheckCircle2,
+  ClipboardCheck,
+  FileCode,
+  FileSearch,
+  FileText,
+  FolderOpen,
+  ListTodo,
+  Loader2,
+  MessageSquare,
+  PlayCircle,
+  Sparkles,
+  Target,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  useProject,
-  useSpecKitStatus,
-  useInitSpecKit,
-  useGenerateSpec,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  useAnalyzeSpec,
   useClarifySpec,
   useGenerateChecklist,
-  useAnalyzeSpec,
+  useGenerateSpec,
+  useInitSpecKit,
+  useProject,
   useRunImplement,
-} from "@/lib/api"
+  useSpecKitStatus,
+} from "@/lib/api";
 
 // Minimum character length for description (matches backend validation)
-const MIN_DESCRIPTION_LENGTH = 5
+const MIN_DESCRIPTION_LENGTH = 5;
 
 interface GenerateSpecsWizardProps {
-  projectId: number
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  projectId: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: GenerateSpecsWizardProps) {
-  const router = useRouter()
-  const [step, setStep] = useState(1)
+export function GenerateSpecsWizardModal({
+  projectId,
+  open,
+  onOpenChange,
+}: GenerateSpecsWizardProps) {
+  const router = useRouter();
+  const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     featureName: "",
     featureDescription: "",
     requirements: "",
     constraints: "",
-  })
-  const [lastSpecPath, setLastSpecPath] = useState<string | null>(null)
-  const [lastSpecRunId, setLastSpecRunId] = useState<number | null>(null)
-  const [clarifyOpen, setClarifyOpen] = useState(false)
-  const [clarifyQuestion, setClarifyQuestion] = useState("")
-  const [clarifyAnswer, setClarifyAnswer] = useState("")
-  const [clarifyNotes, setClarifyNotes] = useState("")
+  });
+  const [lastSpecPath, setLastSpecPath] = useState<string | null>(null);
+  const [lastSpecRunId, setLastSpecRunId] = useState<number | null>(null);
+  const [clarifyOpen, setClarifyOpen] = useState(false);
+  const [clarifyQuestion, setClarifyQuestion] = useState("");
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
+  const [clarifyNotes, setClarifyNotes] = useState("");
 
-  const { data: project, isLoading: projectLoading } = useProject(projectId)
-  const { data: specKitStatus, isLoading: statusLoading, refetch: refetchStatus } = useSpecKitStatus(projectId)
+  const { data: project, isLoading: projectLoading } = useProject(projectId);
+  const {
+    data: specKitStatus,
+    isLoading: statusLoading,
+    refetch: refetchStatus,
+  } = useSpecKitStatus(projectId);
 
-  const initSpecKit = useInitSpecKit()
-  const generateSpec = useGenerateSpec()
-  const clarifySpec = useClarifySpec()
-  const generateChecklist = useGenerateChecklist()
-  const analyzeSpec = useAnalyzeSpec()
-  const runImplement = useRunImplement()
+  const initSpecKit = useInitSpecKit();
+  const generateSpec = useGenerateSpec();
+  const clarifySpec = useClarifySpec();
+  const generateChecklist = useGenerateChecklist();
+  const analyzeSpec = useAnalyzeSpec();
+  const runImplement = useRunImplement();
 
-  const isLoading = projectLoading || statusLoading
-  const isInitialized = specKitStatus?.initialized ?? false
+  const isLoading = projectLoading || statusLoading;
+  const isInitialized = specKitStatus?.initialized ?? false;
   const availableSpecs = useMemo(
     () => (specKitStatus?.specs ?? []).filter((spec) => spec.status !== "cleaned"),
-    [specKitStatus],
-  )
+    [specKitStatus]
+  );
 
   const activeSpec = useMemo(() => {
     if (lastSpecRunId) {
-      const match = availableSpecs.find((spec) => spec.spec_run_id === lastSpecRunId)
-      if (match) return match
+      const match = availableSpecs.find((spec) => spec.spec_run_id === lastSpecRunId);
+      if (match) return match;
     }
     if (lastSpecPath) {
-      return availableSpecs.find((spec) => spec.spec_path === lastSpecPath || spec.path === lastSpecPath) || null
+      return (
+        availableSpecs.find(
+          (spec) => spec.spec_path === lastSpecPath || spec.path === lastSpecPath
+        ) || null
+      );
     }
-    if (!availableSpecs.length) return null
+    if (!availableSpecs.length) return null;
     const sorted = [...availableSpecs].sort((a, b) => {
-      const aNum = Number.parseInt(a.name.split("-")[0] || "0", 10)
-      const bNum = Number.parseInt(b.name.split("-")[0] || "0", 10)
-      return bNum - aNum
-    })
-    return sorted[0]
-  }, [availableSpecs, lastSpecPath, lastSpecRunId])
+      const aNum = Number.parseInt(a.name.split("-")[0] || "0", 10);
+      const bNum = Number.parseInt(b.name.split("-")[0] || "0", 10);
+      return bNum - aNum;
+    });
+    return sorted[0];
+  }, [availableSpecs, lastSpecPath, lastSpecRunId]);
 
-  const activeSpecPath = activeSpec?.spec_path || null
+  const activeSpecPath = activeSpec?.spec_path || null;
 
   const buildFullDescription = () => {
-    let desc = formData.featureDescription
+    let desc = formData.featureDescription;
     if (formData.requirements) {
-      desc += `\n\n## Requirements\n${formData.requirements}`
+      desc += `\n\n## Requirements\n${formData.requirements}`;
     }
     if (formData.constraints) {
-      desc += `\n\n## Constraints & Considerations\n${formData.constraints}`
+      desc += `\n\n## Constraints & Considerations\n${formData.constraints}`;
     }
-    return desc
-  }
+    return desc;
+  };
 
   // Validation state
-  const fullDescription = buildFullDescription()
-  const descriptionLength = fullDescription.length
-  const isDescriptionValid = descriptionLength >= MIN_DESCRIPTION_LENGTH
-  const descriptionError = !isDescriptionValid && formData.featureDescription.length > 0
-    ? `Description must be at least ${MIN_DESCRIPTION_LENGTH} characters (currently ${descriptionLength})`
-    : null
+  const fullDescription = buildFullDescription();
+  const descriptionLength = fullDescription.length;
+  const isDescriptionValid = descriptionLength >= MIN_DESCRIPTION_LENGTH;
+  const descriptionError =
+    !isDescriptionValid && formData.featureDescription.length > 0
+      ? `Description must be at least ${MIN_DESCRIPTION_LENGTH} characters (currently ${descriptionLength})`
+      : null;
 
   const handleInitialize = async () => {
     try {
-      const result = await initSpecKit.mutateAsync({ project_id: projectId })
+      const result = await initSpecKit.mutateAsync({ project_id: projectId });
       if (result.success) {
-        toast.success("SpecKit initialized successfully!")
-        refetchStatus()
+        toast.success("SpecKit initialized successfully!");
+        refetchStatus();
       } else {
-        toast.error(result.error || "Failed to initialize SpecKit")
+        toast.error(result.error || "Failed to initialize SpecKit");
       }
     } catch {
-      toast.error("Failed to initialize SpecKit")
+      toast.error("Failed to initialize SpecKit");
     }
-  }
+  };
 
   const handleNext = () => {
-    if (step < 3) setStep(step + 1)
-  }
+    if (step < 3) setStep(step + 1);
+  };
 
   const handleBack = () => {
     if (step > 1) {
-      setStep(step - 1)
-      return
+      setStep(step - 1);
+      return;
     }
-    onOpenChange(false)
-  }
+    onOpenChange(false);
+  };
 
   const handleGenerate = async () => {
     if (!isDescriptionValid) {
-      toast.error(`Description must be at least ${MIN_DESCRIPTION_LENGTH} characters`)
-      return
+      toast.error(`Description must be at least ${MIN_DESCRIPTION_LENGTH} characters`);
+      return;
     }
 
     try {
@@ -156,85 +177,87 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         project_id: projectId,
         description: fullDescription,
         feature_name: formData.featureName || undefined,
-      })
+      });
 
       if (result.success) {
-        toast.success(`Specification generated: ${result.feature_name || "Feature"}`)
+        toast.success(`Specification generated: ${result.feature_name || "Feature"}`);
         if (result.spec_path) {
-          setLastSpecPath(result.spec_path)
-          setLastSpecRunId(result.spec_run_id ?? null)
-          router.push(`/projects/${projectId}?tab=spec&spec=${result.spec_path}`)
+          setLastSpecPath(result.spec_path);
+          setLastSpecRunId(result.spec_run_id ?? null);
+          router.push(`/projects/${projectId}?tab=spec&spec=${result.spec_path}`);
         }
-        onOpenChange(false)
+        onOpenChange(false);
       } else {
-        toast.error(result.error || "Failed to generate specification")
+        toast.error(result.error || "Failed to generate specification");
       }
     } catch {
-      toast.error("Failed to generate specification")
+      toast.error("Failed to generate specification");
     }
-  }
+  };
 
   const handleClarify = async () => {
     if (!activeSpecPath) {
-      toast.error("No spec available to clarify")
-      return
+      toast.error("No spec available to clarify");
+      return;
     }
 
-    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim()
-    const hasNotes = clarifyNotes.trim()
+    const hasEntry = clarifyQuestion.trim() && clarifyAnswer.trim();
+    const hasNotes = clarifyNotes.trim();
 
     if (!hasEntry && !hasNotes) {
-      toast.error("Provide a question/answer or notes")
-      return
+      toast.error("Provide a question/answer or notes");
+      return;
     }
 
     try {
       const result = await clarifySpec.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
-        entries: hasEntry ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }] : [],
+        entries: hasEntry
+          ? [{ question: clarifyQuestion.trim(), answer: clarifyAnswer.trim() }]
+          : [],
         notes: hasNotes ? clarifyNotes.trim() : undefined,
         spec_run_id: activeSpec?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success(`Clarifications added (${result.clarifications_added})`)
-        setClarifyOpen(false)
-        setClarifyQuestion("")
-        setClarifyAnswer("")
-        setClarifyNotes("")
+        toast.success(`Clarifications added (${result.clarifications_added})`);
+        setClarifyOpen(false);
+        setClarifyQuestion("");
+        setClarifyAnswer("");
+        setClarifyNotes("");
       } else {
-        toast.error(result.error || "Clarification failed")
+        toast.error(result.error || "Clarification failed");
       }
     } catch {
-      toast.error("Clarification failed")
+      toast.error("Clarification failed");
     }
-  }
+  };
 
   const handleChecklist = async () => {
     if (!activeSpecPath) {
-      toast.error("No spec available for checklist")
-      return
+      toast.error("No spec available for checklist");
+      return;
     }
     try {
       const result = await generateChecklist.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
         spec_run_id: activeSpec?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success(`Checklist generated (${result.item_count} items)`)
+        toast.success(`Checklist generated (${result.item_count} items)`);
       } else {
-        toast.error(result.error || "Checklist generation failed")
+        toast.error(result.error || "Checklist generation failed");
       }
     } catch {
-      toast.error("Checklist generation failed")
+      toast.error("Checklist generation failed");
     }
-  }
+  };
 
   const handleAnalyze = async () => {
     if (!activeSpecPath) {
-      toast.error("No spec available for analysis")
-      return
+      toast.error("No spec available for analysis");
+      return;
     }
     try {
       const result = await analyzeSpec.mutateAsync({
@@ -243,43 +266,43 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         plan_path: activeSpec?.plan_path || undefined,
         tasks_path: activeSpec?.tasks_path || undefined,
         spec_run_id: activeSpec?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success("Analysis report generated")
+        toast.success("Analysis report generated");
       } else {
-        toast.error(result.error || "Analysis failed")
+        toast.error(result.error || "Analysis failed");
       }
     } catch {
-      toast.error("Analysis failed")
+      toast.error("Analysis failed");
     }
-  }
+  };
 
   const handleImplement = async () => {
     if (!activeSpecPath) {
-      toast.error("No spec available to implement")
-      return
+      toast.error("No spec available to implement");
+      return;
     }
     try {
       const result = await runImplement.mutateAsync({
         project_id: projectId,
         spec_path: activeSpecPath,
         spec_run_id: activeSpec?.spec_run_id ?? undefined,
-      })
+      });
       if (result.success) {
-        toast.success("Implementation run initialized")
+        toast.success("Implementation run initialized");
       } else {
-        toast.error(result.error || "Implementation init failed")
+        toast.error(result.error || "Implementation init failed");
       }
     } catch {
-      toast.error("Implementation init failed")
+      toast.error("Implementation init failed");
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="5xl" className="h-[90vh] max-h-[90vh] p-0 overflow-hidden">
-        <div className="flex h-full flex-col min-h-0">
-          <DialogHeader className="border-b px-6 py-4 flex-shrink-0">
+      <DialogContent size="5xl" className="h-[90vh] max-h-[90vh] overflow-hidden p-0">
+        <div className="flex h-full min-h-0 flex-col">
+          <DialogHeader className="flex-shrink-0 border-b px-6 py-4">
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-blue-500" />
               Generate Specification
@@ -289,10 +312,10 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 space-y-6">
+          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-6">
             {isLoading ? (
               <div className="flex items-center justify-center py-16">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
               </div>
             ) : (
               <>
@@ -301,7 +324,8 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     <AlertDescription className="flex items-center justify-between gap-4">
                       <span>
-                        SpecKit is not initialized for this project. Initialize it to start generating specifications.
+                        SpecKit is not initialized for this project. Initialize it to start
+                        generating specifications.
                       </span>
                       <Button size="sm" onClick={handleInitialize} disabled={initSpecKit.isPending}>
                         {initSpecKit.isPending ? (
@@ -325,36 +349,51 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                   </Alert>
                 )}
 
-                <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="bg-muted/30 rounded-lg border p-4">
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-3">
                       <div
-                        className={`flex items-center justify-center w-8 h-8 rounded-full ${step >= 1 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                          }`}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                          step >= 1
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground"
+                        }`}
                       >
                         1
                       </div>
-                      <span className={step >= 1 ? "font-medium" : "text-muted-foreground"}>Feature Info</span>
+                      <span className={step >= 1 ? "font-medium" : "text-muted-foreground"}>
+                        Feature Info
+                      </span>
                     </div>
-                    <Separator className="flex-1 mx-4" />
+                    <Separator className="mx-4 flex-1" />
                     <div className="flex items-center gap-3">
                       <div
-                        className={`flex items-center justify-center w-8 h-8 rounded-full ${step >= 2 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                          }`}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                          step >= 2
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground"
+                        }`}
                       >
                         2
                       </div>
-                      <span className={step >= 2 ? "font-medium" : "text-muted-foreground"}>Details</span>
+                      <span className={step >= 2 ? "font-medium" : "text-muted-foreground"}>
+                        Details
+                      </span>
                     </div>
-                    <Separator className="flex-1 mx-4" />
+                    <Separator className="mx-4 flex-1" />
                     <div className="flex items-center gap-3">
                       <div
-                        className={`flex items-center justify-center w-8 h-8 rounded-full ${step >= 3 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                          }`}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                          step >= 3
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground"
+                        }`}
                       >
                         3
                       </div>
-                      <span className={step >= 3 ? "font-medium" : "text-muted-foreground"}>Generate</span>
+                      <span className={step >= 3 ? "font-medium" : "text-muted-foreground"}>
+                        Generate
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -381,14 +420,20 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                             id="featureName"
                             placeholder="e.g., User Authentication System"
                             value={formData.featureName}
-                            onChange={(e) => setFormData({ ...formData, featureName: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, featureName: e.target.value })
+                            }
                           />
-                          <p className="text-xs text-muted-foreground">A short, descriptive name for this feature</p>
+                          <p className="text-muted-foreground text-xs">
+                            A short, descriptive name for this feature
+                          </p>
                         </div>
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label htmlFor="featureDescription">Description *</Label>
-                            <span className={`text-xs ${descriptionError ? 'text-destructive' : 'text-muted-foreground'}`}>
+                            <span
+                              className={`text-xs ${descriptionError ? "text-destructive" : "text-muted-foreground"}`}
+                            >
                               {descriptionLength}/{MIN_DESCRIPTION_LENGTH} min characters
                             </span>
                           </div>
@@ -397,14 +442,17 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                             placeholder="Describe what this feature should do, who will use it, and what problem it solves..."
                             rows={8}
                             value={formData.featureDescription}
-                            onChange={(e) => setFormData({ ...formData, featureDescription: e.target.value })}
-                            className={descriptionError ? 'border-destructive' : ''}
+                            onChange={(e) =>
+                              setFormData({ ...formData, featureDescription: e.target.value })
+                            }
+                            className={descriptionError ? "border-destructive" : ""}
                           />
                           {descriptionError && (
-                            <p className="text-xs text-destructive">{descriptionError}</p>
+                            <p className="text-destructive text-xs">{descriptionError}</p>
                           )}
-                          <p className="text-xs text-muted-foreground">
-                            Provide a detailed description of the feature. Minimum {MIN_DESCRIPTION_LENGTH} characters required.
+                          <p className="text-muted-foreground text-xs">
+                            Provide a detailed description of the feature. Minimum{" "}
+                            {MIN_DESCRIPTION_LENGTH} characters required.
                           </p>
                         </div>
                       </div>
@@ -419,7 +467,9 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                             placeholder="List the key requirements, user stories, or acceptance criteria..."
                             rows={8}
                             value={formData.requirements}
-                            onChange={(e) => setFormData({ ...formData, requirements: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, requirements: e.target.value })
+                            }
                           />
                         </div>
                         <div className="space-y-2">
@@ -429,7 +479,9 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                             placeholder="Any technical constraints, security requirements, performance targets..."
                             rows={5}
                             value={formData.constraints}
-                            onChange={(e) => setFormData({ ...formData, constraints: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, constraints: e.target.value })
+                            }
                           />
                         </div>
                       </div>
@@ -440,18 +492,18 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                         <div className="grid gap-6 md:grid-cols-2">
                           <Card className="border-2">
                             <CardHeader>
-                              <CardTitle className="text-base flex items-center gap-2">
+                              <CardTitle className="flex items-center gap-2 text-base">
                                 <FileText className="h-4 w-4" />
                                 Feature Summary
                               </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
                               <div>
-                                <p className="text-sm font-medium text-muted-foreground">Name</p>
+                                <p className="text-muted-foreground text-sm font-medium">Name</p>
                                 <p className="font-medium">{formData.featureName}</p>
                               </div>
                               <div>
-                                <p className="text-sm font-medium text-muted-foreground">Project</p>
+                                <p className="text-muted-foreground text-sm font-medium">Project</p>
                                 <p className="text-sm">{project?.name}</p>
                               </div>
                             </CardContent>
@@ -459,21 +511,21 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
 
                           <Card className="border-2">
                             <CardHeader>
-                              <CardTitle className="text-base flex items-center gap-2">
+                              <CardTitle className="flex items-center gap-2 text-base">
                                 <Sparkles className="h-4 w-4" />
                                 What SpecKit Will Generate
                               </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
                               <div className="flex items-center justify-between">
-                                <span className="text-sm flex items-center gap-2">
+                                <span className="flex items-center gap-2 text-sm">
                                   <FileCode className="h-4 w-4 text-blue-500" />
                                   Feature Specification (spec.md)
                                 </span>
                                 <CheckCircle2 className="h-4 w-4 text-green-500" />
                               </div>
                               <Separator />
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <div className="text-muted-foreground flex items-center gap-2 text-xs">
                                 <Target className="h-3 w-3" />
                                 <span>Next: Plan → Tasks → Execution</span>
                               </div>
@@ -486,19 +538,20 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                             <CardTitle className="text-base">Description Preview</CardTitle>
                           </CardHeader>
                           <CardContent>
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+                            <p className="text-muted-foreground max-h-48 overflow-y-auto text-sm whitespace-pre-wrap">
                               {buildFullDescription() || "No description provided"}
                             </p>
                           </CardContent>
                         </Card>
 
-                        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                        <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-4">
                           <div className="flex items-start gap-3">
-                            <Sparkles className="h-5 w-5 text-blue-500 mt-0.5" />
+                            <Sparkles className="mt-0.5 h-5 w-5 text-blue-500" />
                             <div>
-                              <p className="font-medium mb-1">AI-Powered Generation</p>
-                              <p className="text-sm text-muted-foreground">
-                                SpecKit will analyze your description and generate a detailed technical specification.
+                              <p className="mb-1 font-medium">AI-Powered Generation</p>
+                              <p className="text-muted-foreground text-sm">
+                                SpecKit will analyze your description and generate a detailed
+                                technical specification.
                               </p>
                             </div>
                           </div>
@@ -514,7 +567,9 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                       <Sparkles className="h-5 w-5" />
                       SpecKit Actions
                     </CardTitle>
-                    <CardDescription>Run clarify/checklist/analyze/implement on the latest spec</CardDescription>
+                    <CardDescription>
+                      Run clarify/checklist/analyze/implement on the latest spec
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     {activeSpecPath ? (
@@ -537,7 +592,9 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                         </Button>
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">Generate a specification to unlock actions.</p>
+                      <p className="text-muted-foreground text-sm">
+                        Generate a specification to unlock actions.
+                      </p>
                     )}
                   </CardContent>
                 </Card>
@@ -545,7 +602,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                 {isInitialized && specKitStatus && specKitStatus.spec_count > 0 && (
                   <Card className="border-dashed">
                     <CardHeader>
-                      <CardTitle className="text-base flex items-center gap-2">
+                      <CardTitle className="flex items-center gap-2 text-base">
                         <ListTodo className="h-4 w-4" />
                         Existing Specifications
                       </CardTitle>
@@ -556,7 +613,10 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                     <CardContent>
                       <div className="grid gap-2">
                         {specKitStatus.specs?.slice(0, 5).map((spec) => (
-                          <div key={spec.path} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                          <div
+                            key={spec.path}
+                            className="bg-muted/50 flex items-center justify-between rounded-lg p-3"
+                          >
                             <div className="flex items-center gap-3">
                               <FileText className="h-4 w-4 text-blue-500" />
                               <span className="font-medium">{spec.name}</span>
@@ -576,7 +636,7 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
             )}
           </div>
 
-          <div className="border-t px-6 py-4 flex justify-between flex-shrink-0">
+          <div className="flex flex-shrink-0 justify-between border-t px-6 py-4">
             <Button variant="outline" onClick={handleBack}>
               {step === 1 ? "Cancel" : "Back"}
             </Button>
@@ -586,7 +646,10 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
-              <Button onClick={handleGenerate} disabled={generateSpec.isPending || !isInitialized || !isDescriptionValid}>
+              <Button
+                onClick={handleGenerate}
+                disabled={generateSpec.isPending || !isInitialized || !isDescriptionValid}
+              >
                 {generateSpec.isPending ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -607,7 +670,9 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
           <DialogContent size="xl">
             <DialogHeader>
               <DialogTitle>Clarify Specification</DialogTitle>
-              <DialogDescription>Add a clarification entry or notes to the latest spec.</DialogDescription>
+              <DialogDescription>
+                Add a clarification entry or notes to the latest spec.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -651,5 +716,5 @@ export function GenerateSpecsWizardModal({ projectId, open, onOpenChange }: Gene
         </Dialog>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

@@ -1,12 +1,14 @@
-import type React from "react"
-import { Header } from "./header"
-import { Sidebar } from "./sidebar"
-import { Breadcrumbs } from "./breadcrumbs"
-import { CommandPalette } from "./command-palette"
-import { SkipToContent } from "@/components/ui/skip-to-content"
+import type React from "react";
+
+import { SkipToContent } from "@/components/ui/skip-to-content";
+
+import { Breadcrumbs } from "./breadcrumbs";
+import { CommandPalette } from "./command-palette";
+import { Header } from "./header";
+import { Sidebar } from "./sidebar";
 
 interface AppShellProps {
-  children: React.ReactNode
+  children: React.ReactNode;
 }
 
 export function AppShell({ children }: AppShellProps) {
@@ -17,11 +19,11 @@ export function AppShell({ children }: AppShellProps) {
       <div className="flex min-h-screen flex-1 flex-col">
         <Header />
         <Breadcrumbs />
-        <main id="main-content" className="flex-1 bg-background" tabIndex={-1}>
+        <main id="main-content" className="bg-background flex-1" tabIndex={-1}>
           {children}
         </main>
       </div>
       <CommandPalette />
     </div>
-  )
+  );
 }

@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server"
+import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const redirect = searchParams.get("redirect") || "/"
+  const { searchParams } = new URL(request.url);
+  const redirect = searchParams.get("redirect") || "/";
 
   // In production, this would:
   // 1. Generate PKCE challenge
@@ -12,6 +12,6 @@ export async function GET(request: Request) {
   // 5. Set HttpOnly session cookie
 
   // Mock: redirect to callback with success
-  const callbackUrl = `/api/auth/callback?redirect=${encodeURIComponent(redirect)}`
-  return NextResponse.redirect(new URL(callbackUrl, request.url))
+  const callbackUrl = `/api/auth/callback?redirect=${encodeURIComponent(redirect)}`;
+  return NextResponse.redirect(new URL(callbackUrl, request.url));
 }

@@ -1,26 +1,27 @@
-"use client"
+"use client";
 
-import dynamic from "next/dynamic"
-import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/utils"
+import dynamic from "next/dynamic";
+
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 type MonacoProps = {
-  value: string
-  onChange: (value: string) => void
-  language?: string
-  height?: number
-  className?: string
-  options?: Record<string, unknown>
-}
+  value: string;
+  onChange: (value: string) => void;
+  language?: string;
+  height?: number;
+  className?: string;
+  options?: Record<string, unknown>;
+};
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.default), {
   ssr: false,
   loading: () => (
-    <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+    <div className="bg-muted/20 text-muted-foreground rounded-md border p-3 text-sm">
       Loading editor…
     </div>
   ),
-})
+});
 
 export function JsonEditor({
   value,
@@ -31,7 +32,7 @@ export function JsonEditor({
   options,
 }: MonacoProps) {
   return (
-    <div className={cn("rounded-md border overflow-hidden", className)}>
+    <div className={cn("overflow-hidden rounded-md border", className)}>
       <MonacoEditor
         value={value}
         language={language}
@@ -48,9 +49,14 @@ export function JsonEditor({
           ...options,
         }}
         theme="vs-dark"
-        loading={<Textarea value={value} onChange={(e) => onChange(e.target.value)} className="font-mono text-sm min-h-32" />}
+        loading={
+          <Textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="min-h-32 font-mono text-sm"
+          />
+        }
       />
     </div>
-  )
+  );
 }
-

@@ -1,62 +1,82 @@
-"use client"
+"use client";
 
-import Link from "next/link"
-import { useState } from "react"
-import { useProtocolSteps, useStepAction, useAssignStepAgent, useAgents, useProtocol } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { DataTable } from "@/components/ui/data-table"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Play, ClipboardCheck, ExternalLink, ListChecks, Bot } from "lucide-react"
-import { toast } from "sonner"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { StepRun } from "@/lib/api/types"
+import { useState } from "react";
+import Link from "next/link";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { Bot,ClipboardCheck, ExternalLink, ListChecks, Play } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { StatusPill } from "@/components/ui/status-pill";
+import {
+  useAgents,
+  useAssignStepAgent,
+  useProtocol,
+  useProtocolSteps,
+  useStepAction,
+} from "@/lib/api";
+import type { StepRun } from "@/lib/api/types";
 
 interface StepsTabProps {
-  protocolId: number
+  protocolId: number;
 }
 
 export function StepsTab({ protocolId }: StepsTabProps) {
-  const { data: steps, isLoading } = useProtocolSteps(protocolId)
-  const { data: protocol } = useProtocol(protocolId)
-  const { data: agents } = useAgents(protocol?.project_id)
-  const stepAction = useStepAction()
-  const assignAgent = useAssignStepAgent()
-  const [assignStep, setAssignStep] = useState<StepRun | null>(null)
-  const [selectedAgentId, setSelectedAgentId] = useState("")
+  const { data: steps, isLoading } = useProtocolSteps(protocolId);
+  const { data: protocol } = useProtocol(protocolId);
+  const { data: agents } = useAgents(protocol?.project_id);
+  const stepAction = useStepAction();
+  const assignAgent = useAssignStepAgent();
+  const [assignStep, setAssignStep] = useState<StepRun | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
 
   const handleAction = async (stepId: number, action: "execute" | "qa") => {
     try {
-      const result = await stepAction.mutateAsync({ stepId, protocolId, action })
-      toast.success(result.message || `Action ${action} executed`)
+      const result = await stepAction.mutateAsync({ stepId, protocolId, action });
+      toast.success(result.message || `Action ${action} executed`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : `Failed to ${action}`)
+      toast.error(err instanceof Error ? err.message : `Failed to ${action}`);
     }
-  }
+  };
 
   const openAssignDialog = (step: StepRun) => {
-    setAssignStep(step)
-    setSelectedAgentId(step.assigned_agent || step.engine_id || "")
-  }
+    setAssignStep(step);
+    setSelectedAgentId(step.assigned_agent || step.engine_id || "");
+  };
 
   const handleAssignAgent = async () => {
-    if (!assignStep || !selectedAgentId) return
+    if (!assignStep || !selectedAgentId) return;
     try {
       const result = await assignAgent.mutateAsync({
         stepId: assignStep.id,
         protocolId,
         agentId: selectedAgentId,
-      })
-      toast.success(result.message || "Agent assignment updated")
-      setAssignStep(null)
+      });
+      toast.success(result.message || "Agent assignment updated");
+      setAssignStep(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to assign agent")
+      toast.error(err instanceof Error ? err.message : "Failed to assign agent");
     }
-  }
+  };
 
   const columns: ColumnDef<StepRun>[] = [
     {
@@ -76,7 +96,9 @@ export function StepsTab({ protocolId }: StepsTabProps) {
     {
       accessorKey: "step_type",
       header: "Type",
-      cell: ({ row }) => <span className="capitalize text-muted-foreground">{row.original.step_type}</span>,
+      cell: ({ row }) => (
+        <span className="text-muted-foreground capitalize">{row.original.step_type}</span>
+      ),
     },
     {
       accessorKey: "status",
@@ -87,7 +109,9 @@ export function StepsTab({ protocolId }: StepsTabProps) {
       accessorKey: "engine_id",
       header: "Engine",
       cell: ({ row }) => (
-        <span className="font-mono text-sm">{row.original.assigned_agent || row.original.engine_id || "-"}</span>
+        <span className="font-mono text-sm">
+          {row.original.assigned_agent || row.original.engine_id || "-"}
+        </span>
       ),
     },
     {
@@ -99,9 +123,9 @@ export function StepsTab({ protocolId }: StepsTabProps) {
       id: "actions",
       header: "Actions",
       cell: ({ row }) => {
-        const step = row.original
-        const canRun = step.status === "pending"
-        const canRunQA = ["completed", "failed", "blocked", "needs_qa"].includes(step.status)
+        const step = row.original;
+        const canRun = step.status === "pending";
+        const canRunQA = ["completed", "failed", "blocked", "needs_qa"].includes(step.status);
 
         return (
           <div className="flex gap-1">
@@ -110,8 +134,8 @@ export function StepsTab({ protocolId }: StepsTabProps) {
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
-                  e.stopPropagation()
-                  handleAction(step.id, "execute")
+                  e.stopPropagation();
+                  handleAction(step.id, "execute");
                 }}
                 disabled={stepAction.isPending}
               >
@@ -123,8 +147,8 @@ export function StepsTab({ protocolId }: StepsTabProps) {
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
-                  e.stopPropagation()
-                  handleAction(step.id, "qa")
+                  e.stopPropagation();
+                  handleAction(step.id, "qa");
                 }}
                 disabled={stepAction.isPending}
               >
@@ -135,8 +159,8 @@ export function StepsTab({ protocolId }: StepsTabProps) {
               variant="ghost"
               size="sm"
               onClick={(e) => {
-                e.stopPropagation()
-                openAssignDialog(step)
+                e.stopPropagation();
+                openAssignDialog(step);
               }}
               disabled={!agents || agents.length === 0}
             >
@@ -148,15 +172,21 @@ export function StepsTab({ protocolId }: StepsTabProps) {
               </Button>
             </Link>
           </div>
-        )
+        );
       },
     },
-  ]
+  ];
 
-  if (isLoading) return <LoadingState message="Loading steps..." />
+  if (isLoading) return <LoadingState message="Loading steps..." />;
 
   if (!steps || steps.length === 0) {
-    return <EmptyState icon={ListChecks} title="No steps yet" description="This protocol has no steps defined yet." />
+    return (
+      <EmptyState
+        icon={ListChecks}
+        title="No steps yet"
+        description="This protocol has no steps defined yet."
+      />
+    );
   }
 
   return (
@@ -164,12 +194,19 @@ export function StepsTab({ protocolId }: StepsTabProps) {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold">Steps</h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {steps.filter((s) => s.status === "completed").length} / {steps.length} completed
           </p>
         </div>
       </div>
-      <DataTable columns={columns} data={steps} enableSearch enableExport enableColumnFilters exportFilename={`protocol-${protocolId}-steps.csv`} />
+      <DataTable
+        columns={columns}
+        data={steps}
+        enableSearch
+        enableExport
+        enableColumnFilters
+        exportFilename={`protocol-${protocolId}-steps.csv`}
+      />
       <Dialog open={!!assignStep} onOpenChange={(open) => (!open ? setAssignStep(null) : null)}>
         <DialogContent>
           <DialogHeader>
@@ -196,7 +233,10 @@ export function StepsTab({ protocolId }: StepsTabProps) {
               <Button variant="outline" onClick={() => setAssignStep(null)}>
                 Cancel
               </Button>
-              <Button onClick={handleAssignAgent} disabled={!selectedAgentId || assignAgent.isPending}>
+              <Button
+                onClick={handleAssignAgent}
+                disabled={!selectedAgentId || assignAgent.isPending}
+              >
                 Assign Agent
               </Button>
             </div>
@@ -204,5 +244,5 @@ export function StepsTab({ protocolId }: StepsTabProps) {
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }

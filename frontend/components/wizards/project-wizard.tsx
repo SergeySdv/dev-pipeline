@@ -1,98 +1,112 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
-import { Badge } from "@/components/ui/badge"
-import { Checkbox } from "@/components/ui/checkbox"
-import { CheckCircle2, GitBranch, Shield, type LucideIcon, Loader2 } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { toast } from "sonner"
-import { ApiError } from "@/lib/api/client"
-import { useCreateProject, useUpdateProjectPolicy } from "@/lib/api/hooks/use-projects"
-import { usePolicyPacks } from "@/lib/api/hooks/use-policy-packs"
-import type { PolicyEnforcementMode } from "@/lib/api/types"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { CheckCircle2, GitBranch, Loader2,type LucideIcon, Shield } from "lucide-react";
+import { toast } from "sonner";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { ApiError } from "@/lib/api/client";
+import { usePolicyPacks } from "@/lib/api/hooks/use-policy-packs";
+import { useCreateProject, useUpdateProjectPolicy } from "@/lib/api/hooks/use-projects";
+import type { PolicyEnforcementMode } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 
 interface ProjectWizardProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-type WizardStep = "git" | "policy" | "onboarding"
+type WizardStep = "git" | "policy" | "onboarding";
 
 const steps: { id: WizardStep; label: string; icon: LucideIcon }[] = [
   { id: "git", label: "Git Repository", icon: GitBranch },
   { id: "policy", label: "Policy Pack", icon: Shield },
   { id: "onboarding", label: "Review & Start", icon: CheckCircle2 },
-]
+];
 
 export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
-  const router = useRouter()
-  const createProject = useCreateProject()
-  const updatePolicy = useUpdateProjectPolicy()
-  const { data: policyPacks, isLoading: policyPacksLoading } = usePolicyPacks()
+  const router = useRouter();
+  const createProject = useCreateProject();
+  const updatePolicy = useUpdateProjectPolicy();
+  const { data: policyPacks, isLoading: policyPacksLoading } = usePolicyPacks();
 
-  const [currentStep, setCurrentStep] = useState<WizardStep>("git")
+  const [currentStep, setCurrentStep] = useState<WizardStep>("git");
   const [formData, setFormData] = useState({
     repoUrl: "",
     branch: "main",
     policyPack: "",
     enforcementMode: "warn",
     autoDiscovery: true,
-  })
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const currentStepIndex = steps.findIndex((s) => s.id === currentStep)
+  const currentStepIndex = steps.findIndex((s) => s.id === currentStep);
 
   const handleNext = () => {
     // Validation
     if (currentStep === "git") {
       if (!formData.repoUrl) {
-        toast.error("Repository URL is required")
-        return
+        toast.error("Repository URL is required");
+        return;
       }
     }
 
-    const nextIndex = currentStepIndex + 1
+    const nextIndex = currentStepIndex + 1;
     if (nextIndex < steps.length) {
-      setCurrentStep(steps[nextIndex].id)
+      setCurrentStep(steps[nextIndex].id);
     } else {
-      handleFinish()
+      handleFinish();
     }
-  }
+  };
 
   const handleBack = () => {
-    const prevIndex = currentStepIndex - 1
+    const prevIndex = currentStepIndex - 1;
     if (prevIndex >= 0) {
-      setCurrentStep(steps[prevIndex].id)
+      setCurrentStep(steps[prevIndex].id);
     }
-  }
+  };
 
   const extractProjectName = (url: string) => {
     try {
-      const parts = url.split("/")
-      let name = parts[parts.length - 1]
+      const parts = url.split("/");
+      let name = parts[parts.length - 1];
       if (name.endsWith(".git")) {
-        name = name.slice(0, -4)
+        name = name.slice(0, -4);
       }
-      return name || "untitled-project"
+      return name || "untitled-project";
     } catch {
-      return "untitled-project"
+      return "untitled-project";
     }
-  }
+  };
 
   const handleFinish = async () => {
-    setIsSubmitting(true)
+    setIsSubmitting(true);
     try {
-      const name = extractProjectName(formData.repoUrl)
+      const name = extractProjectName(formData.repoUrl);
 
-      let onboardingQueued = true
-      let project = null
+      let onboardingQueued = true;
+      let project = null;
       try {
         project = await createProject.mutateAsync({
           name,
@@ -100,27 +114,27 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
           base_branch: formData.branch || "main",
           auto_onboard: true,
           auto_discovery: formData.autoDiscovery,
-        })
+        });
       } catch (error) {
         if (
           error instanceof ApiError &&
           error.status === 503 &&
           (error.message || "").toLowerCase().includes("windmill integration not configured")
         ) {
-          onboardingQueued = false
+          onboardingQueued = false;
           project = await createProject.mutateAsync({
             name,
             git_url: formData.repoUrl,
             base_branch: formData.branch || "main",
             auto_onboard: false,
             auto_discovery: false,
-          })
+          });
         } else {
-          throw error
+          throw error;
         }
       }
       if (!project) {
-        throw new Error("Project creation failed")
+        throw new Error("Project creation failed");
       }
 
       // 2. Update Policy if selected
@@ -129,50 +143,56 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
           projectId: project.id,
           policy: {
             policy_pack_key: formData.policyPack || undefined,
-            policy_enforcement_mode: (formData.enforcementMode || undefined) as PolicyEnforcementMode | undefined,
+            policy_enforcement_mode: (formData.enforcementMode || undefined) as
+              | PolicyEnforcementMode
+              | undefined,
           },
-        })
+        });
       }
 
       if (onboardingQueued) {
-        toast.success("Project created and onboarding queued!")
+        toast.success("Project created and onboarding queued!");
       } else {
-        toast.success("Project created. Windmill not configured, so onboarding was not queued (start it from the Onboarding page).")
+        toast.success(
+          "Project created. Windmill not configured, so onboarding was not queued (start it from the Onboarding page)."
+        );
       }
-      onOpenChange(false)
-      setCurrentStep("git")
+      onOpenChange(false);
+      setCurrentStep("git");
       setFormData({
         repoUrl: "",
         branch: "main",
         policyPack: "",
         enforcementMode: "warn",
         autoDiscovery: true,
-      })
+      });
 
       // Redirect to the new project
-      router.push(`/projects/${project.id}/onboarding`)
+      router.push(`/projects/${project.id}/onboarding`);
     } catch (error) {
-      console.error(error)
-      toast.error("Failed to create project")
+      console.error(error);
+      toast.error("Failed to create project");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="3xl" className="max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent size="3xl" className="flex max-h-[90vh] flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
-          <DialogDescription>Follow the steps to set up your project with DevGodzilla.</DialogDescription>
+          <DialogDescription>
+            Follow the steps to set up your project with DevGodzilla.
+          </DialogDescription>
         </DialogHeader>
 
         {/* Step Indicator */}
         <div className="flex items-center justify-between px-4 py-6">
           {steps.map((step, index) => {
-            const Icon = step.icon
-            const isCompleted = index < currentStepIndex
-            const isCurrent = step.id === currentStep
+            const Icon = step.icon;
+            const isCompleted = index < currentStepIndex;
+            const isCurrent = step.id === currentStep;
             return (
               <div key={step.id} className="flex flex-1 items-center">
                 <div className="flex flex-col items-center gap-2">
@@ -181,20 +201,34 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                       "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors",
                       isCompleted && "border-primary bg-primary text-primary-foreground",
                       isCurrent && "border-primary text-primary",
-                      !isCompleted && !isCurrent && "border-muted text-muted-foreground",
+                      !isCompleted && !isCurrent && "border-muted text-muted-foreground"
                     )}
                   >
-                    {isCompleted ? <CheckCircle2 className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
+                    {isCompleted ? (
+                      <CheckCircle2 className="h-5 w-5" />
+                    ) : (
+                      <Icon className="h-5 w-5" />
+                    )}
                   </div>
-                  <span className={cn("text-xs font-medium", isCurrent ? "text-foreground" : "text-muted-foreground")}>
+                  <span
+                    className={cn(
+                      "text-xs font-medium",
+                      isCurrent ? "text-foreground" : "text-muted-foreground"
+                    )}
+                  >
                     {step.label}
                   </span>
                 </div>
                 {index < steps.length - 1 && (
-                  <div className={cn("flex-1 border-t-2 mx-2", isCompleted ? "border-primary" : "border-muted")} />
+                  <div
+                    className={cn(
+                      "mx-2 flex-1 border-t-2",
+                      isCompleted ? "border-primary" : "border-muted"
+                    )}
+                  />
                 )}
               </div>
-            )
+            );
           })}
         </div>
 
@@ -212,7 +246,9 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   value={formData.repoUrl}
                   onChange={(e) => setFormData({ ...formData, repoUrl: e.target.value })}
                 />
-                <p className="text-xs text-muted-foreground">Enter the Git repository URL for your project</p>
+                <p className="text-muted-foreground text-xs">
+                  Enter the Git repository URL for your project
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="branch">Default Branch</Label>
@@ -230,15 +266,24 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="policyPack">Policy Pack</Label>
-                <Select value={formData.policyPack} onValueChange={(v) => setFormData({ ...formData, policyPack: v })}>
+                <Select
+                  value={formData.policyPack}
+                  onValueChange={(v) => setFormData({ ...formData, policyPack: v })}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder={policyPacksLoading ? "Loading..." : "Select a policy pack (optional)"} />
+                    <SelectValue
+                      placeholder={
+                        policyPacksLoading ? "Loading..." : "Select a policy pack (optional)"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {policyPacks?.map((pack) => (
                       <SelectItem key={pack.key || pack.id} value={pack.key || String(pack.id)}>
                         {pack.name}
-                        {pack.description && <span className="text-muted-foreground ml-2">- {pack.description}</span>}
+                        {pack.description && (
+                          <span className="text-muted-foreground ml-2">- {pack.description}</span>
+                        )}
                       </SelectItem>
                     ))}
                     {(!policyPacks || policyPacks.length === 0) && !policyPacksLoading && (
@@ -248,7 +293,9 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                     )}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">Choose a policy pack to enforce coding standards</p>
+                <p className="text-muted-foreground text-xs">
+                  Choose a policy pack to enforce coding standards
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="enforcementMode">Enforcement Mode</Label>
@@ -271,8 +318,8 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
 
           {currentStep === "onboarding" && (
             <div className="space-y-4">
-              <div className="rounded-lg border bg-muted/50 p-4">
-                <h3 className="font-medium mb-2">Project Summary</h3>
+              <div className="bg-muted/50 rounded-lg border p-4">
+                <h3 className="mb-2 font-medium">Project Summary</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Repository:</span>
@@ -288,7 +335,9 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Enforcement:</span>
-                    <Badge variant="secondary" className="capitalize">{formData.enforcementMode}</Badge>
+                    <Badge variant="secondary" className="capitalize">
+                      {formData.enforcementMode}
+                    </Badge>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Discovery:</span>
@@ -306,7 +355,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   />
                   <div>
                     <p className="text-sm font-medium">Run repository discovery</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-muted-foreground text-xs">
                       Generate discovery artifacts for planning and onboarding. Recommended.
                     </p>
                   </div>
@@ -314,8 +363,8 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
               </div>
               <div className="rounded-lg border bg-blue-500/10 p-4">
                 <p className="text-sm text-blue-600 dark:text-blue-400">
-                  After creating the project, onboarding is queued in Windmill. You may need to answer clarification
-                  questions to help DevGodzilla understand your codebase.
+                  After creating the project, onboarding is queued in Windmill. You may need to
+                  answer clarification questions to help DevGodzilla understand your codebase.
                 </p>
               </div>
             </div>
@@ -325,7 +374,11 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
         {/* Actions */}
         <Separator />
         <div className="flex justify-between px-6 py-4">
-          <Button variant="outline" onClick={handleBack} disabled={currentStepIndex === 0 || isSubmitting}>
+          <Button
+            variant="outline"
+            onClick={handleBack}
+            disabled={currentStepIndex === 0 || isSubmitting}
+          >
             Back
           </Button>
           <div className="flex gap-2">
@@ -340,5 +393,5 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

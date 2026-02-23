@@ -1,27 +1,32 @@
 /**
  * Property-Based Tests for Pipeline Visualizer Component
  * **Feature: frontend-comprehensive-refactor**
- * 
+ *
  * Property 7: View mode state preservation
- * 
+ *
  * **Validates: Requirements 4.4**
  */
 
-import { describe, it, expect, vi } from 'vitest'
-import * as fc from 'fast-check'
-import { render, screen, fireEvent, within } from '@testing-library/react'
-import { PipelineVisualizer, ViewMode } from '@/components/workflow/pipeline-visualizer'
-import type { StepRun, ProtocolRun, StepStatus } from '@/lib/api/types'
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import * as fc from "fast-check";
+import { describe, expect, it, vi } from "vitest";
+
+import { PipelineVisualizer, ViewMode } from "@/components/workflow/pipeline-visualizer";
+import type { ProtocolRun, StepRun, StepStatus } from "@/lib/api/types";
 
 // Mock the PipelineDag component to avoid D3 rendering issues in tests
-vi.mock('@/components/visualizations/pipeline-dag', () => ({
-  PipelineDag: ({ steps, onStepClick, selectedStepId }: {
-    steps: StepRun[]
-    onStepClick?: (step: StepRun) => void
-    selectedStepId?: number | null
+vi.mock("@/components/visualizations/pipeline-dag", () => ({
+  PipelineDag: ({
+    steps,
+    onStepClick,
+    selectedStepId,
+  }: {
+    steps: StepRun[];
+    onStepClick?: (step: StepRun) => void;
+    selectedStepId?: number | null;
   }) => (
     <div data-testid="pipeline-dag">
-      {steps.map(step => (
+      {steps.map((step) => (
         <button
           key={step.id}
           data-testid={`dag-step-${step.id}`}
@@ -32,22 +37,24 @@ vi.mock('@/components/visualizations/pipeline-dag', () => ({
         </button>
       ))}
     </div>
-  )
-}))
+  ),
+}));
 
 // Arbitrary generators for property-based testing
 
 const stepStatusArbitrary = fc.oneof(
-  fc.constant('pending' as StepStatus),
-  fc.constant('running' as StepStatus),
-  fc.constant('completed' as StepStatus),
-  fc.constant('failed' as StepStatus)
-)
+  fc.constant("pending" as StepStatus),
+  fc.constant("running" as StepStatus),
+  fc.constant("completed" as StepStatus),
+  fc.constant("failed" as StepStatus)
+);
 
-const validDateArbitrary = fc.integer({
-  min: new Date('2020-01-01').getTime(),
-  max: new Date('2030-12-31').getTime()
-}).map(ts => new Date(ts).toISOString())
+const validDateArbitrary = fc
+  .integer({
+    min: new Date("2020-01-01").getTime(),
+    max: new Date("2030-12-31").getTime(),
+  })
+  .map((ts) => new Date(ts).toISOString());
 
 // Generate a valid StepRun object
 const stepRunArbitrary = (id: number, stepIndex: number): fc.Arbitrary<StepRun> =>
@@ -56,7 +63,7 @@ const stepRunArbitrary = (id: number, stepIndex: number): fc.Arbitrary<StepRun> 
     protocol_run_id: fc.nat({ max: 1000 }),
     step_index: fc.constant(stepIndex),
     step_name: fc.string({ minLength: 1, maxLength: 50 }),
-    step_type: fc.oneof(fc.constant('code_gen'), fc.constant('planning'), fc.constant('exec')),
+    step_type: fc.oneof(fc.constant("code_gen"), fc.constant("planning"), fc.constant("exec")),
     status: stepStatusArbitrary,
     retries: fc.nat({ max: 5 }),
     model: fc.option(fc.string({ minLength: 1, maxLength: 30 }), { nil: null }),
@@ -68,17 +75,17 @@ const stepRunArbitrary = (id: number, stepIndex: number): fc.Arbitrary<StepRun> 
     depends_on: fc.constant([]),
     parallel_group: fc.constant(null),
     created_at: validDateArbitrary,
-    updated_at: validDateArbitrary
-  })
+    updated_at: validDateArbitrary,
+  });
 
 // Generate a list of steps
-const stepsListArbitrary = fc.integer({ min: 1, max: 5 }).chain(count => {
-  const stepArbitraries: fc.Arbitrary<StepRun>[] = []
+const stepsListArbitrary = fc.integer({ min: 1, max: 5 }).chain((count) => {
+  const stepArbitraries: fc.Arbitrary<StepRun>[] = [];
   for (let i = 0; i < count; i++) {
-    stepArbitraries.push(stepRunArbitrary(i + 1, i))
+    stepArbitraries.push(stepRunArbitrary(i + 1, i));
   }
-  return fc.tuple(...stepArbitraries)
-})
+  return fc.tuple(...stepArbitraries);
+});
 
 // Generate a valid ProtocolRun object matching the actual ProtocolRun interface
 const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
@@ -86,10 +93,10 @@ const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
   project_id: fc.integer({ min: 1, max: 100 }),
   protocol_name: fc.string({ minLength: 1, maxLength: 50 }),
   status: fc.oneof(
-    fc.constant('pending' as const),
-    fc.constant('running' as const),
-    fc.constant('completed' as const),
-    fc.constant('failed' as const)
+    fc.constant("pending" as const),
+    fc.constant("running" as const),
+    fc.constant("completed" as const),
+    fc.constant("failed" as const)
   ),
   base_branch: fc.string({ minLength: 1, maxLength: 50 }),
   worktree_path: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
@@ -106,23 +113,23 @@ const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
   policy_effective_json: fc.constant(null),
   created_at: validDateArbitrary,
   updated_at: validDateArbitrary,
-})
+});
 
 // View mode arbitrary
 const viewModeArbitrary = fc.oneof(
-  fc.constant('linear' as ViewMode),
-  fc.constant('dag' as ViewMode)
-)
+  fc.constant("linear" as ViewMode),
+  fc.constant("dag" as ViewMode)
+);
 
-describe('Pipeline Visualizer Property Tests', () => {
+describe("Pipeline Visualizer Property Tests", () => {
   /**
    * Property 7: View mode state preservation
    * For any selected step, changing the view mode from linear to DAG or vice versa
    * SHALL preserve the step selection.
    * **Validates: Requirements 4.4**
    */
-  describe('Property 7: View mode state preservation', () => {
-    it('should preserve step selection when switching from linear to DAG view', () => {
+  describe("Property 7: View mode state preservation", () => {
+    it("should preserve step selection when switching from linear to DAG view", () => {
       fc.assert(
         fc.property(
           protocolRunArbitrary,
@@ -130,19 +137,19 @@ describe('Pipeline Visualizer Property Tests', () => {
           fc.integer({ min: 0, max: 4 }), // Index to select
           (protocol, steps, selectIndex) => {
             // Ensure we have a valid step to select
-            const stepToSelect = steps[selectIndex % steps.length]
-            if (!stepToSelect) return true // Skip if no steps
+            const stepToSelect = steps[selectIndex % steps.length];
+            if (!stepToSelect) return true; // Skip if no steps
 
-            let currentSelectedStepId: number | null = null
-            let currentViewMode: ViewMode = 'linear'
+            let currentSelectedStepId: number | null = null;
+            let currentViewMode: ViewMode = "linear";
 
             const handleStepSelect = (stepId: number | null) => {
-              currentSelectedStepId = stepId
-            }
+              currentSelectedStepId = stepId;
+            };
 
             const handleViewModeChange = (mode: ViewMode) => {
-              currentViewMode = mode
-            }
+              currentViewMode = mode;
+            };
 
             const { rerender, container } = render(
               <PipelineVisualizer
@@ -153,24 +160,28 @@ describe('Pipeline Visualizer Property Tests', () => {
                 selectedStepId={currentSelectedStepId}
                 onStepSelect={handleStepSelect}
               />
-            )
+            );
 
             // Select a step in linear view by clicking on the step card
-            const stepCards = container.querySelectorAll('[class*="cursor-pointer"]')
-            const stepCard = stepCards[selectIndex % stepCards.length]
+            const stepCards = container.querySelectorAll('[class*="cursor-pointer"]');
+            const stepCard = stepCards[selectIndex % stepCards.length];
             if (stepCard) {
-              fireEvent.click(stepCard)
+              fireEvent.click(stepCard);
             }
 
             // Verify step is selected
-            expect(currentSelectedStepId).toBe(stepToSelect.id)
+            expect(currentSelectedStepId).toBe(stepToSelect.id);
 
             // Find the view mode toggle container and get the DAG button within it
-            const toggleContainer = container.querySelector('.flex.items-center.gap-1.rounded-lg.border')
-            if (!toggleContainer) return true // Skip if toggle not found
+            const toggleContainer = container.querySelector(
+              ".flex.items-center.gap-1.rounded-lg.border"
+            );
+            if (!toggleContainer) return true; // Skip if toggle not found
 
-            const dagButton = within(toggleContainer as HTMLElement).getByRole('button', { name: /dag view/i })
-            fireEvent.click(dagButton)
+            const dagButton = within(toggleContainer as HTMLElement).getByRole("button", {
+              name: /dag view/i,
+            });
+            fireEvent.click(dagButton);
 
             // Rerender with new view mode (simulating controlled component update)
             rerender(
@@ -182,17 +193,17 @@ describe('Pipeline Visualizer Property Tests', () => {
                 selectedStepId={currentSelectedStepId}
                 onStepSelect={handleStepSelect}
               />
-            )
+            );
 
             // Verify step selection is preserved after view mode change
-            expect(currentSelectedStepId).toBe(stepToSelect.id)
+            expect(currentSelectedStepId).toBe(stepToSelect.id);
           }
         ),
         { numRuns: 100 }
-      )
-    })
+      );
+    });
 
-    it('should preserve step selection when switching from DAG to linear view', () => {
+    it("should preserve step selection when switching from DAG to linear view", () => {
       fc.assert(
         fc.property(
           protocolRunArbitrary,
@@ -200,19 +211,19 @@ describe('Pipeline Visualizer Property Tests', () => {
           fc.integer({ min: 0, max: 4 }), // Index to select
           (protocol, steps, selectIndex) => {
             // Ensure we have a valid step to select
-            const stepToSelect = steps[selectIndex % steps.length]
-            if (!stepToSelect) return true // Skip if no steps
+            const stepToSelect = steps[selectIndex % steps.length];
+            if (!stepToSelect) return true; // Skip if no steps
 
-            let currentSelectedStepId: number | null = null
-            let currentViewMode: ViewMode = 'dag'
+            let currentSelectedStepId: number | null = null;
+            let currentViewMode: ViewMode = "dag";
 
             const handleStepSelect = (stepId: number | null) => {
-              currentSelectedStepId = stepId
-            }
+              currentSelectedStepId = stepId;
+            };
 
             const handleViewModeChange = (mode: ViewMode) => {
-              currentViewMode = mode
-            }
+              currentViewMode = mode;
+            };
 
             const { rerender, container } = render(
               <PipelineVisualizer
@@ -223,21 +234,25 @@ describe('Pipeline Visualizer Property Tests', () => {
                 selectedStepId={currentSelectedStepId}
                 onStepSelect={handleStepSelect}
               />
-            )
+            );
 
             // Select a step in DAG view
-            const dagStepButton = screen.getByTestId(`dag-step-${stepToSelect.id}`)
-            fireEvent.click(dagStepButton)
+            const dagStepButton = screen.getByTestId(`dag-step-${stepToSelect.id}`);
+            fireEvent.click(dagStepButton);
 
             // Verify step is selected
-            expect(currentSelectedStepId).toBe(stepToSelect.id)
+            expect(currentSelectedStepId).toBe(stepToSelect.id);
 
             // Find the view mode toggle container and get the Linear button within it
-            const toggleContainer = container.querySelector('.flex.items-center.gap-1.rounded-lg.border')
-            if (!toggleContainer) return true // Skip if toggle not found
+            const toggleContainer = container.querySelector(
+              ".flex.items-center.gap-1.rounded-lg.border"
+            );
+            if (!toggleContainer) return true; // Skip if toggle not found
 
-            const linearButton = within(toggleContainer as HTMLElement).getByRole('button', { name: /linear view/i })
-            fireEvent.click(linearButton)
+            const linearButton = within(toggleContainer as HTMLElement).getByRole("button", {
+              name: /linear view/i,
+            });
+            fireEvent.click(linearButton);
 
             // Rerender with new view mode (simulating controlled component update)
             rerender(
@@ -249,17 +264,17 @@ describe('Pipeline Visualizer Property Tests', () => {
                 selectedStepId={currentSelectedStepId}
                 onStepSelect={handleStepSelect}
               />
-            )
+            );
 
             // Verify step selection is preserved after view mode change
-            expect(currentSelectedStepId).toBe(stepToSelect.id)
+            expect(currentSelectedStepId).toBe(stepToSelect.id);
           }
         ),
         { numRuns: 100 }
-      )
-    }, 30000) // Increase timeout to 30 seconds
+      );
+    }, 30000); // Increase timeout to 30 seconds
 
-    it('should preserve selection through multiple view mode toggles', () => {
+    it("should preserve selection through multiple view mode toggles", () => {
       fc.assert(
         fc.property(
           protocolRunArbitrary,
@@ -268,19 +283,19 @@ describe('Pipeline Visualizer Property Tests', () => {
           fc.integer({ min: 0, max: 4 }), // Index to select
           (protocol, steps, viewModeSequence, selectIndex) => {
             // Ensure we have a valid step to select
-            const stepToSelect = steps[selectIndex % steps.length]
-            if (!stepToSelect) return true // Skip if no steps
+            const stepToSelect = steps[selectIndex % steps.length];
+            if (!stepToSelect) return true; // Skip if no steps
 
-            let currentSelectedStepId: number | null = stepToSelect.id
-            let currentViewMode: ViewMode = 'linear'
+            let currentSelectedStepId: number | null = stepToSelect.id;
+            let currentViewMode: ViewMode = "linear";
 
             const handleStepSelect = (stepId: number | null) => {
-              currentSelectedStepId = stepId
-            }
+              currentSelectedStepId = stepId;
+            };
 
             const handleViewModeChange = (mode: ViewMode) => {
-              currentViewMode = mode
-            }
+              currentViewMode = mode;
+            };
 
             const { rerender, container } = render(
               <PipelineVisualizer
@@ -291,18 +306,22 @@ describe('Pipeline Visualizer Property Tests', () => {
                 selectedStepId={currentSelectedStepId}
                 onStepSelect={handleStepSelect}
               />
-            )
+            );
 
             // Go through each view mode in the sequence
             for (const targetMode of viewModeSequence) {
               // Find the view mode toggle container
-              const toggleContainer = container.querySelector('.flex.items-center.gap-1.rounded-lg.border')
-              if (!toggleContainer) continue // Skip if toggle not found
+              const toggleContainer = container.querySelector(
+                ".flex.items-center.gap-1.rounded-lg.border"
+              );
+              if (!toggleContainer) continue; // Skip if toggle not found
 
               // Click the appropriate button
-              const buttonLabel = targetMode === 'dag' ? /dag view/i : /linear view/i
-              const button = within(toggleContainer as HTMLElement).getByRole('button', { name: buttonLabel })
-              fireEvent.click(button)
+              const buttonLabel = targetMode === "dag" ? /dag view/i : /linear view/i;
+              const button = within(toggleContainer as HTMLElement).getByRole("button", {
+                name: buttonLabel,
+              });
+              fireEvent.click(button);
 
               // Rerender with new view mode
               rerender(
@@ -314,15 +333,15 @@ describe('Pipeline Visualizer Property Tests', () => {
                   selectedStepId={currentSelectedStepId}
                   onStepSelect={handleStepSelect}
                 />
-              )
+              );
 
               // Verify step selection is preserved after each view mode change
-              expect(currentSelectedStepId).toBe(stepToSelect.id)
+              expect(currentSelectedStepId).toBe(stepToSelect.id);
             }
           }
         ),
         { numRuns: 100 }
-      )
-    }, 60000) // Increase timeout to 60 seconds for multiple toggles
-  })
-})
+      );
+    }, 60000); // Increase timeout to 60 seconds for multiple toggles
+  });
+});

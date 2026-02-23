@@ -1,11 +1,15 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
+import { useState } from "react";
+import Link from "next/link";
 
-import { useState } from "react"
-import Link from "next/link"
-import { useProjectProtocols, useCreateProtocol } from "@/lib/api"
-import { Button } from "@/components/ui/button"
+import type { ColumnDef } from "@tanstack/react-table";
+import { ExternalLink,FileText, Plus } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { DataTable } from "@/components/ui/data-table";
 import {
   Dialog,
   DialogContent,
@@ -14,22 +18,19 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { DataTable } from "@/components/ui/data-table"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { Plus, FileText, ExternalLink } from "lucide-react"
-import { toast } from "sonner"
-import { formatRelativeTime, truncateHash } from "@/lib/format"
-import type { ColumnDef } from "@tanstack/react-table"
-import type { ProtocolRun } from "@/lib/api/types"
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { Textarea } from "@/components/ui/textarea";
+import { useCreateProtocol,useProjectProtocols } from "@/lib/api";
+import type { ProtocolRun } from "@/lib/api/types";
+import { formatRelativeTime, truncateHash } from "@/lib/format";
 
 interface ProtocolsTabProps {
-  projectId: number
+  projectId: number;
 }
 
 const columns: ColumnDef<ProtocolRun>[] = [
@@ -56,13 +57,17 @@ const columns: ColumnDef<ProtocolRun>[] = [
     accessorKey: "spec_hash",
     header: "Spec",
     cell: ({ row }) => (
-      <span className="font-mono text-xs text-muted-foreground">{truncateHash(row.original.spec_hash)}</span>
+      <span className="text-muted-foreground font-mono text-xs">
+        {truncateHash(row.original.spec_hash)}
+      </span>
     ),
   },
   {
     accessorKey: "created_at",
     header: "Created",
-    cell: ({ row }) => <span className="text-muted-foreground">{formatRelativeTime(row.original.created_at)}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{formatRelativeTime(row.original.created_at)}</span>
+    ),
   },
   {
     id: "actions",
@@ -74,20 +79,20 @@ const columns: ColumnDef<ProtocolRun>[] = [
       </Link>
     ),
   },
-]
+];
 
 export function ProtocolsTab({ projectId }: ProtocolsTabProps) {
-  const { data: protocols, isLoading } = useProjectProtocols(projectId)
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const { data: protocols, isLoading } = useProjectProtocols(projectId);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  if (isLoading) return <LoadingState message="Loading protocols..." />
+  if (isLoading) return <LoadingState message="Loading protocols..." />;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold">Protocols</h3>
-          <p className="text-sm text-muted-foreground">Protocol runs for this project</p>
+          <p className="text-muted-foreground text-sm">Protocol runs for this project</p>
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
@@ -116,20 +121,20 @@ export function ProtocolsTab({ projectId }: ProtocolsTabProps) {
         <DataTable columns={columns} data={protocols} />
       )}
     </div>
-  )
+  );
 }
 
 function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
-  const createProtocol = useCreateProtocol()
+  const createProtocol = useCreateProtocol();
   const [formData, setFormData] = useState({
     protocol_name: "",
     description: "",
     base_branch: "",
     template_source: "",
-  })
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     try {
       await createProtocol.mutateAsync({
         projectId,
@@ -139,13 +144,13 @@ function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClo
           base_branch: formData.base_branch || undefined,
           template_source: formData.template_source || undefined,
         },
-      })
-      toast.success("Protocol created successfully")
-      onClose()
+      });
+      toast.success("Protocol created successfully");
+      onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create protocol")
+      toast.error(err instanceof Error ? err.message : "Failed to create protocol");
     }
-  }
+  };
 
   return (
     <DialogContent>
@@ -203,5 +208,5 @@ function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClo
         </DialogFooter>
       </form>
     </DialogContent>
-  )
+  );
 }

@@ -1,37 +1,34 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
+import { useEffect,useState } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import type {
-  AgileTask,
-  AgileTaskCreate,
-  AgileTaskUpdate,
-  Sprint,
-} from "@/lib/api/types"
-import { taskTypeConfig, validateTaskForm } from "./task-form"
-import { TaskDetailsTab } from "./task-details-tab"
-import { TaskCriteriaTab } from "./task-criteria-tab"
-import { TaskActivityTab } from "./task-activity-tab"
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { AgileTask, AgileTaskCreate, AgileTaskUpdate, Sprint } from "@/lib/api/types";
+
+import { TaskActivityTab } from "./task-activity-tab";
+import { TaskCriteriaTab } from "./task-criteria-tab";
+import { TaskDetailsTab } from "./task-details-tab";
+import { taskTypeConfig, validateTaskForm } from "./task-form";
 
 interface TaskModalProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  task?: AgileTask | null
-  sprints: Sprint[]
-  onSave: (data: AgileTaskCreate | AgileTaskUpdate) => Promise<void>
-  onDelete?: (taskId: number) => Promise<void>
-  mode: "create" | "edit" | "view"
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  task?: AgileTask | null;
+  sprints: Sprint[];
+  onSave: (data: AgileTaskCreate | AgileTaskUpdate) => Promise<void>;
+  onDelete?: (taskId: number) => Promise<void>;
+  mode: "create" | "edit" | "view";
 }
 
 const initialFormData: AgileTaskCreate = {
@@ -46,11 +43,19 @@ const initialFormData: AgileTaskCreate = {
   labels: [],
   acceptance_criteria: [],
   due_date: "",
-}
+};
 
-export function TaskModal({ open, onOpenChange, task, sprints, onSave, onDelete, mode }: TaskModalProps) {
-  const [formData, setFormData] = useState<AgileTaskCreate>(initialFormData)
-  const [saving, setSaving] = useState(false)
+export function TaskModal({
+  open,
+  onOpenChange,
+  task,
+  sprints,
+  onSave,
+  onDelete,
+  mode,
+}: TaskModalProps) {
+  const [formData, setFormData] = useState<AgileTaskCreate>(initialFormData);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (task && (mode === "edit" || mode === "view")) {
@@ -66,37 +71,39 @@ export function TaskModal({ open, onOpenChange, task, sprints, onSave, onDelete,
         labels: task.labels || [],
         acceptance_criteria: task.acceptance_criteria || [],
         due_date: task.due_date || "",
-      })
+      });
     } else if (mode === "create") {
-      setFormData(initialFormData)
+      setFormData(initialFormData);
     }
-  }, [task, mode, open])
+  }, [task, mode, open]);
 
   const handleSave = async () => {
-    const validation = validateTaskForm(formData)
+    const validation = validateTaskForm(formData);
     if (!validation.isValid) {
-      return
+      return;
     }
-    
-    setSaving(true)
-    try {
-      await onSave(formData)
-      onOpenChange(false)
-    } finally {
-      setSaving(false)
-    }
-  }
 
-  const isReadOnly = mode === "view"
-  const TypeIcon = taskTypeConfig[formData.task_type || "task"].icon
-  const validation = validateTaskForm(formData)
+    setSaving(true);
+    try {
+      await onSave(formData);
+      onOpenChange(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isReadOnly = mode === "view";
+  const TypeIcon = taskTypeConfig[formData.task_type || "task"].icon;
+  const validation = validateTaskForm(formData);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="3xl" className="max-h-[90vh] p-0">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b">
+        <DialogHeader className="border-b px-6 pt-6 pb-4">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg bg-muted ${taskTypeConfig[formData.task_type || "task"].color}`}>
+            <div
+              className={`bg-muted rounded-lg p-2 ${taskTypeConfig[formData.task_type || "task"].color}`}
+            >
               <TypeIcon className="h-5 w-5" />
             </div>
             <div className="flex-1">
@@ -153,17 +160,17 @@ export function TaskModal({ open, onOpenChange, task, sprints, onSave, onDelete,
           </Tabs>
         </ScrollArea>
 
-        <DialogFooter className="px-6 py-4 border-t">
-          <div className="flex items-center justify-between w-full">
+        <DialogFooter className="border-t px-6 py-4">
+          <div className="flex w-full items-center justify-between">
             <div>
               {onDelete && task && mode !== "create" && (
                 <Button
                   variant="destructive"
                   size="sm"
                   onClick={async () => {
-                    if (!confirm("Are you sure you want to delete this task?")) return
-                    await onDelete(task.id)
-                    onOpenChange(false)
+                    if (!confirm("Are you sure you want to delete this task?")) return;
+                    await onDelete(task.id);
+                    onOpenChange(false);
                   }}
                 >
                   Delete
@@ -184,5 +191,5 @@ export function TaskModal({ open, onOpenChange, task, sprints, onSave, onDelete,
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

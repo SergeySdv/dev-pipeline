@@ -1,11 +1,14 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
+import { useState } from "react";
 
-import { useState } from "react"
-import { usePolicyPacks, useCreatePolicyPack } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { ChevronRight,Plus, Shield } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
 import {
   Dialog,
   DialogContent,
@@ -14,32 +17,30 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { StatusPill } from "@/components/ui/status-pill"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { CodeBlock } from "@/components/ui/code-block"
-import { Plus, Shield, ChevronRight } from "lucide-react"
-import { toast } from "sonner"
-import type { PolicyPack } from "@/lib/api/types"
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import { StatusPill } from "@/components/ui/status-pill";
+import { Textarea } from "@/components/ui/textarea";
+import { useCreatePolicyPack,usePolicyPacks } from "@/lib/api";
+import type { PolicyPack } from "@/lib/api/types";
 
 export default function PolicyPacksPage() {
-  const { data: packs, isLoading, error } = usePolicyPacks()
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [selectedPack, setSelectedPack] = useState<PolicyPack | null>(null)
+  const { data: packs, isLoading, error } = usePolicyPacks();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [selectedPack, setSelectedPack] = useState<PolicyPack | null>(null);
 
-  if (isLoading) return <LoadingState message="Loading policy packs..." />
+  if (isLoading) return <LoadingState message="Loading policy packs..." />;
   if (error) {
-    const message = error instanceof Error ? error.message : "Failed to load policy packs"
-    return <EmptyState title="Error loading policy packs" description={message} />
+    const message = error instanceof Error ? error.message : "Failed to load policy packs";
+    return <EmptyState title="Error loading policy packs" description={message} />;
   }
 
   return (
     <div className="container py-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Policy Packs</h1>
           <p className="text-muted-foreground">Manage policy packs for protocol governance</p>
@@ -79,15 +80,18 @@ export default function PolicyPacksPage() {
               >
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-base font-mono">{pack.key}</CardTitle>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    <CardTitle className="font-mono text-base">{pack.key}</CardTitle>
+                    <ChevronRight className="text-muted-foreground h-4 w-4" />
                   </div>
                   <CardDescription>{pack.name}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4 text-sm">
-                    <span className="font-mono text-muted-foreground">v{pack.version}</span>
-                    <StatusPill status={pack.status === "active" ? "completed" : "pending"} size="sm" />
+                    <span className="text-muted-foreground font-mono">v{pack.version}</span>
+                    <StatusPill
+                      status={pack.status === "active" ? "completed" : "pending"}
+                      size="sm"
+                    />
                   </div>
                 </CardContent>
               </Card>
@@ -105,13 +109,17 @@ export default function PolicyPacksPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {selectedPack.description && (
-                    <p className="text-sm text-muted-foreground">{selectedPack.description}</p>
+                    <p className="text-muted-foreground text-sm">{selectedPack.description}</p>
                   )}
-                  <CodeBlock code={selectedPack.pack} title="Pack Configuration" maxHeight="400px" />
+                  <CodeBlock
+                    code={selectedPack.pack}
+                    title="Pack Configuration"
+                    maxHeight="400px"
+                  />
                 </CardContent>
               </Card>
             ) : (
-              <div className="flex items-center justify-center h-64 border border-dashed rounded-lg">
+              <div className="flex h-64 items-center justify-center rounded-lg border border-dashed">
                 <p className="text-muted-foreground">Select a pack to view details</p>
               </div>
             )}
@@ -119,40 +127,40 @@ export default function PolicyPacksPage() {
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function CreatePolicyPackDialog({ onClose }: { onClose: () => void }) {
-  const createPack = useCreatePolicyPack()
+  const createPack = useCreatePolicyPack();
   const [formData, setFormData] = useState({
     key: "",
     version: "1.0",
     name: "",
     description: "",
     pack: "{}",
-  })
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     try {
-      const packJson = JSON.parse(formData.pack)
+      const packJson = JSON.parse(formData.pack);
       await createPack.mutateAsync({
         key: formData.key,
         version: formData.version,
         name: formData.name,
         description: formData.description || undefined,
         pack: packJson,
-      })
-      toast.success("Policy pack created successfully")
-      onClose()
+      });
+      toast.success("Policy pack created successfully");
+      onClose();
     } catch (err) {
       if (err instanceof SyntaxError) {
-        toast.error("Invalid JSON in pack configuration")
+        toast.error("Invalid JSON in pack configuration");
       } else {
-        toast.error(err instanceof Error ? err.message : "Failed to create pack")
+        toast.error(err instanceof Error ? err.message : "Failed to create pack");
       }
     }
-  }
+  };
 
   return (
     <DialogContent size="2xl">
@@ -207,7 +215,7 @@ function CreatePolicyPackDialog({ onClose }: { onClose: () => void }) {
             <Label htmlFor="pack">Pack Configuration (JSON)</Label>
             <Textarea
               id="pack"
-              className="font-mono text-sm min-h-48"
+              className="min-h-48 font-mono text-sm"
               placeholder='{ "defaults": {}, "requirements": {} }'
               value={formData.pack}
               onChange={(e) => setFormData((p) => ({ ...p, pack: e.target.value }))}
@@ -225,5 +233,5 @@ function CreatePolicyPackDialog({ onClose }: { onClose: () => void }) {
         </DialogFooter>
       </form>
     </DialogContent>
-  )
+  );
 }

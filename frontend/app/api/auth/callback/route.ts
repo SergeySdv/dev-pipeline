@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server"
+import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const redirect = searchParams.get("redirect") || "/"
+  const { searchParams } = new URL(request.url);
+  const redirect = searchParams.get("redirect") || "/";
 
   // In production, this would:
   // 1. Validate state parameter
@@ -12,13 +12,13 @@ export async function GET(request: Request) {
   // 5. Set HttpOnly cookie
 
   // Mock: set session and redirect
-  const response = NextResponse.redirect(new URL(redirect, request.url))
+  const response = NextResponse.redirect(new URL(redirect, request.url));
   response.cookies.set("session", "mock-session-token", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 60 * 60 * 24 * 7, // 7 days
-  })
+  });
 
-  return response
+  return response;
 }

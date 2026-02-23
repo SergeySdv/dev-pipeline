@@ -1,21 +1,30 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { User, Calendar, Tag, X, Plus } from "lucide-react"
-import type { AgileTask, AgileTaskCreate, Sprint } from "@/lib/api/types"
-import { TaskForm } from "./task-form"
+import { useState } from "react";
+
+import { Calendar, Plus,Tag, User, X } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { AgileTask, AgileTaskCreate, Sprint } from "@/lib/api/types";
+
+import { TaskForm } from "./task-form";
 
 export interface TaskDetailsTabProps {
-  formData: AgileTaskCreate
-  onFormChange: (data: AgileTaskCreate) => void
-  task?: AgileTask | null
-  sprints: Sprint[]
-  isReadOnly?: boolean
+  formData: AgileTaskCreate;
+  onFormChange: (data: AgileTaskCreate) => void;
+  task?: AgileTask | null;
+  sprints: Sprint[];
+  isReadOnly?: boolean;
 }
 
 export function TaskDetailsTab({
@@ -25,23 +34,23 @@ export function TaskDetailsTab({
   sprints,
   isReadOnly = false,
 }: TaskDetailsTabProps) {
-  const [newLabel, setNewLabel] = useState("")
+  const [newLabel, setNewLabel] = useState("");
 
   const addLabel = () => {
     if (newLabel.trim() && !formData.labels?.includes(newLabel.trim())) {
-      onFormChange({ ...formData, labels: [...(formData.labels || []), newLabel.trim()] })
-      setNewLabel("")
+      onFormChange({ ...formData, labels: [...(formData.labels || []), newLabel.trim()] });
+      setNewLabel("");
     }
-  }
+  };
 
   const removeLabel = (label: string) => {
-    onFormChange({ ...formData, labels: formData.labels?.filter((l) => l !== label) || [] })
-  }
+    onFormChange({ ...formData, labels: formData.labels?.filter((l) => l !== label) || [] });
+  };
 
   return (
     <div className="space-y-6">
       <TaskForm formData={formData} onFormChange={onFormChange} isReadOnly={isReadOnly} />
-      
+
       <div className="grid grid-cols-2 gap-6">
         <div className="space-y-2">
           <Label>Execution</Label>
@@ -72,7 +81,10 @@ export function TaskDetailsTab({
         {task && (
           <div className="space-y-2">
             <Label>Protocol Run</Label>
-            <Input value={task.protocol_run_id ? `#${task.protocol_run_id}` : "Not linked"} disabled />
+            <Input
+              value={task.protocol_run_id ? `#${task.protocol_run_id}` : "Not linked"}
+              disabled
+            />
           </div>
         )}
 
@@ -88,7 +100,10 @@ export function TaskDetailsTab({
           <Select
             value={formData.story_points?.toString() || ""}
             onValueChange={(value) =>
-              onFormChange({ ...formData, story_points: value ? Number.parseInt(value) : undefined })
+              onFormChange({
+                ...formData,
+                story_points: value ? Number.parseInt(value) : undefined,
+              })
             }
             disabled={isReadOnly}
           >
@@ -108,7 +123,7 @@ export function TaskDetailsTab({
         <div className="space-y-2">
           <Label htmlFor="assignee">Assignee</Label>
           <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <User className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
               id="assignee"
               value={formData.assignee}
@@ -123,7 +138,7 @@ export function TaskDetailsTab({
         <div className="space-y-2">
           <Label htmlFor="due_date">Due Date</Label>
           <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Calendar className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
               id="due_date"
               type="date"
@@ -137,13 +152,16 @@ export function TaskDetailsTab({
 
         <div className="col-span-2 space-y-2">
           <Label>Labels</Label>
-          <div className="flex flex-wrap gap-2 mb-2">
+          <div className="mb-2 flex flex-wrap gap-2">
             {formData.labels?.map((label) => (
               <Badge key={label} variant="secondary" className="gap-1">
                 <Tag className="h-3 w-3" />
                 {label}
                 {!isReadOnly && (
-                  <button onClick={() => removeLabel(label)} className="ml-1 hover:text-destructive">
+                  <button
+                    onClick={() => removeLabel(label)}
+                    className="hover:text-destructive ml-1"
+                  >
                     <X className="h-3 w-3" />
                   </button>
                 )}
@@ -167,5 +185,5 @@ export function TaskDetailsTab({
         </div>
       </div>
     </div>
-  )
+  );
 }

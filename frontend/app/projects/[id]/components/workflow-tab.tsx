@@ -1,36 +1,43 @@
-"use client"
+"use client";
 
-import { useProtocol, useProtocolSteps, useProjectProtocols } from "@/lib/api"
-import { LoadingState } from "@/components/ui/loading-state"
-import { EmptyState } from "@/components/ui/empty-state"
-import { PipelineVisualizer } from "@/components/workflow/pipeline-visualizer"
-import { Workflow } from "lucide-react"
-import { toast } from "sonner"
-import { useRouter } from "next/navigation"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { useEffect, useRef, useState } from "react"
-import type { StepRun } from "@/lib/api/types"
-import { useEventStream } from "@/lib/api"
-import { useVisibility } from "@/lib/hooks/use-visibility"
-import { useQueryClient } from "@tanstack/react-query"
-import { queryKeys } from "@/lib/api/query-keys"
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { useQueryClient } from "@tanstack/react-query";
+import { Workflow } from "lucide-react";
+import { toast } from "sonner";
+
+import { EmptyState } from "@/components/ui/empty-state";
+import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { PipelineVisualizer } from "@/components/workflow/pipeline-visualizer";
+import { useEventStream,useProjectProtocols,useProtocol, useProtocolSteps  } from "@/lib/api";
+import { queryKeys } from "@/lib/api/query-keys";
+import type { StepRun } from "@/lib/api/types";
+import { useVisibility } from "@/lib/hooks/use-visibility";
 
 interface WorkflowTabProps {
-  projectId: number
+  projectId: number;
 }
 
 export function WorkflowTab({ projectId }: WorkflowTabProps) {
-  const { data: protocols, isLoading: protocolsLoading } = useProjectProtocols(projectId)
-  const [selectedProtocolId, setSelectedProtocolId] = useState<number | null>(null)
-  const queryClient = useQueryClient()
-  const isVisible = useVisibility()
-  const invalidateTimeoutRef = useRef<number | null>(null)
+  const { data: protocols, isLoading: protocolsLoading } = useProjectProtocols(projectId);
+  const [selectedProtocolId, setSelectedProtocolId] = useState<number | null>(null);
+  const queryClient = useQueryClient();
+  const isVisible = useVisibility();
+  const invalidateTimeoutRef = useRef<number | null>(null);
 
-  const protocolId = selectedProtocolId || protocols?.[0]?.id || null
-  const { data: protocol, isLoading: protocolLoading } = useProtocol(protocolId!)
-  const { data: steps, isLoading: stepsLoading } = useProtocolSteps(protocolId!)
-  const router = useRouter()
+  const protocolId = selectedProtocolId || protocols?.[0]?.id || null;
+  const { data: protocol, isLoading: protocolLoading } = useProtocol(protocolId!);
+  const { data: steps, isLoading: stepsLoading } = useProtocolSteps(protocolId!);
+  const router = useRouter();
 
   useEventStream(
     protocolId
@@ -41,37 +48,37 @@ export function WorkflowTab({ projectId }: WorkflowTabProps) {
     {
       enabled: Boolean(protocolId) && isVisible,
       onEvent: () => {
-        if (!protocolId) return
-        if (invalidateTimeoutRef.current != null) return
+        if (!protocolId) return;
+        if (invalidateTimeoutRef.current != null) return;
         invalidateTimeoutRef.current = window.setTimeout(() => {
-          queryClient.invalidateQueries({ queryKey: queryKeys.protocols.detail(protocolId) })
-          queryClient.invalidateQueries({ queryKey: queryKeys.protocols.steps(protocolId) })
-          queryClient.invalidateQueries({ queryKey: queryKeys.protocols.events(protocolId) })
-          queryClient.invalidateQueries({ queryKey: queryKeys.projects.protocols(projectId) })
-          invalidateTimeoutRef.current = null
-        }, 250)
+          queryClient.invalidateQueries({ queryKey: queryKeys.protocols.detail(protocolId) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.protocols.steps(protocolId) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.protocols.events(protocolId) });
+          queryClient.invalidateQueries({ queryKey: queryKeys.projects.protocols(projectId) });
+          invalidateTimeoutRef.current = null;
+        }, 250);
       },
-    },
-  )
+    }
+  );
 
   useEffect(() => {
     return () => {
       if (invalidateTimeoutRef.current != null) {
-        window.clearTimeout(invalidateTimeoutRef.current)
-        invalidateTimeoutRef.current = null
+        window.clearTimeout(invalidateTimeoutRef.current);
+        invalidateTimeoutRef.current = null;
       }
-    }
-  }, [])
+    };
+  }, []);
 
   const handleStepClick = (step: StepRun) => {
-    router.push(`/steps/${step.id}`)
-  }
+    router.push(`/steps/${step.id}`);
+  };
 
   const handleAssignAgent = (stepId: number, agentId: string) => {
-    toast.success(`Agent ${agentId} assigned to step ${stepId}`)
-  }
+    toast.success(`Agent ${agentId} assigned to step ${stepId}`);
+  };
 
-  if (protocolsLoading) return <LoadingState message="Loading workflows..." />
+  if (protocolsLoading) return <LoadingState message="Loading workflows..." />;
 
   if (!protocols || protocols.length === 0) {
     return (
@@ -80,7 +87,7 @@ export function WorkflowTab({ projectId }: WorkflowTabProps) {
         title="No workflows yet"
         description="Create a protocol to visualize its workflow pipeline"
       />
-    )
+    );
   }
 
   return (
@@ -88,7 +95,10 @@ export function WorkflowTab({ projectId }: WorkflowTabProps) {
       <div className="flex items-center gap-4">
         <div className="flex-1 space-y-2">
           <Label htmlFor="protocol-select">Select Protocol Workflow</Label>
-          <Select value={protocolId?.toString() || ""} onValueChange={(value) => setSelectedProtocolId(Number(value))}>
+          <Select
+            value={protocolId?.toString() || ""}
+            onValueChange={(value) => setSelectedProtocolId(Number(value))}
+          >
             <SelectTrigger id="protocol-select" className="w-full">
               <SelectValue placeholder="Select a protocol" />
             </SelectTrigger>
@@ -113,8 +123,12 @@ export function WorkflowTab({ projectId }: WorkflowTabProps) {
           onAssignAgent={handleAssignAgent}
         />
       ) : (
-        <EmptyState icon={Workflow} title="No pipeline data" description="Unable to load pipeline visualization" />
+        <EmptyState
+          icon={Workflow}
+          title="No pipeline data"
+          description="Unable to load pipeline visualization"
+        />
       )}
     </div>
-  )
+  );
 }
