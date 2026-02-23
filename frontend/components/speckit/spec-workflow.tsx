@@ -220,17 +220,17 @@ export function SpecWorkflow({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {steps.map((step, index) => {
             const status = stepStatus[step.key];
             const isActive = currentStep === step.key;
             const isNextStep = !currentStep && index === 0 && !status;
 
             return (
-              <div key={step.key} className="relative">
+              <div key={step.key} className="relative w-[180px] flex-shrink-0">
                 {/* Connector line */}
                 {index < steps.length - 1 && (
-                  <div className="bg-muted absolute top-8 left-[calc(100%_-_8px)] hidden h-0.5 w-[calc(100%_-_16px)] md:block">
+                  <div className="bg-muted pointer-events-none absolute top-7 left-full hidden h-0.5 w-4 z-0 sm:block">
                     <div
                       className={cn(
                         "h-full transition-all",
@@ -243,13 +243,15 @@ export function SpecWorkflow({
                 <Link href={getStepHref(step.key, projectId)}>
                   <div
                     className={cn(
-                      "cursor-pointer rounded-lg border-2 p-4 transition-all hover:shadow-md",
+                      "relative z-10 cursor-pointer rounded-lg border-2 p-4 transition-all hover:shadow-md",
                       getStatusColor(status, isActive)
                     )}
                   >
-                    <div className="mb-2 flex items-center gap-3">
-                      {getStatusIcon(status, isActive)}
-                      <span className="font-medium">{step.label}</span>
+                    <div className="mb-2 flex min-w-0 items-center gap-3">
+                      <div className="flex-shrink-0">{getStatusIcon(status, isActive)}</div>
+                      <span className="min-w-0 flex-1 text-sm leading-tight font-medium whitespace-normal">
+                        {step.label}
+                      </span>
                     </div>
                     <p className="text-muted-foreground mb-3 text-xs">{step.description}</p>
 

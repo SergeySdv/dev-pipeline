@@ -16,6 +16,7 @@ archive/tasksgodzilla/api/frontend_dist/
 .venv/
 __pycache__/
 *.pyc
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

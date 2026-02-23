@@ -441,3 +441,33 @@ def check_agent_health(
     if res.error == "Agent not found":
         raise HTTPException(status_code=404, detail="Agent not found")
     return {"status": "available" if res.available else "unavailable"}
+
+
+@router.post("/agents/{agent_id}/test", response_model=schemas.AgentTestOut)
+def test_agent_setup(
+    agent_id: str,
+    req: schemas.AgentTestRequest,
+    project_id: Optional[int] = Query(default=None),
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
+):
+    """Run a lightweight setup test for a single agent (auth/provider checks where possible)."""
+    cfg = AgentConfigService(ctx, db=db)
+    overrides = req.overrides.model_dump(exclude_unset=True) if req.overrides is not None else None
+    res = cfg.test_setup(agent_id, project_id=project_id, overrides=overrides)
+    if any((c.name == "agent" and not c.ok and c.error == "Agent not found") for c in (res.checks or [])):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return schemas.AgentTestOut(
+        agent_id=res.agent_id,
+        ok=res.ok,
+        duration_ms=res.duration_ms,
+        checks=[
+            schemas.AgentTestCheckOut(
+                name=c.name,
+                ok=c.ok,
+                error=c.error,
+                details=c.details,
+            )
+            for c in (res.checks or [])
+        ],
+    )

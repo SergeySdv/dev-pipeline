@@ -9,6 +9,10 @@ import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import json
+import os
+import re
+import time
 
 try:
     import yaml
@@ -56,6 +60,22 @@ class HealthCheckResult:
     version: Optional[str] = None
     error: Optional[str] = None
     response_time_ms: Optional[float] = None
+
+
+@dataclass
+class AgentTestCheckResult:
+    name: str
+    ok: bool
+    error: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentTestResult:
+    agent_id: str
+    ok: bool
+    checks: List[AgentTestCheckResult] = field(default_factory=list)
+    duration_ms: Optional[float] = None
 
 
 class AgentConfigService(Service):
@@ -717,6 +737,220 @@ class AgentConfigService(Service):
             agent_id=agent.id,
             available=False,
             error="API health checks not yet implemented",
+        )
+
+    def test_setup(
+        self,
+        agent_id: str,
+        *,
+        project_id: Optional[int | str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> AgentTestResult:
+        """
+        Run a lightweight "setup" test for an agent.
+
+        This is intended for the Console "Test setup" button and should be:
+        - safe (no repo edits)
+        - fast (seconds)
+        - informative (credential / provider checks where possible)
+
+        `overrides` are applied in-memory and are NOT persisted.
+        """
+        started = time.perf_counter()
+        agent = self.get_agent(agent_id, project_id=project_id)
+        if not agent:
+            return AgentTestResult(
+                agent_id=agent_id,
+                ok=False,
+                checks=[AgentTestCheckResult(name="agent", ok=False, error="Agent not found")],
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
+        effective = agent
+        if overrides:
+            allowed = set(getattr(AgentConfig, "__dataclass_fields__", {}).keys())  # type: ignore[attr-defined]
+            patch = {k: v for k, v in overrides.items() if k in allowed}
+            if patch:
+                effective = replace(effective, **patch)
+
+        checks: List[AgentTestCheckResult] = []
+
+        if not effective.enabled:
+            checks.append(
+                AgentTestCheckResult(
+                    name="enabled",
+                    ok=False,
+                    error="Agent is disabled",
+                )
+            )
+
+        if not effective.is_cli:
+            checks.append(
+                AgentTestCheckResult(
+                    name="kind",
+                    ok=False,
+                    error=f"Setup test not supported for kind: {effective.kind}",
+                )
+            )
+            return AgentTestResult(
+                agent_id=effective.id,
+                ok=False,
+                checks=checks,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
+        cmd = (effective.command or "").strip()
+        if not cmd:
+            checks.append(AgentTestCheckResult(name="command", ok=False, error="No command configured"))
+            return AgentTestResult(
+                agent_id=effective.id,
+                ok=False,
+                checks=checks,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
+        ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+        def _strip_ansi(text: str) -> str:
+            return ansi_re.sub("", text or "")
+
+        def _run(args: List[str], *, timeout: int) -> Dict[str, Any]:
+            try:
+                res = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                stdout = _strip_ansi(res.stdout or "").strip()
+                stderr = _strip_ansi(res.stderr or "").strip()
+                return {"ok": res.returncode == 0, "exit_code": res.returncode, "stdout": stdout, "stderr": stderr}
+            except FileNotFoundError:
+                return {"ok": False, "exit_code": None, "stdout": "", "stderr": f"Command not found: {args[0]}"}
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "exit_code": None, "stdout": "", "stderr": "Command timed out"}
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "exit_code": None, "stdout": "", "stderr": str(exc)}
+
+        timeout = int(effective.timeout_seconds or self._health_config.get("timeout_seconds", 30) or 30)
+        timeout = max(3, min(timeout, 30))
+
+        # Always run a version check first.
+        version_res = _run([cmd, "--version"], timeout=timeout)
+        version_text = (version_res.get("stdout") or "") or (version_res.get("stderr") or "")
+        version_line = version_text.splitlines()[0].strip() if version_text else None
+        checks.append(
+            AgentTestCheckResult(
+                name="version",
+                ok=bool(version_res.get("ok")),
+                error=None if version_res.get("ok") else (version_res.get("stderr") or "Version check failed"),
+                details={"command": cmd, "version": version_line},
+            )
+        )
+
+        # Command-specific setup checks (no-cost).
+        cmd_base = Path(cmd).name
+
+        if cmd_base == "opencode":
+            auth_res = _run([cmd, "auth", "list"], timeout=timeout)
+            auth_out = (auth_res.get("stdout") or "") + "\n" + (auth_res.get("stderr") or "")
+            auth_clean = _strip_ansi(auth_out)
+            m = re.search(r"(\d+)\s+credentials", auth_clean, re.IGNORECASE)
+            credential_count = int(m.group(1)) if m else None
+            checks.append(
+                AgentTestCheckResult(
+                    name="credentials",
+                    ok=bool(auth_res.get("ok")) and (credential_count is None or credential_count > 0),
+                    error=(
+                        None
+                        if (auth_res.get("ok") and (credential_count is None or credential_count > 0))
+                        else "No OpenCode credentials found (run `opencode auth login` or mount auth.json into Docker)"
+                    ),
+                    details={"credential_count": credential_count},
+                )
+            )
+
+            provider = None
+            model = (effective.default_model or "").strip()
+            if "/" in model:
+                provider = model.split("/", 1)[0].strip()
+
+            if provider:
+                models_res = _run([cmd, "models", provider], timeout=timeout)
+                checks.append(
+                    AgentTestCheckResult(
+                        name="model_provider",
+                        ok=bool(models_res.get("ok")),
+                        error=None if models_res.get("ok") else (models_res.get("stderr") or "Provider check failed"),
+                        details={"provider": provider},
+                    )
+                )
+
+        elif cmd_base == "codex":
+            # Best-effort: validate that auth is present via env var or login status.
+            assume = os.environ.get("DEVGODZILLA_ASSUME_AGENT_AUTH", "").lower() in ("1", "true", "yes", "on")
+            has_key = bool(os.environ.get("OPENAI_API_KEY"))
+            checks.append(
+                AgentTestCheckResult(
+                    name="openai_api_key",
+                    ok=assume or has_key,
+                    error=None if (assume or has_key) else "OPENAI_API_KEY not set (or set DEVGODZILLA_ASSUME_AGENT_AUTH=true)",
+                    details={"present": has_key, "assume_auth": assume},
+                )
+            )
+            status_res = _run([cmd, "login", "status"], timeout=timeout)
+            status_text = ((status_res.get("stdout") or "") + "\n" + (status_res.get("stderr") or "")).strip()
+            logged_in = bool(status_res.get("ok")) and "not logged in" not in status_text.lower()
+            checks.append(
+                AgentTestCheckResult(
+                    name="login_status",
+                    ok=logged_in or has_key or assume,
+                    error=None if (logged_in or has_key or assume) else "Codex not logged in (and OPENAI_API_KEY not set)",
+                    details={"logged_in": logged_in},
+                )
+            )
+
+        elif cmd_base == "claude":
+            has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+            status_res = _run([cmd, "auth", "status"], timeout=timeout)
+            logged_in = False
+            if status_res.get("ok") and status_res.get("stdout"):
+                try:
+                    data = json.loads(status_res["stdout"])
+                    logged_in = bool(data.get("loggedIn"))
+                except Exception:
+                    logged_in = False
+            checks.append(
+                AgentTestCheckResult(
+                    name="auth_status",
+                    ok=logged_in or has_key,
+                    error=None if (logged_in or has_key) else "Claude not logged in (and ANTHROPIC_API_KEY not set)",
+                    details={"logged_in": logged_in, "anthropic_api_key_present": has_key},
+                )
+            )
+
+        elif cmd_base == "gemini":
+            has_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+            checks.append(
+                AgentTestCheckResult(
+                    name="api_key",
+                    ok=has_key,
+                    error=None if has_key else "GEMINI_API_KEY or GOOGLE_API_KEY not set",
+                    details={
+                        "gemini_api_key_present": bool(os.environ.get("GEMINI_API_KEY")),
+                        "google_api_key_present": bool(os.environ.get("GOOGLE_API_KEY")),
+                    },
+                )
+            )
+
+        # Overall OK if all checks passed (ignore the informational 'enabled' check if present).
+        relevant = [c for c in checks if c.name != "enabled"]
+        ok = all(c.ok for c in relevant) if relevant else False
+        return AgentTestResult(
+            agent_id=effective.id,
+            ok=ok,
+            checks=checks,
+            duration_ms=(time.perf_counter() - started) * 1000,
         )
     
     def check_all_health(self) -> List[HealthCheckResult]:

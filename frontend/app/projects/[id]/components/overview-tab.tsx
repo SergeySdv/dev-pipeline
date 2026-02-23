@@ -96,23 +96,46 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
       (specKitStatus?.specs ?? []).filter((s) => s.status !== "cleaned" && (s.spec_path || s.path)),
     [specKitStatus]
   );
-  const activeSpecPath =
-    selectedSpecPath || specOptions[0]?.spec_path || specOptions[0]?.path || "";
+  const activeSpecPath = selectedSpecPath || specOptions[0]?.spec_path || specOptions[0]?.path || "";
+  const activeSpecMeta = useMemo(() => {
+    if (!activeSpecPath) return null;
+    return (
+      specOptions.find((spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath) ??
+      null
+    );
+  }, [activeSpecPath, specOptions]);
+
   const workflowStatus = useMemo(() => {
-    const hasSpec = (specKitStatus?.spec_count || 0) > 0;
-    const hasPlan = specOptions.some((spec) => spec.has_plan);
-    const hasTasks = specOptions.some((spec) => spec.has_tasks);
+    const hasSpec = Boolean(activeSpecMeta?.has_spec ?? activeSpecMeta?.spec_path ?? activeSpecMeta?.path);
+    const hasPlan = Boolean(activeSpecMeta?.has_plan ?? activeSpecMeta?.plan_path);
+    const hasTasks = Boolean(activeSpecMeta?.has_tasks ?? activeSpecMeta?.tasks_path);
+    const hasChecklist = Boolean(activeSpecMeta?.checklist_path);
+    const hasAnalysis = Boolean(activeSpecMeta?.analysis_path);
+    const hasImplement = Boolean(activeSpecMeta?.implement_path);
     return {
       spec: hasSpec ? "completed" : "pending",
-      clarify: hasSpec ? "in-progress" : "pending",
+      clarify: "pending",
       plan: hasPlan ? "completed" : "pending",
-      checklist: hasPlan ? "in-progress" : "pending",
+      checklist: hasChecklist ? "completed" : "pending",
       tasks: hasTasks ? "completed" : "pending",
-      analyze: hasTasks ? "in-progress" : "pending",
-      implement: hasTasks ? "in-progress" : "pending",
+      analyze: hasAnalysis ? "completed" : "pending",
+      implement: hasImplement ? "completed" : "pending",
       sprint: "pending",
     } as const;
-  }, [specKitStatus, specOptions]);
+  }, [activeSpecMeta]);
+
+  const currentWorkflowStep = useMemo(() => {
+    const hasSpec = workflowStatus.spec === "completed";
+    const hasPlan = workflowStatus.plan === "completed";
+    const hasTasks = workflowStatus.tasks === "completed";
+    const hasImplement = workflowStatus.implement === "completed";
+
+    if (!hasSpec) return "spec" as const;
+    if (!hasPlan) return "plan" as const;
+    if (!hasTasks) return "tasks" as const;
+    if (!hasImplement) return "implement" as const;
+    return "sprint" as const;
+  }, [workflowStatus]);
 
   if (projectLoading || onboardingLoading) return <LoadingState message="Loading overview..." />;
 
@@ -296,7 +319,12 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
         </div>
       </div>
 
-      <SpecWorkflow projectId={projectId} stepStatus={workflowStatus} showActions />
+      <SpecWorkflow
+        projectId={projectId}
+        currentStep={currentWorkflowStep}
+        stepStatus={workflowStatus}
+        showActions
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>

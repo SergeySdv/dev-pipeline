@@ -785,6 +785,20 @@ export interface AgentHealth {
   response_time_ms?: number | null;
 }
 
+export interface AgentTestCheck {
+  name: string;
+  ok: boolean;
+  error?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface AgentTestResult {
+  agent_id: string;
+  ok: boolean;
+  checks: AgentTestCheck[];
+  duration_ms?: number | null;
+}
+
 export interface AgentMetrics {
   agent_id: string;
   active_steps: number;
