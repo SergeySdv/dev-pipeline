@@ -10,13 +10,21 @@ except ImportError:
     SLOWAPI_AVAILABLE = False
 
 from devgodzilla.api import schemas
-from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit, sprints, tasks, policy_packs, specifications, quality, profile
+from devgodzilla.services.telemetry import (
+    TelemetryConfig,
+    get_telemetry,
+    init_telemetry,
+    shutdown_telemetry,
+)
+from devgodzilla.services.health import HealthChecker, health_status_to_dict
+from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit, sprints, tasks, policy_packs, specifications, quality, profile, templates
 from devgodzilla.api.routes import metrics, webhooks, events, logs
 from devgodzilla.api.routes import windmill as windmill_routes
 from devgodzilla.api.routes import runs as runs_routes
 from devgodzilla.api.routes import project_speckit as project_speckit_routes
 from devgodzilla.api.routes import cli_executions
 from devgodzilla.api.routes import queues
+from devgodzilla.api.routes import reconciliation as reconciliation_routes
 from devgodzilla.api.dependencies import get_db, get_service_context, require_api_token, require_webhook_token
 from devgodzilla.config import get_config
 from devgodzilla.engines.bootstrap import bootstrap_default_engines
@@ -74,10 +82,12 @@ app.include_router(project_speckit_routes.router, dependencies=auth_deps)  # /pr
 app.include_router(sprints.router, tags=["Sprints"], dependencies=auth_deps)
 app.include_router(tasks.router, tags=["Tasks"], dependencies=auth_deps)
 app.include_router(queues.router, dependencies=auth_deps)  # /queues
+app.include_router(reconciliation_routes.router, dependencies=auth_deps)  # /reconciliation
 app.include_router(policy_packs.router, dependencies=auth_deps)  # /policy_packs
 app.include_router(specifications.router, dependencies=auth_deps)  # /specifications
 app.include_router(quality.router, dependencies=auth_deps)  # /quality
 app.include_router(profile.router, dependencies=auth_deps)  # /profile
+app.include_router(templates.router, dependencies=auth_deps)  # /templates
 app.include_router(cli_executions.router, tags=["CLI Executions"], dependencies=auth_deps)  # /cli-executions
 
 
@@ -171,7 +181,7 @@ def bootstrap_sprint_integration() -> None:
         from devgodzilla.services.sprint_event_handlers import register_sprint_event_handlers
         register_sprint_event_handlers()
     except Exception as e:
-        logger.error(f"Failed to register sprint event handlers: {e}")
+        logger.error("sprint_event_handlers_registration_failed", extra={"error": str(e)})
 
 
 @app.on_event("startup")
@@ -186,6 +196,44 @@ def validate_path_contract_startup() -> None:
     logger.error("path_contract_invalid", extra={"errors": report.errors})
     joined = "; ".join(report.errors)
     raise RuntimeError(f"Path contract validation failed: {joined}")
+
+
+@app.on_event("startup")
+def initialize_telemetry() -> None:
+    """Initialize OpenTelemetry distributed tracing."""
+    import os
+
+    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    sample_rate = float(os.environ.get("OTEL_SAMPLE_RATE", "1.0"))
+    enable_console = os.environ.get("OTEL_CONSOLE_EXPORT", "").lower() in ("1", "true", "yes")
+
+    telemetry_config = TelemetryConfig(
+        service_name="devgodzilla-api",
+        service_version=app.version,
+        environment=os.environ.get("DEVGODZILLA_ENV", "development"),
+        otlp_endpoint=otlp_endpoint,
+        sample_rate=sample_rate,
+        enable_console_export=enable_console,
+    )
+
+    if init_telemetry(telemetry_config):
+        get_telemetry().instrument_fastapi(app)
+        logger.info(
+            "telemetry_enabled",
+            extra={
+                "otlp_endpoint": otlp_endpoint or "none",
+                "sample_rate": sample_rate,
+                "console_export": enable_console,
+            },
+        )
+    else:
+        logger.info("telemetry_disabled", extra={"reason": "not available"})
+
+
+@app.on_event("shutdown")
+def shutdown_telemetry_on_exit() -> None:
+    """Shutdown OpenTelemetry on application exit."""
+    shutdown_telemetry()
 
 
 @app.get("/health", response_model=schemas.Health)
@@ -205,31 +253,78 @@ def health_ready(
     db: Database = Depends(get_db),
     ctx=Depends(get_service_context),
 ):
-    """Readiness probe (dependencies reachable)."""
-    components: dict[str, str] = {"database": "ok", "windmill": "skipped"}
-    try:
-        db.list_projects()
-    except Exception:
-        components["database"] = "error"
-
-    try:
-        config = ctx.config
-        if getattr(config, "windmill_enabled", False):
-            wm = WindmillClient(
+    """Readiness probe (dependencies reachable) with comprehensive health checking."""
+    from devgodzilla.engines.registry import get_registry
+    
+    # Build windmill client if enabled
+    windmill_client = None
+    config = ctx.config
+    if getattr(config, "windmill_enabled", False):
+        try:
+            windmill_client = WindmillClient(
                 WindmillConfig(
                     base_url=config.windmill_url or "http://localhost:8000",
                     token=config.windmill_token or "",
                     workspace=getattr(config, "windmill_workspace", "devgodzilla"),
                 )
             )
-            components["windmill"] = "ok" if wm.health_check() else "error"
-        else:
-            components["windmill"] = "disabled"
+        except Exception:
+            pass
+    
+    # Get agent registry
+    try:
+        agent_registry = get_registry()
     except Exception:
-        components["windmill"] = "error"
+        agent_registry = None
+    
+    # Create health checker and run checks
+    checker = HealthChecker(
+        db=db,
+        windmill=windmill_client,
+        agent_registry=agent_registry,
+    )
+    status = checker.check_all_sync()
+    
+    return health_status_to_dict(status)
 
-    status = "ok" if all(v in ("ok", "disabled", "skipped") for v in components.values()) else "error"
-    return {"status": status, "components": components, "version": app.version}
+
+@app.get("/health/agents")
+def health_agents(
+    db: Database = Depends(get_db),
+    ctx=Depends(get_service_context),
+):
+    """Detailed agent availability check."""
+    from devgodzilla.engines.registry import get_registry
+    
+    try:
+        agent_registry = get_registry()
+        availability = agent_registry.check_all_available()
+        engines = agent_registry.list_all()
+        
+        agents = [
+            {
+                "agent_id": e.metadata.id,
+                "name": e.metadata.display_name,
+                "kind": e.metadata.kind.value if hasattr(e.metadata.kind, "value") else str(e.metadata.kind),
+                "available": availability.get(e.metadata.id, False),
+            }
+            for e in engines
+        ]
+        
+        return {
+            "total": len(agents),
+            "available": sum(1 for a in agents if a["available"]),
+            "unavailable": sum(1 for a in agents if not a["available"]),
+            "agents": agents,
+        }
+    except Exception as exc:
+        return {
+            "total": 0,
+            "available": 0,
+            "unavailable": 0,
+            "agents": [],
+            "error": str(exc),
+        }
 
 if __name__ == "__main__":
     import uvicorn

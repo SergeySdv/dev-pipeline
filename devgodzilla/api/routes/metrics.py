@@ -203,7 +203,7 @@ PROTOCOL_RUNS_TOTAL = Counter(
 PROTOCOL_DURATION_SECONDS = Histogram(
     "devgodzilla_protocol_duration_seconds",
     "Protocol run duration in seconds",
-    buckets=[10, 30, 60, 120, 300, 600, 1800, 3600],
+    buckets=[60, 300, 600, 1800, 3600, 7200],
 )
 
 # Step metrics
@@ -220,6 +220,12 @@ STEP_DURATION_SECONDS = Histogram(
     buckets=[5, 15, 30, 60, 120, 300],
 )
 
+STEP_RETRIES_TOTAL = Counter(
+    "devgodzilla_step_retries_total",
+    "Total step retries",
+    ["step_type", "agent_id"],
+)
+
 # QA metrics
 QA_EVALUATIONS_TOTAL = Counter(
     "devgodzilla_qa_evaluations_total",
@@ -233,10 +239,17 @@ QA_FINDINGS_TOTAL = Counter(
     ["severity"],
 )
 
+QA_DURATION_SECONDS = Histogram(
+    "devgodzilla_qa_duration_seconds",
+    "QA check duration in seconds",
+    ["gate_id"],
+    buckets=[1, 5, 10, 30, 60, 120],
+)
+
 # Agent metrics
 AGENT_EXECUTIONS_TOTAL = Counter(
     "devgodzilla_agent_executions_total",
-    "Total number of agent executions",
+    "Total executions per agent",
     ["agent_id", "status"],
 )
 
@@ -244,6 +257,26 @@ AGENT_TOKENS_TOTAL = Counter(
     "devgodzilla_agent_tokens_total",
     "Total tokens used by agents",
     ["agent_id"],
+)
+
+AGENT_AVAILABILITY = Gauge(
+    "devgodzilla_agent_availability",
+    "Agent availability status (1=available, 0=unavailable)",
+    ["agent_id", "agent_kind"],
+)
+
+# Queue metrics
+QUEUE_DEPTH = Gauge(
+    "devgodzilla_queue_depth",
+    "Current queue depth",
+    ["queue_name", "priority"],
+)
+
+# Feedback loop metrics
+FEEDBACK_LOOPS_TOTAL = Counter(
+    "devgodzilla_feedback_loops_total",
+    "Total feedback loops triggered",
+    ["action_taken", "error_type"],
 )
 
 # Active gauges
@@ -309,6 +342,11 @@ def record_step_completed(step_type: str, status: str, duration_seconds: float):
     ACTIVE_STEP_RUNS.set(max(0, ACTIVE_STEP_RUNS._value.get() - 1 if hasattr(ACTIVE_STEP_RUNS, '_value') else 0))
 
 
+def record_step_retry(step_type: str, agent_id: str):
+    """Record a step retry."""
+    STEP_RETRIES_TOTAL.labels(step_type=step_type, agent_id=agent_id).inc()
+
+
 def record_qa_evaluation(verdict: str, findings_by_severity: dict):
     """Record a QA evaluation."""
     QA_EVALUATIONS_TOTAL.labels(verdict=verdict).inc()
@@ -317,8 +355,80 @@ def record_qa_evaluation(verdict: str, findings_by_severity: dict):
             QA_FINDINGS_TOTAL.labels(severity=severity).inc()
 
 
+def record_qa_duration(gate_id: str, duration_seconds: float):
+    """Record QA gate duration."""
+    QA_DURATION_SECONDS.labels(gate_id=gate_id).observe(duration_seconds)
+
+
 def record_agent_execution(agent_id: str, status: str, tokens: int = 0):
     """Record an agent execution."""
     AGENT_EXECUTIONS_TOTAL.labels(agent_id=agent_id, status=status).inc()
     if tokens > 0:
         AGENT_TOKENS_TOTAL.labels(agent_id=agent_id).inc(tokens)
+
+
+def record_feedback_loop(action_taken: str, error_type: str):
+    """Record a feedback loop triggered."""
+    FEEDBACK_LOOPS_TOTAL.labels(action_taken=action_taken, error_type=error_type).inc()
+
+
+def update_queue_metrics(db: Database):
+    """
+    Update queue depth metrics.
+    
+    Queries pending steps grouped by priority and updates the gauge.
+    """
+    try:
+        # Get all projects
+        projects = db.list_projects()
+        
+        # Count pending steps by queue (protocol) and priority
+        queue_counts: dict[tuple[str, str], int] = {}
+        
+        for project in projects:
+            if project.status == "archived":
+                continue
+            protocol_runs = db.list_protocol_runs(project.id)
+            for pr in protocol_runs:
+                if pr.status not in ("pending", "planning", "running"):
+                    continue
+                steps = db.list_step_runs(pr.id)
+                for step in steps:
+                    if step.status == "pending":
+                        queue_name = pr.protocol_name or "default"
+                        priority = str(getattr(step, "priority", "normal") or "normal")
+                        key = (queue_name, priority)
+                        queue_counts[key] = queue_counts.get(key, 0) + 1
+        
+        # Update gauges
+        for (queue_name, priority), count in queue_counts.items():
+            QUEUE_DEPTH.labels(queue_name=queue_name, priority=priority).set(count)
+            
+    except Exception as exc:
+        logger.warning(
+            "update_queue_metrics_failed",
+            extra={"error": str(exc)},
+        )
+
+
+def update_agent_metrics(registry):
+    """
+    Update agent availability metrics.
+    
+    Checks each agent and updates the availability gauge.
+    
+    Args:
+        registry: EngineRegistry instance to check agent availability
+    """
+    try:
+        availability = registry.check_all_available()
+        for engine in registry.list_all():
+            agent_id = engine.metadata.id
+            agent_kind = engine.metadata.kind.value if hasattr(engine.metadata.kind, "value") else str(engine.metadata.kind)
+            available = availability.get(agent_id, False)
+            AGENT_AVAILABILITY.labels(agent_id=agent_id, agent_kind=agent_kind).set(1 if available else 0)
+    except Exception as exc:
+        logger.warning(
+            "update_agent_metrics_failed",
+            extra={"error": str(exc)},
+        )
