@@ -197,6 +197,8 @@ class StepRun:
     parallel_group: Optional[str] = None
     # Agent assignment (new for DevGodzilla)
     assigned_agent: Optional[str] = None
+    # Priority queue (higher = executed first)
+    priority: int = 0
 
 
 @dataclass

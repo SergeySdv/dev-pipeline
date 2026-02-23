@@ -21,6 +21,7 @@ from devgodzilla.models.domain import (
 )
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.events import get_event_bus, ProtocolStarted, ProtocolCompleted, StepStarted, StepCompleted
+from devgodzilla.services.priority import sort_by_priority, DEFAULT_PRIORITY
 from devgodzilla.windmill.client import WindmillClient, JobStatus
 from devgodzilla.windmill.flow_generator import DAGBuilder, FlowGenerator
 
@@ -472,6 +473,7 @@ class OrchestratorService(Service):
         Find and run the next available step.
         
         Selects a step with status PENDING whose dependencies are satisfied.
+        Steps are sorted by priority (highest first) before selection.
         
         Args:
             protocol_run_id: Protocol run ID
@@ -482,10 +484,11 @@ class OrchestratorService(Service):
         steps = self.db.list_step_runs(protocol_run_id)
         completed_ids = {s.id for s in steps if s.status == StepStatus.COMPLETED}
         
-        for step in steps:
-            if step.status != StepStatus.PENDING:
-                continue
-            
+        # Sort steps by priority (highest first) before iterating
+        pending_steps = [s for s in steps if s.status == StepStatus.PENDING]
+        sorted_pending = sort_by_priority(pending_steps, priority_attr="priority")
+        
+        for step in sorted_pending:
             # Check dependencies
             deps_satisfied = all(dep in completed_ids for dep in (step.depends_on or []))
             if deps_satisfied:
@@ -651,9 +654,10 @@ class OrchestratorService(Service):
 
     def _find_runnable_step(self, steps: List[StepRun]) -> Optional[StepRun]:
         completed_ids = {s.id for s in steps if s.status == StepStatus.COMPLETED}
-        for step in steps:
-            if step.status != StepStatus.PENDING:
-                continue
+        # Sort by priority (highest first) to select highest-priority runnable step
+        pending_steps = [s for s in steps if s.status == StepStatus.PENDING]
+        sorted_pending = sort_by_priority(pending_steps, priority_attr="priority")
+        for step in sorted_pending:
             deps_satisfied = all(dep in completed_ids for dep in (step.depends_on or []))
             if deps_satisfied:
                 return step
@@ -804,4 +808,156 @@ class OrchestratorService(Service):
         return OrchestratorResult(
             success=True,
             message=pr_info.get("url"),
+        )
+
+    # Error Handling
+    def handle_step_error(
+        self,
+        step_run_id: int,
+        error: Exception,
+        *,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> OrchestratorResult:
+        """
+        Handle an error that occurred during step execution.
+        
+        Uses the ErrorClassifier to determine the appropriate action and
+        updates step/protocol status accordingly.
+        
+        Args:
+            step_run_id: Step run ID where error occurred
+            error: The exception that was raised
+            context: Optional additional context for classification
+            
+        Returns:
+            OrchestratorResult with classification and action taken
+        """
+        from devgodzilla.services.error_classification import (
+            ErrorClassifier,
+            ErrorAction,
+        )
+        
+        step = self.db.get_step_run(step_run_id)
+        if not step:
+            return OrchestratorResult(
+                success=False,
+                error=f"Step {step_run_id} not found",
+            )
+        
+        # Build context for classification
+        classification_context = {
+            "step_id": step_run_id,
+            "protocol_run_id": step.protocol_run_id,
+            "step_name": step.step_name,
+            "assigned_agent": step.assigned_agent,
+            "retry_count": step.retries or 0,
+            **(context or {}),
+        }
+        
+        # Classify the error
+        classifier = ErrorClassifier()
+        classification = classifier.classify(error, classification_context)
+        
+        self.logger.info(
+            "step_error_classified",
+            extra=self.log_extra(
+                step_run_id=step_run_id,
+                protocol_run_id=step.protocol_run_id,
+                action=classification.action.value,
+                confidence=classification.confidence,
+                reason=classification.reason,
+            ),
+        )
+        
+        # Take action based on classification
+        action_taken = None
+        
+        if classification.action == ErrorAction.RETRY:
+            # Check if we can retry
+            if classifier.should_retry(classification, step.retries or 0):
+                action_taken = "retry_scheduled"
+                # Update status to pending for retry
+                self.db.update_step_status(
+                    step_run_id,
+                    StepStatus.PENDING,
+                    retries=(step.retries or 0) + 1,
+                )
+                retry_delay = classifier.get_retry_delay(
+                    classification, step.retries or 0
+                )
+                return OrchestratorResult(
+                    success=True,
+                    message=f"Error classified as retryable. Retry scheduled after {retry_delay}s.",
+                    data={
+                        "classification": {
+                            "action": classification.action.value,
+                            "confidence": classification.confidence,
+                            "reason": classification.reason,
+                        },
+                        "action_taken": action_taken,
+                        "retry_delay": retry_delay,
+                    },
+                )
+            else:
+                # Max retries exceeded
+                action_taken = "max_retries_exceeded"
+                self.db.update_step_status(step_run_id, StepStatus.FAILED)
+        
+        elif classification.action == ErrorAction.CLARIFY:
+            action_taken = "clarification_needed"
+            self.db.update_step_status(step_run_id, StepStatus.BLOCKED)
+            # Create clarification request
+            if classification.suggested_question:
+                try:
+                    self.db.create_clarification(
+                        scope="step",
+                        project_id=self.db.get_protocol_run(step.protocol_run_id).project_id,
+                        key=f"step_{step_run_id}_error",
+                        question=classification.suggested_question,
+                        status="pending",
+                        protocol_run_id=step.protocol_run_id,
+                        step_run_id=step_run_id,
+                        options=classification.options,
+                        blocking=True,
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "clarification_create_failed",
+                        extra=self.log_extra(
+                            step_run_id=step_run_id,
+                            error=str(exc),
+                        ),
+                    )
+        
+        elif classification.action == ErrorAction.RE_PLAN:
+            action_taken = "re_plan_needed"
+            # Mark step as blocked and update protocol status
+            self.db.update_step_status(step_run_id, StepStatus.BLOCKED)
+            self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.BLOCKED)
+        
+        elif classification.action == ErrorAction.RE_SPECIFY:
+            action_taken = "re_specify_needed"
+            self.db.update_step_status(step_run_id, StepStatus.BLOCKED)
+            self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.BLOCKED)
+        
+        elif classification.action == ErrorAction.MANUAL:
+            action_taken = "manual_intervention_needed"
+            self.db.update_step_status(step_run_id, StepStatus.FAILED)
+        
+        # Check if protocol should be marked as failed/blocked
+        self.check_and_complete_protocol(step.protocol_run_id)
+        
+        return OrchestratorResult(
+            success=True,
+            message=f"Error handled: {classification.reason}",
+            data={
+                "classification": {
+                    "action": classification.action.value,
+                    "confidence": classification.confidence,
+                    "reason": classification.reason,
+                    "suggested_question": classification.suggested_question,
+                    "options": classification.options,
+                },
+                "action_taken": action_taken,
+            },
         )

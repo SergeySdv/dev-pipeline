@@ -19,6 +19,37 @@ if TYPE_CHECKING:
     from devgodzilla.services.execution import ExecutionService, ExecutionResult, StepResolution
     from devgodzilla.services.quality import QualityService, QAResult, QAVerdict
     from devgodzilla.services.specification import SpecificationService, SpecifyResult, PlanResult, TasksResult
+    from devgodzilla.services.telemetry import (
+        Telemetry,
+        TelemetryConfig,
+        get_telemetry,
+        init_telemetry,
+        shutdown_telemetry,
+        start_as_current_span,
+        traced,
+        set_span_attribute,
+        set_span_attributes,
+        record_exception,
+    )
+    from devgodzilla.services.error_classification import (
+        ErrorAction,
+        ErrorClassification,
+        ErrorClassifier,
+        AgentUnavailableError,
+        ExecutionBlockedError,
+        TimeoutError,
+        TransientError,
+        classify_error,
+        get_error_classifier,
+    )
+    from devgodzilla.services.reconciliation import (
+        ReconciliationService,
+        ReconciliationReport,
+        ReconciliationDetail,
+        ProtocolReconciliation,
+        StepReconciliation,
+        ReconciliationAction,
+    )
 
 __all__ = [
     # Base
@@ -59,6 +90,34 @@ __all__ = [
     "QualityService",
     "QAResult",
     "QAVerdict",
+    # Telemetry
+    "Telemetry",
+    "TelemetryConfig",
+    "get_telemetry",
+    "init_telemetry",
+    "shutdown_telemetry",
+    "start_as_current_span",
+    "traced",
+    "set_span_attribute",
+    "set_span_attributes",
+    "record_exception",
+    # Error Classification
+    "ErrorAction",
+    "ErrorClassification",
+    "ErrorClassifier",
+    "AgentUnavailableError",
+    "ExecutionBlockedError",
+    "TimeoutError",
+    "TransientError",
+    "classify_error",
+    "get_error_classifier",
+    # Reconciliation
+    "ReconciliationService",
+    "ReconciliationReport",
+    "ReconciliationDetail",
+    "ProtocolReconciliation",
+    "StepReconciliation",
+    "ReconciliationAction",
 ]
 
 _EXPORTS = {
@@ -89,6 +148,34 @@ _EXPORTS = {
     "QualityService": "devgodzilla.services.quality",
     "QAResult": "devgodzilla.services.quality",
     "QAVerdict": "devgodzilla.services.quality",
+    # Telemetry
+    "Telemetry": "devgodzilla.services.telemetry",
+    "TelemetryConfig": "devgodzilla.services.telemetry",
+    "get_telemetry": "devgodzilla.services.telemetry",
+    "init_telemetry": "devgodzilla.services.telemetry",
+    "shutdown_telemetry": "devgodzilla.services.telemetry",
+    "start_as_current_span": "devgodzilla.services.telemetry",
+    "traced": "devgodzilla.services.telemetry",
+    "set_span_attribute": "devgodzilla.services.telemetry",
+    "set_span_attributes": "devgodzilla.services.telemetry",
+    "record_exception": "devgodzilla.services.telemetry",
+    # Error Classification
+    "ErrorAction": "devgodzilla.services.error_classification",
+    "ErrorClassification": "devgodzilla.services.error_classification",
+    "ErrorClassifier": "devgodzilla.services.error_classification",
+    "AgentUnavailableError": "devgodzilla.services.error_classification",
+    "ExecutionBlockedError": "devgodzilla.services.error_classification",
+    "TimeoutError": "devgodzilla.services.error_classification",
+    "TransientError": "devgodzilla.services.error_classification",
+    "classify_error": "devgodzilla.services.error_classification",
+    "get_error_classifier": "devgodzilla.services.error_classification",
+    # Reconciliation
+    "ReconciliationService": "devgodzilla.services.reconciliation",
+    "ReconciliationReport": "devgodzilla.services.reconciliation",
+    "ReconciliationDetail": "devgodzilla.services.reconciliation",
+    "ProtocolReconciliation": "devgodzilla.services.reconciliation",
+    "StepReconciliation": "devgodzilla.services.reconciliation",
+    "ReconciliationAction": "devgodzilla.services.reconciliation",
 }
 
 

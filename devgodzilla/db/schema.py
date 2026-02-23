@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
     parallel_group TEXT,
     assigned_agent TEXT,
     linked_task_id INTEGER,  -- FK to tasks removed to avoid circular dependency
+    priority INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -484,6 +485,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
     parallel_group TEXT,
     assigned_agent TEXT,
     linked_task_id INTEGER,  -- FK to tasks removed to avoid circular dependency
+    priority INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
