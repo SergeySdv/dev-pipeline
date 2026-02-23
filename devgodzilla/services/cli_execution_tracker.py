@@ -188,7 +188,7 @@ class CLIExecutionTracker:
                 try:
                     callback(entry)
                 except Exception as e:
-                    logger.warning(f"Subscriber callback failed: {e}")
+                    logger.warning("subscriber_callback_failed", extra={"error": str(e)})
     
     def set_pid(self, execution_id: str, pid: int):
         """Set the process ID for an execution."""
