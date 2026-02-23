@@ -26,41 +26,53 @@ type StatusType =
   | "cancelled"
   | "completed"
   | "needs_qa"
+  | "skipped"
   | "queued"
   | "succeeded"
+  | "active"
+  | "archived"
+  | "planning"
   | "open"
   | "answered";
 
 const statusConfig: Record<StatusType, { color: string; icon: React.ElementType; label?: string }> =
   {
-    // Protocol statuses
+    // Protocol/Step statuses
     pending: { color: "bg-neutral-100 text-neutral-500 border border-neutral-200", icon: Circle },
     planning: { color: "bg-neutral-200 text-neutral-700 border border-neutral-300", icon: Loader2 },
     planned: {
-      color: "bg-neutral-100 text-neutral-600 border border-neutral-200",
+      color: "bg-blue-100 text-blue-700 border border-blue-200",
       icon: CheckCircle2,
     },
-    running: { color: "bg-neutral-800 text-white border border-neutral-900", icon: Play },
-    paused: { color: "bg-neutral-100 text-neutral-600 border border-neutral-300", icon: Pause },
+    running: { color: "bg-emerald-100 text-emerald-700 border border-emerald-200", icon: Play },
+    paused: { color: "bg-amber-100 text-amber-700 border border-amber-200", icon: Pause },
     blocked: {
-      color: "bg-neutral-200 text-neutral-700 border border-neutral-400",
+      color: "bg-orange-100 text-orange-700 border border-orange-200",
       icon: AlertCircle,
     },
-    failed: { color: "bg-neutral-100 text-neutral-600 border border-neutral-300", icon: XCircle },
+    failed: { color: "bg-red-100 text-red-700 border border-red-200", icon: XCircle },
     cancelled: { color: "bg-neutral-50 text-neutral-400 border border-neutral-200", icon: Slash },
-    completed: { color: "bg-neutral-900 text-white border border-neutral-950", icon: CheckCircle2 },
+    completed: { color: "bg-green-100 text-green-700 border border-green-200", icon: CheckCircle2 },
     // Step statuses
     needs_qa: {
-      color: "bg-neutral-100 text-neutral-600 border border-neutral-300",
+      color: "bg-purple-100 text-purple-700 border border-purple-200",
       icon: ClipboardCheck,
       label: "Needs QA",
     },
+    skipped: {
+      color: "bg-neutral-50 text-neutral-500 border border-neutral-200",
+      icon: Slash,
+      label: "Skipped",
+    },
     // Run statuses
-    queued: { color: "bg-neutral-50 text-neutral-500 border border-neutral-200", icon: Clock },
-    succeeded: { color: "bg-neutral-900 text-white border border-neutral-950", icon: CheckCircle2 },
+    queued: { color: "bg-slate-100 text-slate-600 border border-slate-200", icon: Clock },
+    succeeded: { color: "bg-green-100 text-green-700 border border-green-200", icon: CheckCircle2 },
+    // Sprint statuses
+    active: { color: "bg-emerald-100 text-emerald-700 border border-emerald-200", icon: Play },
+    archived: { color: "bg-neutral-50 text-neutral-400 border border-neutral-200", icon: Slash },
     // Clarification statuses
-    open: { color: "bg-neutral-100 text-neutral-600 border border-neutral-300", icon: Circle },
-    answered: { color: "bg-neutral-900 text-white border border-neutral-950", icon: CheckCircle2 },
+    open: { color: "bg-amber-100 text-amber-700 border border-amber-200", icon: Circle },
+    answered: { color: "bg-green-100 text-green-700 border border-green-200", icon: CheckCircle2 },
   };
 
 interface StatusPillProps {
