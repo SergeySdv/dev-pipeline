@@ -11,6 +11,12 @@ from typing import Any, Dict, List, Optional
 from devgodzilla.logging import get_logger
 from devgodzilla.models.domain import Clarification
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.events import (
+    ClarificationAnswered,
+    ClarificationCreated,
+    EventBus,
+    get_event_bus,
+)
 
 logger = get_logger(__name__)
 
@@ -57,9 +63,74 @@ class ClarifierService(Service):
             return "Blocked on clarifications"
     """
 
-    def __init__(self, context: ServiceContext, db) -> None:
+    def __init__(
+        self,
+        context: ServiceContext,
+        db,
+        event_bus: Optional[EventBus] = None,
+    ) -> None:
         super().__init__(context)
         self.db = db
+        self._event_bus = event_bus
+
+    @property
+    def event_bus(self) -> EventBus:
+        """Get the event bus (global if not provided)."""
+        if self._event_bus is None:
+            self._event_bus = get_event_bus()
+        return self._event_bus
+
+    def _emit_created_event(self, clarification: Clarification) -> None:
+        """Emit a ClarificationCreated event."""
+        try:
+            event = ClarificationCreated(
+                clarification_id=str(clarification.id),
+                scope=clarification.scope,
+                key=clarification.key,
+                question=clarification.question,
+                options=clarification.options,
+                blocking=clarification.blocking,
+                project_id=clarification.project_id,
+                protocol_run_id=clarification.protocol_run_id,
+                step_run_id=clarification.step_run_id,
+            )
+            self.event_bus.publish(event)
+        except Exception as exc:
+            self.logger.warning(
+                "clarification_event_emit_failed",
+                extra=self.log_extra(
+                    clarification_id=str(clarification.id),
+                    event_type="created",
+                    error=str(exc),
+                ),
+            )
+
+    def _emit_answered_event(
+        self,
+        clarification: Clarification,
+        answer: Any,
+        answered_by: Optional[str],
+    ) -> None:
+        """Emit a ClarificationAnswered event."""
+        try:
+            event = ClarificationAnswered(
+                clarification_id=str(clarification.id),
+                answer=answer,
+                answered_by=answered_by,
+                project_id=clarification.project_id,
+                protocol_run_id=clarification.protocol_run_id,
+                step_run_id=clarification.step_run_id,
+            )
+            self.event_bus.publish(event)
+        except Exception as exc:
+            self.logger.warning(
+                "clarification_event_emit_failed",
+                extra=self.log_extra(
+                    clarification_id=str(clarification.id),
+                    event_type="answered",
+                    error=str(exc),
+                ),
+            )
 
     def ensure_from_policy(
         self,
@@ -149,6 +220,8 @@ class ClarifierService(Service):
                     blocking=blocking,
                 )
                 out.append(row)
+                # Emit clarification.created event
+                self._emit_created_event(row)
             except Exception as exc:
                 self.logger.warning(
                     "clarification_upsert_failed",
@@ -204,7 +277,7 @@ class ClarifierService(Service):
     ) -> Clarification:
         """
         Set the answer for a clarification.
-        
+
         Args:
             project_id: Project ID
             key: Clarification key
@@ -212,7 +285,7 @@ class ClarifierService(Service):
             protocol_run_id: Optional protocol run ID for scoping
             step_run_id: Optional step run ID for scoping
             answered_by: Optional user/system that answered
-            
+
         Returns:
             Updated Clarification object
         """
@@ -221,13 +294,16 @@ class ClarifierService(Service):
             protocol_run_id=protocol_run_id,
             step_run_id=step_run_id,
         )
-        return self.db.answer_clarification(
+        clarification = self.db.answer_clarification(
             scope=scope,
             key=key,
             answer=answer,
             answered_by=answered_by,
             status="answered",
         )
+        # Emit clarification.answered event
+        self._emit_answered_event(clarification, answer, answered_by)
+        return clarification
 
     def has_blocking_open(
         self,

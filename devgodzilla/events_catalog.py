@@ -3,7 +3,56 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
+
+class ClarificationEventTypes:
+    """Event types for clarification workflow."""
+
+    CREATED = "clarification.created"
+    """Fired when a new clarification is created."""
+
+    UPDATED = "clarification.updated"
+    """Fired when a clarification is updated."""
+
+    ANSWERED = "clarification.answered"
+    """Fired when a clarification receives an answer."""
+
+    RESOLVED = "clarification.resolved"
+    """Fired when a clarification is resolved (answer accepted)."""
+
+    EXPIRED = "clarification.expired"
+    """Fired when a clarification expires without answer."""
+
+    ESCALATED = "clarification.escalated"
+    """Fired when a clarification is escalated."""
+
+
+# Event data schemas for documentation and validation
+CLARIFICATION_EVENT_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "clarification.created": {
+        "clarification_id": "string",
+        "scope": "string",  # project, protocol, step
+        "key": "string",
+        "question": "string",
+        "options": "array",
+        "blocking": "boolean",
+        "project_id": "integer?",
+        "protocol_run_id": "integer?",
+        "step_run_id": "integer?"
+    },
+    "clarification.answered": {
+        "clarification_id": "string",
+        "answer": "any",
+        "answered_by": "string",
+        "answered_at": "datetime"
+    },
+    "clarification.resolved": {
+        "clarification_id": "string",
+        "resolution": "string",
+        "resolved_by": "string"
+    }
+}
 
 
 _EVENT_CATEGORY_OVERRIDES = {

@@ -150,6 +150,60 @@ class FeedbackEvent(Event):
     attempt: int = 1
 
 
+# Clarification Events
+
+@dataclass
+class ClarificationEvent(Event):
+    """Base class for clarification-related events."""
+    clarification_id: str = ""
+    project_id: Optional[int] = None
+    protocol_run_id: Optional[int] = None
+    step_run_id: Optional[int] = None
+
+
+@dataclass
+class ClarificationCreated(ClarificationEvent):
+    """Fired when a new clarification is created."""
+    scope: str = ""
+    key: str = ""
+    question: str = ""
+    options: Optional[List[Any]] = None
+    blocking: bool = False
+
+
+@dataclass
+class ClarificationUpdated(ClarificationEvent):
+    """Fired when a clarification is updated."""
+    updates: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ClarificationAnswered(ClarificationEvent):
+    """Fired when a clarification receives an answer."""
+    answer: Any = None
+    answered_by: Optional[str] = None
+
+
+@dataclass
+class ClarificationResolved(ClarificationEvent):
+    """Fired when a clarification is resolved (answer accepted)."""
+    resolution: str = ""
+    resolved_by: Optional[str] = None
+
+
+@dataclass
+class ClarificationExpired(ClarificationEvent):
+    """Fired when a clarification expires without answer."""
+    reason: Optional[str] = None
+
+
+@dataclass
+class ClarificationEscalated(ClarificationEvent):
+    """Fired when a clarification is escalated."""
+    escalated_to: Optional[str] = None
+    reason: Optional[str] = None
+
+
 # Type alias for handlers
 EventHandler = Callable[[Event], None]
 AsyncEventHandler = Callable[[Event], asyncio.Future]
