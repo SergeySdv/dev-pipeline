@@ -56,6 +56,21 @@ const agentHealthArbitrary = (agentId: string): fc.Arbitrary<AgentHealth> =>
     response_time_ms: fc.option(fc.nat({ max: 10000 }), { nil: null }),
   });
 
+// Arbitrary generator for valid ISO date strings
+const isoDateArbitrary = fc
+  .tuple(
+    fc.integer({ min: 2020, max: 2030 }), // year
+    fc.integer({ min: 1, max: 12 }), // month
+    fc.integer({ min: 1, max: 28 }), // day (using 28 to avoid invalid dates)
+    fc.integer({ min: 0, max: 23 }), // hour
+    fc.integer({ min: 0, max: 59 }), // minute
+    fc.integer({ min: 0, max: 59 }) // second
+  )
+  .map(([year, month, day, hour, minute, second]) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}.000Z`;
+  });
+
 // Arbitrary generator for AgentMetrics
 const agentMetricsArbitrary = (agentId: string): fc.Arbitrary<AgentMetrics> =>
   fc.record({
@@ -64,10 +79,7 @@ const agentMetricsArbitrary = (agentId: string): fc.Arbitrary<AgentMetrics> =>
     completed_steps: fc.nat({ max: 1000 }),
     failed_steps: fc.nat({ max: 100 }),
     total_steps: fc.nat({ max: 1200 }),
-    last_activity_at: fc.option(
-      fc.date().map((d) => d.toISOString()),
-      { nil: undefined }
-    ),
+    last_activity_at: fc.option(isoDateArbitrary, { nil: undefined }),
   });
 
 // Combined arbitrary for agent with optional health and metrics
