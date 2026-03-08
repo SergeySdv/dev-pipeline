@@ -47,6 +47,7 @@ export interface Project {
   name: string;
   git_url: string;
   local_path: string | null;
+  github_token_configured: boolean;
   base_branch: string;
   project_classification: string | null;
   created_at: string;
@@ -63,7 +64,9 @@ export interface Project {
 
 export interface ProjectCreate {
   name: string;
-  git_url: string;
+  git_url?: string;
+  local_path?: string;
+  github_token?: string | null;
   base_branch?: string;
   description?: string;
   policy_pack_key?: string;
@@ -262,6 +265,78 @@ export interface ArtifactContent {
   truncated: boolean;
 }
 
+export interface WorkItemArtifactRefs {
+  task_dir: string;
+  context_pack_json: string;
+  context_pack_md: string;
+  review_report_json: string;
+  review_report_md: string;
+  test_report_json: string;
+  test_report_md: string;
+  rework_pack_json: string;
+  step_artifacts_dir: string;
+}
+
+export interface WorkItem {
+  id: number;
+  project_id: number;
+  protocol_run_id: number;
+  title: string;
+  status: string;
+  context_status: string;
+  review_status: string;
+  qa_status: string;
+  owner_agent: string | null;
+  helper_agents: string[];
+  task_dir: string | null;
+  artifact_refs: WorkItemArtifactRefs;
+  depends_on: number[];
+  pr_ready: boolean;
+  blocking_clarifications: number;
+  blocking_policy_findings: number;
+  iteration_count: number;
+  max_iterations: number;
+  summary: string | null;
+}
+
+export interface WorkItemReview {
+  verdict: string;
+  summary: string;
+  blocking_findings: string[];
+  warnings: string[];
+}
+
+export interface WorkItemQA {
+  work_item: WorkItem;
+  qa: QAResult;
+}
+
+export interface BrownfieldRunRequest {
+  feature_request: string;
+  feature_name?: string;
+  output_mode?: string;
+  branch?: string;
+  protocol_name?: string;
+  overwrite_protocol?: boolean;
+  owner_agent?: string;
+  helper_agents?: string[];
+  allow_helper_agents?: boolean;
+}
+
+export interface BrownfieldRunResponse {
+  success: boolean;
+  project_id: number;
+  output_mode: string;
+  spec_run_id: number | null;
+  spec_path: string | null;
+  plan_path: string | null;
+  tasks_path: string | null;
+  protocol: ProtocolRun | null;
+  work_items: WorkItem[];
+  next_work_item_id: number | null;
+  warnings: string[];
+}
+
 export interface DiffHunk {
   old_start: number;
   old_lines: number;
@@ -377,6 +452,28 @@ export interface PolicyFinding {
 export interface EffectivePolicy {
   hash: string;
   policy: Record<string, unknown>;
+}
+
+export interface QAResult {
+  verdict: string;
+  summary: string | null;
+  gates: QAGate[];
+}
+
+export interface QAGate {
+  id: string;
+  name: string;
+  status: string;
+  findings: QAFinding[];
+}
+
+export interface QAFinding {
+  severity: string;
+  message: string;
+  file?: string | null;
+  line?: number | null;
+  rule_id?: string | null;
+  suggestion?: string | null;
 }
 
 // =============================================================================
@@ -708,7 +805,7 @@ export interface Agent {
   name: string;
   kind: string;
   capabilities: string[];
-  status: "available" | "busy" | "unavailable";
+  status: "configured" | "available" | "busy" | "unavailable" | "disabled";
   default_model: string | null;
   command_dir: string | null;
   enabled?: boolean | null;

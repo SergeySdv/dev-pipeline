@@ -451,6 +451,7 @@ class SQLiteDatabase:
             local_path=row["local_path"] if "local_path" in keys else None,
             ci_provider=row["ci_provider"],
             secrets=self._parse_json(row["secrets"]),
+            github_token_configured=bool((self._parse_json(row["secrets"]) or {}).get("github_token")),
             default_models=self._parse_json(row["default_models"]),
             project_classification=row["project_classification"] if "project_classification" in keys else None,
             policy_pack_key=row["policy_pack_key"] if "policy_pack_key" in keys else None,
@@ -750,6 +751,7 @@ class SQLiteDatabase:
         status: Optional[str] = None,
         git_url: Optional[str] = None,
         base_branch: Optional[str] = None,
+        secrets: Optional[dict] = _UNSET,
         local_path: Optional[str] = None,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
@@ -772,6 +774,9 @@ class SQLiteDatabase:
         if base_branch is not None:
             updates.append("base_branch = ?")
             params.append(base_branch)
+        if secrets is not _UNSET:
+            updates.append("secrets = ?")
+            params.append(json.dumps(secrets) if secrets else None)
         if local_path is not None:
             updates.append("local_path = ?")
             params.append(local_path)
@@ -2805,6 +2810,7 @@ class PostgresDatabase:
             local_path=row.get("local_path"),
             ci_provider=row.get("ci_provider"),
             secrets=row.get("secrets"),
+            github_token_configured=bool((row.get("secrets") or {}).get("github_token")),
             default_models=row.get("default_models"),
             project_classification=row.get("project_classification"),
             policy_pack_key=row.get("policy_pack_key"),
@@ -3604,6 +3610,7 @@ class PostgresDatabase:
         status: Optional[str] = None,
         git_url: Optional[str] = None,
         base_branch: Optional[str] = None,
+        secrets: Optional[dict] = _UNSET,
         local_path: Optional[str] = None,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
@@ -3626,6 +3633,9 @@ class PostgresDatabase:
         if base_branch is not None:
             updates.append("base_branch = %s")
             params.append(base_branch)
+        if secrets is not _UNSET:
+            updates.append("secrets = %s")
+            params.append(json.dumps(secrets) if secrets else None)
         if local_path is not None:
             updates.append("local_path = %s")
             params.append(local_path)
@@ -3806,6 +3816,118 @@ class PostgresDatabase:
                     (status, run_id),
                 )
         return self.get_protocol_run(run_id)
+
+    def update_protocol_windmill(
+        self,
+        run_id: int,
+        windmill_flow_id: Optional[str] = None,
+        speckit_metadata: Optional[dict] = None,
+    ) -> ProtocolRun:
+        """Update Windmill-specific fields on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if windmill_flow_id is not None:
+            updates.append("windmill_flow_id = %s")
+            params.append(windmill_flow_id)
+        if speckit_metadata is not None:
+            updates.append("speckit_metadata = %s")
+            params.append(json.dumps(speckit_metadata))
+        if len(params) == 0:
+            return self.get_protocol_run(run_id)
+        params.append(run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_paths(
+        self,
+        run_id: int,
+        *,
+        worktree_path: Optional[str] = None,
+        protocol_root: Optional[str] = None,
+    ) -> ProtocolRun:
+        """Update worktree/protocol root paths on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if worktree_path is not None:
+            updates.append("worktree_path = %s")
+            params.append(worktree_path)
+        if protocol_root is not None:
+            updates.append("protocol_root = %s")
+            params.append(protocol_root)
+        if len(params) == 0:
+            return self.get_protocol_run(run_id)
+        params.append(run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_template(
+        self,
+        protocol_run_id: int,
+        *,
+        template_config: Optional[dict] = None,
+        template_source: Optional[dict] = None,
+    ) -> ProtocolRun:
+        """Update template config and source on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if template_config is not None:
+            updates.append("template_config = %s")
+            params.append(json.dumps(template_config))
+        if template_source is not None:
+            updates.append("template_source = %s")
+            params.append(json.dumps(template_source))
+        if len(params) == 0:
+            return self.get_protocol_run(protocol_run_id)
+        params.append(protocol_run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_protocol_run(protocol_run_id)
+
+    def update_protocol_policy_audit(
+        self,
+        protocol_run_id: int,
+        *,
+        policy_pack_key: str,
+        policy_pack_version: str,
+        policy_effective_hash: str,
+        policy_effective_json: Optional[dict] = None,
+    ) -> ProtocolRun:
+        """Record the effective policy used for a protocol run (audit trail)."""
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE protocol_runs
+                    SET policy_pack_key = %s,
+                        policy_pack_version = %s,
+                        policy_effective_hash = %s,
+                        policy_effective_json = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (
+                        policy_pack_key,
+                        policy_pack_version,
+                        policy_effective_hash,
+                        json.dumps(policy_effective_json) if policy_effective_json else None,
+                        protocol_run_id,
+                    ),
+                )
+        return self.get_protocol_run(protocol_run_id)
 
     # SpecKit spec operations
     def upsert_speckit_spec(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from typing import Any, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -21,6 +23,26 @@ from pathlib import Path
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def _looks_like_git_repository_url(value: Optional[str]) -> bool:
+    url = (value or "").strip()
+    if not url:
+        return False
+    if re.match(r"^git@[^:]+:.+", url):
+        return True
+    if not re.match(r"^(https?|ssh)://", url):
+        return False
+    parsed = urlparse(url)
+    path = [segment for segment in parsed.path.split("/") if segment]
+    if url.endswith(".git"):
+        return True
+    return (parsed.hostname or "").lower() in {
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "dev.azure.com",
+    } and len(path) >= 2
 
 def _policy_location(metadata: Optional[dict]) -> Optional[str]:
     if not metadata:
@@ -68,6 +90,19 @@ def _normalize_policy_enforcement_mode(mode: Optional[str]) -> Optional[str]:
         "blocking": "block",
     }
     return mapping.get(value, value)
+
+
+def _project_secrets_with_github_token(
+    existing: Optional[dict],
+    github_token: Optional[str],
+) -> Optional[dict]:
+    secrets = dict(existing or {})
+    token = (github_token or "").strip()
+    if token:
+        secrets["github_token"] = token
+    else:
+        secrets.pop("github_token", None)
+    return secrets or None
 
 
 class ProjectOnboardRequest(BaseModel):
@@ -123,8 +158,15 @@ def create_project(
             local_path=project.local_path,
         ),
     )
-    if project.auto_onboard and not (project.git_url or "").strip():
-        raise HTTPException(status_code=400, detail="git_url is required for auto onboarding")
+    has_git_url = bool((project.git_url or "").strip())
+    has_local_path = bool((project.local_path or "").strip())
+    if project.auto_onboard and not (has_git_url or has_local_path):
+        raise HTTPException(status_code=400, detail="git_url or local_path is required for auto onboarding")
+    if project.auto_onboard and has_git_url and not _looks_like_git_repository_url(project.git_url):
+        raise HTTPException(
+            status_code=400,
+            detail="git_url must be a cloneable Git repository URL for auto onboarding",
+        )
     if project.auto_onboard and not getattr(ctx.config, "windmill_enabled", False):
         raise HTTPException(status_code=503, detail="Windmill integration not configured")
 
@@ -132,6 +174,7 @@ def create_project(
         name=project.name,
         git_url=project.git_url or "",
         base_branch=project.base_branch,
+        secrets=_project_secrets_with_github_token(None, project.github_token),
         local_path=project.local_path,
     )
     logger.info(
@@ -220,6 +263,10 @@ def update_project(
 ):
     """Update a project."""
     try:
+        existing = db.get_project(project_id)
+        secrets = _UNSET
+        if "github_token" in project.model_fields_set:
+            secrets = _project_secrets_with_github_token(existing.secrets, project.github_token)
         return db.update_project(
             project_id,
             name=project.name,
@@ -227,6 +274,7 @@ def update_project(
             status=project.status.value if project.status else None,
             git_url=project.git_url,
             base_branch=project.base_branch,
+            secrets=secrets,
             local_path=project.local_path,
         )
     except KeyError:
@@ -452,6 +500,7 @@ def onboard_project(
     )
 
     git = GitService(ctx)
+    github_token = ((project.secrets or {}).get("github_token") or "").strip() or None
     repo_resolve_start = time.perf_counter()
     try:
         repo_path = git.resolve_repo_path(
@@ -460,6 +509,7 @@ def onboard_project(
             project.local_path,
             project_id=project.id,
             clone_if_missing=bool(request.clone_if_missing),
+            github_token=github_token,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -478,11 +528,17 @@ def onboard_project(
     branch = (request.branch or project.base_branch or "main").strip()
     if branch:
         try:
-            run_process(["git", "fetch", "--prune", "origin", branch], cwd=repo_path, check=False)
+            git_env = git.build_remote_git_env(project.git_url, github_token)
+            run_process(["git", "fetch", "--prune", "origin", branch], cwd=repo_path, check=False, env=git_env)
             # Prefer tracking branch when available.
             res = run_process(["git", "checkout", branch], cwd=repo_path, check=False)
             if res.returncode != 0:
-                run_process(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=repo_path, check=False)
+                run_process(
+                    ["git", "checkout", "-B", branch, f"origin/{branch}"],
+                    cwd=repo_path,
+                    check=False,
+                    env=git_env,
+                )
         except Exception:
             # Best-effort: branch checkout isn't strictly required for SpecKit init.
             pass

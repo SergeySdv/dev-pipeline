@@ -387,14 +387,57 @@ def open_protocol_pr(
                 message=f"Failed to create PR: {str(exc)}",
                 status="error",
             )
-    
-    # No git provider available - return placeholder response
-    return OpenPRResponse(
-        pr_url=None,
-        pr_number=None,
-        message="PR creation not available - no git provider configured. Use CLI to create PR.",
-        status="unavailable",
-    )
+
+    # Fallback to local git service for standard GitHub/GitLab repositories.
+    try:
+        from devgodzilla.services.git import GitService
+
+        worktree = Path(run.worktree_path or project.local_path or "").expanduser()
+        if not worktree.exists():
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message="PR creation not available - repository worktree is missing.",
+                status="error",
+            )
+
+        github_token = ((project.secrets or {}).get("github_token") or "").strip() or None
+        git_service = GitService(ctx)
+        branch_pushed = git_service.push_and_open_pr(
+            worktree,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=project.id,
+            github_token=github_token,
+        )
+        if not branch_pushed:
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message="Failed to push branch or create pull request.",
+                status="error",
+            )
+
+        pr_url = None
+        if project.git_url and "github.com" in project.git_url:
+            owner_repo = project.git_url.split("github.com/", 1)[-1].replace(".git", "").strip("/")
+            if owner_repo:
+                pr_url = f"https://github.com/{owner_repo}/compare/{run.base_branch}...{run.protocol_name}"
+
+        return OpenPRResponse(
+            pr_url=pr_url,
+            pr_number=None,
+            message="Pull request created or compare view prepared",
+            status="created",
+        )
+    except Exception as exc:
+        return OpenPRResponse(
+            pr_url=None,
+            pr_number=None,
+            message=f"PR creation failed: {exc}",
+            status="error",
+        )
 
 
 @router.get("/protocols/{protocol_id}/events", response_model=List[schemas.EventOut])

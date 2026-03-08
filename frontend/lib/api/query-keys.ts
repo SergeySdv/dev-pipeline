@@ -23,6 +23,15 @@ export const queryKeys = {
     commits: (id: number) => [...queryKeys.projects.all, "commits", id] as const,
     pulls: (id: number) => [...queryKeys.projects.all, "pulls", id] as const,
     worktrees: (id: number) => [...queryKeys.projects.all, "worktrees", id] as const,
+    taskCycle: (id: number, protocolRunId?: number) =>
+      [...queryKeys.projects.all, "taskCycle", id, { protocolRunId }] as const,
+  },
+
+  workItems: {
+    all: ["workItems"] as const,
+    detail: (id: number) => [...queryKeys.workItems.all, "detail", id] as const,
+    artifactContent: (id: number, artifactKey: string) =>
+      [...queryKeys.workItems.all, "artifactContent", id, artifactKey] as const,
   },
 
   // Protocols

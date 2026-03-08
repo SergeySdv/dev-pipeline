@@ -79,6 +79,7 @@ class Project:
     local_path: Optional[str] = None
     ci_provider: Optional[str] = None
     secrets: Optional[Dict[str, Any]] = None
+    github_token_configured: Optional[bool] = None
     default_models: Optional[Dict[str, str]] = None
     # Policy configuration
     project_classification: Optional[str] = None
