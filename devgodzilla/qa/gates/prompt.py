@@ -11,10 +11,83 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from devgodzilla.engines.interface import Engine, EngineRequest, EngineResult, SandboxMode
 from devgodzilla.qa.gates.interface import Gate, GateContext, GateResult, GateVerdict, Finding
+
+
+def _normalize_heading(line: str) -> Optional[str]:
+    candidate = line.strip()
+    if not candidate:
+        return None
+    candidate = re.sub(r"^\s*#+\s*", "", candidate)
+    candidate = re.sub(r"^\s*[-*]\s*", "", candidate)
+    candidate = re.sub(r":\s*$", "", candidate)
+    normalized = re.sub(r"\s+", " ", candidate).strip().lower()
+    if normalized in {"summary", "findings", "blocking issues", "warnings", "notes", "next actions", "verdict"}:
+        return normalized
+    return None
+
+
+def _extract_section_items(lines: List[str], heading: str) -> List[str]:
+    items: List[str] = []
+    collecting = False
+    for raw in lines:
+        current_heading = _normalize_heading(raw)
+        if current_heading == heading:
+            collecting = True
+            continue
+        if collecting and current_heading is not None:
+            break
+        if not collecting:
+            continue
+
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        is_bullet = bool(re.match(r"^\s*[-*]\s+", raw) or re.match(r"^\s*\d+\.\s+", raw))
+        stripped = re.sub(r"^\s*[-*]\s*", "", stripped)
+        stripped = re.sub(r"^\s*\d+\.\s*", "", stripped)
+        if items and raw[:1].isspace() and not is_bullet:
+            items[-1] = f"{items[-1]} {stripped}".strip()
+        else:
+            items.append(stripped)
+    return items
+
+
+def summarize_prompt_qa_report(report_text: str) -> Dict[str, Any]:
+    lines = report_text.splitlines()
+    summary_lines = _extract_section_items(lines, "summary")
+    blocking_items = _extract_section_items(lines, "blocking issues")
+    next_actions = _extract_section_items(lines, "next actions")
+
+    summary = " ".join(summary_lines).strip()
+    message = blocking_items[0] if blocking_items else (summary or "Prompt QA reported FAIL")
+
+    detail_parts: List[str] = []
+    if summary and summary != message:
+        detail_parts.append(f"Summary: {summary}")
+    if blocking_items:
+        detail_parts.append("Blocking issues:\n- " + "\n- ".join(blocking_items[:3]))
+    if next_actions:
+        detail_parts.append("Next actions:\n- " + "\n- ".join(next_actions[:3]))
+
+    report_excerpt = report_text.strip()
+    if len(report_excerpt) > 2000:
+        report_excerpt = f"{report_excerpt[:1997]}..."
+
+    text = "\n\n".join(part for part in detail_parts if part).strip()
+    if not text and report_excerpt:
+        text = report_excerpt
+
+    return {
+        "message": message,
+        "summary": summary or message,
+        "next_actions": next_actions,
+        "report_excerpt": report_excerpt,
+        "text": text,
+    }
 
 
 class PromptQAGate(Gate):
@@ -138,11 +211,18 @@ class PromptQAGate(Gate):
         verdict = self._extract_verdict(output)
         findings = []
         if verdict == GateVerdict.FAIL:
+            details = summarize_prompt_qa_report(output)
             findings.append(
                 Finding(
                     gate_id=self.gate_id,
                     severity="error",
-                    message="Prompt QA reported FAIL",
+                    message=details["message"],
+                    suggestion="\n".join(details["next_actions"]) if details["next_actions"] else None,
+                    metadata={
+                        "summary": details["summary"],
+                        "report_excerpt": details["report_excerpt"],
+                        "text": details["text"],
+                    },
                 )
             )
         elif verdict == GateVerdict.ERROR:

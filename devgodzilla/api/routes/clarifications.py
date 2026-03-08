@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from devgodzilla.api import schemas
 from devgodzilla.api.dependencies import get_db
+from devgodzilla.api.routes._clarification_enrichment import enrich_clarifications
 from devgodzilla.db.database import Database
 
 router = APIRouter()
@@ -16,12 +17,15 @@ def list_clarifications(
     db: Database = Depends(get_db)
 ):
     """List clarifications."""
-    return db.list_clarifications(
+    if status == "all":
+        status = None
+    clarifications = db.list_clarifications(
         project_id=project_id,
         protocol_run_id=protocol_run_id,
         status=status,
         limit=limit
     )
+    return enrich_clarifications(db, clarifications)
 
 @router.post("/clarifications/{clarification_id}/answer", response_model=schemas.ClarificationOut)
 def answer_clarification(

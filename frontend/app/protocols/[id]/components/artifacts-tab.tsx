@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useProtocolArtifacts } from "@/lib/api";
+import { artifactBytes, artifactKind, artifactPath } from "@/lib/artifacts";
 import { formatRelativeTime } from "@/lib/format";
 
 interface ArtifactsTabProps {
@@ -53,7 +54,10 @@ export function ArtifactsTab({ protocolId }: ArtifactsTabProps) {
         <CardContent>
           <div className="space-y-2">
             {artifacts.map((artifact) => {
-              const Icon = artifactIcon(artifact.kind);
+              const kind = artifactKind(artifact);
+              const path = artifactPath(artifact);
+              const bytes = artifactBytes(artifact);
+              const Icon = artifactIcon(kind);
               return (
                 <div key={artifact.id} className="flex items-center gap-3 rounded-lg border p-3">
                   <Icon className="text-muted-foreground h-5 w-5 shrink-0" />
@@ -61,12 +65,12 @@ export function ArtifactsTab({ protocolId }: ArtifactsTabProps) {
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium">{artifact.name}</span>
                       <Badge variant="outline" className="shrink-0 text-[10px]">
-                        {artifact.kind}
+                        {kind}
                       </Badge>
                     </div>
                     <div className="text-muted-foreground mt-1 flex items-center gap-3 text-xs">
-                      <span className="truncate">{artifact.path}</span>
-                      <span>{formatBytes(artifact.bytes)}</span>
+                      {path ? <span className="truncate">{path}</span> : null}
+                      <span>{formatBytes(bytes)}</span>
                       <span>{formatRelativeTime(artifact.created_at)}</span>
                     </div>
                   </div>

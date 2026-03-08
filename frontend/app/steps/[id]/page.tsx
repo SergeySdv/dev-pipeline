@@ -37,6 +37,9 @@ import {
   useStepQuality,
   useStepRuns,
 } from "@/lib/api";
+import { artifactBytes, artifactKind, artifactPath } from "@/lib/artifacts";
+import { summarizeStepQuality } from "@/lib/step-quality-summary";
+import { hasTaskCycleRuntimeState, runtimeStateForStepPage } from "@/lib/step-runtime-state";
 import type { CodexRun, PolicyFinding, StepArtifact, StepQuality,StepRun } from "@/lib/api/types";
 import { formatRelativeTime, truncateHash } from "@/lib/format";
 
@@ -91,6 +94,9 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
 
   const canRun = displayStep.status === "pending";
   const canRunQA = ["completed", "failed", "blocked", "needs_qa"].includes(displayStep.status);
+  const taskCycleRuntimeHidden = hasTaskCycleRuntimeState(displayStep.runtime_state);
+  const runtimeState = runtimeStateForStepPage(displayStep.runtime_state);
+  const qualitySummary = summarizeStepQuality(quality);
 
   return (
     <div className="container py-8">
@@ -182,13 +188,43 @@ export default function StepDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       </div>
 
-      {displayStep.runtime_state && (
+      {taskCycleRuntimeHidden && protocol && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Task Cycle Details</CardTitle>
+            <CardDescription>
+              Brownfield task-cycle state is shown in the project Task Cycle view instead of this
+              generic step runtime dump.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/projects/${protocol.project_id}?tab=task_cycle`}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Open Task Cycle
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {quality && qualitySummary && (
+        <LatestQAVerdictCard
+          quality={quality}
+          scorePercent={qualitySummary.scorePercent}
+          totalFindings={qualitySummary.totalFindings}
+          highlightedFindings={qualitySummary.highlightedFindings}
+          gates={qualitySummary.gates}
+        />
+      )}
+
+      {runtimeState && (
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Runtime State</CardTitle>
           </CardHeader>
           <CardContent>
-            <CodeBlock code={displayStep.runtime_state} maxHeight="200px" />
+            <CodeBlock code={runtimeState} maxHeight="200px" />
           </CardContent>
         </Card>
       )}
@@ -329,6 +365,106 @@ function formatBytes(bytes: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function LatestQAVerdictCard({
+  quality,
+  scorePercent,
+  totalFindings,
+  highlightedFindings,
+  gates,
+}: {
+  quality: StepQuality;
+  scorePercent: number;
+  totalFindings: number;
+  highlightedFindings: Array<{
+    gateName: string;
+    article: string;
+    message: string;
+    suggestedFix: string | null;
+  }>;
+  gates: Array<{
+    name: string;
+    article: string;
+    status: string;
+    findingsCount: number;
+  }>;
+}) {
+  const overall = qualityStatusMeta(quality.overall_status);
+  const OverallIcon = overall.icon;
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <OverallIcon className={`h-5 w-5 ${overall.className}`} />
+          Latest QA Verdict
+        </CardTitle>
+        <CardDescription>
+          Human-readable QA summary for this step. Full gate output stays in the Quality tab.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <span>
+            Verdict: <strong>{overall.label}</strong>
+          </span>
+          <span>
+            Score: <strong>{scorePercent}%</strong>
+          </span>
+          <span>
+            Blocking: <strong>{quality.blocking_issues}</strong>
+          </span>
+          <span>
+            Warnings: <strong>{quality.warnings}</strong>
+          </span>
+          <span>
+            Findings: <strong>{totalFindings}</strong>
+          </span>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {gates.map((gate) => {
+            const meta = qualityStatusMeta(gate.status);
+            return (
+              <div
+                key={`${gate.article}:${gate.name}`}
+                className="bg-muted/40 flex items-center gap-2 rounded-md border px-2 py-1 text-xs"
+              >
+                <span className="font-medium">{gate.name}</span>
+                <span className="text-muted-foreground">({gate.article})</span>
+                <span className={meta.className}>{meta.label}</span>
+                <span className="text-muted-foreground">{gate.findingsCount} finding(s)</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {highlightedFindings.length > 0 ? (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium">QA issues</h4>
+            {highlightedFindings.map((finding, index) => (
+              <div key={`${finding.article}-${index}`} className="rounded-md bg-muted/60 p-3">
+                <p className="text-sm font-medium">
+                  {finding.gateName} <span className="text-muted-foreground">({finding.article})</span>
+                </p>
+                <p className="mt-1 text-sm">{finding.message}</p>
+                {finding.suggestedFix ? (
+                  <p className="text-muted-foreground mt-1 whitespace-pre-wrap text-xs">
+                    Suggested fix: {finding.suggestedFix}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed p-3 text-sm">
+            No issues found in the latest QA run.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function StepArtifactsTab({
   artifacts,
   stepId: _stepId,
@@ -354,16 +490,20 @@ function StepArtifactsTab({
       </div>
       <div className="space-y-2">
         {artifacts.map((artifact) => {
-          const Icon = artifactIcon(artifact.kind);
+          const kind = artifactKind(artifact);
+          const path = artifactPath(artifact);
+          const bytes = artifactBytes(artifact);
+          const Icon = artifactIcon(kind);
           return (
             <div key={artifact.id} className="flex items-center gap-3 rounded-lg border p-3">
               <Icon className="text-muted-foreground h-5 w-5 shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{artifact.name}</div>
                 <div className="text-muted-foreground mt-1 flex items-center gap-3 text-xs">
-                  <span>{artifact.kind}</span>
-                  <span>{formatBytes(artifact.bytes)}</span>
-                  <span className="truncate">{artifact.path}</span>
+                  <span>{kind}</span>
+                  <span>{formatBytes(bytes)}</span>
+                  {path ? <span className="truncate">{path}</span> : null}
+                  <span>{formatRelativeTime(artifact.created_at)}</span>
                 </div>
               </div>
             </div>
@@ -380,6 +520,9 @@ function qualityStatusMeta(status: string) {
   if (status === "warning")
     {return { label: "Warning", icon: AlertTriangle, className: "text-amber-600" };}
   if (status === "failed") return { label: "Failed", icon: XCircleIcon, className: "text-red-600" };
+  if (status === "skipped") {
+    return { label: "Skipped", icon: ShieldCheck, className: "text-muted-foreground" };
+  }
   return { label: status || "Unknown", icon: ShieldCheck, className: "text-muted-foreground" };
 }
 
@@ -428,13 +571,55 @@ function StepQualityTab({ quality }: { quality: StepQuality | undefined }) {
                 return (
                   <div
                     key={`${gate.article}:${gate.name}`}
-                    className="flex items-center justify-between rounded-lg border p-3"
+                    className="space-y-3 rounded-lg border p-3"
                   >
-                    <div>
-                      <div className="text-sm font-medium">{gate.name}</div>
-                      <div className="text-muted-foreground text-xs">{gate.article}</div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">{gate.name}</div>
+                        <div className="text-muted-foreground text-xs">{gate.article}</div>
+                      </div>
+                      <GateIcon className={`h-4 w-4 shrink-0 ${meta.className}`} />
                     </div>
-                    <GateIcon className={`h-4 w-4 ${meta.className}`} />
+                    {gate.findings.length > 0 ? (
+                      <div className="space-y-2">
+                        {gate.findings.map((finding, index) => (
+                          <div key={`${gate.article}-${index}`} className="rounded-md bg-muted/60 p-2">
+                            <p className="text-sm">{finding.message}</p>
+                            {finding.suggested_fix ? (
+                              <p className="text-muted-foreground mt-1 whitespace-pre-wrap text-xs">
+                                Suggested fix: {finding.suggested_fix}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {gate.details?.command || gate.details?.stdout || gate.details?.stderr ? (
+                      <div className="space-y-2 rounded-md bg-muted/40 p-2">
+                        {gate.details?.command ? (
+                          <div>
+                            <p className="text-muted-foreground text-xs">Command</p>
+                            <p className="font-mono text-xs">{gate.details.command}</p>
+                          </div>
+                        ) : null}
+                        {gate.details?.stdout ? (
+                          <div>
+                            <p className="text-muted-foreground text-xs">Output</p>
+                            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-background p-2 text-xs">
+                              {gate.details.stdout}
+                            </pre>
+                          </div>
+                        ) : null}
+                        {gate.details?.stderr ? (
+                          <div>
+                            <p className="text-muted-foreground text-xs">Errors</p>
+                            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-background p-2 text-xs">
+                              {gate.details.stderr}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

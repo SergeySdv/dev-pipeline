@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from devgodzilla.api import schemas
 from devgodzilla.api.run_context import enrich_runs_with_agile_context
 from devgodzilla.api.dependencies import get_db, get_service_context, get_windmill_client
+from devgodzilla.api.routes._clarification_enrichment import enrich_clarifications
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
 from devgodzilla.models.domain import ProtocolStatus, StepStatus
@@ -85,8 +86,6 @@ def _next_runnable_step_id(db: Database, protocol_id: int) -> Optional[int]:
         if all(dep in completed_ids for dep in depends_on):
             return step.id
     return None
-
-
 def _build_orchestrator(ctx: ServiceContext, db: Database) -> OrchestratorService:
     windmill_client = None
     mode = OrchestratorMode.LOCAL
@@ -688,34 +687,50 @@ def retry_latest_step(
     # Find the most recent failed or blocked step
     steps = db.list_step_runs(protocol_id)
     target_step = None
+    recovering_stale_pending = False
     for step in reversed(steps):
         if step.status in ["failed", "blocked"]:
             target_step = step
             break
-    
+
+    if not target_step:
+        completed_ids = {step.id for step in steps if step.status == "completed"}
+        if run.status == "blocked":
+            for step in steps:
+                depends_on = step.depends_on or []
+                if step.status == "pending" and all(dep in completed_ids for dep in depends_on):
+                    target_step = step
+                    recovering_stale_pending = True
+                    break
+
     if not target_step:
         raise HTTPException(
             status_code=404,
-            detail="No failed or blocked steps to retry"
+            detail="No failed, blocked, or runnable pending steps to retry"
         )
-    
-    # Update step status to pending and increment retry count
-    new_retries = (target_step.retries or 0) + 1
-    db.update_step_status(
-        target_step.id,
-        "pending",
-        retries=new_retries,
-    )
-    
-    # Update protocol status to running if needed
-    if run.status in ["paused", "failed"]:
+
+    orchestrator = _build_orchestrator(ctx, db)
+    if recovering_stale_pending:
         db.update_protocol_status(protocol_id, "running")
-    
+        result = orchestrator.run_step(target_step.id)
+    else:
+        result = orchestrator.retry_step(target_step.id)
+    if not result.success:
+        raise HTTPException(
+            status_code=409,
+            detail=result.error or f"Failed to retry step '{target_step.step_name}'",
+        )
+
+    updated_step = db.get_step_run(target_step.id)
     return schemas.RetryStepOut(
-        step_run_id=target_step.id,
-        step_name=target_step.step_name,
-        message=f"Retrying step '{target_step.step_name}'",
-        retries=new_retries,
+        step_run_id=updated_step.id,
+        step_name=updated_step.step_name,
+        message=result.message or (
+            f"Resuming pending step '{updated_step.step_name}'"
+            if recovering_stale_pending
+            else f"Retrying step '{updated_step.step_name}'"
+        ),
+        retries=updated_step.retries or 0,
     )
 
 
@@ -935,12 +950,15 @@ def list_protocol_clarifications(
         db.get_protocol_run(protocol_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Protocol not found")
+    if status == "all":
+        status = None
     
-    return db.list_clarifications(
+    clarifications = db.list_clarifications(
         protocol_run_id=protocol_id,
         status=status,
         limit=limit
     )
+    return enrich_clarifications(db, clarifications)
 
 @router.post("/protocols/{protocol_id}/clarifications/{key}", response_model=schemas.ClarificationOut)
 def answer_protocol_clarification(

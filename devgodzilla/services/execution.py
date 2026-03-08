@@ -58,6 +58,24 @@ def _normalize_policy_enforcement_mode(mode: Optional[str]) -> str:
     return mapping.get(value, value)
 
 
+def _build_orchestrator(context: ServiceContext, db) -> Any:
+    from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
+    from devgodzilla.windmill.client import WindmillClient, WindmillConfig
+
+    windmill_client = None
+    mode = OrchestratorMode.LOCAL
+    if getattr(context.config, "windmill_enabled", False):
+        windmill_client = WindmillClient(
+            WindmillConfig(
+                base_url=context.config.windmill_url or "http://localhost:8000",
+                token=context.config.windmill_token or "",
+                workspace=getattr(context.config, "windmill_workspace", "devgodzilla"),
+            )
+        )
+        mode = OrchestratorMode.WINDMILL
+    return OrchestratorService(context=context, db=db, windmill_client=windmill_client, mode=mode)
+
+
 @dataclass
 class ExecutionResult:
     """Result from step execution."""
@@ -432,6 +450,8 @@ class ExecutionService(Service):
             or default_engine
             or "codex"
         )
+        if isinstance(resolved_engine, str) and resolved_engine.strip().lower() in {"dev", "developer", "default", "exec"}:
+            resolved_engine = default_engine or self.context.config.engine_defaults.get("exec") or "opencode"
         
         resolved_model = (
             model
@@ -693,10 +713,16 @@ class ExecutionService(Service):
                     qa_report_path = None
                 qa_service.persist_verdict(qa_result, step.id, report_path=qa_report_path)
                 try:
-                    from devgodzilla.services.orchestrator import OrchestratorService
-
-                    orchestrator = OrchestratorService(context=self.context, db=self.db)
-                    orchestrator.check_and_complete_protocol(step.protocol_run_id)
+                    orchestrator = _build_orchestrator(self.context, self.db)
+                    completed = orchestrator.check_and_complete_protocol(step.protocol_run_id)
+                    current_run = self.db.get_protocol_run(step.protocol_run_id)
+                    current_step = self.db.get_step_run(step.id)
+                    if (
+                        not completed
+                        and current_run.status == ProtocolStatus.RUNNING
+                        and current_step.status == StepStatus.COMPLETED
+                    ):
+                        orchestrator.enqueue_next_step(step.protocol_run_id)
                 except Exception:
                     pass
             except Exception as exc:

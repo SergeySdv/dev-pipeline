@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from devgodzilla.api import schemas
 from devgodzilla.api.dependencies import get_db, get_service_context
+from devgodzilla.api.routes._clarification_enrichment import enrich_clarifications
 from devgodzilla.db.database import Database, _UNSET
 from devgodzilla.events_catalog import normalize_event_type
 from devgodzilla.logging import get_logger, log_extra
@@ -1316,12 +1317,15 @@ def list_project_clarifications(
         db.get_project(project_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
+    if status == "all":
+        status = None
     
-    return db.list_clarifications(
+    clarifications = db.list_clarifications(
         project_id=project_id,
         status=status,
         limit=limit
     )
+    return enrich_clarifications(db, clarifications)
 
 @router.post("/projects/{project_id}/clarifications/{key}", response_model=schemas.ClarificationOut)
 def answer_project_clarification(
