@@ -365,6 +365,43 @@ class TestStepStatusTransitions:
             result = orchestrator.retry_step(step.id)
             assert result.success
 
+    def test_retry_from_blocked_resumes_protocol_and_runs_step(self, monkeypatch: pytest.MonkeyPatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db, project, repo = _setup_db(Path(tmpdir))
+            orchestrator = _make_orchestrator(db)
+
+            run = db.create_protocol_run(
+                project_id=project.id,
+                protocol_name="test",
+                status=ProtocolStatus.BLOCKED,
+                base_branch="main",
+                worktree_path=str(repo),
+                protocol_root=str(repo),
+            )
+            step = db.create_step_run(
+                protocol_run_id=run.id,
+                step_index=0,
+                step_name="Step 1",
+                step_type="exec",
+                status=StepStatus.BLOCKED,
+            )
+
+            def fake_run_step(step_run_id: int):
+                assert step_run_id == step.id
+                return type("Result", (), {"success": True, "error": None, "message": "retry started"})()
+
+            monkeypatch.setattr(orchestrator, "run_step", fake_run_step)
+
+            result = orchestrator.retry_step(step.id)
+
+            assert result.success
+            assert result.message == "retry started"
+            updated_step = db.get_step_run(step.id)
+            updated_run = db.get_protocol_run(run.id)
+            assert updated_step.status == StepStatus.PENDING
+            assert updated_step.retries == 1
+            assert updated_run.status == ProtocolStatus.RUNNING
+
     def test_retry_from_completed_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db, project, repo = _setup_db(Path(tmpdir))

@@ -206,8 +206,9 @@ export interface StepRun {
 }
 
 export interface StepRuntimeState {
-  loop_counts: Record<string, number>;
-  inline_trigger_depth: number;
+  [key: string]: unknown;
+  loop_counts?: Record<string, number>;
+  inline_trigger_depth?: number;
 }
 
 // =============================================================================
@@ -730,17 +731,15 @@ export interface BurndownPoint {
 
 export interface ProtocolArtifact {
   id: string;
-  protocol_run_id: number;
   step_run_id: number | null;
-  run_id: string | null;
+  step_name?: string | null;
   name: string;
   type: string;
-  kind: string; // Alias for type, kept for backwards compatibility
+  kind?: string | null; // Legacy alias for type
   path?: string | null;
-  sha256?: string | null;
   size: number;
-  bytes?: number | null; // Alias for size, kept for backwards compatibility
-  created_at: string;
+  bytes?: number | null; // Legacy alias for size
+  created_at: string | null;
 }
 
 export interface Feedback {
@@ -771,15 +770,14 @@ export interface ProtocolFlowInfo {
 }
 
 export interface StepArtifact {
-  id: number;
-  step_run_id: number;
-  run_id: string | null;
+  id: string;
   name: string;
-  kind: string;
-  path: string;
-  sha256: string | null;
-  bytes: number | null;
-  created_at: string;
+  type: string;
+  kind?: string | null; // Legacy alias for type
+  path?: string | null;
+  size: number;
+  bytes?: number | null; // Legacy alias for size
+  created_at: string | null;
 }
 
 export interface StepQuality {
@@ -792,7 +790,18 @@ export interface StepQuality {
     name: string;
     article: string;
     status: string;
-    findings: unknown[];
+    details?: {
+      command?: string | null;
+      stdout?: string | null;
+      stderr?: string | null;
+    } | null;
+    findings: Array<{
+      code: string;
+      severity: string;
+      message: string;
+      step_id?: string | null;
+      suggested_fix?: string | null;
+    }>;
   }>;
 }
 

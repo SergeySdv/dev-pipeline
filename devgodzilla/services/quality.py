@@ -87,6 +87,14 @@ def _gate_ids_from_required_checks(checks: List[str]) -> List[str]:
     return list(dict.fromkeys(gate_ids))
 
 
+def _is_verify_step(step: StepRun) -> bool:
+    step_type = str(step.step_type or "").strip().lower()
+    if step_type in {"verify", "verification", "test", "testing", "qa"}:
+        return True
+    name = str(step.step_name or "").strip().lower()
+    return any(token in name for token in ("test", "verify", "validation", "quality"))
+
+
 class QAVerdict(str, Enum):
     """Overall QA verdict."""
     PASS = "pass"
@@ -471,7 +479,7 @@ class QualityService(Service):
             elif qa_policy == "light":
                 gates_to_run.append(LintGate())
             else:
-                gates_to_run.extend(self.default_gates)
+                gates_to_run.extend(self._default_gates_for_step(step))
 
             # Add SpecKit checklist gate when a checklist exists.
             speckit_gate = SpecKitChecklistGate()
@@ -529,6 +537,8 @@ class QualityService(Service):
                 gate_results.append(result)
             except Exception as e:
                 gate_results.append(gate.error(str(e)))
+
+        gate_results = self._enforce_required_verify_gates(step, gate_results)
         
         # Aggregate verdict
         verdict = self._aggregate_verdict(gate_results)
@@ -648,6 +658,60 @@ class QualityService(Service):
         if not constitution.articles:
             return None
         return ConstitutionalGate(constitution)
+
+    def _default_gates_for_step(self, step: StepRun) -> List[Gate]:
+        if _is_verify_step(step):
+            return [TestGate()]
+        return list(self.default_gates)
+
+    def _enforce_required_verify_gates(
+        self,
+        step: StepRun,
+        gate_results: List[GateResult],
+    ) -> List[GateResult]:
+        if not _is_verify_step(step):
+            return gate_results
+
+        test_result = next((result for result in gate_results if result.gate_id == "test"), None)
+        if test_result is None:
+            return gate_results + [
+                GateResult(
+                    gate_id="test",
+                    gate_name="Test Gate",
+                    verdict=GateVerdict.FAIL,
+                    findings=[
+                        Finding(
+                            gate_id="test",
+                            severity="error",
+                            message="Verify step requires automated tests, but no test gate ran.",
+                            suggestion="Configure a runnable test command or invoke QA with the test gate.",
+                        )
+                    ],
+                    metadata={"required_for_step": True},
+                )
+            ]
+
+        if test_result.verdict == GateVerdict.SKIP:
+            enriched = GateResult(
+                gate_id=test_result.gate_id,
+                gate_name=test_result.gate_name,
+                verdict=GateVerdict.FAIL,
+                findings=[
+                    *list(test_result.findings),
+                    Finding(
+                        gate_id="test",
+                        severity="error",
+                        message="Verify step requires automated tests, but the test gate was skipped.",
+                        suggestion="Ensure the repository exposes a runnable test command such as pytest or npm test.",
+                    ),
+                ],
+                duration_seconds=test_result.duration_seconds,
+                metadata={**(test_result.metadata or {}), "required_for_step": True},
+                error=test_result.error,
+            )
+            return [enriched if result.gate_id == "test" else result for result in gate_results]
+
+        return gate_results
 
     def _aggregate_verdict(self, gate_results: List[GateResult]) -> QAVerdict:
         """Aggregate gate results into overall verdict."""

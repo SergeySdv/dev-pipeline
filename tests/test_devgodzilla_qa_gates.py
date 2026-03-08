@@ -28,6 +28,7 @@ from devgodzilla.qa.gates.constitutional import (
     ConstitutionalGate,
     ConstitutionalSummaryGate,
 )
+from devgodzilla.qa.gates.prompt import summarize_prompt_qa_report
 from devgodzilla.services.constitution import Constitution, Article
 
 
@@ -549,3 +550,28 @@ class TestGateBaseMethods:
         
         assert result.verdict == GateVerdict.ERROR
         assert result.error == "Something broke"
+
+
+class TestPromptQAReportParsing:
+    def test_summarize_prompt_qa_report_extracts_blockers_and_actions(self):
+        report = """Summary
+The protocol step is incomplete.
+
+Findings:
+- Blocking issues
+  - Missing /status command handler registration.
+  - Tests for /status command are absent.
+
+Next actions:
+- Register the /status command.
+- Add tests for /status.
+
+Verdict: FAIL
+"""
+
+        details = summarize_prompt_qa_report(report)
+
+        assert details["message"] == "Missing /status command handler registration."
+        assert details["summary"] == "The protocol step is incomplete."
+        assert "Register the /status command." in details["next_actions"]
+        assert "Blocking issues:" in details["text"]

@@ -88,7 +88,7 @@ def test_api_onboard_can_run_discovery_agent(monkeypatch: pytest.MonkeyPatch) ->
             local_path=str(repo),
         )
 
-        from devgodzilla.api.dependencies import get_db
+        from devgodzilla.api.dependeввncies import get_db
 
         app.dependency_overrides[get_db] = lambda: db
         try:

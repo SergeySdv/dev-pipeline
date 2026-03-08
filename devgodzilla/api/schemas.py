@@ -654,6 +654,7 @@ class GateResultOut(BaseModel):
     name: str
     status: str  # passed|warning|failed|skipped
     findings: List[GateFindingOut] = Field(default_factory=list)
+    details: Optional[Dict[str, Any]] = None
 
 
 class ChecklistItemOut(BaseModel):

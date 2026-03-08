@@ -171,7 +171,7 @@ export default function ClarificationsPage() {
               <CardContent className="space-y-3">
                 <p className="text-sm">{clarification.question}</p>
                 {clarification.recommended && (
-                  <p className="text-muted-foreground text-sm">
+                  <p className="text-muted-foreground whitespace-pre-wrap text-sm">
                     Recommended:{" "}
                     <span className="font-medium">
                       {resolveClarificationText(clarification.recommended)}
