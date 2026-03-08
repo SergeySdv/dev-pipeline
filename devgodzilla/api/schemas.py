@@ -54,6 +54,7 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = None
     git_url: Optional[str] = None
     local_path: Optional[str] = None
+    github_token: Optional[str] = None
     base_branch: str = "main"
     auto_onboard: bool = True
     auto_discovery: bool = True
@@ -65,6 +66,7 @@ class ProjectUpdate(BaseModel):
     git_url: Optional[str] = None
     base_branch: Optional[str] = None
     local_path: Optional[str] = None
+    github_token: Optional[str] = None
 
 class ProjectOut(APIModel):
     id: int
@@ -74,6 +76,7 @@ class ProjectOut(APIModel):
     git_url: Optional[str]
     base_branch: str = "main"
     local_path: Optional[str]
+    github_token_configured: bool = False
     created_at: Any
     updated_at: Any
     constitution_version: Optional[str] = None
@@ -206,7 +209,7 @@ class AgentInfo(BaseModel):
     name: str
     kind: str
     capabilities: List[str]
-    status: str = "available"
+    status: str = "configured"
     default_model: Optional[str] = None
     command_dir: Optional[str] = None
     enabled: Optional[bool] = None
@@ -422,6 +425,86 @@ class ArtifactContentOut(BaseModel):
 class ProtocolArtifactOut(ArtifactOut):
     step_run_id: int
     step_name: Optional[str] = None
+
+
+class WorkItemArtifactRefsOut(BaseModel):
+    task_dir: str
+    context_pack_json: str
+    context_pack_md: str
+    review_report_json: str
+    review_report_md: str
+    test_report_json: str
+    test_report_md: str
+    rework_pack_json: str
+    step_artifacts_dir: str
+
+
+class WorkItemOut(BaseModel):
+    id: int
+    project_id: int
+    protocol_run_id: int
+    title: str
+    status: str
+    context_status: str
+    review_status: str
+    qa_status: str
+    owner_agent: Optional[str] = None
+    helper_agents: List[str] = Field(default_factory=list)
+    task_dir: Optional[str] = None
+    artifact_refs: WorkItemArtifactRefsOut
+    depends_on: List[int] = Field(default_factory=list)
+    pr_ready: bool = False
+    blocking_clarifications: int = 0
+    blocking_policy_findings: int = 0
+    iteration_count: int = 0
+    max_iterations: int = 0
+    summary: Optional[str] = None
+
+
+class BuildContextRequest(BaseModel):
+    refresh: bool = False
+
+
+class WorkItemImplementRequest(BaseModel):
+    owner_agent: Optional[str] = None
+
+
+class WorkItemReviewOut(BaseModel):
+    verdict: str
+    summary: str
+    blocking_findings: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class WorkItemQAOut(BaseModel):
+    work_item: WorkItemOut
+    qa: QAResultOut
+
+
+class BrownfieldRunRequest(BaseModel):
+    feature_request: str
+    feature_name: Optional[str] = None
+    output_mode: str = "task_cycle"
+    branch: Optional[str] = None
+    protocol_name: Optional[str] = None
+    overwrite_protocol: bool = False
+    owner_agent: Optional[str] = None
+    helper_agents: List[str] = Field(default_factory=list)
+    allow_helper_agents: bool = False
+
+
+class BrownfieldRunOut(BaseModel):
+    success: bool
+    project_id: int
+    output_mode: str
+    spec_run_id: Optional[int] = None
+    spec_path: Optional[str] = None
+    plan_path: Optional[str] = None
+    tasks_path: Optional[str] = None
+    protocol: Optional[ProtocolOut] = None
+    work_items: List[WorkItemOut] = Field(default_factory=list)
+    next_work_item_id: Optional[int] = None
+    warnings: List[str] = Field(default_factory=list)
 
 
 # =============================================================================

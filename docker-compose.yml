@@ -72,6 +72,7 @@ services:
       - DATABASE_URL=postgresql://windmill:changeme@db:5432/windmill_db
       - MODE=server
       - BASE_URL=http://localhost:8001
+      - SUPERADMIN_SECRET=${WINDMILL_SUPERADMIN_SECRET:-devgodzilla-local-superadmin}
       - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
       - DEVGODZILLA_API_URL=http://devgodzilla-api:8000
     depends_on:
@@ -162,7 +163,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        INSTALL_AGENT_CLIS: "1"
+        INSTALL_AGENT_CLIS: "${INSTALL_AGENT_CLIS:-1}"
     restart: unless-stopped
     expose:
       - "8000"
@@ -170,6 +171,7 @@ services:
       - DEVGODZILLA_DB_URL=postgresql://devgodzilla:changeme@db:5432/devgodzilla_db
       - DEVGODZILLA_LOG_LEVEL=${DEVGODZILLA_LOG_LEVEL:-INFO}
       - DEVGODZILLA_WINDMILL_URL=http://windmill:8000
+      - DEVGODZILLA_WINDMILL_TOKEN=${DEVGODZILLA_WINDMILL_TOKEN:-devgodzilla-local-superadmin}
       - DEVGODZILLA_WINDMILL_WORKSPACE=${DEVGODZILLA_WINDMILL_WORKSPACE:-demo1}
       - DEVGODZILLA_WINDMILL_ENV_FILE=windmill/apps/devgodzilla-react-app/.env.development
       - DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH=u/devgodzilla/project_onboard_api

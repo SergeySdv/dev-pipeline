@@ -237,6 +237,48 @@ class GitService(Service):
                 extra=self.log_extra(),
             )
 
+    def build_remote_git_env(
+        self,
+        git_url: Optional[str],
+        github_token: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
+        """Build a transient git env that authenticates GitHub HTTPS/SSH remotes."""
+        token = (github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+        if not token or not git_url or "github.com" not in git_url:
+            return None
+
+        env = os.environ.copy()
+        env["GITHUB_TOKEN"] = env.get("GITHUB_TOKEN") or token
+        env["GH_TOKEN"] = env.get("GH_TOKEN") or token
+        env["GIT_CONFIG_COUNT"] = "3"
+        env["GIT_CONFIG_KEY_0"] = f"url.https://{token}:x-oauth-basic@github.com/.insteadOf"
+        env["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+        env["GIT_CONFIG_KEY_1"] = f"url.https://{token}:x-oauth-basic@github.com/.insteadOf"
+        env["GIT_CONFIG_VALUE_1"] = "git@github.com:"
+        env["GIT_CONFIG_KEY_2"] = f"url.https://{token}:x-oauth-basic@github.com/.insteadOf"
+        env["GIT_CONFIG_VALUE_2"] = "ssh://git@github.com/"
+        return env
+
+    def build_repo_remote_git_env(
+        self,
+        repo_root: Path,
+        github_token: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
+        """Build transient git env for the current origin remote, if any."""
+        try:
+            result = run_process(
+                ["git", "config", "--get", "remote.origin.url"],
+                cwd=repo_root,
+                check=False,
+            )
+        except Exception:
+            return None
+
+        remote_url = (result.stdout or "").strip()
+        if result.returncode != 0 or not remote_url:
+            return None
+        return self.build_remote_git_env(remote_url, github_token)
+
     def get_branch_name(self, protocol_name: str) -> str:
         """
         Resolve the branch name to use for worktrees.
@@ -387,6 +429,7 @@ class GitService(Service):
         *,
         project_id: Optional[int] = None,
         clone_if_missing: bool = False,
+        github_token: Optional[str] = None,
     ) -> Path:
         """
         Resolve a local repo path for a project.
@@ -484,6 +527,7 @@ class GitService(Service):
             run_process(
                 ["git", "clone", git_url, default_path.name],
                 cwd=default_path.parent,
+                env=self.build_remote_git_env(git_url, github_token),
             )
         except Exception as exc:
             self.logger.error(
@@ -601,6 +645,7 @@ class GitService(Service):
         *,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        github_token: Optional[str] = None,
     ) -> bool:
         """
         Commit, push, and open a PR/MR for the worktree changes.
@@ -644,6 +689,7 @@ class GitService(Service):
             run_process(
                 ["git", "push", "--set-upstream", "origin", branch_name],
                 cwd=worktree,
+                env=self.build_repo_remote_git_env(worktree, github_token),
             )
 
         try:
@@ -656,7 +702,7 @@ class GitService(Service):
             _git_push()
             pushed = True
         except Exception as exc:
-            branch_exists = self.remote_branch_exists(worktree, branch_name)
+            branch_exists = self.remote_branch_exists(worktree, branch_name, github_token=github_token)
             self.logger.warning(
                 "Failed to push branch",
                 extra=self.log_extra(
@@ -673,26 +719,39 @@ class GitService(Service):
                 except Exception:
                     return False
 
-        self._create_pr_if_possible(worktree, protocol_name, base_branch, head_branch=branch_name)
+        self._create_pr_if_possible(
+            worktree,
+            protocol_name,
+            base_branch,
+            head_branch=branch_name,
+            github_token=github_token,
+        )
         return pushed or branch_exists
 
-    def remote_branch_exists(self, repo_root: Path, branch: str) -> bool:
+    def remote_branch_exists(
+        self,
+        repo_root: Path,
+        branch: str,
+        github_token: Optional[str] = None,
+    ) -> bool:
         """Check if a branch exists on the remote repository."""
         try:
             result = run_process(
                 ["git", "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"],
                 cwd=repo_root,
                 check=False,
+                env=self.build_repo_remote_git_env(repo_root, github_token),
             )
             return result.returncode == 0
         except Exception:
             return False
 
-    def list_remote_branches(self, repo_root: Path) -> list[str]:
+    def list_remote_branches(self, repo_root: Path, github_token: Optional[str] = None) -> list[str]:
         """List remote branch names (origin) for the given repo root."""
         result = run_process(
             ["git", "ls-remote", "--heads", "origin"],
             cwd=repo_root,
+            env=self.build_repo_remote_git_env(repo_root, github_token),
         )
         branches: list[str] = []
         for line in result.stdout.strip().splitlines():
@@ -701,12 +760,18 @@ class GitService(Service):
                 branches.append(parts[1].replace("refs/heads/", ""))
         return branches
 
-    def delete_remote_branch(self, repo_root: Path, branch: str) -> None:
+    def delete_remote_branch(
+        self,
+        repo_root: Path,
+        branch: str,
+        github_token: Optional[str] = None,
+    ) -> None:
         """Delete a remote branch (origin)."""
         try:
             run_process(
                 ["git", "push", "origin", f":refs/heads/{branch}"],
                 cwd=repo_root,
+                env=self.build_repo_remote_git_env(repo_root, github_token),
             )
         except Exception as exc:
             raise GitCommandError(f"Failed to delete remote branch {branch}") from exc
@@ -778,6 +843,7 @@ class GitService(Service):
         head_branch: Optional[str] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
+        github_token: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Best-effort PR/MR creation for an existing branch.
@@ -813,6 +879,7 @@ class GitService(Service):
                     ],
                     cwd=worktree,
                     check=False,
+                    env=self.build_repo_remote_git_env(worktree, github_token),
                 )
                 if res.returncode == 0:
                     return {"success": True, "url": _extract_url((res.stdout or "") + "\n" + (res.stderr or "")) or ""}
@@ -836,13 +903,21 @@ class GitService(Service):
                     ],
                     cwd=worktree,
                     check=False,
+                    env=self.build_repo_remote_git_env(worktree, github_token),
                 )
                 if res.returncode == 0:
                     return {"success": True, "url": _extract_url((res.stdout or "") + "\n" + (res.stderr or ""))}
             except Exception:
                 pass
 
-        if self._create_github_pr_api(worktree, head=head, base=base_branch, title=pr_title, body=pr_body):
+        if self._create_github_pr_api(
+            worktree,
+            head=head,
+            base=base_branch,
+            title=pr_title,
+            body=pr_body,
+            github_token=github_token,
+        ):
             return {"success": True, "url": None}
         return {"success": False, "url": None}
 
@@ -855,6 +930,7 @@ class GitService(Service):
         head_branch: Optional[str] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
+        github_token: Optional[str] = None,
     ) -> bool:
         """Helper to try creating PR via GH/GLAB CLI or API fallback."""
         result = self.open_pr(
@@ -864,6 +940,7 @@ class GitService(Service):
             head_branch=head_branch,
             title=title,
             description=description,
+            github_token=github_token,
         )
         return bool(result.get("success"))
 
@@ -875,6 +952,7 @@ class GitService(Service):
         base: str,
         title: str,
         body: str,
+        github_token: Optional[str] = None,
     ) -> bool:
         """Create a GitHub PR via REST API (fallback when CLI not available)."""
         owner_repo = self._parse_github_remote(repo_root)
@@ -882,7 +960,7 @@ class GitService(Service):
             return False
             
         owner, repo = owner_repo
-        gh_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        gh_token = github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if not gh_token:
             return False
 

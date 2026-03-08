@@ -43,6 +43,7 @@ import { PolicyTab } from "./components/policy-tab";
 import { SettingsTab } from "./components/settings-tab";
 import { SpecTab } from "./components/spec-tab";
 import { SprintTab } from "./components/sprint-tab";
+import { TaskCycleTab } from "./components/task-cycle-tab";
 import { WorkflowTab } from "./components/workflow-tab";
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -133,6 +134,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           label: "Workflow Pipeline",
           icon: Workflow,
           description: "Visual pipeline with agent assignment",
+        },
+        {
+          id: "task_cycle",
+          label: "Task Cycle",
+          icon: Kanban,
+          description: "Brownfield work items and review loop",
         },
       ],
     },
@@ -379,6 +386,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             {activeTab === "overview" && <OverviewTab projectId={projectId} />}
             {activeTab === "workflow" && <WorkflowTab projectId={projectId} />}
             {activeTab === "execution" && <SprintTab projectId={projectId} />}
+            {activeTab === "task_cycle" && <TaskCycleTab projectId={projectId} />}
             {activeTab === "onboarding" && <OnboardingTab projectId={projectId} />}
             {activeTab === "spec" && <SpecTab projectId={projectId} />}
             {activeTab === "policy" && <PolicyTab projectId={projectId} />}

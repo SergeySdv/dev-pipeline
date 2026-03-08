@@ -17,12 +17,12 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 import urllib.request
 import urllib.error
 import re
 
-DEFAULT_IMPORT_MANIFEST: dict[str, Any] = {
+DEFAULT_IMPORT_MANIFEST: Dict[str, Any] = {
     "scripts": {
         "source_dir": "scripts/devgodzilla",
         "path_prefix": "u/devgodzilla",
@@ -49,8 +49,8 @@ DEFAULT_IMPORT_MANIFEST: dict[str, Any] = {
 }
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged: dict[str, Any] = dict(base)
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(base)
     for key, value in override.items():
         base_value = merged.get(key)
         if isinstance(base_value, dict) and isinstance(value, dict):
@@ -60,7 +60,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-def load_import_manifest(root: Path, manifest_path: Path | None = None) -> dict[str, Any]:
+def load_import_manifest(root: Path, manifest_path: Optional[Path] = None) -> Dict[str, Any]:
     """Load importer manifest from disk, merging onto defaults."""
     manifest = DEFAULT_IMPORT_MANIFEST
     candidate = manifest_path or (root / "import-manifest.json")
@@ -116,7 +116,32 @@ def api_request(base_url: str, endpoint: str, token: str, method: str = "GET", d
     except Exception as e:
         return {"error": str(e)}
 
-def _load_token_from_env_file(path: Path) -> str | None:
+
+def ensure_workspace(base_url: str, token: str, workspace: str) -> None:
+    """Create the target workspace if it does not already exist."""
+    existing = api_request(base_url, "/workspaces/list_as_superadmin", token)
+    if isinstance(existing, list):
+        for item in existing:
+            if isinstance(item, dict) and item.get("id") == workspace:
+                return
+
+    print(f"Creating workspace {workspace}...", end=" ")
+    result = api_request(
+        base_url,
+        "/workspaces/create",
+        token,
+        "POST",
+        {
+            "id": workspace,
+            "name": workspace,
+        },
+    )
+    if isinstance(result, dict) and result.get("error"):
+        print("✗")
+        raise RuntimeError(f"Failed to create workspace {workspace}: {result['error']}")
+    print("✓")
+
+def _load_token_from_env_file(path: Path) -> Optional[str]:
     """
     Load a token from a simple KEY=VALUE env file.
 
@@ -265,7 +290,7 @@ def create_app(base_url: str, token: str, workspace: str, path: str, app_def: di
     return "error" not in result
 
 
-def _resolve_source_dir(root: Path, section: dict[str, Any], fallback: str) -> Path:
+def _resolve_source_dir(root: Path, section: Dict[str, Any], fallback: str) -> Path:
     return root / section.get("source_dir", fallback)
 
 
@@ -326,6 +351,8 @@ def main():
         print(f"Error connecting to Windmill: {version['error']}")
         sys.exit(1)
     print(f"Connected to Windmill {version}")
+    print()
+    ensure_workspace(args.url, token, args.workspace)
     print()
     
     success_count = 0

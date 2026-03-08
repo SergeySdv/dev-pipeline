@@ -30,9 +30,13 @@ const agentNameArbitrary = fc
 const agentKindArbitrary = fc.constantFrom("opencode", "codex", "claude", "gpt", "custom");
 
 // Arbitrary generator for agent status
-const agentStatusArbitrary = fc.constantFrom("available", "busy", "unavailable") as fc.Arbitrary<
-  "available" | "busy" | "unavailable"
->;
+const agentStatusArbitrary = fc.constantFrom(
+  "configured",
+  "available",
+  "busy",
+  "unavailable",
+  "disabled"
+) as fc.Arbitrary<"configured" | "available" | "busy" | "unavailable" | "disabled">;
 
 // Arbitrary generator for a valid Agent
 const agentArbitrary: fc.Arbitrary<Agent> = fc.record({
@@ -147,7 +151,9 @@ describe("Agent Health Dashboard Property Tests", () => {
           const cardData = computeAgentCardData(agent, health, metrics);
 
           // Status should be one of the valid values
-          expect(["available", "unavailable", "disabled"]).toContain(cardData.status);
+          expect(["available", "unavailable", "disabled", "configured", "not_installed"]).toContain(
+            cardData.status
+          );
         }),
         { numRuns: 100 }
       );
@@ -218,6 +224,8 @@ describe("Agent Health Dashboard Property Tests", () => {
               expect(cardData.status).toBe("disabled");
             } else if (available) {
               expect(cardData.status).toBe("available");
+            } else if (agent.status === "configured") {
+              expect(cardData.status).toBe("configured");
             } else {
               expect(cardData.status).toBe("unavailable");
             }

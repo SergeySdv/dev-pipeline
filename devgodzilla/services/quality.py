@@ -44,6 +44,7 @@ from devgodzilla.qa.feedback import FeedbackRouter, FeedbackAction
 from devgodzilla.engines import EngineNotFoundError, get_registry
 from devgodzilla.spec import resolve_spec_path
 from devgodzilla.services.agent_config import AgentConfigService
+from devgodzilla.services.workspace_paths import resolve_workspace_root
 
 logger = get_logger(__name__)
 
@@ -629,11 +630,7 @@ class QualityService(Service):
 
     def _get_workspace(self, run: ProtocolRun, project) -> Path:
         """Get workspace root path."""
-        if run.worktree_path:
-            return Path(run.worktree_path).expanduser()
-        elif project.local_path:
-            return Path(project.local_path).expanduser()
-        return Path.cwd()
+        return resolve_workspace_root(run, project)
 
     def _load_constitution_gate(
         self,

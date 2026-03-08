@@ -17,7 +17,7 @@ from devgodzilla.services.telemetry import (
     shutdown_telemetry,
 )
 from devgodzilla.services.health import HealthChecker, health_status_to_dict
-from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit, sprints, tasks, policy_packs, specifications, quality, profile, templates
+from devgodzilla.api.routes import projects, protocols, steps, agents, clarifications, speckit, sprints, tasks, policy_packs, specifications, quality, profile, templates, brownfield
 from devgodzilla.api.routes import metrics, webhooks, events, logs
 from devgodzilla.api.routes import windmill as windmill_routes
 from devgodzilla.api.routes import runs as runs_routes
@@ -67,6 +67,7 @@ app.add_middleware(
 # Routes
 auth_deps = [Depends(require_api_token)]
 app.include_router(projects.router, tags=["Projects"], dependencies=auth_deps)
+app.include_router(brownfield.router, dependencies=auth_deps)
 app.include_router(protocols.router, tags=["Protocols"], dependencies=auth_deps)
 app.include_router(steps.router, tags=["Steps"], dependencies=auth_deps)
 app.include_router(agents.router, tags=["Agents"], dependencies=auth_deps)

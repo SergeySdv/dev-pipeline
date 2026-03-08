@@ -73,6 +73,10 @@ export DEVGODZILLA_OPENCODE_MODEL=zai-coding-plan/glm-5
 devgodzilla project create my-project --repo https://github.com/yourorg/repo.git
 ```
 
+For private GitHub repositories in the UI or API, save a project-level GitHub token.
+DevGodzilla uses it for clone, push, and pull-request steps without exposing the raw
+token back in API responses.
+
 2) Run headless repo discovery (writes `specs/discovery/_runtime/*` artifacts):
 
 ```bash
@@ -107,6 +111,31 @@ devgodzilla step qa <step_run_id>
 ```
 
 For fully orchestrated runs, use the REST API + Windmill flows (see `docs/DevGodzilla/WINDMILL-WORKFLOWS.md`).
+
+### Local Docker Agent Setup
+
+If you run the API on the host, DevGodzilla uses agent binaries from your host `PATH`.
+
+If you run the API in Docker via `docker-compose.local.yml`, CLI agents are installed by default so brownfield and task-cycle flows work without extra setup. You can still disable them for a lighter image:
+
+```bash
+export INSTALL_AGENT_CLIS=0
+docker compose -f docker-compose.local.yml up -d --build devgodzilla-api
+```
+
+If you use `opencode`, authenticate on the host first so the mounted auth state is available in Docker:
+
+```bash
+opencode auth login
+```
+
+Check agent runtime health with:
+
+```bash
+curl -s http://localhost:8080/agents/health
+```
+
+`/agents` reports configured agents. `/agents/health` reports whether the current runtime can actually execute them.
 
 ## CLI Commands
 

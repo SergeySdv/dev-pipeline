@@ -13,6 +13,7 @@ from devgodzilla.services.planning import PlanningService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.sprint_integration import SprintIntegrationService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
+from devgodzilla.services.workspace_paths import WorkspacePathError, resolve_protocol_root, resolve_workspace_root
 from devgodzilla.windmill.client import WindmillClient
 
 router = APIRouter()
@@ -45,26 +46,14 @@ def get_policy_service(
 
 
 def _workspace_root(run, project) -> Path:
-    if run.worktree_path:
-        return Path(run.worktree_path).expanduser()
-    if project.local_path:
-        return Path(project.local_path).expanduser()
-    return Path.cwd()
+    try:
+        return resolve_workspace_root(run, project)
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _protocol_root(run, workspace_root: Path) -> Path:
-    if run.protocol_root:
-        candidate = Path(run.protocol_root).expanduser()
-        if candidate.is_absolute():
-            return candidate
-        return workspace_root / candidate
-    specs = workspace_root / "specs" / run.protocol_name
-    protocols = workspace_root / ".protocols" / run.protocol_name
-    if specs.exists():
-        return specs
-    if protocols.exists():
-        return protocols
-    return specs
+    return resolve_protocol_root(run, workspace_root)
 
 
 def _artifact_type_from_name(name: str) -> str:
@@ -387,14 +376,57 @@ def open_protocol_pr(
                 message=f"Failed to create PR: {str(exc)}",
                 status="error",
             )
-    
-    # No git provider available - return placeholder response
-    return OpenPRResponse(
-        pr_url=None,
-        pr_number=None,
-        message="PR creation not available - no git provider configured. Use CLI to create PR.",
-        status="unavailable",
-    )
+
+    # Fallback to local git service for standard GitHub/GitLab repositories.
+    try:
+        from devgodzilla.services.git import GitService
+
+        worktree = Path(run.worktree_path or project.local_path or "").expanduser()
+        if not worktree.exists():
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message="PR creation not available - repository worktree is missing.",
+                status="error",
+            )
+
+        github_token = ((project.secrets or {}).get("github_token") or "").strip() or None
+        git_service = GitService(ctx)
+        branch_pushed = git_service.push_and_open_pr(
+            worktree,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=project.id,
+            github_token=github_token,
+        )
+        if not branch_pushed:
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message="Failed to push branch or create pull request.",
+                status="error",
+            )
+
+        pr_url = None
+        if project.git_url and "github.com" in project.git_url:
+            owner_repo = project.git_url.split("github.com/", 1)[-1].replace(".git", "").strip("/")
+            if owner_repo:
+                pr_url = f"https://github.com/{owner_repo}/compare/{run.base_branch}...{run.protocol_name}"
+
+        return OpenPRResponse(
+            pr_url=pr_url,
+            pr_number=None,
+            message="Pull request created or compare view prepared",
+            status="created",
+        )
+    except Exception as exc:
+        return OpenPRResponse(
+            pr_url=None,
+            pr_number=None,
+            message=f"PR creation failed: {exc}",
+            status="error",
+        )
 
 
 @router.get("/protocols/{protocol_id}/events", response_model=List[schemas.EventOut])
@@ -1086,10 +1118,16 @@ def get_protocol_sprint(
         except KeyError:
             return None
 
-    # Fallback: find sprint by tasks linked to this protocol
-    tasks = db.list_tasks(protocol_run_id=protocol_id, limit=1)
-    if tasks and tasks[0].sprint_id:
-        return db.get_sprint(tasks[0].sprint_id)
+    # Fallback: find sprint by tasks linked to this protocol. Database.list_tasks
+    # is intentionally narrow across backends, so filter protocol linkage here.
+    tasks = db.list_tasks(project_id=run.project_id, limit=500)
+    for task in tasks:
+        if task.protocol_run_id != protocol_id or not task.sprint_id:
+            continue
+        try:
+            return db.get_sprint(task.sprint_id)
+        except KeyError:
+            continue
     return None
 
 
