@@ -19,6 +19,7 @@ import type {
   PolicyFinding,
   Project,
   ProjectCreate,
+  ProtocolRun,
   PullRequest,
   WorkItem,
   WorkItemQA,
@@ -364,8 +365,24 @@ export function useStartBrownfieldRun() {
       apiClient.post<BrownfieldRunResponse>(`/projects/${projectId}/brownfield/run`, data, {
         projectId,
       }),
-    onSuccess: (_response, { projectId }) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId) });
+    onSuccess: (response, { projectId }) => {
+      if (response.protocol) {
+        queryClient.setQueryData(
+          queryKeys.projects.protocols(projectId),
+          (current: ProtocolRun[] | undefined) => {
+            const existing = Array.isArray(current) ? current : [];
+            if (existing.some((protocol) => protocol.id === response.protocol?.id)) {
+              return existing;
+            }
+            return [response.protocol as ProtocolRun, ...existing];
+          }
+        );
+        queryClient.setQueryData(
+          queryKeys.projects.taskCycle(projectId, response.protocol.id),
+          response.work_items
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.protocols(projectId) });
     },
   });
@@ -387,6 +404,9 @@ export function useBuildContextWorkItem() {
     }) =>
       apiClient.post<WorkItem>(`/work-items/${workItemId}/build-context`, { refresh }, { projectId }),
     onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
@@ -412,6 +432,9 @@ export function useImplementWorkItem() {
       apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/implement`, data ?? {}, { projectId }),
     onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
       queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
@@ -433,6 +456,9 @@ export function useReviewWorkItem() {
     }) =>
       apiClient.post<WorkItemReview>(`/work-items/${workItemId}/actions/review`, {}, { projectId }),
     onSuccess: (_review, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
@@ -458,6 +484,9 @@ export function useQaWorkItem() {
       apiClient.post<WorkItemQA>(`/work-items/${workItemId}/actions/qa`, { gates }, { projectId }),
     onSuccess: (result, { projectId, protocolRunId, workItemId }) => {
       queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), result.work_item);
@@ -479,6 +508,9 @@ export function useMarkPrReady() {
     }) =>
       apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/mark-pr-ready`, {}, { projectId }),
     onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });

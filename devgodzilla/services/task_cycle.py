@@ -11,6 +11,7 @@ from devgodzilla.logging import get_logger
 from devgodzilla.models.domain import StepRun, StepStatus
 from devgodzilla.qa.gates.interface import GateResult, GateVerdict
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QAResult, QAVerdict, QualityService
@@ -93,6 +94,7 @@ class TaskCycleService(Service):
         project = self.db.get_project(project_id)
         if not project.local_path:
             raise TaskCycleError("Project has no local path")
+        resolved_owner_agent = self._resolve_owner_agent(project.id, request.owner_agent)
 
         spec_service = SpecificationService(self.context, self.db)
         protocol_service = SpecToProtocolService(self.context, self.db)
@@ -161,7 +163,7 @@ class TaskCycleService(Service):
             protocol_out = schemas.ProtocolOut.model_validate(protocol_run)
             self._seed_task_cycle_metadata(
                 protocol.protocol_run_id,
-                owner_agent=request.owner_agent,
+                owner_agent=resolved_owner_agent,
                 helper_agents=request.helper_agents if (request.allow_helper_agents or request.helper_agents) else [],
             )
             work_items = self.list_work_items(project_id, protocol_run_id=protocol.protocol_run_id)
@@ -273,8 +275,12 @@ class TaskCycleService(Service):
     def implement(self, step_run_id: int, *, owner_agent: Optional[str] = None) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
         state = self._task_cycle_state(step, project)
-        if owner_agent:
-            self.db.update_step_assigned_agent(step.id, owner_agent)
+        resolved_owner_agent = self._resolve_owner_agent(
+            project.id,
+            owner_agent or self._string_or_none(state.get("owner_agent")) or step.assigned_agent,
+        )
+        if resolved_owner_agent and resolved_owner_agent != step.assigned_agent:
+            self.db.update_step_assigned_agent(step.id, resolved_owner_agent)
             step = self.db.get_step_run(step.id)
 
         iterations = int(state.get("iteration_count", 0) or 0)
@@ -287,7 +293,7 @@ class TaskCycleService(Service):
 
         state["iteration_count"] = iterations + 1
         state["max_iterations"] = max_iterations
-        state["owner_agent"] = step.assigned_agent or owner_agent or state.get("owner_agent")
+        state["owner_agent"] = resolved_owner_agent or step.assigned_agent or state.get("owner_agent")
         state["status"] = self.STATUS_IN_PROGRESS
         state["review_status"] = "pending"
         state["qa_status"] = "pending"
@@ -298,9 +304,6 @@ class TaskCycleService(Service):
         result = execution.execute_step(step.id)
         step = self.db.get_step_run(step.id)
         state = self._task_cycle_state(step, project)
-        latest_qa = self.db.get_latest_qa_result(step_run_id=step.id)
-        if latest_qa is not None:
-            state["qa_status"] = self._map_qa_verdict(latest_qa.verdict)
 
         if not result.success or step.status in (StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED):
             state["status"] = self.STATUS_NEEDS_REWORK
@@ -312,10 +315,9 @@ class TaskCycleService(Service):
                 source="implement",
                 findings=[result.error or f"Implementation ended in {step.status}"],
             )
-        elif state.get("qa_status") in ("failed", "warning"):
-            state["status"] = self.STATUS_NEEDS_REWORK
-            state["last_failure_source"] = "qa"
         else:
+            # Task-cycle QA is an explicit stage with its own persisted artifacts.
+            state["qa_status"] = "pending"
             state["status"] = self.STATUS_AWAITING_REVIEW
             state["last_failure_source"] = None
         self._persist_task_cycle_state(step, state)
@@ -410,6 +412,17 @@ class TaskCycleService(Service):
     def qa(self, step_run_id: int, *, gates: Optional[List[str]] = None) -> schemas.WorkItemQAOut:
         step, run, project = self._load_work_item(step_run_id)
         refs = self._artifact_refs(project, step)
+        state = self._task_cycle_state(step, project)
+        step_artifacts_dir = Path(refs["step_artifacts_dir"])
+        context_pack_json = Path(refs["context_pack_json"])
+        if not context_pack_json.exists():
+            raise TaskCycleError("Build context before running QA")
+        if step.status in (StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED):
+            raise TaskCycleError(f"Step is not in a QA-ready state: {step.status}")
+        if state.get("review_status") in {"failed", "warning"}:
+            raise TaskCycleError("Resolve review findings before running QA")
+        if not step_artifacts_dir.exists() or not any(step_artifacts_dir.iterdir()):
+            raise TaskCycleError("Implementation artifacts are missing; run Implement successfully before QA")
         gate_map = {
             "lint": __import__("devgodzilla.qa.gates", fromlist=["LintGate"]).LintGate,
             "type": __import__("devgodzilla.qa.gates", fromlist=["TypeGate"]).TypeGate,
@@ -461,10 +474,9 @@ class TaskCycleService(Service):
             ],
         )
 
-        state = self._task_cycle_state(step, project)
         state["qa_status"] = qa_out.verdict
-        if qa_out.verdict == "passed" and state.get("review_status") == "passed":
-            state["status"] = self.STATUS_READY_FOR_PR
+        if qa_out.verdict == "passed":
+            state["status"] = self.STATUS_READY_FOR_PR if state.get("review_status") == "passed" else self.STATUS_AWAITING_REVIEW
             state["last_failure_source"] = None
         else:
             state["status"] = self.STATUS_NEEDS_REWORK
@@ -963,17 +975,41 @@ class TaskCycleService(Service):
     ) -> None:
         run = self.db.get_protocol_run(protocol_run_id)
         project = self.db.get_project(run.project_id)
+        resolved_owner_agent = self._resolve_owner_agent(project.id, owner_agent)
         protocol_metadata = dict(run.speckit_metadata or {})
         protocol_metadata["task_cycle"] = True
         self.db.update_protocol_windmill(run.id, speckit_metadata=protocol_metadata)
         for step in self.db.list_step_runs(protocol_run_id):
-            if owner_agent:
-                self.db.update_step_assigned_agent(step.id, owner_agent)
+            if resolved_owner_agent and resolved_owner_agent != step.assigned_agent:
+                self.db.update_step_assigned_agent(step.id, resolved_owner_agent)
                 step = self.db.get_step_run(step.id)
             state = self._task_cycle_state(step, project)
-            state["owner_agent"] = owner_agent or step.assigned_agent
+            state["owner_agent"] = resolved_owner_agent or step.assigned_agent
             state["helper_agents"] = self._string_list(helper_agents)
             self._persist_task_cycle_state(step, state)
+
+    def _default_exec_engine_id(self, project_id: int) -> str:
+        candidate: Optional[str] = None
+        try:
+            cfg = AgentConfigService(self.context, db=self.db)
+            candidate = cfg.get_default_engine_id(
+                "exec",
+                project_id=project_id,
+                fallback=self.context.config.engine_defaults.get("exec"),
+            )
+        except Exception:
+            candidate = self.context.config.engine_defaults.get("exec")
+        if not isinstance(candidate, str) or not candidate.strip():
+            return "opencode"
+        return candidate.strip()
+
+    def _resolve_owner_agent(self, project_id: int, owner_agent: Optional[str]) -> Optional[str]:
+        candidate = self._string_or_none(owner_agent)
+        if candidate is None:
+            return None
+        if candidate.lower() in {"dev", "developer", "default", "exec"}:
+            return self._default_exec_engine_id(project_id)
+        return candidate
 
     def _write_rework_pack(
         self,

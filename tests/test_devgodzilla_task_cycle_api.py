@@ -52,6 +52,7 @@ def test_task_cycle_build_context_creates_reusable_artifacts(monkeypatch: pytest
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
         monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.setenv("DEVGODZILLA_EXEC_ENGINE_ID", "opencode")
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
         _reset_config_for_tests()
 
@@ -320,7 +321,7 @@ def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeyp
                 assert payload["protocol"] is not None
                 assert payload["next_work_item_id"] is not None
                 assert len(payload["work_items"]) == 1
-                assert payload["work_items"][0]["owner_agent"] == "dev"
+                assert payload["work_items"][0]["owner_agent"] == "opencode"
                 assert payload["work_items"][0]["helper_agents"] == ["trace", "tests"]
 
                 listed = client.get(f"/projects/{project.id}/task-cycle")
@@ -428,6 +429,7 @@ def test_task_cycle_implement_respects_max_iterations(monkeypatch: pytest.Monkey
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
         monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
         monkeypatch.setenv("DEVGODZILLA_TASK_CYCLE_MAX_ITERATIONS", "2")
+        monkeypatch.setenv("DEVGODZILLA_EXEC_ENGINE_ID", "opencode")
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
         _reset_config_for_tests()
 
@@ -479,6 +481,67 @@ def test_task_cycle_implement_respects_max_iterations(monkeypatch: pytest.Monkey
                 third = client.post(f"/work-items/{step.id}/actions/implement", json={"owner_agent": "dev"})
                 assert third.status_code == 409
                 assert "Max task-cycle iterations reached" in third.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_qa_requires_reviewable_implementation_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "plan.md").write_text("# Plan\n", encoding="utf-8")
+        (protocol_root / "step-01-demo.md").write_text("# Demo step\n", encoding="utf-8")
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="failed",
+            assigned_agent="dev",
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                context_resp = client.post(f"/work-items/{step.id}/build-context", json={"refresh": False})
+                assert context_resp.status_code == 200
+
+                qa_resp = client.post(f"/work-items/{step.id}/actions/qa", json={"gates": ["lint"]})
+                assert qa_resp.status_code == 400
+                assert "qa-ready state" in qa_resp.json()["detail"].lower()
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()

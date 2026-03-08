@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -7,6 +8,7 @@ import time
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -103,6 +105,92 @@ def _project_secrets_with_github_token(
     else:
         secrets.pop("github_token", None)
     return secrets or None
+
+
+def _project_github_token(project: Any) -> Optional[str]:
+    token = ((getattr(project, "secrets", None) or {}).get("github_token") or "").strip()
+    return token or None
+
+
+def _parse_github_owner_repo_from_url(git_url: Optional[str]) -> Optional[tuple[str, str]]:
+    url = (git_url or "").strip()
+    if not url or "github.com" not in url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        tail = url.split("github.com/", 1)[-1]
+    elif url.startswith("git@"):
+        tail = url.split(":", 1)[-1]
+    elif url.startswith("ssh://git@"):
+        tail = url.split("github.com/", 1)[-1]
+    else:
+        return None
+    parts = tail.rstrip("/").removesuffix(".git").split("/")
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
+def _project_github_owner_repo(repo_path: Path, project: Any) -> Optional[tuple[str, str]]:
+    from devgodzilla.services.git import run_process
+
+    remote_url = (project.git_url or "").strip()
+    result = run_process(
+        ["git", "config", "--get", "remote.origin.url"],
+        cwd=repo_path,
+        check=False,
+    )
+    if result.returncode == 0 and (result.stdout or "").strip():
+        remote_url = (result.stdout or "").strip()
+    return _parse_github_owner_repo_from_url(remote_url)
+
+
+def _github_headers(github_token: Optional[str]) -> Optional[dict[str, str]]:
+    token = (github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    if not token:
+        return None
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+
+def _github_pr_check_status(item: dict[str, Any]) -> str:
+    if item.get("draft"):
+        return "draft"
+    return "unknown"
+
+
+def _list_github_pulls(owner: str, repo: str, *, github_token: Optional[str]) -> list[schemas.PullRequestOut]:
+    headers = _github_headers(github_token)
+    if headers is None:
+        return []
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+    try:
+        response = httpx.get(
+            url,
+            headers=headers,
+            params={"state": "open", "per_page": 100},
+            timeout=30,
+        )
+    except Exception:
+        return []
+    if response.status_code != 200:
+        return []
+    pulls: list[schemas.PullRequestOut] = []
+    for item in response.json():
+        pulls.append(
+            schemas.PullRequestOut(
+                id=str(item.get("number", "")),
+                title=item.get("title", ""),
+                branch=((item.get("head") or {}).get("ref") or ""),
+                status="draft" if item.get("draft") else (item.get("state", "open") or "open").lower(),
+                checks=_github_pr_check_status(item),
+                url=item.get("html_url", ""),
+                author=((item.get("user") or {}).get("login") or ""),
+                created_at=item.get("created_at", ""),
+            )
+        )
+    return pulls
 
 
 class ProjectOnboardRequest(BaseModel):
@@ -1038,8 +1126,9 @@ def list_project_branches(
     
     if not (repo_path / ".git").exists():
         raise HTTPException(status_code=400, detail="Project path is not a git repository")
-    
+
     git_service = GitService(ctx)
+    github_token = _project_github_token(project)
     branches = []
     
     # Get local branches with their SHAs
@@ -1066,11 +1155,17 @@ def list_project_branches(
             ["git", "ls-remote", "--heads", "origin"],
             cwd=repo_path,
             check=False,
+            env=git_service.build_repo_remote_git_env(repo_path, github_token),
         )
         if result.returncode != 0:
             stderr = (result.stderr or "").lower()
             # Repos used in local tests/dev can have no configured origin.
-            if "no such remote" in stderr or "could not read from remote repository" in stderr:
+            if (
+                "no such remote" in stderr
+                or "could not read from remote repository" in stderr
+                or "could not read username" in stderr
+                or "authentication failed" in stderr
+            ):
                 return branches
             raise HTTPException(
                 status_code=502,
@@ -1323,21 +1418,22 @@ def list_project_pulls(
     if not project.local_path:
         return []  # No repo path, return empty list
     
-    from pathlib import Path
     from devgodzilla.services.git import run_process
-    import json
-    
+
     repo_path = Path(project.local_path).expanduser()
     if not repo_path.exists() or not (repo_path / ".git").exists():
         return []
-    
-    pulls = []
+
+    github_token = _project_github_token(project)
+    owner_repo = _project_github_owner_repo(repo_path, project)
+    pulls: list[schemas.PullRequestOut] = []
     try:
         # Use GitHub CLI to list PRs (requires gh to be installed and authenticated)
         result = run_process(
             ["gh", "pr", "list", "--json", "number,title,headRefName,state,author,url,createdAt,statusCheckRollup"],
             cwd=repo_path,
             check=False,
+            env={**os.environ, **({"GH_TOKEN": github_token, "GITHUB_TOKEN": github_token} if github_token else {})},
         )
         if result.returncode == 0 and result.stdout.strip():
             pr_data = json.loads(result.stdout)
@@ -1363,8 +1459,9 @@ def list_project_pulls(
                     author=pr.get("author", {}).get("login", "") if isinstance(pr.get("author"), dict) else "",
                     created_at=pr.get("createdAt", ""),
                 ))
+            return pulls
     except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="GitHub CLI (gh) is not installed")
+        pass
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to parse GitHub PR response: {exc}")
     except subprocess.CalledProcessError as exc:
@@ -1372,8 +1469,11 @@ def list_project_pulls(
         raise HTTPException(status_code=502, detail=f"Failed to list pull requests: {detail}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to list pull requests: {exc}")
-    
-    return pulls
+
+    if owner_repo is None:
+        return []
+    owner, repo = owner_repo
+    return _list_github_pulls(owner, repo, github_token=github_token)
 
 
 @router.get("/projects/{project_id}/worktrees", response_model=List[schemas.WorktreeOut])
@@ -1436,6 +1536,17 @@ def list_project_worktrees(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to list git worktrees: {exc}")
     
+    github_token = _project_github_token(project)
+    owner_repo = _project_github_owner_repo(repo_path, project)
+    pulls_by_branch: dict[str, schemas.PullRequestOut] = {}
+    if owner_repo is not None:
+        owner, repo = owner_repo
+        pulls_by_branch = {
+            pull.branch: pull
+            for pull in _list_github_pulls(owner, repo, github_token=github_token)
+            if pull.branch
+        }
+
     # Build worktree list from protocols
     for branch_name, protocol in branch_protocols.items():
         # Get last commit for this branch
@@ -1459,21 +1570,10 @@ def list_project_worktrees(
         
         # Check if there's a PR for this branch
         pr_url = None
-        try:
-            result = run_process(
-                ["gh", "pr", "view", branch_name, "--json", "url"],
-                cwd=repo_path,
-                check=False,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                import json
-                pr_data = json.loads(result.stdout)
-                pr_url = pr_data.get("url")
-        except FileNotFoundError:
-            raise HTTPException(status_code=503, detail="GitHub CLI (gh) is not installed")
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to resolve PR for {branch_name}: {exc}")
-        
+        pull = pulls_by_branch.get(branch_name)
+        if pull is not None:
+            pr_url = pull.url
+
         worktrees.append(schemas.WorktreeOut(
             branch_name=branch_name,
             worktree_path=worktree_paths.get(branch_name) or protocol.worktree_path,
