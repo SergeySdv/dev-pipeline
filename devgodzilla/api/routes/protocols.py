@@ -1118,10 +1118,16 @@ def get_protocol_sprint(
         except KeyError:
             return None
 
-    # Fallback: find sprint by tasks linked to this protocol
-    tasks = db.list_tasks(protocol_run_id=protocol_id, limit=1)
-    if tasks and tasks[0].sprint_id:
-        return db.get_sprint(tasks[0].sprint_id)
+    # Fallback: find sprint by tasks linked to this protocol. Database.list_tasks
+    # is intentionally narrow across backends, so filter protocol linkage here.
+    tasks = db.list_tasks(project_id=run.project_id, limit=500)
+    for task in tasks:
+        if task.protocol_run_id != protocol_id or not task.sprint_id:
+            continue
+        try:
+            return db.get_sprint(task.sprint_id)
+        except KeyError:
+            continue
     return None
 
 

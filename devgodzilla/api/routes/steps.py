@@ -112,6 +112,19 @@ def get_step(
         raise HTTPException(status_code=404, detail="Step not found")
 
 
+@router.get("/steps/{step_id}/runs", response_model=List[schemas.JobRunOut])
+def list_step_runs_for_step(
+    step_id: int,
+    db: Database = Depends(get_db),
+):
+    """List job runs associated with a step."""
+    try:
+        db.get_step_run(step_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Step not found")
+    return db.list_job_runs(step_run_id=step_id, limit=200)
+
+
 @router.get("/steps/{step_id}/policy/findings", response_model=List[schemas.PolicyFindingOut])
 def get_step_policy_findings(
     step_id: int,
