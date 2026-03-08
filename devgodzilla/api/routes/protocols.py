@@ -13,6 +13,7 @@ from devgodzilla.services.planning import PlanningService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.sprint_integration import SprintIntegrationService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
+from devgodzilla.services.workspace_paths import WorkspacePathError, resolve_protocol_root, resolve_workspace_root
 from devgodzilla.windmill.client import WindmillClient
 
 router = APIRouter()
@@ -45,26 +46,14 @@ def get_policy_service(
 
 
 def _workspace_root(run, project) -> Path:
-    if run.worktree_path:
-        return Path(run.worktree_path).expanduser()
-    if project.local_path:
-        return Path(project.local_path).expanduser()
-    return Path.cwd()
+    try:
+        return resolve_workspace_root(run, project)
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _protocol_root(run, workspace_root: Path) -> Path:
-    if run.protocol_root:
-        candidate = Path(run.protocol_root).expanduser()
-        if candidate.is_absolute():
-            return candidate
-        return workspace_root / candidate
-    specs = workspace_root / "specs" / run.protocol_name
-    protocols = workspace_root / ".protocols" / run.protocol_name
-    if specs.exists():
-        return specs
-    if protocols.exists():
-        return protocols
-    return specs
+    return resolve_protocol_root(run, workspace_root)
 
 
 def _artifact_type_from_name(name: str) -> str:

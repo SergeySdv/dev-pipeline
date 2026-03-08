@@ -95,9 +95,12 @@ def test_task_cycle_build_context_creates_reusable_artifacts(monkeypatch: pytest
                 assert resp.status_code == 200
                 payload = resp.json()
                 assert payload["context_status"] == "ready"
-                assert payload["task_dir"].endswith(f"/{project.id}/_runtime/task-cycle/work-items/{step.id}")
+                expected_task_dir = (repo / ".devgodzilla" / "task-cycle" / "protocols" / str(run.id) / "work-items" / str(step.id)).resolve()
+                assert Path(payload["task_dir"]).resolve() == expected_task_dir
                 context_path = Path(payload["artifact_refs"]["context_pack_json"])
                 assert context_path.exists()
+                assert context_path.resolve().is_relative_to(repo.resolve())
+                assert not context_path.resolve().is_relative_to(projects_root.resolve())
                 context = json.loads(context_path.read_text(encoding="utf-8"))
                 assert context["project_id"] == project.id
                 assert context["step_run_id"] == step.id

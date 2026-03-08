@@ -17,6 +17,11 @@ from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QAResult, QAVerdict, QualityService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
 from devgodzilla.services.specification import SpecificationService
+from devgodzilla.services.workspace_paths import (
+    WorkspacePathError,
+    resolve_protocol_root,
+    resolve_workspace_root,
+)
 
 logger = get_logger(__name__)
 
@@ -615,32 +620,19 @@ class TaskCycleService(Service):
             truncated=truncated,
         )
 
-    def _project_temp_root(self, project) -> Path:
-        return self.config.projects_root / str(project.id) / "_runtime"
-
     def _task_dir(self, project, step: StepRun) -> Path:
-        return self._project_temp_root(project) / "task-cycle" / "work-items" / str(step.id)
+        run = self.db.get_protocol_run(step.protocol_run_id)
+        workspace_root = self._workspace_root(run, project)
+        return workspace_root / ".devgodzilla" / "task-cycle" / "protocols" / str(run.id) / "work-items" / str(step.id)
 
     def _workspace_root(self, run, project) -> Path:
-        if run.worktree_path:
-            return Path(run.worktree_path).expanduser()
-        if project.local_path:
-            return Path(project.local_path).expanduser()
-        return Path.cwd()
+        try:
+            return resolve_workspace_root(run, project)
+        except WorkspacePathError as exc:
+            raise TaskCycleError(str(exc)) from exc
 
     def _protocol_root(self, run, workspace_root: Path) -> Path:
-        if run.protocol_root:
-            candidate = Path(run.protocol_root).expanduser()
-            if candidate.is_absolute():
-                return candidate
-            return workspace_root / candidate
-        specs = workspace_root / "specs" / run.protocol_name
-        protocols = workspace_root / ".protocols" / run.protocol_name
-        if specs.exists():
-            return specs
-        if protocols.exists():
-            return protocols
-        return specs
+        return resolve_protocol_root(run, workspace_root)
 
     def _step_artifacts_dir(self, step: StepRun) -> Path:
         run = self.db.get_protocol_run(step.protocol_run_id)

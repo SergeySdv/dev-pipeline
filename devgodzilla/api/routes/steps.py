@@ -13,6 +13,7 @@ from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QualityService
 from devgodzilla.qa.gates import LintGate, TypeGate, TestGate
+from devgodzilla.services.workspace_paths import WorkspacePathError, resolve_protocol_root, resolve_workspace_root
 
 from devgodzilla.api import schemas
 from devgodzilla.api.dependencies import get_db
@@ -30,23 +31,14 @@ class StepAssignAgentRequest(BaseModel):
 
 
 def _workspace_root(run, project) -> Path:
-    if run.worktree_path:
-        return Path(run.worktree_path).expanduser()
-    if project.local_path:
-        return Path(project.local_path).expanduser()
-    return Path.cwd()
+    try:
+        return resolve_workspace_root(run, project)
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _protocol_root(run, workspace_root: Path) -> Path:
-    if run.protocol_root:
-        return Path(run.protocol_root).expanduser()
-    specs = workspace_root / "specs" / run.protocol_name
-    protocols = workspace_root / ".protocols" / run.protocol_name
-    if specs.exists():
-        return specs
-    if protocols.exists():
-        return protocols
-    return specs
+    return resolve_protocol_root(run, workspace_root)
 
 
 def _step_artifacts_dir(db: Database, step_id: int) -> Path:
