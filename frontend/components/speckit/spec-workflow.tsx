@@ -22,7 +22,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getProjectExecutionPath } from "@/lib/project-routes";
+import {
+  getProjectExecutionPath,
+  getProjectSpecWorkflowPath,
+  getProjectSpecWorkspacePath,
+} from "@/lib/project-routes";
 import { cn } from "@/lib/utils";
 
 export type WorkflowStep =
@@ -112,19 +116,19 @@ const steps: { key: WorkflowStep; label: string; icon: React.ElementType; descri
 function getStepHref(step: WorkflowStep, projectId: number): string {
   switch (step) {
     case "spec":
-      return `/projects/${projectId}?wizard=generate-specs`;
+      return getProjectSpecWorkflowPath(projectId);
     case "clarify":
-      return `/projects/${projectId}?tab=spec`;
+      return getProjectSpecWorkspacePath(projectId);
     case "plan":
-      return `/projects/${projectId}?wizard=design-solution`;
+      return getProjectSpecWorkspacePath(projectId);
     case "checklist":
-      return `/projects/${projectId}?tab=spec`;
+      return getProjectSpecWorkspacePath(projectId);
     case "tasks":
-      return `/projects/${projectId}?wizard=implement-feature`;
+      return getProjectSpecWorkspacePath(projectId);
     case "analyze":
-      return `/projects/${projectId}?tab=spec`;
+      return getProjectSpecWorkspacePath(projectId);
     case "implement":
-      return `/projects/${projectId}?tab=spec`;
+      return getProjectSpecWorkspacePath(projectId);
     case "sprint":
       return getProjectExecutionPath(projectId);
     default:
@@ -217,7 +221,7 @@ export function SpecWorkflow({
       <CardHeader className="pb-4">
         <CardTitle className="text-lg">SpecKit Workflow</CardTitle>
         <CardDescription>
-          Guide specs through clarify, plan, checklist, tasks, analysis, and implementation
+          Default happy path starts in the full spec workflow, then continues in the spec workspace
         </CardDescription>
       </CardHeader>
       <CardContent>

@@ -67,6 +67,7 @@ import {
   useSpecKitStatus,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
+import { getProjectSpecWorkflowPath, getProjectSpecWorkspacePath } from "@/lib/project-routes";
 
 interface OverviewTabProps {
   projectId: number;
@@ -436,25 +437,33 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
         <Card>
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common tasks for this project</CardDescription>
+            <CardDescription>
+              Start the canonical workflow first; use manual tools only when you need step-by-step control
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=implement-feature`}>
-                <Wand2 className="mr-2 h-4 w-4" />
-                Implement a Feature
+              <Link href={getProjectSpecWorkflowPath(projectId)}>
+                <Workflow className="mr-2 h-4 w-4" />
+                Run Spec Workflow
               </Link>
             </Button>
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=generate-specs`}>
+              <Link href={getProjectSpecWorkspacePath(projectId)}>
                 <FileCode2 className="mr-2 h-4 w-4" />
-                Generate Specs Wizard
+                Open Spec Workspace
               </Link>
             </Button>
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
               <Link href={`/projects/${projectId}?wizard=design-solution`}>
                 <Lightbulb className="mr-2 h-4 w-4" />
-                Design A Solution
+                Manual Plan Wizard
+              </Link>
+            </Button>
+            <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
+              <Link href={`/projects/${projectId}?wizard=implement-feature`}>
+                <Wand2 className="mr-2 h-4 w-4" />
+                Manual Tasks Wizard
               </Link>
             </Button>
           </CardContent>
