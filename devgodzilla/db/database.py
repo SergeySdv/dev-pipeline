@@ -90,6 +90,7 @@ class DatabaseProtocol(Protocol):
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]: ...
     def list_all_protocol_runs(self, *, limit: int = 200) -> List[ProtocolRun]: ...
     def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun: ...
+    def update_protocol_linked_sprint(self, run_id: int, linked_sprint_id: Optional[int]) -> ProtocolRun: ...
 
     # SpecKit specs
     def upsert_speckit_spec(
@@ -488,6 +489,7 @@ class SQLiteDatabase:
             policy_effective_json=self._parse_json(row["policy_effective_json"] if "policy_effective_json" in keys else None),
             windmill_flow_id=row["windmill_flow_id"] if "windmill_flow_id" in keys else None,
             speckit_metadata=self._parse_json(row["speckit_metadata"] if "speckit_metadata" in keys else None),
+            linked_sprint_id=row["linked_sprint_id"] if "linked_sprint_id" in keys else None,
             created_at=self._coerce_ts(row["created_at"]),
             updated_at=self._coerce_ts(row["updated_at"]),
         )
@@ -907,6 +909,18 @@ class SQLiteDatabase:
             conn.execute(
                 "UPDATE protocol_runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (status, run_id),
+            )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_linked_sprint(
+        self,
+        run_id: int,
+        linked_sprint_id: Optional[int],
+    ) -> ProtocolRun:
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE protocol_runs SET linked_sprint_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (linked_sprint_id, run_id),
             )
         return self.get_protocol_run(run_id)
 
@@ -2879,6 +2893,7 @@ class PostgresDatabase:
             policy_effective_json=row.get("policy_effective_json"),
             windmill_flow_id=row.get("windmill_flow_id"),
             speckit_metadata=row.get("speckit_metadata"),
+            linked_sprint_id=row.get("linked_sprint_id"),
             created_at=self._coerce_ts(row["created_at"]),
             updated_at=self._coerce_ts(row["updated_at"]),
         )
@@ -3860,6 +3875,19 @@ class PostgresDatabase:
                 cur.execute(
                     "UPDATE protocol_runs SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                     (status, run_id),
+                )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_linked_sprint(
+        self,
+        run_id: int,
+        linked_sprint_id: Optional[int],
+    ) -> ProtocolRun:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE protocol_runs SET linked_sprint_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (linked_sprint_id, run_id),
                 )
         return self.get_protocol_run(run_id)
 

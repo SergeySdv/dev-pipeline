@@ -121,6 +121,7 @@ class ProtocolRun:
     # Windmill integration (new for DevGodzilla)
     windmill_flow_id: Optional[str] = None
     speckit_metadata: Optional[Dict[str, Any]] = None
+    linked_sprint_id: Optional[int] = None
 
 
 @dataclass

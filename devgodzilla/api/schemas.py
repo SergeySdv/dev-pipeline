@@ -160,6 +160,7 @@ class ProtocolOut(APIModel):
     summary: Optional[str] = None
     windmill_flow_id: Optional[str]
     speckit_metadata: Optional[Dict[str, Any]]
+    linked_sprint_id: Optional[int] = None
     created_at: Any
     updated_at: Any
 
