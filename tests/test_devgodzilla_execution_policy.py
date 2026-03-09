@@ -70,8 +70,9 @@ def test_execute_step_blocks_on_clarifications(service_context, monkeypatch):
     db.update_protocol_status.assert_called_with(run.id, ProtocolStatus.BLOCKED)
 
 
-def test_execute_step_blocks_on_policy_findings(service_context, monkeypatch):
+def test_execute_step_blocks_on_policy_findings(service_context, monkeypatch, tmp_path):
     db, step, run, project = _build_execution_db()
+    project.local_path = str(tmp_path)
 
     monkeypatch.setattr(
         "devgodzilla.services.execution.ClarifierService.has_blocking_open",
