@@ -50,3 +50,36 @@ jobs:
           else
             echo "skip: scripts/ci/build.sh not found or not executable"
           fi
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Frontend Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Frontend Vitest + Playwright Smoke
+        working-directory: .
+        run: |
+          if [ -x scripts/ci/test_frontend.sh ]; then
+            scripts/ci/test_frontend.sh
+          else
+            echo "skip: scripts/ci/test_frontend.sh not found or not executable"
+          fi
