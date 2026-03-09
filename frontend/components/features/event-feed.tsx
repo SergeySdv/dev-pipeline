@@ -45,6 +45,7 @@ import {
 } from "@/lib/api/hooks/use-events";
 import type { Event } from "@/lib/api/types";
 import { formatRelativeTime } from "@/lib/format";
+import { getSpecificationReviewPath } from "@/lib/project-routes";
 import { cn } from "@/lib/utils";
 
 const MAX_EVENTS = 200;
@@ -362,6 +363,8 @@ function EventItem({ event: e }: { event: Event }) {
   const hasMetadata = e.metadata && Object.keys(e.metadata).length > 0;
 
   const timestamp = e.created_at ? new Date(e.created_at).toLocaleTimeString() : "";
+  const reviewPath =
+    typeof e.spec_run_id === "number" ? getSpecificationReviewPath(e.spec_run_id) : null;
 
   return (
     <div className="hover:bg-muted/30 rounded-lg border p-3 transition-colors">
@@ -395,6 +398,11 @@ function EventItem({ event: e }: { event: Event }) {
             {typeof e.project_id === "number" && (
               <Link href={`/projects/${e.project_id}`} className="text-blue-600 hover:underline">
                 {e.project_name ?? `Project #${e.project_id}`}
+              </Link>
+            )}
+            {reviewPath && (
+              <Link href={reviewPath} className="text-blue-600 hover:underline">
+                Review Implementation
               </Link>
             )}
             {eventHasProtocolLink(e) && (

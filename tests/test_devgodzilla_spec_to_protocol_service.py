@@ -178,6 +178,36 @@ class TestSpecToProtocolService:
         except Exception:
             pass  # Spec run linking is optional
 
+    def test_create_protocol_persists_spec_run_id_in_metadata(
+        self,
+        spec_service,
+        sample_project,
+        spec_dir,
+        db,
+    ):
+        """Protocols created from a spec run should carry review context metadata."""
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text("## Phase 1\n\n- [ ] Task\n")
+
+        spec_run = db.create_spec_run(
+            project_id=sample_project.id,
+            spec_name="review-ready",
+            spec_path="specs/0001-feature/spec.md",
+            status="planned",
+            base_branch="main",
+        )
+
+        result = spec_service.create_protocol_from_spec(
+            project_id=sample_project.id,
+            tasks_path=str(tasks_path),
+            spec_run_id=spec_run.id,
+        )
+
+        assert result.success is True
+        protocol = db.get_protocol_run(result.protocol_run_id)
+        assert protocol.speckit_metadata is not None
+        assert protocol.speckit_metadata["spec_run_id"] == spec_run.id
+
     def test_create_protocol_overwrite_existing(self, spec_service, sample_project, spec_dir):
         """Test overwriting existing protocol files."""
         tasks_path = spec_dir / "tasks.md"

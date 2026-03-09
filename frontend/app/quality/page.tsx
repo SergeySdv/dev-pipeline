@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQualityDashboard } from "@/lib/api";
+import { getSpecificationReviewPath } from "@/lib/project-routes";
 
 export default function QualityPage() {
   const { data: dashboard, isLoading, refetch } = useQualityDashboard();
@@ -193,9 +194,18 @@ export default function QualityPage() {
                           <span>{finding.timestamp}</span>
                         </div>
                       </div>
+                      {typeof finding.spec_run_id === "number" && (
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href={getSpecificationReviewPath(finding.spec_run_id)}>
+                            Review Implementation
+                          </Link>
+                        </Button>
+                      )}
                       {finding.protocol_id > 0 && (
                         <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/protocols/${finding.protocol_id}`}>View</Link>
+                          <Link href={`/protocols/${finding.protocol_id}`}>
+                            {typeof finding.spec_run_id === "number" ? "Protocol" : "View"}
+                          </Link>
                         </Button>
                       )}
                     </div>

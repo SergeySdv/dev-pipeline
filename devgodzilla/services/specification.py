@@ -29,6 +29,7 @@ from devgodzilla.services.speckit_adapter import SpecKitAdapter
 from devgodzilla.services.git import GitService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
 from devgodzilla.models.domain import SpecRun, SpecRunStatus
+from devgodzilla.speckit_metadata import with_spec_run_id
 from devgodzilla.spec import resolve_spec_path
 
 
@@ -1332,6 +1333,13 @@ class SpecificationService(Service):
                 protocol_root = Path(protocol_result.protocol_root) if protocol_result.protocol_root else spec_dir / "_runtime"
                 step_count = protocol_result.step_count
                 warnings = protocol_result.warnings
+            elif protocol_id is not None:
+                protocol = self.db.get_protocol_run(protocol_id)
+                protocol_metadata = with_spec_run_id(
+                    protocol.speckit_metadata,
+                    spec_run.id if spec_run else spec_run_id,
+                )
+                self.db.update_protocol_windmill(protocol_id, speckit_metadata=protocol_metadata)
 
             metadata_path = protocol_root / "implement-bootstrap.json"
             metadata = {

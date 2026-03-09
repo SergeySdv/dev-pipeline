@@ -379,6 +379,7 @@ class EventOut(APIModel):
     id: int
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
+    spec_run_id: Optional[int] = None
     event_type: str
     message: str
     metadata: Optional[Dict[str, Any]] = None
@@ -520,6 +521,7 @@ class JobRunOut(APIModel):
     project_id: Optional[int] = None
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
+    spec_run_id: Optional[int] = None
     queue: Optional[str] = None
     attempt: Optional[int] = None
     worker_id: Optional[str] = None

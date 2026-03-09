@@ -9,6 +9,7 @@ from devgodzilla.api.dependencies import get_db, get_service_context, get_windmi
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
 from devgodzilla.models.domain import ProtocolStatus, StepStatus
+from devgodzilla.speckit_metadata import extract_spec_run_id
 from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
 from devgodzilla.services.planning import PlanningService
@@ -277,6 +278,7 @@ def list_protocol_steps(
 
 # Response models for new endpoints
 class ProtocolSpecOut(BaseModel):
+    spec_run_id: Optional[int] = None
     spec_hash: Optional[str] = None
     validation_status: Optional[str] = None
     validated_at: Optional[str] = None
@@ -309,6 +311,7 @@ def get_protocol_spec(
     
     meta = run.speckit_metadata or {}
     return ProtocolSpecOut(
+        spec_run_id=extract_spec_run_id(meta),
         spec_hash=meta.get("spec_hash"),
         validation_status=meta.get("validation_status"),
         validated_at=meta.get("validated_at"),

@@ -157,6 +157,7 @@ export interface ProtocolCreate {
 }
 
 export interface ProtocolSpec {
+  spec_run_id?: number | null;
   spec_hash: string;
   validation_status: string;
   validated_at: string | null;
@@ -222,6 +223,7 @@ export interface CodexRun {
   project_id: number | null;
   protocol_run_id: number | null;
   step_run_id: number | null;
+  spec_run_id?: number | null;
   attempt: number;
   worker_id: string | null;
   queue: string | null;
@@ -370,6 +372,7 @@ export interface Event {
   id: number;
   protocol_run_id: number | null;
   step_run_id: number | null;
+  spec_run_id?: number | null;
   event_type: string;
   message: string;
   metadata: Record<string, unknown> | null;

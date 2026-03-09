@@ -20,6 +20,7 @@ import {
   formatDuration,
   formatTokens,
 } from "@/lib/format";
+import { getSpecificationReviewPath } from "@/lib/project-routes";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -47,6 +48,8 @@ export default function RunDetailPage() {
     );
   }
   if (!run) return <LoadingState message="Run not found" />;
+  const reviewPath =
+    typeof run.spec_run_id === "number" ? getSpecificationReviewPath(run.spec_run_id) : null;
 
   return (
     <div className="container py-8">
@@ -97,6 +100,14 @@ export default function RunDetailPage() {
               <Link href={`/projects/${run.project_id}`}>
                 <Button variant="outline" size="sm">
                   Project
+                  <ExternalLink className="ml-2 h-3 w-3" />
+                </Button>
+              </Link>
+            )}
+            {reviewPath && (
+              <Link href={reviewPath}>
+                <Button variant="outline" size="sm">
+                  Review Implementation
                   <ExternalLink className="ml-2 h-3 w-3" />
                 </Button>
               </Link>

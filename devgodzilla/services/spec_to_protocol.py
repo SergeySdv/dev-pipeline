@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from devgodzilla.logging import get_logger
+from devgodzilla.speckit_metadata import with_spec_run_id
 from devgodzilla.spec import PROTOCOL_SPEC_KEY, build_spec_from_protocol_files, create_steps_from_spec
 from devgodzilla.services.base import Service, ServiceContext
 
@@ -166,6 +167,7 @@ class SpecToProtocolService(Service):
             plan_path=spec_dir / "plan.md",
             tasks_path=resolved_tasks_path,
             protocol_root=protocol_root,
+            spec_run_id=spec_run.id if spec_run else spec_run_id,
         )
         self.db.update_protocol_windmill(run.id, speckit_metadata=speckit_metadata)
 
@@ -354,7 +356,8 @@ class SpecToProtocolService(Service):
         plan_path: Path,
         tasks_path: Path,
         protocol_root: Path,
-    ) -> Dict[str, str]:
+        spec_run_id: Optional[int],
+    ) -> Dict[str, object]:
         def _rel(path: Optional[Path]) -> Optional[str]:
             if not path:
                 return None
@@ -363,9 +366,12 @@ class SpecToProtocolService(Service):
             except Exception:
                 return str(path)
 
-        return {
-            "spec_path": _rel(spec_path),
-            "plan_path": _rel(plan_path) if plan_path.exists() else None,
-            "tasks_path": _rel(tasks_path),
-            "protocol_root": _rel(protocol_root),
-        }
+        return with_spec_run_id(
+            {
+                "spec_path": _rel(spec_path),
+                "plan_path": _rel(plan_path) if plan_path.exists() else None,
+                "tasks_path": _rel(tasks_path),
+                "protocol_root": _rel(protocol_root),
+            },
+            spec_run_id,
+        )

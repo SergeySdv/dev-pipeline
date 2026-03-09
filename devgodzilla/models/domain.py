@@ -239,6 +239,7 @@ class Event:
     protocol_name: Optional[str] = None
     project_id: Optional[int] = None
     project_name: Optional[str] = None
+    spec_run_id: Optional[int] = None
 
 
 @dataclass
@@ -257,6 +258,7 @@ class JobRun:
     project_id: Optional[int] = None
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
+    spec_run_id: Optional[int] = None
     queue: Optional[str] = None
     attempt: Optional[int] = None
     worker_id: Optional[str] = None

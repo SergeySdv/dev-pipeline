@@ -30,6 +30,7 @@ from devgodzilla.models.domain import (
     Sprint,
     StepRun,
 )
+from devgodzilla.speckit_metadata import extract_spec_run_id
 
 logger = get_logger(__name__)
 
@@ -586,10 +587,12 @@ class SQLiteDatabase:
     def _row_to_event(self, row: sqlite3.Row) -> Event:
         keys = set(row.keys())
         event_type = normalize_event_type(row["event_type"])
+        protocol_metadata = self._parse_json(row["speckit_metadata"] if "speckit_metadata" in keys else None)
         return Event(
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
             step_run_id=row["step_run_id"],
+            spec_run_id=extract_spec_run_id(protocol_metadata),
             event_type=event_type,
             message=row["message"],
             metadata=self._parse_json(row["metadata"] if "metadata" in keys else None),
@@ -602,6 +605,7 @@ class SQLiteDatabase:
 
     def _row_to_job_run(self, row: sqlite3.Row) -> JobRun:
         keys = set(row.keys())
+        protocol_metadata = self._parse_json(row["speckit_metadata"] if "speckit_metadata" in keys else None)
         return JobRun(
             run_id=row["run_id"],
             job_type=row["job_type"],
@@ -610,6 +614,7 @@ class SQLiteDatabase:
             project_id=row["project_id"] if "project_id" in keys else None,
             protocol_run_id=row["protocol_run_id"] if "protocol_run_id" in keys else None,
             step_run_id=row["step_run_id"] if "step_run_id" in keys else None,
+            spec_run_id=extract_spec_run_id(protocol_metadata),
             queue=row["queue"] if "queue" in keys else None,
             attempt=row["attempt"] if "attempt" in keys else None,
             worker_id=row["worker_id"] if "worker_id" in keys else None,
@@ -1525,6 +1530,7 @@ class SQLiteDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -1574,6 +1580,7 @@ class SQLiteDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -1625,6 +1632,7 @@ class SQLiteDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -1885,7 +1893,17 @@ class SQLiteDatabase:
         return self.get_job_run(run_id)
 
     def get_job_run(self, run_id: str) -> JobRun:
-        row = self._fetchone("SELECT * FROM job_runs WHERE run_id = ?", (run_id,))
+        row = self._fetchone(
+            """
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            WHERE jr.run_id = ?
+            """,
+            (run_id,),
+        )
         if row is None:
             raise KeyError(f"JobRun {run_id} not found")
         return self._row_to_job_run(row)
@@ -1905,27 +1923,35 @@ class SQLiteDatabase:
         where = []
         params: list[Any] = []
         if project_id is not None:
-            where.append("project_id = ?")
+            where.append("jr.project_id = ?")
             params.append(project_id)
         if protocol_run_id is not None:
-            where.append("protocol_run_id = ?")
+            where.append("jr.protocol_run_id = ?")
             params.append(protocol_run_id)
         if step_run_id is not None:
-            where.append("step_run_id = ?")
+            where.append("jr.step_run_id = ?")
             params.append(step_run_id)
         if status is not None:
-            where.append("status = ?")
+            where.append("jr.status = ?")
             params.append(status)
         if job_type is not None:
-            where.append("job_type = ?")
+            where.append("jr.job_type = ?")
             params.append(job_type)
         if windmill_job_id is not None:
-            where.append("windmill_job_id = ?")
+            where.append("jr.windmill_job_id = ?")
             params.append(windmill_job_id)
 
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         rows = self._fetchall(
-            f"SELECT * FROM job_runs {clause} ORDER BY created_at DESC LIMIT ?",
+            f"""
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            {clause}
+            ORDER BY jr.created_at DESC LIMIT ?
+            """,
             (*params, limit),
         )
         return [self._row_to_job_run(row) for row in rows]
@@ -2922,6 +2948,7 @@ class PostgresDatabase:
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
             step_run_id=row.get("step_run_id"),
+            spec_run_id=extract_spec_run_id(row.get("speckit_metadata")),
             event_type=event_type,
             message=row["message"],
             metadata=row.get("metadata"),
@@ -2962,6 +2989,7 @@ class PostgresDatabase:
             project_id=row.get("project_id"),
             protocol_run_id=row.get("protocol_run_id"),
             step_run_id=row.get("step_run_id"),
+            spec_run_id=extract_spec_run_id(row.get("speckit_metadata")),
             queue=row.get("queue"),
             attempt=row.get("attempt"),
             worker_id=row.get("worker_id"),
@@ -4509,6 +4537,7 @@ class PostgresDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -4558,6 +4587,7 @@ class PostgresDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -4609,6 +4639,7 @@ class PostgresDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -4779,7 +4810,17 @@ class PostgresDatabase:
         return self.get_job_run(run_id)
 
     def get_job_run(self, run_id: str) -> JobRun:
-        row = self._fetchone("SELECT * FROM job_runs WHERE run_id = %s", (run_id,))
+        row = self._fetchone(
+            """
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            WHERE jr.run_id = %s
+            """,
+            (run_id,),
+        )
         if row is None:
             raise KeyError(f"JobRun {run_id} not found")
         return self._row_to_job_run(row)
@@ -4799,27 +4840,35 @@ class PostgresDatabase:
         where = []
         params: list[Any] = []
         if project_id is not None:
-            where.append("project_id = %s")
+            where.append("jr.project_id = %s")
             params.append(project_id)
         if protocol_run_id is not None:
-            where.append("protocol_run_id = %s")
+            where.append("jr.protocol_run_id = %s")
             params.append(protocol_run_id)
         if step_run_id is not None:
-            where.append("step_run_id = %s")
+            where.append("jr.step_run_id = %s")
             params.append(step_run_id)
         if status is not None:
-            where.append("status = %s")
+            where.append("jr.status = %s")
             params.append(status)
         if job_type is not None:
-            where.append("job_type = %s")
+            where.append("jr.job_type = %s")
             params.append(job_type)
         if windmill_job_id is not None:
-            where.append("windmill_job_id = %s")
+            where.append("jr.windmill_job_id = %s")
             params.append(windmill_job_id)
 
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         rows = self._fetchall(
-            f"SELECT * FROM job_runs {clause} ORDER BY created_at DESC LIMIT %s",
+            f"""
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            {clause}
+            ORDER BY jr.created_at DESC LIMIT %s
+            """,
             (*params, limit),
         )
         return [self._row_to_job_run(row) for row in rows]

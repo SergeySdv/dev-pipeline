@@ -19,6 +19,7 @@ export interface QAOverview {
 export interface QualityDashboardFinding {
   id: number;
   protocol_id: number;
+  spec_run_id?: number | null;
   project_name: string;
   article: string;
   article_name: string;
