@@ -1,0 +1,44 @@
+{
+  "scenario_id": "live_speckit_test_glm5_demo",
+  "source": "github_user_allowlist",
+  "repo": {
+    "owner": "ilyafedotov-ops",
+    "name": "test-glm5-demo",
+    "url": "https://github.com/ilyafedotov-ops/test-glm5-demo.git",
+    "default_branch": "main"
+  },
+  "adapter_id": "test_glm5_demo",
+  "workflow": {
+    "stages": [
+      "project_create",
+      "speckit_init",
+      "speckit_specify",
+      "speckit_clarify",
+      "speckit_plan",
+      "speckit_tasks",
+      "speckit_checklist",
+      "speckit_analyze",
+      "speckit_implement"
+    ]
+  },
+  "expectations": {
+    "discovery_outputs": [
+      "README.md"
+    ],
+    "min_protocol_steps": 1,
+    "terminal_protocol_status": "completed",
+    "artifact_patterns": [
+      ".protocols/*/plan.md"
+    ]
+  },
+  "timeouts": {
+    "onboard_seconds": 2700,
+    "planning_seconds": 2700,
+    "execution_seconds": 2700
+  },
+  "retries": {
+    "max_attempts": 3,
+    "backoff_seconds": 2,
+    "max_backoff_seconds": 20
+  }
+}

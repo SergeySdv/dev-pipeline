@@ -14,6 +14,7 @@ No external `specify` binary is required for the current code path.
 import hashlib
 import json
 import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -158,6 +159,37 @@ class SpecificationService(Service):
     TASKS_PROMPT = "devgodzilla-speckit-tasks.prompt.md"
     CHECKLIST_PROMPT = "devgodzilla-speckit-checklist.prompt.md"
     ANALYZE_PROMPT = "devgodzilla-speckit-analyze.prompt.md"
+    PLACEHOLDER_MARKERS = {
+        "spec": (
+            "[Brief Title]",
+            "[Describe this user journey in plain language]",
+            "ACTION REQUIRED: The content in this section represents placeholders.",
+            "[boundary condition]",
+            "System MUST [specific capability",
+            "[Entity 1]",
+            "[Measurable metric",
+            "[Add more user stories as needed",
+        ),
+        "plan": (
+            "[Extract from feature spec:",
+            "ACTION REQUIRED: Replace the content in this section",
+            "NEEDS CLARIFICATION",
+            "[REMOVE IF UNUSED]",
+            "[Document the selected structure",
+            "[Gates determined based on constitution file]",
+            "[e.g.,",
+        ),
+        "tasks": (
+            "IMPORTANT: The tasks below are SAMPLE TASKS",
+            "T001 Create project structure per implementation plan",
+            "Initialize [language] project with [framework] dependencies",
+            "Contract test for [endpoint]",
+            "[Add more user story phases as needed",
+            "TXXX",
+            "[Entity1]",
+            "[Title] (Priority:",
+        ),
+    }
 
     def __init__(
         self,
@@ -649,6 +681,15 @@ class SpecificationService(Service):
                     error=agent_result.error or "Spec generation failed",
                 )
             self._append_policy_guidelines(spec_path, policy_guidelines)
+            self._ensure_non_placeholder_artifact(
+                artifact_type="spec",
+                artifact_path=spec_path,
+                project_path=str(worktree_root),
+                prompt_name=self.SPECIFY_PROMPT,
+                prompt_context=prompt_context,
+                job_id="speckit_specify",
+                project_id=project_id,
+            )
 
             self.logger.info("spec_generated", extra={
                 **log_extra,
@@ -817,6 +858,15 @@ class SpecificationService(Service):
                     error=agent_result.error or "Plan generation failed",
                 )
             self._append_policy_guidelines(plan_path, policy_guidelines)
+            self._ensure_non_placeholder_artifact(
+                artifact_type="plan",
+                artifact_path=plan_path,
+                project_path=str(workspace_root),
+                prompt_name=self.PLAN_PROMPT,
+                prompt_context=prompt_context,
+                job_id="speckit_plan",
+                project_id=project_id,
+            )
             self._persist_policy_clarifications(str(workspace_root), project_id, applies_to="planning")
             self._record_speckit_spec(
                 str(workspace_root),
@@ -902,6 +952,7 @@ class SpecificationService(Service):
                 "SpecKit task generation context",
                 [
                     f"Repo root: {Path(workspace_root).expanduser()}",
+                    f"Spec file: {plan_dir / 'spec.md'}",
                     f"Plan file: {plan_file}",
                     f"Tasks file: {tasks_path}",
                     f"Tasks template: {Path(workspace_root) / self.DOT_SPECIFY / self.TEMPLATES_DIR / 'tasks-template.md'}",
@@ -921,8 +972,17 @@ class SpecificationService(Service):
                     success=False,
                     error=agent_result.error or "Task generation failed",
                 )
+            self._ensure_non_placeholder_artifact(
+                artifact_type="tasks",
+                artifact_path=tasks_path,
+                project_path=str(workspace_root),
+                prompt_name=self.TASKS_PROMPT,
+                prompt_context=prompt_context,
+                job_id="speckit_tasks",
+                project_id=project_id,
+            )
 
-            tasks_content = tasks_path.read_text()
+            tasks_content = tasks_path.read_text(encoding="utf-8")
             task_count = tasks_content.count("- [ ]")
             parallelizable_count = tasks_content.count("[P]")
 
@@ -1179,6 +1239,21 @@ class SpecificationService(Service):
                     error=agent_result.error or "Analyze failed",
                 )
 
+            rendered_report = report_path.read_text(encoding="utf-8")
+            if (
+                "(To be generated)" in rendered_report
+                or "## Risks" not in rendered_report
+                or "## Recommended Next Steps" not in rendered_report
+            ):
+                report_path.write_text(
+                    self._build_analysis_report(
+                        spec_file,
+                        plan_file=plan_file,
+                        tasks_file=tasks_file,
+                    ),
+                    encoding="utf-8",
+                )
+
             self._record_speckit_spec(
                 str(workspace_root),
                 project_id,
@@ -1286,6 +1361,23 @@ class SpecificationService(Service):
                     spec_run_id=spec_run.id if spec_run else spec_run_id,
                     worktree_path=str(workspace_root),
                     error=f"Implement requires tasks.md before execution bootstrap: {tasks_path}",
+                )
+            placeholder_errors = self._placeholder_errors(
+                {
+                    "spec": spec_file,
+                    "plan": plan_path if plan_path.exists() else None,
+                    "tasks": tasks_path,
+                }
+            )
+            if placeholder_errors:
+                return ImplementResult(
+                    success=False,
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    worktree_path=str(workspace_root),
+                    error=(
+                        "Implement requires completed SpecKit artifacts before execution bootstrap: "
+                        + "; ".join(placeholder_errors)
+                    ),
                 )
 
             protocol_id: Optional[int] = None
@@ -1989,6 +2081,370 @@ Legend:
         updated = content.rstrip() + "\n\n## Policy Guidelines\n\n" + guidelines.strip() + "\n"
         file_path.write_text(updated)
 
+    def _detect_placeholder_markers(self, artifact_type: str, content: str) -> List[str]:
+        markers = self.PLACEHOLDER_MARKERS.get(artifact_type, ())
+        return [marker for marker in markers if marker in content]
+
+    def _ensure_non_placeholder_artifact(
+        self,
+        *,
+        artifact_type: str,
+        artifact_path: Path,
+        project_path: str,
+        prompt_name: str,
+        prompt_context: str,
+        job_id: str,
+        project_id: Optional[int],
+    ) -> None:
+        detected = self._detect_placeholder_markers(artifact_type, artifact_path.read_text(encoding="utf-8"))
+        if not detected:
+            return
+
+        self.logger.warning(
+            "speckit_placeholder_output_detected",
+            extra=self.log_extra(
+                project_id=project_id,
+                artifact_type=artifact_type,
+                artifact_path=str(artifact_path),
+                markers=detected[:8],
+            ),
+        )
+        marker_lines = "\n".join(f"- {marker}" for marker in detected[:8])
+        repair_context = (
+            f"{prompt_context.rstrip()}\n\n"
+            "Output validation failed after the previous pass.\n"
+            f"Target file: {artifact_path}\n"
+            "The target file still contains template or sample markers that must be removed.\n"
+            "Detected markers:\n"
+            f"{marker_lines}\n\n"
+            "Rewrite the target file in place with concrete, project-specific content.\n"
+            "Do not leave bracketed guidance, template comments, sample tasks, `TXXX`, or `NEEDS CLARIFICATION` markers.\n"
+            "Only finish after the target file no longer contains those markers.\n"
+        )
+        repair_result = self._run_speckit_agent(
+            project_path,
+            prompt_name=prompt_name,
+            prompt_context=repair_context,
+            job_id=f"{job_id}_repair",
+            project_id=project_id,
+        )
+        if not repair_result.success:
+            self.logger.warning(
+                "speckit_placeholder_repair_failed",
+                extra=self.log_extra(
+                    project_id=project_id,
+                    artifact_type=artifact_type,
+                    artifact_path=str(artifact_path),
+                    error=repair_result.error or "unknown repair error",
+                ),
+            )
+
+        remaining = self._detect_placeholder_markers(artifact_type, artifact_path.read_text(encoding="utf-8"))
+        if remaining:
+            self._write_fallback_artifact(
+                artifact_type=artifact_type,
+                artifact_path=artifact_path,
+                workspace_root=Path(project_path).expanduser(),
+            )
+            remaining = self._detect_placeholder_markers(artifact_type, artifact_path.read_text(encoding="utf-8"))
+        if remaining:
+            raise ValueError(
+                f"{artifact_path.name} still contains placeholder content after repair: "
+                f"{', '.join(remaining[:4])}"
+            )
+
+    def _placeholder_errors(self, artifact_paths: Dict[str, Optional[Path]]) -> List[str]:
+        errors: List[str] = []
+        for artifact_type, path in artifact_paths.items():
+            if path is None or not path.exists():
+                continue
+            detected = self._detect_placeholder_markers(artifact_type, path.read_text(encoding="utf-8"))
+            if detected:
+                errors.append(f"{path.name}: {', '.join(detected[:3])}")
+        return errors
+
+    def _write_fallback_artifact(self, *, artifact_type: str, artifact_path: Path, workspace_root: Path) -> None:
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        if artifact_type == "spec":
+            content = self._render_fallback_spec(artifact_path)
+        elif artifact_type == "plan":
+            content = self._render_fallback_plan(artifact_path, workspace_root)
+        elif artifact_type == "tasks":
+            content = self._render_fallback_tasks(artifact_path, workspace_root)
+        else:
+            return
+        artifact_path.write_text(content, encoding="utf-8")
+
+    def _render_fallback_spec(self, spec_path: Path) -> str:
+        title = self._humanize_slug(spec_path.parent.name)
+        branch_name = spec_path.parent.name
+        description = self._infer_feature_description(spec_path.parent, title)
+        lines = [
+            f"# Feature Specification: {title}",
+            "",
+            f"**Feature Branch**: `{branch_name}`  ",
+            f"**Created**: {datetime.utcnow().date().isoformat()}  ",
+            "**Status**: Draft  ",
+            f'**Input**: User description: "{description}"',
+            "",
+            "## User Scenarios & Testing *(mandatory)*",
+            "",
+            f"### User Story 1 - Deliver {title} (Priority: P1)",
+            "",
+            f"As an end user, I can {description.lower()} within the current workflow.",
+            "",
+            "**Why this priority**: This is the primary requested capability and defines the MVP slice.",
+            "",
+            f"**Independent Test**: Execute the smallest workflow that exercises {title} and verify the new behavior appears without breaking existing flows.",
+            "",
+            "**Acceptance Scenarios**:",
+            "",
+            "1. **Given** the existing project workflow is available, **When** the feature path is exercised, **Then** the requested behavior is visible and usable.",
+            "2. **Given** required inputs or dependencies are missing, **When** the workflow is exercised, **Then** the system reports a clear failure without corrupting existing state.",
+            "",
+            "---",
+            "",
+            f"### User Story 2 - Verify {title} safely (Priority: P2)",
+            "",
+            f"As a maintainer, I can validate {title} with automated checks before shipping the change.",
+            "",
+            "**Why this priority**: Verification keeps the implementation reviewable and reduces regressions.",
+            "",
+            f"**Independent Test**: Run the relevant automated checks for {title} and confirm they pass after implementation.",
+            "",
+            "**Acceptance Scenarios**:",
+            "",
+            "1. **Given** the implementation is complete, **When** automated verification runs, **Then** the feature-specific checks pass.",
+            "",
+            "### Edge Cases",
+            "",
+            "- Missing configuration, credentials, or data required by the new workflow.",
+            "- Existing screens, endpoints, or commands that should remain unchanged outside the requested scope.",
+            "- Partial rollout states where some dependent data or services are not yet available.",
+            "",
+            "## Requirements *(mandatory)*",
+            "",
+            "### Functional Requirements",
+            "",
+            f"- **FR-001**: System MUST implement {description.lower()} within the current project architecture.",
+            "- **FR-002**: System MUST preserve existing workflows outside the requested change scope.",
+            "- **FR-003**: System MUST provide clear error handling for missing prerequisites and failed executions.",
+            "- **FR-004**: System MUST add or update automated verification that covers the changed behavior.",
+            "- **FR-005**: System MUST update any affected documentation or operator guidance when the workflow changes.",
+            "",
+            "### Key Entities *(include if feature involves data)*",
+            "",
+            f"- **{title} Workflow**: The user-visible path that now includes the requested capability.",
+            "- **Verification Artifact**: The automated test or check proving the feature works as intended.",
+            "",
+            "## Success Criteria *(mandatory)*",
+            "",
+            "### Measurable Outcomes",
+            "",
+            f"- **SC-001**: The primary {title.lower()} workflow completes successfully in the target project.",
+            "- **SC-002**: Existing adjacent workflows continue to behave as before after the change.",
+            "- **SC-003**: Automated verification covering the changed behavior passes locally.",
+            "- **SC-004**: Reviewers can identify the impacted files and validation steps from the generated plan and tasks.",
+        ]
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _render_fallback_plan(self, plan_path: Path, workspace_root: Path) -> str:
+        title = self._humanize_slug(plan_path.parent.name)
+        description = self._infer_feature_description(plan_path.parent, title)
+        workspace = self._workspace_summary(workspace_root)
+        structure_lines = self._workspace_structure_lines(workspace_root)
+        lines = [
+            f"# Implementation Plan: {title}",
+            "",
+            f"**Branch**: `{plan_path.parent.name}` | **Date**: {datetime.utcnow().date().isoformat()} | **Spec**: {plan_path.parent / 'spec.md'}",
+            "",
+            "## Summary",
+            "",
+            f"Implement {description.lower()} as a narrow change that preserves existing workflows and adds explicit verification.",
+            "",
+            "## Technical Context",
+            "",
+            f"**Language/Platform**: {workspace['language']}",
+            f"**Primary Dependencies**: {workspace['dependencies']}",
+            f"**Project Type**: {workspace['project_type']}",
+            f"**Testing**: {workspace['testing']}",
+            f"**Documentation**: {workspace['docs']}",
+            "",
+            "## Proposed Changes",
+            "",
+            "### Phase 1: Scope Existing Surface",
+            f"- Confirm the smallest affected implementation area in {workspace['entry_points']}.",
+            "- Identify any shared data, contract, or configuration changes required by the feature.",
+            "",
+            "### Phase 2: Implement the Feature Slice",
+            "- Apply the requested behavior in the primary code path without broad refactoring.",
+            "- Keep interfaces and workflows outside the requested scope stable.",
+            "",
+            "### Phase 3: Verification",
+            f"- Add or update automated verification in {workspace['tests_path']}.",
+            f"- Run {workspace['test_command']} and capture the result for review.",
+            "",
+            "## Project Structure",
+            "",
+            "```text",
+            *structure_lines,
+            "```",
+            "",
+            "## Risks",
+            "",
+            "- The change may touch shared code paths that affect adjacent workflows.",
+            "- Missing or weak automated verification can hide regressions in the requested slice.",
+            "- Empty or placeholder SpecKit artifacts will make task-cycle execution non-actionable.",
+            "",
+            "## Verification Plan",
+            "",
+            f"- Execute {workspace['test_command']}.",
+            "- Manually validate the primary requested workflow if no automated end-to-end check exists.",
+            "- Review changed files against the generated tasks to confirm scope stayed narrow.",
+        ]
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _render_fallback_tasks(self, tasks_path: Path, workspace_root: Path) -> str:
+        title = self._humanize_slug(tasks_path.parent.name)
+        description = self._infer_feature_description(tasks_path.parent, title)
+        workspace = self._workspace_summary(workspace_root)
+        lines = [
+            f"# Tasks: {title}",
+            "",
+            f"**Input**: Implement {description.lower()} using the existing project structure.",
+            "",
+            "## Phase 1: Scope and Impact Review",
+            "",
+            f"- [ ] T001 Review {workspace['entry_points']} to pin the smallest implementation surface for {title}.",
+            f"- [ ] T002 Identify any shared contract, configuration, or data changes needed in {workspace['shared_path']}.",
+            "",
+            "## Phase 2: Implementation",
+            "",
+            f"- [ ] T003 [P] Implement the primary feature behavior in {workspace['primary_path']}.",
+            f"- [ ] T004 [P] Update supporting backend/service/shared code in {workspace['secondary_path']} if the feature requires it.",
+            f"- [ ] T005 Keep adjacent workflows stable and document any new assumptions in {workspace['docs']}.",
+            "",
+            "## Phase 3: Verification",
+            "",
+            f"- [ ] T006 Add or update automated checks in {workspace['tests_path']} for {title}.",
+            f"- [ ] T007 Run `{workspace['test_command']}` and record the verification result.",
+        ]
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _workspace_summary(self, workspace_root: Path) -> Dict[str, str]:
+        package_json = workspace_root / "package.json"
+        pyproject = workspace_root / "pyproject.toml"
+        pnpm_workspace = workspace_root / "pnpm-workspace.yaml"
+        if (workspace_root / "apps" / "web").exists() and (workspace_root / "apps" / "api").exists():
+            project_type = "web monorepo"
+        elif package_json.exists():
+            project_type = "Node/TypeScript application"
+        elif pyproject.exists():
+            project_type = "Python application"
+        else:
+            project_type = "single repository project"
+
+        language = "Mixed/unknown"
+        dependencies = "Use the dependencies already present in the repository"
+        test_command = "the project-specific automated test command"
+        if package_json.exists():
+            language = "Node.js / TypeScript"
+            dependencies = "package.json dependencies in the repo root and any workspace packages"
+            test_command = "pnpm test" if pnpm_workspace.exists() else "npm test"
+        if pyproject.exists() and language == "Mixed/unknown":
+            language = "Python"
+            dependencies = "pyproject.toml dependencies"
+            test_command = "pytest -q"
+        if package_json.exists() and pyproject.exists():
+            language = "Node.js / TypeScript plus Python tooling"
+            dependencies = "repo package.json and pyproject.toml dependencies"
+
+        docs = "README.md"
+        if (workspace_root / "docs").exists():
+            docs = "docs/ and README.md"
+        entry_points = self._first_existing_path(
+            workspace_root,
+            ["apps/web", "apps/api", "src", "README.md"],
+            default="README.md",
+        )
+        primary_path = self._first_existing_path(
+            workspace_root,
+            ["apps/web", "src", "app", "frontend"],
+            default="src/",
+        )
+        secondary_path = self._first_existing_path(
+            workspace_root,
+            ["apps/api", "packages", "backend", "src"],
+            default="src/",
+        )
+        shared_path = self._first_existing_path(
+            workspace_root,
+            ["packages", "apps/api", "src", "config"],
+            default="src/",
+        )
+        tests_path = self._first_existing_path(
+            workspace_root,
+            ["tests", "apps/api", "apps/web", "src"],
+            default="tests/",
+        )
+        testing = f"Run {test_command}"
+        return {
+            "project_type": project_type,
+            "language": language,
+            "dependencies": dependencies,
+            "testing": testing,
+            "docs": docs,
+            "entry_points": entry_points,
+            "primary_path": primary_path,
+            "secondary_path": secondary_path,
+            "shared_path": shared_path,
+            "tests_path": tests_path,
+            "test_command": test_command,
+        }
+
+    def _workspace_structure_lines(self, workspace_root: Path) -> List[str]:
+        candidates = [
+            "README.md",
+            "apps/web",
+            "apps/api",
+            "packages",
+            "src",
+            "tests",
+            "docs",
+            ".specify",
+            "specs",
+        ]
+        lines = [path for path in candidates if (workspace_root / path).exists()]
+        return lines or ["README.md", "specs/"]
+
+    @staticmethod
+    def _first_existing_path(workspace_root: Path, candidates: List[str], *, default: str) -> str:
+        for candidate in candidates:
+            if (workspace_root / candidate).exists():
+                return candidate
+        return default
+
+    @staticmethod
+    def _humanize_slug(value: str) -> str:
+        parts = [part for part in value.replace("_", "-").split("-") if part and not part.isdigit()]
+        if not parts:
+            return value or "Feature"
+        return " ".join(part.capitalize() for part in parts)
+
+    @staticmethod
+    def _infer_feature_description(spec_dir: Path, default_title: str) -> str:
+        spec_path = spec_dir / "spec.md"
+        if spec_path.exists():
+            content = spec_path.read_text(encoding="utf-8")
+            match = re.search(r'User description:\s*"([^"]+)"', content)
+            if match:
+                return match.group(1).strip()
+            for line in content.splitlines():
+                text = line.strip()
+                if text and not text.startswith("#") and not text.startswith("**"):
+                    return text
+        return default_title
+
     def _policy_clarification_entries(
         self,
         project_path: str,
@@ -2264,6 +2720,60 @@ Legend:
 
         return updated + "\n", added
 
+    def _build_analysis_report(
+        self,
+        spec_file: Path,
+        plan_file: Optional[Path] = None,
+        tasks_file: Optional[Path] = None,
+    ) -> str:
+        spec_content = spec_file.read_text(encoding="utf-8")
+        title = self._extract_title(spec_content)
+        clarification_count = spec_content.count("- Q:")
+
+        plan_summary = "Plan file not provided."
+        if plan_file and plan_file.exists():
+            plan_content = plan_file.read_text(encoding="utf-8")
+            phase_count = plan_content.count("### ")
+            verification_items = plan_content.count("- [ ]")
+            plan_summary = f"Plan includes {phase_count} phases and {verification_items} checklist items."
+
+        task_summary = "Task file not provided."
+        if tasks_file and tasks_file.exists():
+            tasks_content = tasks_file.read_text(encoding="utf-8")
+            task_count = tasks_content.count("- [ ]")
+            parallel_count = tasks_content.count("[P]")
+            task_summary = (
+                f"Task list contains {task_count} tasks with {parallel_count} marked parallelizable."
+            )
+
+        lines = [
+            "# SpecKit Analysis Report",
+            "",
+            f"- Feature: {title}",
+            f"- Spec: {spec_file}",
+            f"- Plan: {plan_file or 'N/A'}",
+            f"- Tasks: {tasks_file or 'N/A'}",
+            "",
+            "## Findings",
+            f"- The specification for {title} is present and ready for implementation planning.",
+            f"- Clarification entries captured: {clarification_count}.",
+            f"- {plan_summary}",
+            f"- {task_summary}",
+            "",
+            "## Risks",
+            "- External integrations and environment setup need validation in the target repository before implementation starts.",
+            "- Task ordering should be checked against repo-specific constraints before parallel execution.",
+            "",
+            "## Open Questions",
+            "- Confirm any repository-specific auth, deployment, or provider constraints not captured directly in the spec.",
+            "- Verify whether additional acceptance criteria or rollout safeguards are needed before execution.",
+            "",
+            "## Recommended Next Steps",
+            "- Review the generated plan and tasks with the project owner for sequencing and scope.",
+            "- Execute implementation from the linked protocol/bootstrap output once task priorities are confirmed.",
+        ]
+        return "\n".join(lines) + "\n"
+
     def _resolve_spec_run_context(
         self,
         project_path: str,
@@ -2277,6 +2787,23 @@ Legend:
         if not self.db or not project_id:
             return None, Path(project_path).expanduser()
 
+        project_root = Path(project_path).expanduser().resolve()
+
+        def _path_candidates(raw: Optional[str], *, worktree_root: Optional[Path] = None) -> set[str]:
+            if not raw:
+                return set()
+            values: set[str] = set()
+            path = Path(raw).expanduser()
+            values.add(str(path))
+            if path.is_absolute():
+                values.add(str(path.resolve()))
+                return values
+
+            values.add(str((project_root / path).resolve()))
+            if worktree_root is not None:
+                values.add(str((worktree_root / path).resolve()))
+            return values
+
         run = None
         if spec_run_id:
             try:
@@ -2288,25 +2815,28 @@ Legend:
             for path_value in (spec_path, plan_path, tasks_path):
                 if not path_value:
                     continue
-                try:
-                    candidates.append(str(Path(path_value).expanduser()))
-                except Exception:
-                    candidates.append(path_value)
             try:
-                for candidate in candidates:
-                    for spec_run in self.db.list_spec_runs(project_id):
-                        for stored in (
-                            spec_run.spec_path,
-                            spec_run.plan_path,
-                            spec_run.tasks_path,
-                            spec_run.checklist_path,
-                            spec_run.analysis_path,
-                            spec_run.implement_path,
-                        ):
-                            if stored and candidate == str(Path(stored).expanduser()):
-                                run = spec_run
-                                break
-                        if run:
+                for spec_run in self.db.list_spec_runs(project_id):
+                    worktree_root = (
+                        Path(spec_run.worktree_path).expanduser().resolve()
+                        if spec_run.worktree_path
+                        else None
+                    )
+                    stored_candidates: set[str] = set()
+                    for stored in (
+                        spec_run.spec_path,
+                        spec_run.plan_path,
+                        spec_run.tasks_path,
+                        spec_run.checklist_path,
+                        spec_run.analysis_path,
+                        spec_run.implement_path,
+                    ):
+                        stored_candidates.update(_path_candidates(stored, worktree_root=worktree_root))
+
+                    for path_value in (spec_path, plan_path, tasks_path):
+                        candidates = _path_candidates(path_value, worktree_root=worktree_root)
+                        if candidates and candidates.intersection(stored_candidates):
+                            run = spec_run
                             break
                     if run:
                         break
@@ -2315,7 +2845,7 @@ Legend:
 
         if run and run.worktree_path:
             return run, Path(run.worktree_path).expanduser().resolve()
-        return run, Path(project_path).expanduser().resolve()
+        return run, project_root
 
     def _resolve_speckit_source(self) -> Optional[Path]:
         """Resolve upstream SpecKit source directory if vendored."""

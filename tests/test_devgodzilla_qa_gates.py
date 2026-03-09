@@ -201,6 +201,55 @@ class TestTestGateImplementation:
         # Should skip or error gracefully
         assert result.verdict in (GateVerdict.SKIP, GateVerdict.ERROR)
 
+    def test_run_uses_task_cycle_test_command_spec(self, workspace):
+        """Test running a task-cycle command spec from metadata."""
+        gate = TestGate()
+        context = GateContext(
+            workspace_root=str(workspace),
+            step_name="test-step",
+            metadata={
+                "test_command_specs": [
+                    {
+                        "cwd": "packages/web",
+                        "command": ["npm", "test"],
+                        "display": "cd packages/web && npm test",
+                    }
+                ]
+            },
+        )
+
+        mock_proc = Mock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "ok"
+        mock_proc.stderr = ""
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock_proc
+            result = gate.run(context)
+
+        assert result.verdict == GateVerdict.PASS
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        assert kwargs["cwd"] == workspace / "packages" / "web"
+        assert mock_run.call_args.args[0] == ["npm", "test"]
+
+    def test_run_adds_fallback_finding_for_unparsed_command_failure(self, gate_context):
+        """Test opaque command failures still create a blocking finding."""
+        gate = TestGate(test_command=["pytest", "-q"])
+
+        mock_proc = Mock()
+        mock_proc.returncode = 2
+        mock_proc.stdout = ""
+        mock_proc.stderr = "usage error"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock_proc
+            result = gate.run(gate_context)
+
+        assert result.verdict == GateVerdict.FAIL
+        assert result.findings
+        assert "exit code 2" in result.findings[0].message
+
 
 class TestFormatGateImplementation:
     """Test FormatGate implementation."""

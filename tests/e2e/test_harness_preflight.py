@@ -23,13 +23,25 @@ def test_run_preflight_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
 
     monkeypatch.setenv("HARNESS_GITHUB_REPOS", "a,b,c")
+    monkeypatch.setenv("HARNESS_READY_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("HARNESS_READY_POLL_INTERVAL_SECONDS", "0.01")
 
     runner = _FakeRunner()
+    calls = {"backend": 0, "windmill": 0}
+
+    def _probe(url: str, timeout: float) -> tuple[bool, str]:
+        del timeout
+        if "8000/health" in url:
+            calls["backend"] += 1
+            return (calls["backend"] >= 2, "backend")
+        calls["windmill"] += 1
+        return (calls["windmill"] >= 2, "windmill")
+
     report = run_preflight(
         project_root=tmp_path,
         command_exists=lambda command: True,
         command_runner=runner,
-        http_probe=lambda url, timeout: (True, "ok"),
+        http_probe=_probe,
     )
 
     assert report.ok
@@ -113,6 +125,62 @@ def test_run_preflight_no_autostart_skips_runner(monkeypatch: pytest.MonkeyPatch
     assert report.ok
     assert runner.calls == []
     assert report.warnings
+
+
+def test_run_preflight_skips_up_when_windmill_ready_but_starts_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "scripts" / "run-local-dev.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    monkeypatch.setenv("HARNESS_GITHUB_REPOS", "a,b,c")
+    monkeypatch.setenv("HARNESS_READY_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("HARNESS_READY_POLL_INTERVAL_SECONDS", "0.01")
+
+    runner = _FakeRunner()
+    calls = {"backend": 0}
+
+    def _probe(url: str, timeout: float) -> tuple[bool, str]:
+        del timeout
+        if "8000/health" in url:
+            calls["backend"] += 1
+            return (calls["backend"] >= 2, "backend")
+        return True, "windmill ready"
+
+    report = run_preflight(
+        project_root=tmp_path,
+        command_exists=lambda command: True,
+        command_runner=runner,
+        http_probe=_probe,
+    )
+
+    assert report.ok
+    assert not any(call[-1] == "up" for call in runner.calls)
+    assert any(call[:2] == ["bash", "-lc"] and "backend start" in call[2] for call in runner.calls)
+
+
+def test_run_preflight_skips_all_starts_when_services_already_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "scripts" / "run-local-dev.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    monkeypatch.setenv("HARNESS_GITHUB_REPOS", "a,b,c")
+
+    runner = _FakeRunner()
+    report = run_preflight(
+        project_root=tmp_path,
+        command_exists=lambda command: True,
+        command_runner=runner,
+        http_probe=lambda url, timeout: (True, "ready"),
+    )
+
+    assert report.ok
+    assert runner.calls == []
+    assert any("ready infra" in warning for warning in report.warnings)
+    assert any("ready backend" in warning for warning in report.warnings)
 
 
 def test_run_preflight_waits_for_backend_readiness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

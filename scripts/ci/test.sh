@@ -34,7 +34,9 @@ if [ "${DEVGODZILLA_RUN_E2E_REAL_AGENT:-}" = "1" ]; then
     exit 1
   fi
   ci_info "running real agent E2E tests" "scope=e2e engine=opencode"
-  "${PYTEST_BIN}" -q --disable-warnings --maxfail=1 tests/e2e/test_devgodzilla_cli_real_agent.py
+  "${PYTEST_BIN}" -q --disable-warnings --maxfail=1 \
+    tests/e2e/test_devgodzilla_cli_real_agent.py \
+    tests/test_devgodzilla_project_speckit_integration.py
   ci_info "all tests completed" "result=pass unit=pass e2e=pass"
 else
   ci_warn "real-agent e2e skipped" "reason=missing_env DEVGODZILLA_RUN_E2E_REAL_AGENT=1"

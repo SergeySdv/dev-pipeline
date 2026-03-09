@@ -404,7 +404,17 @@ class SQLiteDatabase:
         
         with self._transaction() as conn:
             conn.executescript(SCHEMA_SQLITE)
+            self._ensure_protocol_runs_linked_sprint_column(conn)
             conn.commit()
+
+    @staticmethod
+    def _ensure_protocol_runs_linked_sprint_column(conn: sqlite3.Connection) -> None:
+        cols = conn.execute("PRAGMA table_info(protocol_runs)").fetchall()
+        names = {row[1] for row in cols}
+        if "linked_sprint_id" not in names:
+            conn.execute(
+                "ALTER TABLE protocol_runs ADD COLUMN linked_sprint_id INTEGER REFERENCES sprints(id)"
+            )
 
     # Helper methods for JSON and timestamp parsing
     @staticmethod
@@ -2840,6 +2850,24 @@ class PostgresDatabase:
         with self._transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA_POSTGRES)
+                self._ensure_protocol_runs_linked_sprint_column(cur)
+
+    @staticmethod
+    def _ensure_protocol_runs_linked_sprint_column(cur) -> None:
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'protocol_runs'
+              AND column_name = 'linked_sprint_id'
+            """
+        )
+        exists = cur.fetchone()
+        if not exists:
+            cur.execute(
+                "ALTER TABLE protocol_runs ADD COLUMN linked_sprint_id INTEGER REFERENCES sprints(id)"
+            )
 
     # Helper methods for JSON and timestamp parsing (reuse SQLite implementations)
     @staticmethod

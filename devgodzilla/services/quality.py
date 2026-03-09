@@ -5,6 +5,7 @@ Service for quality assurance and validation of protocol steps.
 Orchestrates QA gates and manages verdicts.
 """
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -389,6 +390,11 @@ class QualityService(Service):
             step_run_id=step_run_id,
             protocol_run_id=run.id,
             project_id=project.id,
+            metadata=self._load_task_cycle_context_metadata(
+                workspace_root=workspace_root,
+                protocol_run_id=run.id,
+                step_run_id=step_run_id,
+            ),
         )
 
         policy_service = PolicyService(self.context, self.db)
@@ -648,6 +654,60 @@ class QualityService(Service):
         if not constitution.articles:
             return None
         return ConstitutionalGate(constitution)
+
+    def _load_task_cycle_context_metadata(
+        self,
+        *,
+        workspace_root: Path,
+        protocol_run_id: int,
+        step_run_id: int,
+    ) -> Dict[str, Any]:
+        context_pack = (
+            workspace_root
+            / ".devgodzilla"
+            / "task-cycle"
+            / "protocols"
+            / str(protocol_run_id)
+            / "work-items"
+            / str(step_run_id)
+            / "context_pack.json"
+        )
+        if not context_pack.exists():
+            return {}
+        try:
+            payload = json.loads(context_pack.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+
+        metadata: Dict[str, Any] = {}
+        test_commands = payload.get("test_commands")
+        if isinstance(test_commands, list):
+            metadata["test_commands"] = [str(item) for item in test_commands if str(item).strip()]
+
+        raw_specs = payload.get("test_command_specs")
+        if isinstance(raw_specs, list):
+            specs: List[Dict[str, Any]] = []
+            for item in raw_specs:
+                if not isinstance(item, dict):
+                    continue
+                raw_command = item.get("command")
+                if not isinstance(raw_command, list) or not raw_command:
+                    continue
+                command = [str(part) for part in raw_command if str(part).strip()]
+                if not command:
+                    continue
+                spec: Dict[str, Any] = {
+                    "cwd": str(item.get("cwd") or "."),
+                    "command": command,
+                    "display": str(item.get("display") or " ".join(command)),
+                }
+                specs.append(spec)
+            if specs:
+                metadata["test_command_specs"] = specs
+
+        return metadata
 
     def _aggregate_verdict(self, gate_results: List[GateResult]) -> QAVerdict:
         """Aggregate gate results into overall verdict."""

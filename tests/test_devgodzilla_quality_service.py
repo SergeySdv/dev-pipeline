@@ -569,6 +569,67 @@ class TestRunQA:
         gate_ids = [g.gate_id for g in result.gate_results]
         assert gate_ids == ["prompt_qa", "lint"]
 
+    def test_run_qa_loads_task_cycle_test_command_specs(self, service_context, mock_db, workspace, monkeypatch):
+        """Test run_qa loads task-cycle command specs into gate context metadata."""
+        mock_db.get_project.return_value.local_path = str(workspace)
+        context_pack_dir = workspace / ".devgodzilla" / "task-cycle" / "protocols" / "100" / "work-items" / "1000"
+        context_pack_dir.mkdir(parents=True, exist_ok=True)
+        (context_pack_dir / "context_pack.json").write_text(
+            """
+            {
+              "test_commands": ["cd packages/web && npm test"],
+              "test_command_specs": [
+                {
+                  "cwd": "packages/web",
+                  "command": ["npm", "test"],
+                  "display": "cd packages/web && npm test"
+                }
+              ]
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+
+        effective = EffectivePolicy(
+            policy={"defaults": {"ci": {"required_checks": ["test"]}}},
+            effective_hash="hash",
+            pack_key="default",
+            pack_version="1.0",
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.quality.PolicyService.resolve_effective_policy",
+            lambda *args, **kwargs: effective,
+        )
+
+        observed = {}
+
+        def fake_run(self, context: GateContext) -> GateResult:
+            observed["metadata"] = dict(context.metadata)
+            return GateResult(
+                gate_id="test",
+                gate_name="Test Gate",
+                verdict=GateVerdict.PASS,
+            )
+
+        monkeypatch.setattr("devgodzilla.services.quality.TestGate.run", fake_run)
+
+        service = QualityService(
+            context=service_context,
+            db=mock_db,
+        )
+
+        result = service.run_qa(step_run_id=1000, skip_gates=["prompt_qa"])
+
+        assert result.verdict == QAVerdict.PASS
+        assert observed["metadata"]["test_commands"] == ["cd packages/web && npm test"]
+        assert observed["metadata"]["test_command_specs"] == [
+            {
+                "cwd": "packages/web",
+                "command": ["npm", "test"],
+                "display": "cd packages/web && npm test",
+            }
+        ]
+
     def test_run_qa_blocks_protocol_on_failures(self, service_context, mock_db, workspace, monkeypatch):
         """Test run_qa marks protocol blocked when gates fail."""
         mock_db.get_project.return_value.local_path = str(workspace)

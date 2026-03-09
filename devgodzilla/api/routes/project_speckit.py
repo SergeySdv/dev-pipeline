@@ -391,7 +391,7 @@ def project_speckit_clarify(
     result = service.run_clarify(
         project.local_path,
         request.spec_path,
-        entries=[entry.dict() for entry in request.entries],
+        entries=[entry.model_dump() for entry in request.entries],
         notes=request.notes,
         spec_run_id=request.spec_run_id,
         project_id=project_id,

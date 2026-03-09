@@ -244,6 +244,25 @@ class TestSpecificationServiceSpecify:
         assert "!" not in result.feature_name
         assert "'" not in result.feature_name
 
+    def test_specify_rewrites_placeholder_spec_when_agent_leaves_template_behind(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        template = initialized_workspace / ".specify" / "templates" / "spec-template.md"
+        template.write_text(
+            "# Feature Specification: {{ title }}\n\n### User Story 1 - [Brief Title] (Priority: P1)\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            service,
+            "_run_speckit_agent",
+            lambda *args, **kwargs: MagicMock(success=True, error=None),
+        )
+
+        result = service.run_specify(str(initialized_workspace), "Add demo feature")
+        assert result.success is True
+        assert "[Brief Title]" not in Path(result.spec_path).read_text(encoding="utf-8")
+
 
 class TestSpecificationServicePlan:
     """Tests for SpecificationService.run_plan()"""
@@ -318,6 +337,29 @@ class TestSpecificationServicePlan:
         assert "Additional planning context:" in captured["prompt_context"]
         assert "Prefer the existing auth tables and avoid schema changes." in captured["prompt_context"]
 
+    def test_plan_rewrites_placeholder_plan_when_agent_leaves_template_behind(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_dir = initialized_workspace / "specs" / "001-test-feature"
+        spec_dir.mkdir(parents=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Test Feature\n\nConcrete spec body.\n", encoding="utf-8")
+        plan_template = initialized_workspace / ".specify" / "templates" / "plan-template.md"
+        plan_template.write_text(
+            "# Implementation Plan: {{ title }}\n\n## Summary\n[Extract from feature spec: primary requirement + technical approach from research]\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            service,
+            "_run_speckit_agent",
+            lambda *args, **kwargs: MagicMock(success=True, error=None),
+        )
+
+        result = service.run_plan(str(initialized_workspace), str(spec_path))
+        assert result.success is True
+        assert "[Extract from feature spec:" not in Path(result.plan_path).read_text(encoding="utf-8")
+
 
 class TestSpecificationServiceTasks:
     """Tests for SpecificationService.run_tasks()"""
@@ -344,6 +386,29 @@ class TestSpecificationServiceTasks:
         assert result.success
         assert result.task_count >= 0
         assert result.parallelizable_count >= 0
+
+    def test_tasks_rewrite_sample_template_when_agent_leaves_template_behind(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_dir = initialized_workspace / "specs" / "001-test-feature"
+        spec_dir.mkdir(parents=True)
+        plan_path = spec_dir / "plan.md"
+        plan_path.write_text("# Implementation Plan: Test Feature\n\nConcrete plan body.\n", encoding="utf-8")
+        tasks_template = initialized_workspace / ".specify" / "templates" / "tasks-template.md"
+        tasks_template.write_text(
+            "# Tasks: {{ title }}\n\nIMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            service,
+            "_run_speckit_agent",
+            lambda *args, **kwargs: MagicMock(success=True, error=None),
+        )
+
+        result = service.run_tasks(str(initialized_workspace), str(plan_path))
+        assert result.success is True
+        assert "IMPORTANT: The tasks below are SAMPLE TASKS" not in Path(result.tasks_path).read_text(encoding="utf-8")
 
 
 class TestSpecificationServiceImplement:
@@ -454,6 +519,61 @@ class TestSpecificationServiceImplement:
         assert "tasks" in (result.error or "").lower()
         assert result.protocol_id is None
 
+    def test_implement_rejects_placeholder_speckit_artifacts(
+        self, service_context, initialized_workspace, tmp_path
+    ):
+        from devgodzilla.db.database import SQLiteDatabase
+
+        db_path = tmp_path / "devgodzilla.sqlite"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(
+            name="SpecKit Placeholder Project",
+            git_url="https://github.com/example/test.git",
+            base_branch="main",
+            local_path=str(initialized_workspace),
+        )
+
+        spec_dir = initialized_workspace / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text(
+            "# Feature Specification: Feature 001\n\n### User Story 1 - [Brief Title] (Priority: P1)\n",
+            encoding="utf-8",
+        )
+        plan_path = spec_dir / "plan.md"
+        plan_path.write_text(
+            "# Implementation Plan: Feature 001\n\n## Summary\n[Extract from feature spec: primary requirement + technical approach from research]\n",
+            encoding="utf-8",
+        )
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text(
+            "# Tasks: Feature 001\n\nIMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.\n",
+            encoding="utf-8",
+        )
+
+        spec_run = db.create_spec_run(
+            project_id=project.id,
+            spec_name="001-feature",
+            status="tasks",
+            base_branch="main",
+            spec_path=str(spec_path.relative_to(initialized_workspace)),
+            plan_path=str(plan_path.relative_to(initialized_workspace)),
+            tasks_path=str(tasks_path.relative_to(initialized_workspace)),
+        )
+
+        service = SpecificationService(service_context, db)
+        result = service.run_implement(
+            str(initialized_workspace),
+            str(spec_path.relative_to(initialized_workspace)),
+            spec_run_id=spec_run.id,
+            project_id=project.id,
+        )
+
+        assert result.success is False
+        assert "completed SpecKit artifacts" in str(result.error)
+
 
 class TestSpecificationServiceList:
     """Tests for SpecificationService.list_specs()"""
@@ -515,6 +635,60 @@ class TestSpecificationServiceHelpers:
 
         assert "# Test" in result
         assert "Desc" in result
+
+    def test_resolve_spec_run_context_matches_relative_paths_to_worktree_artifacts(
+        self, service_context, tmp_path
+    ):
+        """Relative artifact paths should still resolve back to a worktree-backed SpecRun."""
+        from devgodzilla.db.database import SQLiteDatabase
+
+        db_path = tmp_path / "devgodzilla.sqlite"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        repo_root = tmp_path / "repo"
+        worktree_root = tmp_path / "worktrees" / "specs" / "001-feature"
+        repo_root.mkdir(parents=True, exist_ok=True)
+        worktree_root.mkdir(parents=True, exist_ok=True)
+
+        project = db.create_project(
+            name="SpecKit Resolve Project",
+            git_url="https://github.com/example/test.git",
+            base_branch="main",
+            local_path=str(repo_root),
+        )
+
+        spec_dir = worktree_root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        plan_path = spec_dir / "plan.md"
+        tasks_path = spec_dir / "tasks.md"
+        spec_path.write_text("# Feature 001\n", encoding="utf-8")
+        plan_path.write_text("# Plan\n", encoding="utf-8")
+        tasks_path.write_text("# Tasks\n", encoding="utf-8")
+
+        spec_run = db.create_spec_run(
+            project_id=project.id,
+            spec_name="001-feature",
+            status="tasks",
+            base_branch="main",
+            worktree_path=str(worktree_root),
+            spec_path=str(spec_path),
+            plan_path=str(plan_path),
+            tasks_path=str(tasks_path),
+        )
+
+        service = SpecificationService(service_context, db)
+
+        resolved_run, resolved_workspace = service._resolve_spec_run_context(
+            str(repo_root),
+            project.id,
+            spec_path="specs/001-feature/spec.md",
+        )
+
+        assert resolved_run is not None
+        assert resolved_run.id == spec_run.id
+        assert resolved_workspace == worktree_root.resolve()
 
 
 class TestSpecKitWorkflow:

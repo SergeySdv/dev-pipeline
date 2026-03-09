@@ -112,6 +112,101 @@ def test_task_cycle_build_context_creates_reusable_artifacts(monkeypatch: pytest
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_build_context_detects_nested_package_test_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        package_dir = repo / "packages" / "web"
+        (package_dir / "src").mkdir(parents=True, exist_ok=True)
+        (package_dir / "src" / "widget.tsx").write_text("export const Widget = () => null;\n", encoding="utf-8")
+        (package_dir / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "web",
+                    "scripts": {
+                        "test": "vitest run",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.setenv("DEVGODZILLA_EXEC_ENGINE_ID", "opencode")
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "plan.md").write_text("# Plan\n- update packages/web/src/widget.tsx\n", encoding="utf-8")
+        (protocol_root / "step-01-demo.md").write_text(
+            "# Update widget\n\n- [ ] update packages/web/src/widget.tsx\n- [ ] add tests\n",
+            encoding="utf-8",
+        )
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="pending",
+            assigned_agent="dev",
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.post(f"/work-items/{step.id}/build-context", json={"refresh": False})
+                assert resp.status_code == 200
+                context_path = Path(resp.json()["artifact_refs"]["context_pack_json"])
+                context = json.loads(context_path.read_text(encoding="utf-8"))
+                assert "cd packages/web && npm test" in context["test_commands"]
+                assert context["test_command_specs"][0] == {
+                    "cwd": "packages/web",
+                    "command": ["npm", "test"],
+                    "display": "cd packages/web && npm test",
+                }
+                assert {
+                    "cwd": "packages/web",
+                    "command": ["npm", "test"],
+                    "display": "cd packages/web && npm test",
+                } in context["test_command_specs"]
+                assert context["test_commands"][0] == "cd packages/web && npm test"
+                assert {
+                    "cwd": ".",
+                    "command": ["pytest", "-q"],
+                    "display": "pytest -q",
+                } in context["test_command_specs"]
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
 def test_task_cycle_review_qa_and_pr_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     from devgodzilla.api.dependencies import get_db
     from devgodzilla.config import _reset_config_for_tests

@@ -35,8 +35,9 @@ fi
 
 export PYTHONPATH="${PYTHONPATH:-.}"
 
-"${PYTEST_BIN}" -q --disable-warnings --maxfail=1 tests/e2e/test_devgodzilla_cli_real_agent.py
+"${PYTEST_BIN}" -q --disable-warnings --maxfail=1 \
+  tests/e2e/test_devgodzilla_cli_real_agent.py \
+  tests/test_devgodzilla_project_speckit_integration.py
 
 ci_info "real-agent e2e completed" "result=pass"
 report_status success
-

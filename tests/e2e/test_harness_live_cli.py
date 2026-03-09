@@ -19,7 +19,13 @@ from tests.e2e.harness.live_cli import (
     _stage_protocol_feature_cycles,
     _stage_project_onboard,
     _stage_project_onboard_windmill,
+    _stage_speckit_analyze,
+    _stage_speckit_implement,
+    _stage_speckit_plan,
+    _stage_speckit_specify,
+    _stage_speckit_tasks,
     _wait_for_windmill_job,
+    build_live_cli_stage_handlers,
 )
 from tests.e2e.harness.runner import HarnessRunContext
 from tests.e2e.harness.scenario_loader import RepoConfig, RetryConfig, ScenarioConfig, TimeoutConfig
@@ -70,6 +76,267 @@ def test_stage_project_onboard_switches_mode(monkeypatch: pytest.MonkeyPatch, tm
 
     monkeypatch.setenv("HARNESS_ONBOARD_MODE", "windmill")
     assert _stage_project_onboard(ctx, scenario, "project_onboard")["mode"] == "windmill"
+
+
+def test_build_live_cli_stage_handlers_includes_speckit_stages() -> None:
+    handlers = build_live_cli_stage_handlers()
+    for stage_name in (
+        "speckit_init",
+        "speckit_specify",
+        "speckit_clarify",
+        "speckit_plan",
+        "speckit_tasks",
+        "speckit_checklist",
+        "speckit_analyze",
+        "speckit_implement",
+    ):
+        assert stage_name in handlers
+
+
+def test_stage_speckit_specify_persists_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "worktree"
+    spec_path = worktree / "specs" / "001-demo" / "spec.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("# Feature Specification: Demo\n", encoding="utf-8")
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-specify",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={
+            "project_id": 17,
+            "env": {},
+            "base_branch": "main",
+        },
+    )
+    scenario = _scenario(["README.md"])
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "spec_run_id": 42,
+            "worktree_path": str(worktree),
+            "spec_path": str(spec_path),
+            "branch_name": "001-demo",
+            "spec_root": str(spec_path.parent),
+        },
+    )
+
+    result = _stage_speckit_specify(ctx, scenario, "speckit_specify")
+    assert result["spec_run_id"] == 42
+    assert ctx.metadata["spec_run_id"] == 42
+    assert ctx.metadata["worktree_path"] == str(worktree.resolve(strict=False))
+    assert ctx.metadata["spec_path"] == str(spec_path.resolve(strict=False))
+
+
+def test_stage_speckit_specify_rejects_placeholder_spec(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "worktree"
+    spec_path = worktree / "specs" / "001-demo" / "spec.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "# Feature Specification: Demo\n\n### User Story 1 - [Brief Title] (Priority: P1)\n",
+        encoding="utf-8",
+    )
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-specify-placeholder",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={"project_id": 17, "env": {}, "base_branch": "main"},
+    )
+    scenario = _scenario(["README.md"])
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "spec_run_id": 42,
+            "worktree_path": str(worktree),
+            "spec_path": str(spec_path),
+            "branch_name": "001-demo",
+            "spec_root": str(spec_path.parent),
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="template content"):
+        _stage_speckit_specify(ctx, scenario, "speckit_specify")
+
+
+def test_stage_speckit_plan_rejects_placeholder_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "worktree"
+    plan_path = worktree / "specs" / "001-demo" / "plan.md"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        "# Implementation Plan: Demo\n\n## Summary\n[Extract from feature spec: primary requirement + technical approach from research]\n",
+        encoding="utf-8",
+    )
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-plan-placeholder",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={
+            "project_id": 17,
+            "env": {},
+            "spec_run_id": 42,
+            "spec_path": str(worktree / "specs" / "001-demo" / "spec.md"),
+            "worktree_path": str(worktree),
+        },
+    )
+    scenario = _scenario(["README.md"])
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "spec_run_id": 42,
+            "worktree_path": str(worktree),
+            "plan_path": str(plan_path),
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="template content"):
+        _stage_speckit_plan(ctx, scenario, "speckit_plan")
+
+
+def test_stage_speckit_tasks_rejects_placeholder_tasks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "worktree"
+    tasks_path = worktree / "specs" / "001-demo" / "tasks.md"
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    tasks_path.write_text(
+        "# Tasks: Demo\n\nIMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.\n",
+        encoding="utf-8",
+    )
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-tasks-placeholder",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={
+            "project_id": 17,
+            "env": {},
+            "spec_run_id": 42,
+            "plan_path": str(worktree / "specs" / "001-demo" / "plan.md"),
+            "worktree_path": str(worktree),
+        },
+    )
+    scenario = _scenario(["README.md"])
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "spec_run_id": 42,
+            "worktree_path": str(worktree),
+            "tasks_path": str(tasks_path),
+            "task_count": 1,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="template content"):
+        _stage_speckit_tasks(ctx, scenario, "speckit_tasks")
+
+
+def test_stage_speckit_analyze_rejects_placeholder_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "worktree"
+    report_path = worktree / "specs" / "001-demo" / "analysis.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# SpecKit Analysis Report\n\n## Findings\n- (To be generated)\n", encoding="utf-8")
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-analyze",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={
+            "project_id": 17,
+            "env": {},
+            "spec_run_id": 42,
+            "spec_path": str(worktree / "specs" / "001-demo" / "spec.md"),
+            "worktree_path": str(worktree),
+            "plan_path": str(worktree / "specs" / "001-demo" / "plan.md"),
+            "tasks_path": str(worktree / "specs" / "001-demo" / "tasks.md"),
+        },
+    )
+    scenario = _scenario(["README.md"])
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "spec_run_id": 42,
+            "worktree_path": str(worktree),
+            "report_path": str(report_path),
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="placeholder"):
+        _stage_speckit_analyze(ctx, scenario, "speckit_analyze")
+
+
+def test_stage_speckit_implement_links_protocol_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "worktree"
+    protocol_root = worktree / ".protocols" / "demo"
+    protocol_root.mkdir(parents=True, exist_ok=True)
+    metadata_path = protocol_root / "implement-bootstrap.json"
+    metadata_path.write_text("{}", encoding="utf-8")
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-implement",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={
+            "project_id": 17,
+            "env": {"DEVGODZILLA_DB_PATH": str(tmp_path / "devgodzilla.sqlite")},
+            "spec_run_id": 42,
+            "spec_path": str(worktree / "specs" / "001-demo" / "spec.md"),
+            "worktree_path": str(worktree),
+        },
+    )
+    scenario = _scenario(["README.md"])
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "spec_run_id": 42,
+            "worktree_path": str(worktree),
+            "protocol_id": 99,
+            "protocol_root": str(protocol_root),
+            "metadata_path": str(metadata_path),
+            "step_count": 2,
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli.get_database",
+        lambda **_kwargs: SimpleNamespace(
+            init_schema=lambda: None,
+            get_protocol_run=lambda _protocol_id: SimpleNamespace(
+                id=99,
+                worktree_path=str(worktree),
+            ),
+            list_step_runs=lambda _protocol_id: [SimpleNamespace(id=1)],
+            get_spec_run=lambda _spec_run_id: SimpleNamespace(protocol_run_id=99),
+        ),
+    )
+
+    result = _stage_speckit_implement(ctx, scenario, "speckit_implement")
+    assert result["protocol_id"] == 99
+    assert ctx.metadata["protocol_id"] == 99
+    assert ctx.metadata["protocol_root"] == str(protocol_root.resolve(strict=False))
 
 
 def test_stage_project_onboard_windmill_waits_for_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -642,6 +909,193 @@ def test_desired_feature_cycles_defaults_and_validates(monkeypatch: pytest.Monke
     monkeypatch.setenv("HARNESS_FEATURE_CYCLES", "bad")
     with pytest.raises(RuntimeError, match="HARNESS_FEATURE_CYCLES"):
         _desired_feature_cycles()
+
+
+def test_speckit_stage_handlers_propagate_metadata_and_validate_linkage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    speckit_root = repo_root / ".specify"
+    speckit_root.mkdir(parents=True, exist_ok=True)
+    (speckit_root / "memory").mkdir(parents=True, exist_ok=True)
+    (speckit_root / "templates").mkdir(parents=True, exist_ok=True)
+    (speckit_root / "memory" / "constitution.md").write_text("# Constitution\n", encoding="utf-8")
+    for template_name in ("spec-template.md", "plan-template.md", "tasks-template.md", "checklist-template.md"):
+        (speckit_root / "templates" / template_name).write_text(f"# {template_name}\n", encoding="utf-8")
+    (repo_root / "specs").mkdir(parents=True, exist_ok=True)
+
+    worktree_root = tmp_path / "worktrees" / "specs" / "001-auth"
+    spec_root = worktree_root / "specs" / "001-auth"
+    spec_root.mkdir(parents=True, exist_ok=True)
+    spec_path = spec_root / "spec.md"
+    spec_path.write_text("# Feature Specification: Auth\n\nGoogle OAuth2\n", encoding="utf-8")
+    plan_path = spec_root / "plan.md"
+    plan_path.write_text("# Implementation Plan: Auth\n\n## Goal\nShip auth\n", encoding="utf-8")
+    data_model_path = spec_root / "data-model.md"
+    data_model_path.write_text("# Data Model: Auth\n", encoding="utf-8")
+    contracts_path = spec_root / "contracts"
+    contracts_path.mkdir(parents=True, exist_ok=True)
+    tasks_path = spec_root / "tasks.md"
+    tasks_path.write_text("# Task List: Auth\n\n- [ ] [T001] Build login\n", encoding="utf-8")
+    checklist_path = spec_root / "checklist.md"
+    checklist_path.write_text("# Quality Checklist: Auth\n\n- [ ] Validate auth flow\n", encoding="utf-8")
+    report_path = spec_root / "analysis.md"
+    report_path.write_text(
+        "# SpecKit Analysis Report\n\n## Findings\n- Ready.\n\n## Risks\n- None.\n\n## Open Questions\n- None.\n\n## Recommended Next Steps\n- Implement.\n",
+        encoding="utf-8",
+    )
+    protocol_root = worktree_root / ".protocols" / "001-auth"
+    protocol_root.mkdir(parents=True, exist_ok=True)
+    metadata_path = protocol_root / "implement-bootstrap.json"
+    metadata_path.write_text("{}", encoding="utf-8")
+
+    ctx = HarnessRunContext(
+        scenario_id="speckit-stage-flow",
+        run_dir=tmp_path / "run",
+        diagnostics_dir=tmp_path / "run" / "diagnostics",
+        metadata={
+            "project_id": 11,
+            "repo_root": str(repo_root),
+            "base_branch": "main",
+            "env": {
+                "DEVGODZILLA_API_URL": "http://localhost:8000",
+                "DEVGODZILLA_DB_PATH": str(tmp_path / "devgodzilla.sqlite"),
+            },
+        },
+    )
+    scenario = _scenario(["specs/discovery/_runtime/DISCOVERY.md"])
+    handlers = build_live_cli_stage_handlers()
+
+    calls: list[tuple[str, str, object]] = []
+    responses = {
+        "/projects/11/speckit/init": {
+            "success": True,
+            "path": str(speckit_root),
+            "constitution_hash": "abc123",
+            "warnings": [],
+        },
+        "/projects/11/speckit/specify": {
+            "success": True,
+            "spec_path": str(spec_path),
+            "spec_number": 1,
+            "feature_name": "auth",
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+            "branch_name": "001-auth",
+            "base_branch": "main",
+            "spec_root": str(spec_root),
+        },
+        "/projects/11/speckit/clarify": {
+            "success": True,
+            "spec_path": str(spec_path),
+            "clarifications_added": 1,
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+        },
+        "/projects/11/speckit/plan": {
+            "success": True,
+            "plan_path": str(plan_path),
+            "data_model_path": str(data_model_path),
+            "contracts_path": str(contracts_path),
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+        },
+        "/projects/11/speckit/tasks": {
+            "success": True,
+            "tasks_path": str(tasks_path),
+            "task_count": 1,
+            "parallelizable_count": 0,
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+        },
+        "/projects/11/speckit/checklist": {
+            "success": True,
+            "checklist_path": str(checklist_path),
+            "item_count": 1,
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+        },
+        "/projects/11/speckit/analyze": {
+            "success": True,
+            "report_path": str(report_path),
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+        },
+        "/projects/11/speckit/implement": {
+            "success": True,
+            "run_path": str(protocol_root),
+            "metadata_path": str(metadata_path),
+            "protocol_id": 91,
+            "protocol_root": str(protocol_root),
+            "step_count": 2,
+            "warnings": [],
+            "spec_run_id": 77,
+            "worktree_path": str(worktree_root),
+        },
+    }
+
+    def _fake_request(
+        *,
+        api_base_url: str,
+        path: str,
+        method: str = "POST",
+        payload=None,
+        timeout_seconds: float = 5.0,
+    ) -> dict[str, object]:
+        del api_base_url, timeout_seconds
+        calls.append((method, path, payload))
+        if path.endswith("/clarify"):
+            answer = str((payload or {}).get("entries", [{}])[0].get("answer", ""))
+            spec_path.write_text(spec_path.read_text(encoding="utf-8") + f"\n{answer}\n", encoding="utf-8")
+        return responses[path]
+
+    class _FakeDb:
+        def init_schema(self) -> None:
+            return None
+
+        def get_protocol_run(self, protocol_id: int):
+            return SimpleNamespace(id=protocol_id, worktree_path=str(worktree_root), protocol_root=str(protocol_root))
+
+        def list_step_runs(self, protocol_id: int):
+            del protocol_id
+            return [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+
+        def get_spec_run(self, spec_run_id: int):
+            return SimpleNamespace(id=spec_run_id, protocol_run_id=91)
+
+    monkeypatch.setattr(
+        "tests.e2e.harness.live_cli._post_project_speckit",
+        lambda _ctx, *, scenario, stage, action, payload=None, timeout_seconds=None: _fake_request(
+            api_base_url="http://localhost:8000",
+            path=f"/projects/11/speckit/{action}",
+            method="POST",
+            payload=payload,
+            timeout_seconds=float(timeout_seconds or scenario.timeouts.planning_seconds),
+        ),
+    )
+    monkeypatch.setattr("tests.e2e.harness.live_cli.get_database", lambda **_kwargs: _FakeDb())
+
+    handlers["speckit_init"](ctx, scenario, "speckit_init")
+    handlers["speckit_specify"](ctx, scenario, "speckit_specify")
+    handlers["speckit_clarify"](ctx, scenario, "speckit_clarify")
+    handlers["speckit_plan"](ctx, scenario, "speckit_plan")
+    handlers["speckit_tasks"](ctx, scenario, "speckit_tasks")
+    handlers["speckit_checklist"](ctx, scenario, "speckit_checklist")
+    handlers["speckit_analyze"](ctx, scenario, "speckit_analyze")
+    result = handlers["speckit_implement"](ctx, scenario, "speckit_implement")
+
+    assert ctx.metadata["spec_run_id"] == 77
+    assert ctx.metadata["worktree_path"] == str(worktree_root)
+    assert ctx.metadata["spec_path"] == str(spec_path)
+    assert ctx.metadata["plan_path"] == str(plan_path)
+    assert ctx.metadata["tasks_path"] == str(tasks_path)
+    assert ctx.metadata["checklist_path"] == str(checklist_path)
+    assert ctx.metadata["report_path"] == str(report_path)
+    assert ctx.metadata["protocol_id"] == 91
+    assert result["step_count"] == 2
+    assert [path for method, path, _payload in calls if method == "POST"] == list(responses.keys())
 
 
 def test_stage_protocol_feature_cycles_runs_multiple_cycles(

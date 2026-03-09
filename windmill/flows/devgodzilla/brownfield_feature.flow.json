@@ -7,36 +7,34 @@
         "id": "onboard_project",
         "value": {
           "type": "script",
-          "path": "u/devgodzilla/project_onboard_api",
-          "input_transforms": {
-            "project_id": { "type": "javascript", "expr": "flow_input.project_id || null" },
-            "git_url": { "type": "javascript", "expr": "flow_input.git_url || ''" },
-            "project_name": { "type": "javascript", "expr": "flow_input.project_name || ''" },
-            "branch": { "type": "javascript", "expr": "flow_input.branch || 'main'" },
-            "description": { "type": "javascript", "expr": "flow_input.project_description || ''" },
-            "constitution_content": { "type": "javascript", "expr": "flow_input.constitution_content || ''" },
-            "run_discovery_agent": { "type": "javascript", "expr": "flow_input.run_discovery_agent || false" },
-            "discovery_pipeline": { "type": "javascript", "expr": "flow_input.discovery_pipeline !== false" },
-            "discovery_engine_id": { "type": "javascript", "expr": "flow_input.discovery_engine_id || ''" },
-            "discovery_model": { "type": "javascript", "expr": "flow_input.discovery_model || ''" },
-            "clone_if_missing": { "type": "javascript", "expr": "flow_input.clone_if_missing !== false" }
-          }
+          "path": "u/devgodzilla/project_onboard_api"
         },
-        "input_transforms": {}
+        "input_transforms": {
+          "project_id": { "type": "javascript", "expr": "flow_input.project_id || null" },
+          "git_url": { "type": "javascript", "expr": "flow_input.git_url || ''" },
+          "project_name": { "type": "javascript", "expr": "flow_input.project_name || ''" },
+          "branch": { "type": "javascript", "expr": "flow_input.branch || 'main'" },
+          "description": { "type": "javascript", "expr": "flow_input.project_description || ''" },
+          "constitution_content": { "type": "javascript", "expr": "flow_input.constitution_content || ''" },
+          "run_discovery_agent": { "type": "javascript", "expr": "flow_input.run_discovery_agent || false" },
+          "discovery_pipeline": { "type": "javascript", "expr": "flow_input.discovery_pipeline !== false" },
+          "discovery_engine_id": { "type": "javascript", "expr": "flow_input.discovery_engine_id || ''" },
+          "discovery_model": { "type": "javascript", "expr": "flow_input.discovery_model || ''" },
+          "clone_if_missing": { "type": "javascript", "expr": "flow_input.clone_if_missing !== false" }
+        }
       },
       {
         "id": "speckit_specify",
         "value": {
           "type": "script",
-          "path": "u/devgodzilla/speckit_specify_api",
-          "input_transforms": {
-            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-            "description": { "type": "javascript", "expr": "flow_input.feature_request" },
-            "feature_name": { "type": "javascript", "expr": "flow_input.feature_name || ''" },
-            "base_branch": { "type": "javascript", "expr": "flow_input.branch || 'main'" }
-          }
+          "path": "u/devgodzilla/speckit_specify_api"
         },
-        "input_transforms": {}
+        "input_transforms": {
+          "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+          "description": { "type": "javascript", "expr": "flow_input.feature_request" },
+          "feature_name": { "type": "javascript", "expr": "flow_input.feature_name || ''" },
+          "base_branch": { "type": "javascript", "expr": "flow_input.branch || 'main'" }
+        }
       },
       {
         "id": "optional_clarify",
@@ -76,14 +74,13 @@
         "id": "speckit_plan",
         "value": {
           "type": "script",
-          "path": "u/devgodzilla/speckit_plan_api",
-          "input_transforms": {
-            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-            "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" },
-            "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" }
-          }
+          "path": "u/devgodzilla/speckit_plan_api"
         },
-        "input_transforms": {}
+        "input_transforms": {
+          "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+          "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" },
+          "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" }
+        }
       },
       {
         "id": "optional_checklist",
@@ -121,14 +118,13 @@
         "id": "speckit_tasks",
         "value": {
           "type": "script",
-          "path": "u/devgodzilla/speckit_tasks_api",
-          "input_transforms": {
-            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-            "plan_path": { "type": "javascript", "expr": "results.speckit_plan.plan_path" },
-            "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" }
-          }
+          "path": "u/devgodzilla/speckit_tasks_api"
         },
-        "input_transforms": {}
+        "input_transforms": {
+          "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+          "plan_path": { "type": "javascript", "expr": "results.speckit_plan.plan_path" },
+          "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" }
+        }
       },
       {
         "id": "optional_analyze",
@@ -165,154 +161,79 @@
         }
       },
       {
-        "id": "delivery_mode",
+        "id": "create_protocol",
+        "skip_if": {
+          "expr": "!['task_cycle', 'protocol', 'protocol_to_sprint'].includes(flow_input.output_mode)"
+        },
         "value": {
-          "type": "branchone",
-          "branches": [
-            {
-              "summary": "Stop at tasks",
-              "expr": "flow_input.output_mode === 'tasks_only'",
-              "modules": []
-            },
-            {
-              "summary": "Create task-cycle protocol",
-              "expr": "flow_input.output_mode === 'task_cycle'",
-              "modules": [
-                {
-                  "id": "create_protocol",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/protocol_from_spec_api"
-                  },
-                  "input_transforms": {
-                    "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-                    "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" },
-                    "tasks_path": { "type": "javascript", "expr": "results.speckit_tasks.tasks_path" },
-                    "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" },
-                    "protocol_name": { "type": "javascript", "expr": "flow_input.protocol_name || ''" },
-                    "overwrite": { "type": "javascript", "expr": "flow_input.overwrite_protocol || false" }
-                  }
-                },
-                {
-                  "id": "protocol_start",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/protocol_plan_and_wait"
-                  },
-                  "input_transforms": {
-                    "protocol_run_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" },
-                    "timeout_seconds": { "type": "javascript", "expr": "flow_input.protocol_timeout_seconds || 300" }
-                  }
-                },
-                {
-                  "id": "get_task_cycle",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/get_task_cycle_api"
-                  },
-                  "input_transforms": {
-                    "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-                    "protocol_run_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" }
-                  }
-                }
-              ]
-            },
-            {
-              "summary": "Import tasks into existing sprint",
-              "expr": "flow_input.output_mode === 'tasks_to_sprint'",
-              "modules": [
-                {
-                  "id": "sync_tasks",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/sync_tasks_api"
-                  },
-                  "input_transforms": {
-                    "sprint_id": { "type": "javascript", "expr": "flow_input.sprint_id" },
-                    "spec_path": { "type": "javascript", "expr": "results.speckit_tasks.tasks_path" },
-                    "overwrite_existing": { "type": "javascript", "expr": "flow_input.overwrite_existing_tasks || false" }
-                  }
-                }
-              ]
-            },
-            {
-              "summary": "Create protocol",
-              "expr": "flow_input.output_mode === 'protocol'",
-              "modules": [
-                {
-                  "id": "create_protocol",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/protocol_from_spec_api"
-                  },
-                  "input_transforms": {
-                    "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-                    "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" },
-                    "tasks_path": { "type": "javascript", "expr": "results.speckit_tasks.tasks_path" },
-                    "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" },
-                    "protocol_name": { "type": "javascript", "expr": "flow_input.protocol_name || ''" },
-                    "overwrite": { "type": "javascript", "expr": "flow_input.overwrite_protocol || false" }
-                  }
-                },
-                {
-                  "id": "protocol_start",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/protocol_plan_and_wait"
-                  },
-                  "input_transforms": {
-                    "protocol_run_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" },
-                    "timeout_seconds": { "type": "javascript", "expr": "flow_input.protocol_timeout_seconds || 300" }
-                  }
-                }
-              ]
-            },
-            {
-              "summary": "Create protocol and sprint",
-              "expr": "flow_input.output_mode === 'protocol_to_sprint'",
-              "modules": [
-                {
-                  "id": "create_protocol",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/protocol_from_spec_api"
-                  },
-                  "input_transforms": {
-                    "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
-                    "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" },
-                    "tasks_path": { "type": "javascript", "expr": "results.speckit_tasks.tasks_path" },
-                    "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" },
-                    "protocol_name": { "type": "javascript", "expr": "flow_input.protocol_name || ''" },
-                    "overwrite": { "type": "javascript", "expr": "flow_input.overwrite_protocol || false" }
-                  }
-                },
-                {
-                  "id": "protocol_start",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/protocol_plan_and_wait"
-                  },
-                  "input_transforms": {
-                    "protocol_run_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" },
-                    "timeout_seconds": { "type": "javascript", "expr": "flow_input.protocol_timeout_seconds || 300" }
-                  }
-                },
-                {
-                  "id": "create_sprint",
-                  "value": {
-                    "type": "script",
-                    "path": "u/devgodzilla/sprint_from_protocol_api"
-                  },
-                  "input_transforms": {
-                    "protocol_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" },
-                    "sprint_name": { "type": "javascript", "expr": "flow_input.sprint_name || null" },
-                    "auto_sync": { "type": "javascript", "expr": "flow_input.auto_sync_sprint !== false" }
-                  }
-                }
-              ]
-            }
-          ],
-          "default": []
+          "type": "script",
+          "path": "u/devgodzilla/protocol_from_spec_api",
+          "input_transforms": {
+            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+            "spec_path": { "type": "javascript", "expr": "results.speckit_specify.spec_path" },
+            "tasks_path": { "type": "javascript", "expr": "results.speckit_tasks.tasks_path" },
+            "spec_run_id": { "type": "javascript", "expr": "results.speckit_specify.spec_run_id" },
+            "protocol_name": { "type": "javascript", "expr": "flow_input.protocol_name || ''" },
+            "overwrite": { "type": "javascript", "expr": "flow_input.overwrite_protocol || false" }
+          }
+        }
+      },
+      {
+        "id": "protocol_start",
+        "skip_if": {
+          "expr": "!['task_cycle', 'protocol', 'protocol_to_sprint'].includes(flow_input.output_mode)"
+        },
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/protocol_plan_and_wait",
+          "input_transforms": {
+            "protocol_run_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" },
+            "timeout_seconds": { "type": "javascript", "expr": "flow_input.protocol_timeout_seconds || 300" }
+          }
+        }
+      },
+      {
+        "id": "get_task_cycle",
+        "skip_if": {
+          "expr": "flow_input.output_mode !== 'task_cycle'"
+        },
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/get_task_cycle_api",
+          "input_transforms": {
+            "project_id": { "type": "javascript", "expr": "results.onboard_project.project_id" },
+            "protocol_run_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" }
+          }
+        }
+      },
+      {
+        "id": "sync_tasks",
+        "skip_if": {
+          "expr": "flow_input.output_mode !== 'tasks_to_sprint'"
+        },
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/sync_tasks_api",
+          "input_transforms": {
+            "sprint_id": { "type": "javascript", "expr": "flow_input.sprint_id" },
+            "spec_path": { "type": "javascript", "expr": "results.speckit_tasks.tasks_path" },
+            "overwrite_existing": { "type": "javascript", "expr": "flow_input.overwrite_existing_tasks || false" }
+          }
+        }
+      },
+      {
+        "id": "create_sprint",
+        "skip_if": {
+          "expr": "flow_input.output_mode !== 'protocol_to_sprint'"
+        },
+        "value": {
+          "type": "script",
+          "path": "u/devgodzilla/sprint_from_protocol_api",
+          "input_transforms": {
+            "protocol_id": { "type": "javascript", "expr": "results.create_protocol.protocol.id" },
+            "sprint_name": { "type": "javascript", "expr": "flow_input.sprint_name || null" },
+            "auto_sync": { "type": "javascript", "expr": "flow_input.auto_sync_sprint !== false" }
+          }
         }
       }
     ]

@@ -10,7 +10,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from devgodzilla.qa.gates.interface import (
     Gate,
@@ -53,27 +53,27 @@ class TestGate(Gate):
         """Run tests."""
         start = time.time()
         workspace = Path(context.workspace_root)
-        
-        # Detect test command
-        cmd = self.test_command
-        if not cmd:
-            if (workspace / "pytest.ini").exists() or (workspace / "pyproject.toml").exists():
-                cmd = ["pytest", "--tb=short", "-q"]
-            elif (workspace / "package.json").exists():
-                cmd = ["npm", "test"]
-            else:
-                return self.skip("No test configuration found")
+        resolved = self._resolve_test_command(context, workspace)
+        if resolved is None:
+            return self.skip("No test configuration found")
+        cmd, command_cwd, display = resolved
         
         try:
             proc = subprocess.run(
                 cmd,
-                cwd=workspace,
+                cwd=command_cwd,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
             )
             
             duration = time.time() - start
+            metadata = {
+                "command": display,
+                "cwd": str(command_cwd),
+                "stdout": proc.stdout[:1000],
+                "stderr": proc.stderr[:1000],
+            }
             
             if proc.returncode == 0:
                 return GateResult(
@@ -81,23 +81,81 @@ class TestGate(Gate):
                     gate_name=self.gate_name,
                     verdict=GateVerdict.PASS,
                     duration_seconds=duration,
-                    metadata={"stdout": proc.stdout[:1000]},
+                    metadata=metadata,
                 )
             else:
                 findings = self._parse_test_output(proc.stdout + proc.stderr)
+                if not findings:
+                    findings = [
+                        Finding(
+                            gate_id=self.gate_id,
+                            severity="error",
+                            message=f"Test command failed with exit code {proc.returncode}: {display}"[:200],
+                            metadata={"stderr": proc.stderr[:500], "stdout": proc.stdout[:500]},
+                        )
+                    ]
                 return GateResult(
                     gate_id=self.gate_id,
                     gate_name=self.gate_name,
                     verdict=GateVerdict.FAIL,
                     findings=findings,
                     duration_seconds=duration,
-                    metadata={"stdout": proc.stdout[:1000], "stderr": proc.stderr[:1000]},
+                    metadata=metadata,
                 )
                 
         except subprocess.TimeoutExpired:
             return self.error(f"Tests timed out after {self.timeout}s")
         except Exception as e:
             return self.error(str(e))
+
+    def _resolve_test_command(
+        self,
+        context: GateContext,
+        workspace: Path,
+    ) -> Optional[Tuple[List[str], Path, str]]:
+        if self.test_command:
+            display = " ".join(self.test_command)
+            return self.test_command, workspace, display
+
+        metadata = context.metadata if isinstance(context.metadata, dict) else {}
+        spec_result = self._command_from_specs(metadata.get("test_command_specs"), workspace)
+        if spec_result is not None:
+            return spec_result
+
+        raw_commands = metadata.get("test_commands")
+        if isinstance(raw_commands, list):
+            for raw in raw_commands:
+                text = str(raw).strip()
+                if text:
+                    return ["bash", "-lc", text], workspace, text
+
+        if (workspace / "pytest.ini").exists() or (workspace / "pyproject.toml").exists():
+            return ["pytest", "--tb=short", "-q"], workspace, "pytest --tb=short -q"
+        if (workspace / "package.json").exists():
+            return ["npm", "test"], workspace, "npm test"
+        return None
+
+    def _command_from_specs(
+        self,
+        raw_specs: Any,
+        workspace: Path,
+    ) -> Optional[Tuple[List[str], Path, str]]:
+        if not isinstance(raw_specs, list):
+            return None
+        for item in raw_specs:
+            if not isinstance(item, dict):
+                continue
+            raw_command = item.get("command")
+            if not isinstance(raw_command, list) or not raw_command:
+                continue
+            command = [str(part) for part in raw_command if str(part).strip()]
+            if not command:
+                continue
+            raw_cwd = str(item.get("cwd") or ".")
+            command_cwd = workspace if raw_cwd in {"", "."} else workspace / raw_cwd
+            display = str(item.get("display") or " ".join(command))
+            return command, command_cwd, display
+        return None
 
     def _parse_test_output(self, output: str) -> List[Finding]:
         """Parse test output for failures."""
