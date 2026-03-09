@@ -70,6 +70,10 @@ import {
 import { formatRelativeTime } from "@/lib/format";
 import { parseTemplateConfigInput } from "@/lib/protocol-create";
 import {
+  describeProtocolTemplateConfig,
+  formatProtocolTemplateSource,
+} from "@/lib/protocol-template-display";
+import {
   getProjectManualPlanWizardPath,
   getProjectManualTasksWizardPath,
   getProjectSpecWorkflowPath,
@@ -589,6 +593,21 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                         <p className="text-sm font-medium">{protocol.protocol_name}</p>
                         <p className="text-muted-foreground text-xs">
                           {formatRelativeTime(protocol.created_at)}
+                        </p>
+                        <p
+                          className="text-muted-foreground max-w-56 truncate text-xs"
+                          title={formatProtocolTemplateSource(protocol.template_source)}
+                        >
+                          {formatProtocolTemplateSource(protocol.template_source)}
+                        </p>
+                        <p
+                          className="text-muted-foreground truncate text-xs"
+                          title={
+                            describeProtocolTemplateConfig(protocol.template_config).detail ??
+                            undefined
+                          }
+                        >
+                          Config: {describeProtocolTemplateConfig(protocol.template_config).summary}
                         </p>
                       </div>
                     </div>

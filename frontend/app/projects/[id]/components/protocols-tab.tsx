@@ -29,6 +29,10 @@ import { useCreateProtocol,useProjectProtocols } from "@/lib/api";
 import type { ProtocolRun } from "@/lib/api/types";
 import { formatRelativeTime, truncateHash } from "@/lib/format";
 import { parseTemplateConfigInput } from "@/lib/protocol-create";
+import {
+  describeProtocolTemplateConfig,
+  formatProtocolTemplateSource,
+} from "@/lib/protocol-template-display";
 
 interface ProtocolsTabProps {
   projectId: number;
@@ -62,6 +66,30 @@ const columns: ColumnDef<ProtocolRun>[] = [
         {truncateHash(row.original.spec_hash)}
       </span>
     ),
+  },
+  {
+    id: "template_source",
+    header: "Template Source",
+    cell: ({ row }) => {
+      const templateSource = formatProtocolTemplateSource(row.original.template_source);
+      return (
+        <span className="text-muted-foreground block max-w-56 truncate text-xs" title={templateSource}>
+          {templateSource}
+        </span>
+      );
+    },
+  },
+  {
+    id: "template_config",
+    header: "Config",
+    cell: ({ row }) => {
+      const templateConfig = describeProtocolTemplateConfig(row.original.template_config);
+      return (
+        <span className="text-muted-foreground text-xs" title={templateConfig.detail ?? undefined}>
+          {templateConfig.summary}
+        </span>
+      );
+    },
   },
   {
     accessorKey: "created_at",
