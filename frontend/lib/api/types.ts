@@ -128,6 +128,7 @@ export interface ProtocolRun {
   summary: string | null;
   /** SpecKit metadata containing spec_hash, spec_validation_status, spec_validated_at */
   speckit_metadata: {
+    spec_run_id?: number | null;
     spec_hash?: string | null;
     spec_validation_status?: string | null;
     spec_validated_at?: string | null;

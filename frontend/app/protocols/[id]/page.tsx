@@ -38,6 +38,7 @@ import {
   useSyncProtocolToSprint,
 } from "@/lib/api";
 import { formatRelativeTime, truncateHash } from "@/lib/format";
+import { getSpecificationReviewPath } from "@/lib/project-routes";
 
 import { ArtifactsTab } from "./components/artifacts-tab";
 import { ClarificationsTab } from "./components/clarifications-tab";
@@ -92,6 +93,10 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
   const canRunNext = protocol.status === "running" || protocol.status === "paused";
   const canRetry = protocol.status === "failed" || protocol.status === "blocked";
   const canOpenPR = protocol.status === "completed" || protocol.status === "running";
+  const reviewPath =
+    typeof protocol.speckit_metadata?.spec_run_id === "number"
+      ? getSpecificationReviewPath(protocol.speckit_metadata.spec_run_id)
+      : null;
 
   return (
     <div className="container py-8">
@@ -131,6 +136,13 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
           </div>
 
           <div className="flex flex-wrap justify-end gap-2">
+            {reviewPath && (
+              <Link href={reviewPath}>
+                <Button variant="outline">
+                  Review Implementation
+                </Button>
+              </Link>
+            )}
             {canStart && (
               <Button onClick={() => handleAction("start")} disabled={protocolAction.isPending}>
                 <Play className="mr-2 h-4 w-4" />
