@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCreateProtocol,useProjectProtocols } from "@/lib/api";
 import type { ProtocolRun } from "@/lib/api/types";
 import { formatRelativeTime, truncateHash } from "@/lib/format";
+import { parseTemplateConfigInput } from "@/lib/protocol-create";
 
 interface ProtocolsTabProps {
   projectId: number;
@@ -131,11 +132,13 @@ function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClo
     description: "",
     base_branch: "",
     template_source: "",
+    template_config: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const templateConfig = parseTemplateConfigInput(formData.template_config);
       await createProtocol.mutateAsync({
         projectId,
         data: {
@@ -143,6 +146,7 @@ function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClo
           description: formData.description || undefined,
           base_branch: formData.base_branch || undefined,
           template_source: formData.template_source || undefined,
+          template_config: templateConfig,
         },
       });
       toast.success("Protocol created successfully");
@@ -195,6 +199,16 @@ function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClo
               placeholder="./templates/feature.yaml"
               value={formData.template_source}
               onChange={(e) => setFormData((p) => ({ ...p, template_source: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="template_config">Template Config (JSON, optional)</Label>
+            <Textarea
+              id="template_config"
+              placeholder='{ "mode": "brownfield" }'
+              className="min-h-28 font-mono text-sm"
+              value={formData.template_config}
+              onChange={(e) => setFormData((p) => ({ ...p, template_config: e.target.value }))}
             />
           </div>
         </div>

@@ -67,6 +67,7 @@ import {
   useSpecKitStatus,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
+import { parseTemplateConfigInput } from "@/lib/protocol-create";
 import {
   getProjectManualPlanWizardPath,
   getProjectManualTasksWizardPath,
@@ -684,17 +685,19 @@ function CreateProtocolDialog({
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    spec: "{}",
+    template_config: "{}",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const templateConfig = parseTemplateConfigInput(formData.template_config);
       await createProtocol.mutateAsync({
         projectId: projectId,
         data: {
           protocol_name: formData.name,
           description: formData.description || undefined,
+          template_config: templateConfig,
         },
       });
       toast.success("Protocol created successfully");
@@ -733,13 +736,15 @@ function CreateProtocolDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="spec">Spec (JSON)</Label>
+              <Label htmlFor="template_config">Template Config (JSON)</Label>
               <Textarea
-                id="spec"
+                id="template_config"
                 className="min-h-48 font-mono text-sm"
-                placeholder='{ "steps": [] }'
-                value={formData.spec}
-                onChange={(e) => setFormData((p) => ({ ...p, spec: e.target.value }))}
+                placeholder='{ "mode": "guided" }'
+                value={formData.template_config}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, template_config: e.target.value }))
+                }
                 required
               />
             </div>

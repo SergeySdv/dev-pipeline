@@ -155,6 +155,7 @@ export interface ProtocolCreate {
   description?: string;
   base_branch?: string;
   template_source?: string;
+  template_config?: Record<string, unknown>;
 }
 
 export interface ProtocolSpec {

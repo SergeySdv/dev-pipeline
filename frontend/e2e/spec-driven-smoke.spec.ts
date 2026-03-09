@@ -34,7 +34,9 @@ interface MockSpec {
 interface MockState {
   initialized: boolean;
   specs: MockSpec[];
+  protocols: Array<Record<string, unknown>>;
   requests: {
+    createProtocol: Array<Record<string, unknown>>;
     init: Array<Record<string, unknown>>;
     workflow: Array<Record<string, unknown>>;
     specify: Array<Record<string, unknown>>;
@@ -100,7 +102,9 @@ async function installApiMocks(page: Page) {
   const state: MockState = {
     initialized: false,
     specs: [],
+    protocols: [],
     requests: {
+      createProtocol: [],
       init: [],
       workflow: [],
       specify: [],
@@ -163,7 +167,37 @@ async function installApiMocks(page: Page) {
     }
 
     if (request.method() === "GET" && pathname === `/projects/${PROJECT_ID}/protocols`) {
-      await json(route, []);
+      await json(route, state.protocols);
+      return;
+    }
+
+    if (request.method() === "POST" && pathname === `/projects/${PROJECT_ID}/protocols`) {
+      const body = requestBody(route);
+      state.requests.createProtocol.push(body);
+      const createdProtocol = {
+        id: 142,
+        project_id: PROJECT_ID,
+        protocol_name: body.protocol_name ?? "auth-flow",
+        status: "pending",
+        base_branch: body.base_branch ?? "main",
+        worktree_path: null,
+        protocol_root: null,
+        description: body.description ?? null,
+        template_config: body.template_config ?? null,
+        template_source: body.template_source ?? null,
+        summary: null,
+        windmill_flow_id: null,
+        speckit_metadata: null,
+        policy_pack_key: null,
+        policy_pack_version: null,
+        policy_effective_hash: null,
+        policy_effective_json: null,
+        linked_sprint_id: null,
+        created_at: "2026-03-09T12:00:00Z",
+        updated_at: "2026-03-09T12:00:00Z",
+      };
+      state.protocols = [createdProtocol, ...state.protocols];
+      await json(route, createdProtocol);
       return;
     }
 
@@ -493,4 +527,32 @@ test("drives the deterministic SpecKit happy path", async ({ page }) => {
   expect(state.requests.implement[0]).toMatchObject({
     spec_path: SPEC_PATH,
   });
+});
+
+test("submits canonical protocol create payloads from the browser", async ({ page }) => {
+  const state = await installApiMocks(page);
+
+  await page.goto(appPath(`/projects/${PROJECT_ID}/protocols`));
+  await page.getByRole("button", { name: /create protocol/i }).first().click();
+  await page.getByLabel(/protocol name/i).fill("auth-flow");
+  await page.getByLabel(/description/i).fill("Implement authentication flow");
+  await page.getByLabel(/base branch/i).fill("develop");
+  await page.getByLabel(/template source/i).fill("./templates/auth.yaml");
+  await page
+    .getByLabel(/template config/i)
+    .fill('{ "mode": "brownfield", "owner": "protocol" }');
+  await page.getByRole("button", { name: /create protocol/i }).last().click();
+
+  await expect.poll(() => state.requests.createProtocol.length).toBe(1);
+  expect(state.requests.createProtocol[0]).toEqual({
+    protocol_name: "auth-flow",
+    description: "Implement authentication flow",
+    base_branch: "develop",
+    template_source: "./templates/auth.yaml",
+    template_config: {
+      mode: "brownfield",
+      owner: "protocol",
+    },
+  });
+  await expect(page.getByRole("link", { name: "auth-flow" })).toBeVisible();
 });
