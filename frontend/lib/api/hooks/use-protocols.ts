@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { adaptProtocol, adaptProtocols, type RawProtocolRun } from "../adapters/protocol";
 import { apiClient } from "../client";
 import { queryKeys } from "../query-keys";
 import type {
@@ -26,6 +27,14 @@ import type {
   StepRun,
 } from "../types";
 
+type RawProtocolFromSpecResponse = Omit<ProtocolFromSpecResponse, "protocol"> & {
+  protocol: RawProtocolRun | null;
+};
+
+function adaptOptionalProtocol(protocol: RawProtocolRun | null | undefined): ProtocolRun | null {
+  return protocol ? adaptProtocol(protocol) : null;
+}
+
 const useConditionalRefetchInterval = (baseInterval: number) => {
   if (typeof document === "undefined") return false;
   return document.hidden ? false : baseInterval;
@@ -36,7 +45,7 @@ export function useProtocols() {
   const refetchInterval = useConditionalRefetchInterval(10000);
   return useQuery({
     queryKey: queryKeys.protocols.all,
-    queryFn: () => apiClient.get<ProtocolRun[]>("/protocols"),
+    queryFn: async () => adaptProtocols(await apiClient.get<RawProtocolRun[]>("/protocols")),
     refetchInterval,
   });
 }
@@ -45,7 +54,8 @@ export function useProtocols() {
 export function useProjectProtocols(projectId: number | undefined) {
   return useQuery({
     queryKey: queryKeys.projects.protocols(projectId as number),
-    queryFn: () => apiClient.get<ProtocolRun[]>(`/projects/${projectId}/protocols`),
+    queryFn: async () =>
+      adaptProtocols(await apiClient.get<RawProtocolRun[]>(`/projects/${projectId}/protocols`)),
     enabled: !!projectId,
   });
 }
@@ -54,7 +64,7 @@ export function useProjectProtocols(projectId: number | undefined) {
 export function useProtocol(id: number | undefined) {
   return useQuery({
     queryKey: queryKeys.protocols.detail(id as number),
-    queryFn: () => apiClient.get<ProtocolRun>(`/protocols/${id}`),
+    queryFn: async () => adaptProtocol(await apiClient.get<RawProtocolRun>(`/protocols/${id}`)),
     enabled: !!id,
   });
 }
@@ -65,9 +75,12 @@ export const useProtocolDetail = useProtocol;
 export function useCreateProtocol() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, data }: { projectId: number; data: ProtocolCreate }) =>
-      apiClient.post<ProtocolRun>(`/projects/${projectId}/protocols`, data),
-    onSuccess: (_, { projectId }) => {
+    mutationFn: async ({ projectId, data }: { projectId: number; data: ProtocolCreate }) =>
+      adaptProtocol(
+        await apiClient.post<RawProtocolRun>(`/projects/${projectId}/protocols`, data)
+      ),
+    onSuccess: (protocol, { projectId }) => {
+      queryClient.setQueryData(queryKeys.protocols.detail(protocol.id), protocol);
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.protocols(projectId),
       });
@@ -78,10 +91,22 @@ export function useCreateProtocol() {
 export function useCreateProtocolFromSpec() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (request: ProtocolFromSpecRequest) =>
-      apiClient.post<ProtocolFromSpecResponse>("/protocols/from-spec", request),
+    mutationFn: async (request: ProtocolFromSpecRequest) => {
+      const response = await apiClient.post<RawProtocolFromSpecResponse>(
+        "/protocols/from-spec",
+        request
+      );
+      return {
+        ...response,
+        protocol: adaptOptionalProtocol(response.protocol),
+      } satisfies ProtocolFromSpecResponse;
+    },
     onSuccess: (response, variables) => {
       if (response.protocol?.project_id) {
+        queryClient.setQueryData(
+          queryKeys.protocols.detail(response.protocol.id),
+          response.protocol
+        );
         queryClient.invalidateQueries({
           queryKey: queryKeys.projects.protocols(response.protocol.project_id),
         });

@@ -7,16 +7,27 @@
  * - Providing defaults for optional fields
  */
 
-import type { CodexRun,ProtocolArtifact, ProtocolRun } from "../types";
+import type { CodexRun, ProtocolArtifact, ProtocolRun } from "../types";
 
 // Raw backend response types
-interface RawProtocolRun {
+export interface RawProtocolRun {
   id: number;
   project_id: number;
   protocol_name: string;
   status: string;
   base_branch: string;
   worktree_path: string | null;
+  protocol_root?: string | null;
+  description?: string | null;
+  template_config?: Record<string, unknown> | null;
+  template_source?: unknown | null;
+  spec_hash?: string | null;
+  spec_validation_status?: string | null;
+  spec_validated_at?: string | null;
+  policy_pack_key?: string | null;
+  policy_pack_version?: string | null;
+  policy_effective_hash?: string | null;
+  policy_effective_json?: Record<string, unknown> | null;
   windmill_flow_id: string | null;
   speckit_metadata: Record<string, unknown> | null;
   summary?: string | null;
@@ -35,6 +46,39 @@ interface RawProtocolArtifact {
   created_at: string | null;
 }
 
+function getMetaString(meta: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = meta[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function getMetaRecord(
+  meta: Record<string, unknown>,
+  ...keys: string[]
+): Record<string, unknown> | null {
+  for (const key of keys) {
+    const value = meta[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function normalizeTemplateSource(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return null;
+}
+
 /**
  * Adapt a raw protocol run from the backend to the frontend ProtocolRun type.
  *
@@ -44,6 +88,7 @@ interface RawProtocolArtifact {
  */
 export function adaptProtocol(data: RawProtocolRun): ProtocolRun {
   const meta = data.speckit_metadata || {};
+  const templateSource = data.template_source ?? meta.template_source ?? null;
 
   return {
     id: data.id,
@@ -61,25 +106,30 @@ export function adaptProtocol(data: RawProtocolRun): ProtocolRun {
     speckit_metadata: data.speckit_metadata,
 
     // Flatten speckit_metadata for backwards compatibility
-    spec_hash: (meta.spec_hash as string) ?? null,
-    spec_validation_status: (meta.validation_status as string) ?? null,
-    spec_validated_at: (meta.validated_at as string) ?? null,
+    spec_hash: data.spec_hash ?? getMetaString(meta, "spec_hash"),
+    spec_validation_status:
+      data.spec_validation_status ??
+      getMetaString(meta, "spec_validation_status", "validation_status"),
+    spec_validated_at:
+      data.spec_validated_at ?? getMetaString(meta, "spec_validated_at", "validated_at"),
 
-    // Template info from metadata
-    template_source: (meta.template_source as string) ?? null,
-    template_config: (meta.template_config as Record<string, unknown>) ?? null,
+    // Template info from direct protocol fields, falling back to legacy metadata
+    template_source: normalizeTemplateSource(templateSource),
+    template_config: data.template_config ?? getMetaRecord(meta, "template_config"),
 
     // Protocol root
-    protocol_root: (meta.protocol_root as string) ?? null,
+    protocol_root: data.protocol_root ?? getMetaString(meta, "protocol_root"),
 
     // Description/summary
-    description: data.summary ?? (meta.description as string) ?? null,
+    description: data.description ?? data.summary ?? getMetaString(meta, "description"),
 
     // Policy fields
-    policy_pack_key: (meta.policy_pack_key as string) ?? null,
-    policy_pack_version: (meta.policy_pack_version as string) ?? null,
-    policy_effective_hash: (meta.policy_effective_hash as string) ?? null,
-    policy_effective_json: (meta.policy_effective_json as Record<string, unknown>) ?? null,
+    policy_pack_key: data.policy_pack_key ?? getMetaString(meta, "policy_pack_key"),
+    policy_pack_version: data.policy_pack_version ?? getMetaString(meta, "policy_pack_version"),
+    policy_effective_hash:
+      data.policy_effective_hash ?? getMetaString(meta, "policy_effective_hash"),
+    policy_effective_json:
+      data.policy_effective_json ?? getMetaRecord(meta, "policy_effective_json"),
 
     // Linked sprint
     linked_sprint_id: data.linked_sprint_id ?? null,
@@ -128,4 +178,4 @@ export function adaptProtocolArtifacts(
 }
 
 // Re-export types for convenience
-export type { CodexRun,ProtocolArtifact, ProtocolRun };
+export type { CodexRun, ProtocolArtifact, ProtocolRun };

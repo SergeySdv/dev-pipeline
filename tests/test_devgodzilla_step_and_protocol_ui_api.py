@@ -280,3 +280,91 @@ def test_protocol_sync_to_sprint_requires_body_sprint_id_and_persists_link(
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_get_protocol_exposes_canonical_protocol_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(name="demo", git_url="git@example.com:demo/repo.git", base_branch="main")
+        sprint = db.create_sprint(project.id, "Sprint Canonical", status="active")
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-protocol",
+            status="running",
+            base_branch="main",
+            description="Canonical protocol description",
+        )
+        db.update_protocol_paths(
+            run.id,
+            worktree_path=str(tmp / "worktrees" / "demo"),
+            protocol_root=str(tmp / "worktrees" / "demo" / ".devgodzilla" / "protocols" / "demo"),
+        )
+        db.update_protocol_template(
+            run.id,
+            template_config={"mode": "brownfield"},
+            template_source={"kind": "builtin", "name": "brownfield/default"},
+        )
+        db.update_protocol_policy_audit(
+            run.id,
+            policy_pack_key="repo/default",
+            policy_pack_version="1.2.3",
+            policy_effective_hash="policy-hash",
+            policy_effective_json={"mode": "warn"},
+        )
+        db.update_protocol_windmill(
+            run.id,
+            windmill_flow_id="flow-123",
+            speckit_metadata={
+                "spec_run_id": 91,
+                "spec_hash": "abc123",
+                "validation_status": "validated",
+                "validated_at": "2026-03-09T10:00:00Z",
+            },
+        )
+        db.update_protocol_linked_sprint(run.id, sprint.id)
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.get(f"/protocols/{run.id}")
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["description"] == "Canonical protocol description"
+            assert payload["protocol_root"].endswith("/.devgodzilla/protocols/demo")
+            assert payload["template_config"] == {"mode": "brownfield"}
+            assert payload["template_source"] == {
+                "kind": "builtin",
+                "name": "brownfield/default",
+            }
+            assert payload["policy_pack_key"] == "repo/default"
+            assert payload["policy_pack_version"] == "1.2.3"
+            assert payload["policy_effective_hash"] == "policy-hash"
+            assert payload["policy_effective_json"] == {"mode": "warn"}
+            assert payload["windmill_flow_id"] == "flow-123"
+            assert payload["speckit_metadata"] == {
+                "spec_run_id": 91,
+                "spec_hash": "abc123",
+                "validation_status": "validated",
+                "validated_at": "2026-03-09T10:00:00Z",
+            }
+            assert payload["linked_sprint_id"] == sprint.id
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()

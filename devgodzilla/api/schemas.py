@@ -157,7 +157,15 @@ class ProtocolOut(APIModel):
     status: str
     base_branch: str
     worktree_path: Optional[str]
+    protocol_root: Optional[str] = None
+    description: Optional[str] = None
+    template_config: Optional[Dict[str, Any]] = None
+    template_source: Optional[Any] = None
     summary: Optional[str] = None
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_effective_hash: Optional[str] = None
+    policy_effective_json: Optional[Dict[str, Any]] = None
     windmill_flow_id: Optional[str]
     speckit_metadata: Optional[Dict[str, Any]]
     linked_sprint_id: Optional[int] = None

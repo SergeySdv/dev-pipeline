@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { adaptProtocol, type RawProtocolRun } from "../adapters/protocol";
 import { apiClient } from "../client";
 import { queryKeys } from "../query-keys";
 import type {
@@ -26,6 +27,10 @@ import type {
   WorkItemReview,
   Worktree,
 } from "../types";
+
+type RawBrownfieldRunResponse = Omit<BrownfieldRunResponse, "protocol"> & {
+  protocol: RawProtocolRun | null;
+};
 
 // List Projects
 export function useProjects() {
@@ -356,30 +361,41 @@ export function useProjectTaskCycle(projectId: number | undefined, protocolRunId
 export function useStartBrownfieldRun() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       projectId,
       data,
     }: {
       projectId: number;
       data: BrownfieldRunRequest;
-    }) =>
-      apiClient.post<BrownfieldRunResponse>(`/projects/${projectId}/brownfield/run`, data, {
-        projectId,
-      }),
+    }) => {
+      const response = await apiClient.post<RawBrownfieldRunResponse>(
+        `/projects/${projectId}/brownfield/run`,
+        data,
+        {
+          projectId,
+        }
+      );
+      return {
+        ...response,
+        protocol: response.protocol ? adaptProtocol(response.protocol) : null,
+      } satisfies BrownfieldRunResponse;
+    },
     onSuccess: (response, { projectId }) => {
       if (response.protocol) {
+        const protocol = response.protocol;
+        queryClient.setQueryData(queryKeys.protocols.detail(protocol.id), protocol);
         queryClient.setQueryData(
           queryKeys.projects.protocols(projectId),
           (current: ProtocolRun[] | undefined) => {
             const existing = Array.isArray(current) ? current : [];
-            if (existing.some((protocol) => protocol.id === response.protocol?.id)) {
+            if (existing.some((existingProtocol) => existingProtocol.id === protocol.id)) {
               return existing;
             }
-            return [response.protocol as ProtocolRun, ...existing];
+            return [protocol, ...existing];
           }
         );
         queryClient.setQueryData(
-          queryKeys.projects.taskCycle(projectId, response.protocol.id),
+          queryKeys.projects.taskCycle(projectId, protocol.id),
           response.work_items
         );
       }
