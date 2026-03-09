@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { ExternalLink, ListTodo,PlayCircle, RefreshCw } from "lucide-react";
+import { ExternalLink, ListTodo, PlayCircle, RefreshCw } from "lucide-react";
 
 import { CLIExecutionsList } from "@/components/cli-executions-list";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { CostAnalyticsChart } from "@/components/visualizations/cost-analytics-c
 import { useRuns } from "@/lib/api";
 import type { CodexRun, RunFilters } from "@/lib/api/types";
 import { formatCost, formatRelativeTime, formatTokens, truncateHash } from "@/lib/format";
+import { getRunLinkageStats, summarizeRunContext } from "@/lib/run-display";
 
 const columns: ColumnDef<CodexRun>[] = [
   {
@@ -37,20 +38,23 @@ const columns: ColumnDef<CodexRun>[] = [
     ),
   },
   {
-    id: "agile_context",
-    header: "Sprint/Task",
-    cell: () => {
-      // In real app, this would come from joined data
-      const hasTask = Math.random() > 0.5;
-      const sprintName = hasTask ? `Sprint ${Math.floor(Math.random() * 5) + 1}` : null;
+    id: "execution_context",
+    header: "Execution Context",
+    cell: ({ row }) => {
+      const context = summarizeRunContext(row.original);
 
-      return hasTask ? (
-        <div className="flex items-center gap-1 text-xs">
-          <ListTodo className="h-3 w-3 text-blue-400" />
-          <span className="text-muted-foreground">{sprintName}</span>
+      return context.isLinked ? (
+        <div className="flex flex-col gap-1 text-xs">
+          {context.protocolLabel && (
+            <span className="text-muted-foreground">{context.protocolLabel}</span>
+          )}
+          {context.stepLabel && <span className="text-muted-foreground">{context.stepLabel}</span>}
         </div>
       ) : (
-        <span className="text-muted-foreground text-xs">-</span>
+        <div className="flex items-center gap-1 text-xs">
+          <ListTodo className="h-3 w-3 text-slate-400" />
+          <span className="text-muted-foreground">Unlinked</span>
+        </div>
       );
     },
   },
@@ -112,6 +116,7 @@ export default function RunsPage() {
   });
 
   const { data: runs, isLoading, refetch } = useRuns(filters);
+  const linkageStats = getRunLinkageStats(runs ?? []);
 
   return (
     <div className="container space-y-8 py-8">
@@ -150,23 +155,19 @@ export default function RunsPage() {
         <div className="bg-card flex items-center gap-4 rounded-lg border px-4 py-3 text-sm">
           <div className="flex items-center gap-2">
             <ListTodo className="h-4 w-4 text-blue-400" />
-            <span className="font-medium">Linked to Tasks:</span>
-            <span className="text-muted-foreground">
-              {runs ? Math.floor(runs.length * 0.6) : 0}
-            </span>
+            <span className="font-medium">Protocol-Linked Runs:</span>
+            <span className="text-muted-foreground">{linkageStats.protocolLinkedRuns}</span>
           </div>
           <div className="bg-border h-4 w-px" />
           <div className="flex items-center gap-2">
             <PlayCircle className="h-4 w-4 text-green-400" />
-            <span className="font-medium">Active Executions:</span>
-            <span className="text-muted-foreground">3</span>
+            <span className="font-medium">Active Runs:</span>
+            <span className="text-muted-foreground">{linkageStats.activeRuns}</span>
           </div>
           <div className="bg-border h-4 w-px" />
           <div className="flex items-center gap-2">
-            <span className="font-medium">Execution Runs:</span>
-            <span className="text-muted-foreground">
-              {runs ? Math.floor(runs.length * 0.4) : 0}
-            </span>
+            <span className="font-medium">Step-Linked Runs:</span>
+            <span className="text-muted-foreground">{linkageStats.stepLinkedRuns}</span>
           </div>
         </div>
 

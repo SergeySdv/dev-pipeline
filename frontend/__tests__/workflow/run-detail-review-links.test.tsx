@@ -73,5 +73,7 @@ describe("Run detail review links", () => {
     expect(screen.getByRole("link", { name: /^protocol/i }).getAttribute("href")).toBe(
       "/protocols/42"
     );
+    expect(screen.getByText(/no sprint or task linkage recorded for this run/i)).toBeTruthy();
+    expect(screen.queryByText(/implement user authentication/i)).toBeNull();
   });
 });
