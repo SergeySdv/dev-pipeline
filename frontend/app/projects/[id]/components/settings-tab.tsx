@@ -22,29 +22,59 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
   const [name, setName] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [githubTokenDirty, setGithubTokenDirty] = useState(false);
 
   useEffect(() => {
     if (project) {
       setName(project.name);
       setGitUrl(project.git_url);
       setBaseBranch(project.base_branch);
+      setGithubToken("");
+      setGithubTokenDirty(false);
     }
   }, [project]);
 
   if (isLoading || !project) return <LoadingState message="Loading settings..." />;
 
   const hasChanges =
-    name !== project.name || gitUrl !== project.git_url || baseBranch !== project.base_branch;
+    name !== project.name ||
+    gitUrl !== project.git_url ||
+    baseBranch !== project.base_branch ||
+    (githubTokenDirty && githubToken.trim().length > 0);
 
   const handleSave = async () => {
     try {
       await updateProject.mutateAsync({
         projectId,
-        data: { name, git_url: gitUrl, base_branch: baseBranch },
+        data: {
+          name,
+          git_url: gitUrl,
+          base_branch: baseBranch,
+          ...(githubTokenDirty && githubToken.trim()
+            ? { github_token: githubToken.trim() }
+            : {}),
+        },
       });
+      setGithubToken("");
+      setGithubTokenDirty(false);
       toast.success("Project updated");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update project");
+    }
+  };
+
+  const handleClearGithubToken = async () => {
+    try {
+      await updateProject.mutateAsync({
+        projectId,
+        data: { github_token: null },
+      });
+      setGithubToken("");
+      setGithubTokenDirty(false);
+      toast.success("Saved GitHub token removed");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to clear GitHub token");
     }
   };
 
@@ -78,10 +108,42 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
               placeholder="main"
             />
           </div>
-          <Button onClick={handleSave} disabled={updateProject.isPending || !hasChanges}>
-            <Save className="mr-2 h-4 w-4" />
-            {updateProject.isPending ? "Saving..." : "Save Changes"}
-          </Button>
+          <div className="space-y-2">
+            <Label htmlFor="github-token">GitHub Token</Label>
+            <Input
+              id="github-token"
+              type="password"
+              value={githubToken}
+              onChange={(e) => {
+                setGithubToken(e.target.value);
+                setGithubTokenDirty(true);
+              }}
+              placeholder={
+                project.github_token_configured
+                  ? "Leave blank to keep saved token"
+                  : "Optional: needed for private GitHub clone/push/PR"
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              Status: {project.github_token_configured ? "configured" : "not configured"}.
+              Saved tokens are used for GitHub clone, push, and pull request steps for this project.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={handleSave} disabled={updateProject.isPending || !hasChanges}>
+              <Save className="mr-2 h-4 w-4" />
+              {updateProject.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+            {project.github_token_configured && (
+              <Button
+                variant="outline"
+                onClick={handleClearGithubToken}
+                disabled={updateProject.isPending}
+              >
+                Clear GitHub Token
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 

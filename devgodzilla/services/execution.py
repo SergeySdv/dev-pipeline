@@ -41,6 +41,7 @@ from devgodzilla.services.events import get_event_bus, StepStarted, StepComplete
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QualityService
+from devgodzilla.services.workspace_paths import resolve_protocol_root, resolve_workspace_root
 
 logger = get_logger(__name__)
 
@@ -235,11 +236,15 @@ class ExecutionService(Service):
                 )
 
             policy_service = PolicyService(self.context, self.db)
-            workspace_root = (
-                Path(run.worktree_path).expanduser()
-                if run.worktree_path
-                else (Path(project.local_path).expanduser() if project.local_path else Path.cwd())
-            )
+            try:
+                workspace_root = resolve_workspace_root(run, project)
+            except Exception as exc:
+                return self._fail_step_pre_execution(
+                    step,
+                    run,
+                    error=str(exc),
+                    engine_id=engine_id or step.engine_id or "unknown",
+                )
             effective = policy_service.resolve_effective_policy(
                 project.id,
                 repo_root=workspace_root,
@@ -402,24 +407,8 @@ class ExecutionService(Service):
     ) -> StepResolution:
         """Resolve step execution context."""
         # Determine workspace and protocol roots
-        if run.worktree_path:
-            workspace_root = Path(run.worktree_path).expanduser()
-        else:
-            workspace_root = Path(project.local_path).expanduser() if project.local_path else Path.cwd()
-        
-        if run.protocol_root:
-            protocol_root = Path(run.protocol_root)
-            if not protocol_root.is_absolute():
-                protocol_root = workspace_root / protocol_root
-        else:
-            specs = workspace_root / "specs" / run.protocol_name
-            protocols = workspace_root / ".protocols" / run.protocol_name
-            if specs.exists():
-                protocol_root = specs
-            elif protocols.exists():
-                protocol_root = protocols
-            else:
-                protocol_root = specs
+        workspace_root = resolve_workspace_root(run, project)
+        protocol_root = resolve_protocol_root(run, workspace_root)
         
         # Get step spec from template config
         step_spec = get_step_spec_from_template(run.template_config, step.step_name)

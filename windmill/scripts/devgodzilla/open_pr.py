@@ -57,6 +57,7 @@ def main(
     branch_name = protocol_info["branch_name"]
     base_branch = protocol_info.get("base_branch", "main")
     git_url = protocol_info["git_url"]
+    github_token = protocol_info.get("github_token")
     
     # Generate title and description if not provided
     if not title:
@@ -69,7 +70,7 @@ def main(
     commit_result = _commit_changes(project_path, f"DevGodzilla: Complete protocol {protocol_run_id}")
     
     # Step 2: Push branch
-    push_result = _push_branch(project_path, branch_name)
+    push_result = _push_branch(project_path, git_url, branch_name, github_token)
     if not push_result.get("success"):
         return {"error": f"Push failed: {push_result.get('error')}"}
     
@@ -77,7 +78,15 @@ def main(
     provider = _detect_provider(git_url)
     
     if provider == "github":
-        result = _create_github_pr(git_url, branch_name, base_branch, title, description, draft)
+        result = _create_github_pr(
+            git_url,
+            branch_name,
+            base_branch,
+            title,
+            description,
+            draft,
+            github_token,
+        )
     elif provider == "gitlab":
         result = _create_gitlab_mr(git_url, branch_name, base_branch, title, description, draft)
     else:
@@ -107,6 +116,7 @@ def _get_protocol_info(protocol_run_id: int) -> dict | None:
                 "local_path": project.local_path,
                 "worktree_path": protocol.worktree_path,
                 "git_url": project.git_url,
+                "github_token": ((project.secrets or {}).get("github_token") or "").strip() or None,
             }
         except:
             pass
@@ -125,6 +135,24 @@ def _get_protocol_info(protocol_run_id: int) -> dict | None:
             }
     
     return None
+
+
+def _build_git_env(git_url: str, github_token: str | None) -> dict | None:
+    token = (github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    if not token or "github.com" not in git_url:
+        return None
+
+    env = os.environ.copy()
+    env["GITHUB_TOKEN"] = env.get("GITHUB_TOKEN") or token
+    env["GH_TOKEN"] = env.get("GH_TOKEN") or token
+    env["GIT_CONFIG_COUNT"] = "3"
+    env["GIT_CONFIG_KEY_0"] = f"url.https://{token}:x-oauth-basic@github.com/.insteadOf"
+    env["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+    env["GIT_CONFIG_KEY_1"] = f"url.https://{token}:x-oauth-basic@github.com/.insteadOf"
+    env["GIT_CONFIG_VALUE_1"] = "git@github.com:"
+    env["GIT_CONFIG_KEY_2"] = f"url.https://{token}:x-oauth-basic@github.com/.insteadOf"
+    env["GIT_CONFIG_VALUE_2"] = "ssh://git@github.com/"
+    return env
 
 
 def _generate_description(protocol_run_id: int, protocol_info: dict, project_path: Path) -> str:
@@ -201,7 +229,7 @@ def _commit_changes(project_path: Path, message: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def _push_branch(project_path: Path, branch_name: str) -> dict:
+def _push_branch(project_path: Path, git_url: str, branch_name: str, github_token: str | None) -> dict:
     """Push branch to remote."""
     
     try:
@@ -210,6 +238,7 @@ def _push_branch(project_path: Path, branch_name: str) -> dict:
             cwd=str(project_path),
             capture_output=True,
             text=True,
+            env=_build_git_env(git_url, github_token),
         )
         
         return {
@@ -253,6 +282,7 @@ def _create_github_pr(
     title: str,
     body: str,
     draft: bool,
+    github_token: str | None,
 ) -> dict:
     """Create GitHub Pull Request."""
     
@@ -260,7 +290,7 @@ def _create_github_pr(
     if not owner or not repo:
         return {"success": False, "error": "Could not parse GitHub URL"}
     
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    token = github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if not token:
         return {
             "success": False,

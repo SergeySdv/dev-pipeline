@@ -65,11 +65,16 @@ import type {
 
 type AgentCard = Agent & {
   enabled: boolean;
-  healthStatus: "available" | "unavailable" | "unknown" | "disabled";
+  healthStatus: "available" | "unavailable" | "unknown" | "disabled" | "configured" | "not_installed";
   healthDetail?: string;
   activeSteps: number;
   completedSteps: number;
 };
+
+function isAgentNotInstalled(error?: string | null): boolean {
+  if (!error) return false;
+  return /command not found|not installed|binary.*not.*found/i.test(error);
+}
 
 type AgentDraft = {
   id: string;
@@ -172,15 +177,23 @@ export default function AgentsPage() {
 
   const agents: AgentCard[] = useMemo(() => {
     return (agentsData || []).map((agent) => {
-      const enabled = agent.enabled ?? agent.status !== "unavailable";
+      const enabled = agent.enabled ?? agent.status !== "disabled";
       const health = healthById.get(agent.id);
       let healthStatus: AgentCard["healthStatus"] = "unknown";
       let healthDetail: string | undefined;
       if (!enabled) {
         healthStatus = "disabled";
       } else if (health) {
-        healthStatus = health.available ? "available" : "unavailable";
+        if (health.available) {
+          healthStatus = "available";
+        } else if (isAgentNotInstalled(health.error)) {
+          healthStatus = "not_installed";
+        } else {
+          healthStatus = "unavailable";
+        }
         healthDetail = health.error || health.version || undefined;
+      } else if (agent.status === "configured") {
+        healthStatus = "configured";
       } else if (agent.status === "available") {
         healthStatus = "available";
       }
@@ -225,6 +238,8 @@ export default function AgentsPage() {
   const statusColors = {
     available: { bg: "bg-green-500", text: "Available" },
     unavailable: { bg: "bg-red-500", text: "Unavailable" },
+    not_installed: { bg: "bg-orange-500", text: "Not Installed" },
+    configured: { bg: "bg-blue-500", text: "Configured" },
     disabled: { bg: "bg-slate-400", text: "Disabled" },
     unknown: { bg: "bg-amber-500", text: "Unknown" },
   };

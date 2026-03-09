@@ -113,12 +113,16 @@ projects:
                 agents = {a["id"]: a for a in resp.json()}
                 assert agents["alpha"]["enabled"] is True
                 assert agents["beta"]["enabled"] is False
+                assert agents["alpha"]["status"] == "configured"
+                assert agents["beta"]["status"] == "disabled"
 
                 resp = client.get(f"/agents?project_id={project.id}")
                 assert resp.status_code == 200
                 project_agents = {a["id"]: a for a in resp.json()}
                 assert project_agents["alpha"]["enabled"] is False
                 assert project_agents["beta"]["enabled"] is False
+                assert project_agents["alpha"]["status"] == "disabled"
+                assert project_agents["beta"]["status"] == "disabled"
 
                 resp = client.get("/agents/defaults")
                 assert resp.status_code == 200
