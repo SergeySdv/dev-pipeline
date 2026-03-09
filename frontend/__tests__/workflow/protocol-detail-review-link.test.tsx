@@ -31,6 +31,11 @@ vi.mock("@/lib/api", () => ({
       description: null,
       spec_hash: "abc123",
       policy_pack_key: null,
+      template_source: '{"kind":"builtin","name":"brownfield/default"}',
+      template_config: {
+        mode: "brownfield",
+        owner: "protocol",
+      },
       speckit_metadata: {
         spec_run_id: 77,
       },
@@ -107,5 +112,10 @@ describe("Protocol detail review link", () => {
     expect(
       (await screen.findByRole("link", { name: /review implementation/i })).getAttribute("href")
     ).toBe("/specifications/77?tab=analysis");
+    expect(screen.getByText("Template Source")).toBeDefined();
+    expect(screen.getByText("builtin: brownfield/default")).toBeDefined();
+    expect(screen.getByText("Template Config")).toBeDefined();
+    expect(screen.getByText("2 fields")).toBeDefined();
+    expect(screen.getByText("mode=brownfield, owner=protocol")).toBeDefined();
   });
 });

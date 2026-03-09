@@ -38,6 +38,10 @@ import {
   useSyncProtocolToSprint,
 } from "@/lib/api";
 import { formatRelativeTime, truncateHash } from "@/lib/format";
+import {
+  describeProtocolTemplateConfig,
+  formatProtocolTemplateSource,
+} from "@/lib/protocol-template-display";
 import { getSpecificationReviewPath } from "@/lib/project-routes";
 
 import { ArtifactsTab } from "./components/artifacts-tab";
@@ -107,6 +111,8 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
     typeof protocol.speckit_metadata?.spec_run_id === "number"
       ? getSpecificationReviewPath(protocol.speckit_metadata.spec_run_id)
       : null;
+  const templateSourceLabel = formatProtocolTemplateSource(protocol.template_source);
+  const templateConfig = describeProtocolTemplateConfig(protocol.template_config);
 
   return (
     <div className="container py-8">
@@ -272,7 +278,7 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
         )}
       </div>
 
-      <div className="mb-8 grid gap-4 md:grid-cols-5">
+      <div className="mb-8 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Status</CardDescription>
@@ -299,10 +305,25 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Template</CardDescription>
+            <CardDescription>Template Source</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="truncate font-medium">{protocol.template_source || "None"}</p>
+            <p className="truncate font-medium" title={templateSourceLabel}>
+              {templateSourceLabel}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Template Config</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="font-medium">{templateConfig.summary}</p>
+            {templateConfig.detail && (
+              <p className="text-muted-foreground mt-1 truncate text-xs" title={templateConfig.detail}>
+                {templateConfig.detail}
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card>

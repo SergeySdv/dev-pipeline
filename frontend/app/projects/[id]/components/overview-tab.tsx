@@ -20,6 +20,7 @@ import {
   MessageCircle,
   MessageSquare,
   PlayCircle,
+  Plus,
   Shield,
   Wand2,
   Workflow,
@@ -495,6 +496,14 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                 Manual Tasks Wizard
               </Link>
             </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start bg-transparent"
+              onClick={() => setIsCreateProtocolOpen(true)}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Create Protocol
+            </Button>
           </CardContent>
         </Card>
 
@@ -683,9 +692,10 @@ function CreateProtocolDialog({
 }) {
   const createProtocol = useCreateProtocol();
   const [formData, setFormData] = useState({
-    name: "",
+    protocol_name: "",
     description: "",
-    template_config: "{}",
+    template_source: "",
+    template_config: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -695,8 +705,9 @@ function CreateProtocolDialog({
       await createProtocol.mutateAsync({
         projectId: projectId,
         data: {
-          protocol_name: formData.name,
+          protocol_name: formData.protocol_name,
           description: formData.description || undefined,
+          template_source: formData.template_source || undefined,
           template_config: templateConfig,
         },
       });
@@ -717,12 +728,14 @@ function CreateProtocolDialog({
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Protocol Name</Label>
+              <Label htmlFor="protocol_name">Protocol Name</Label>
               <Input
-                id="name"
+                id="protocol_name"
                 placeholder="0001-feature-auth"
-                value={formData.name}
-                onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+                value={formData.protocol_name}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, protocol_name: e.target.value }))
+                }
                 required
               />
             </div>
@@ -736,7 +749,18 @@ function CreateProtocolDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="template_config">Template Config (JSON)</Label>
+              <Label htmlFor="template_source">Template Source (optional)</Label>
+              <Input
+                id="template_source"
+                placeholder="./templates/feature.yaml"
+                value={formData.template_source}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, template_source: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="template_config">Template Config (JSON object, optional)</Label>
               <Textarea
                 id="template_config"
                 className="min-h-48 font-mono text-sm"
@@ -745,7 +769,6 @@ function CreateProtocolDialog({
                 onChange={(e) =>
                   setFormData((p) => ({ ...p, template_config: e.target.value }))
                 }
-                required
               />
             </div>
           </div>

@@ -202,7 +202,7 @@ function CreateProtocolDialog({ projectId, onClose }: { projectId: number; onClo
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="template_config">Template Config (JSON, optional)</Label>
+            <Label htmlFor="template_config">Template Config (JSON object, optional)</Label>
             <Textarea
               id="template_config"
               placeholder='{ "mode": "brownfield" }'
