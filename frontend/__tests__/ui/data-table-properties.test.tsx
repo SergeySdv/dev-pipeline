@@ -33,7 +33,7 @@ interface TestRow {
 }
 
 const testRowArbitrary: fc.Arbitrary<TestRow> = fc.record({
-  id: fc.nat({ min: 1, max: 100000 }),
+  id: fc.integer({ min: 1, max: 100000 }),
   name: fc.string({ minLength: 1, maxLength: 100 }),
   status: fc.constantFrom("pending", "active", "completed", "failed", "cancelled"),
   count: fc.integer({ min: 0, max: 1000 }),
