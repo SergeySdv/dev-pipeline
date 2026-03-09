@@ -4,6 +4,7 @@ Integration tests for agent management API endpoints.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -212,6 +213,78 @@ defaults:
 
                 resp = client.post("/agents/does-not-exist/test", json={"overrides": {}})
                 assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_agents_api_returns_codex_model_catalog(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  codex:
+    name: OpenAI Codex
+    kind: cli
+    command: codex
+    default_model: gpt-5.3-codex
+    reasoning_effort: xhigh
+    capabilities: [code_gen]
+    enabled: true
+defaults:
+  exec: codex
+""".strip()
+        )
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        (codex_home / "models_cache.json").write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-5.3-codex",
+                            "display_name": "gpt-5.3-codex",
+                            "description": "Latest coding model",
+                            "priority": 0,
+                            "visibility": "list",
+                            "default_reasoning_level": "medium",
+                            "supported_reasoning_levels": [
+                                {"effort": "low", "description": "Fast"},
+                                {"effort": "high", "description": "Deep"},
+                                {"effort": "xhigh", "description": "Deepest"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        db_path = tmp_path / "test.db"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        from devgodzilla.api.dependencies import get_db
+
+        app.dependency_overrides[get_db] = lambda: db
+
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.get("/agents/codex")
+                assert resp.status_code == 200
+                payload = resp.json()
+                assert payload["default_model"] == "gpt-5.3-codex"
+                assert payload["reasoning_effort"] == "xhigh"
+                assert payload["available_models"][0]["value"] == "gpt-5.3-codex"
+                assert payload["available_models"][0]["default_reasoning_effort"] == "medium"
+                assert payload["available_models"][0]["reasoning_efforts"][-1]["value"] == "xhigh"
         finally:
             app.dependency_overrides.clear()
 

@@ -10,6 +10,34 @@ from devgodzilla.services.base import ServiceContext
 
 router = APIRouter()
 
+
+def _to_agent_info(
+    cfg: AgentConfigService,
+    agent,
+    *,
+    project_id: Optional[int] = None,
+    status: str = "configured",
+) -> schemas.AgentInfo:
+    metadata = cfg.get_agent_ui_metadata(agent.id, project_id=project_id)
+    return schemas.AgentInfo(
+        id=agent.id,
+        name=agent.name,
+        kind=agent.kind,
+        capabilities=agent.capabilities,
+        status=status,
+        default_model=agent.default_model,
+        available_models=metadata.get("available_models", []),
+        reasoning_effort=metadata.get("reasoning_effort"),
+        command_dir=agent.command_dir,
+        enabled=agent.enabled,
+        command=agent.command,
+        endpoint=agent.endpoint,
+        sandbox=agent.sandbox,
+        format=agent.format,
+        timeout_seconds=agent.timeout_seconds,
+        max_retries=agent.max_retries,
+    )
+
 @router.get("/agents", response_model=List[schemas.AgentInfo])
 def list_agents(
     project_id: Optional[int] = Query(default=None),
@@ -21,22 +49,7 @@ def list_agents(
     # Prefer YAML-configured agents (stable list even when engines are not registered).
     cfg = AgentConfigService(ctx, db=db)
     agents = [
-        schemas.AgentInfo(
-            id=a.id,
-            name=a.name,
-            kind=a.kind,
-            capabilities=a.capabilities,
-            status="configured" if a.enabled else "disabled",
-            default_model=a.default_model,
-            command_dir=a.command_dir,
-            enabled=a.enabled,
-            command=a.command,
-            endpoint=a.endpoint,
-            sandbox=a.sandbox,
-            format=a.format,
-            timeout_seconds=a.timeout_seconds,
-            max_retries=a.max_retries,
-        )
+        _to_agent_info(cfg, a, project_id=project_id, status="configured" if a.enabled else "disabled")
         for a in cfg.list_agents(enabled_only=enabled_only, project_id=project_id)
     ]
 
@@ -123,6 +136,7 @@ def update_agent_config(
             agent_id=agent_id,
             enabled=config.enabled,
             default_model=config.default_model,
+            reasoning_effort=config.reasoning_effort,
             capabilities=config.capabilities,
             command_dir=config.command_dir,
             name=config.name,
@@ -135,21 +149,11 @@ def update_agent_config(
             max_retries=config.max_retries,
             project_id=project_id,
         )
-        return schemas.AgentInfo(
-            id=updated_agent.id,
-            name=updated_agent.name,
-            kind=updated_agent.kind,
-            capabilities=updated_agent.capabilities,
+        return _to_agent_info(
+            cfg,
+            updated_agent,
+            project_id=project_id,
             status="configured" if updated_agent.enabled else "disabled",
-            default_model=updated_agent.default_model,
-            command_dir=updated_agent.command_dir,
-            enabled=updated_agent.enabled,
-            command=updated_agent.command,
-            endpoint=updated_agent.endpoint,
-            sandbox=updated_agent.sandbox,
-            format=updated_agent.format,
-            timeout_seconds=updated_agent.timeout_seconds,
-            max_retries=updated_agent.max_retries,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -396,21 +400,11 @@ def get_agent(
     cfg = AgentConfigService(ctx, db=db)
     agent = cfg.get_agent(agent_id, project_id=project_id)
     if agent:
-        return schemas.AgentInfo(
-            id=agent.id,
-            name=agent.name,
-            kind=agent.kind,
-            capabilities=agent.capabilities,
+        return _to_agent_info(
+            cfg,
+            agent,
+            project_id=project_id,
             status="available" if agent.enabled else "unavailable",
-            default_model=agent.default_model,
-            command_dir=agent.command_dir,
-            enabled=agent.enabled,
-            command=agent.command,
-            endpoint=agent.endpoint,
-            sandbox=agent.sandbox,
-            format=agent.format,
-            timeout_seconds=agent.timeout_seconds,
-            max_retries=agent.max_retries,
         )
 
     if project_id is None:

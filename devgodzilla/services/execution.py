@@ -365,6 +365,20 @@ class ExecutionService(Service):
                 resolution.model = env_model or resolved_agent_model or engine.metadata.default_model
             
             # Build request
+            runtime_options = {}
+            try:
+                from devgodzilla.services.agent_config import AgentConfigService
+
+                cfg = AgentConfigService(self.context, db=self.db)
+                runtime_options = cfg.get_runtime_options(resolution.engine_id, project_id=project.id)
+            except Exception:
+                runtime_options = {}
+
+            task_cycle_override = self._task_cycle_active_override(step, stage="implement")
+            reasoning_effort = task_cycle_override.get("reasoning_effort")
+            if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                runtime_options["reasoning_effort"] = reasoning_effort.strip()
+
             request = EngineRequest(
                 project_id=project.id,
                 protocol_run_id=run.id,
@@ -375,7 +389,7 @@ class ExecutionService(Service):
                 working_dir=str(resolution.workdir),
                 sandbox=resolution.sandbox,
                 timeout=resolution.timeout or self.default_timeout,
-                extra={"job_id": job_id},
+                extra={"job_id": job_id, **runtime_options},
             )
             
             # Execute
@@ -427,6 +441,7 @@ class ExecutionService(Service):
         # Determine workspace and protocol roots
         workspace_root = resolve_workspace_root(run, project)
         protocol_root = resolve_protocol_root(run, workspace_root)
+        task_cycle_override = self._task_cycle_active_override(step, stage="implement")
         
         # Get step spec from template config
         step_spec = get_step_spec_from_template(run.template_config, step.step_name)
@@ -445,6 +460,7 @@ class ExecutionService(Service):
 
         resolved_engine = (
             engine_id
+            or task_cycle_override.get("agent_id")
             or step.assigned_agent
             or (step_spec.get("engine_id") if step_spec else None)
             or default_engine
@@ -455,6 +471,7 @@ class ExecutionService(Service):
         
         resolved_model = (
             model
+            or task_cycle_override.get("model_override")
             or (step_spec.get("model") if step_spec else None)
             or step.model
             or None
@@ -518,6 +535,26 @@ class ExecutionService(Service):
             timeout=timeout,
             step_name=step.step_name,
         )
+
+    @staticmethod
+    def _task_cycle_active_override(step: StepRun, *, stage: str) -> Dict[str, str]:
+        runtime_state = step.runtime_state if isinstance(step.runtime_state, dict) else {}
+        task_cycle = runtime_state.get("task_cycle") if isinstance(runtime_state, dict) else None
+        if not isinstance(task_cycle, dict):
+            return {}
+
+        override = task_cycle.get("active_stage_override")
+        if not isinstance(override, dict):
+            return {}
+        if str(override.get("stage") or "").strip() != stage:
+            return {}
+
+        resolved: Dict[str, str] = {}
+        for key in ("agent_id", "model_override", "reasoning_effort"):
+            value = override.get(key)
+            if isinstance(value, str) and value.strip():
+                resolved[key] = value.strip()
+        return resolved
 
     def _get_step_spec(
         self,

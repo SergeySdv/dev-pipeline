@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode, get_registry
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.speckit_adapter import SpecKitAdapter
@@ -1946,7 +1947,14 @@ Legend:
             working_dir=str(Path(project_path).expanduser()),
             sandbox=SandboxMode.FULL_ACCESS,
             timeout=timeout_seconds,
-            extra={"job_id": job_id, "engine_id": resolved_engine_id},
+            extra={
+                "job_id": job_id,
+                "engine_id": resolved_engine_id,
+                **AgentConfigService(self.context, db=self.db).get_runtime_options(
+                    resolved_engine_id,
+                    project_id=project_id,
+                ),
+            },
         )
         return engine.plan(request)
 

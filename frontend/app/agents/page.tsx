@@ -82,6 +82,8 @@ type AgentDraft = {
   kind: string;
   enabled: boolean;
   default_model: string;
+  available_models: AgentModelOption[];
+  reasoning_effort: string;
   command: string;
   command_dir: string;
   endpoint: string;
@@ -110,6 +112,25 @@ type PromptDraft = {
   enabled: boolean;
   description: string;
 };
+
+type AgentReasoningOption = {
+  value: string;
+  description?: string | null;
+};
+
+type AgentModelOption = {
+  value: string;
+  label?: string | null;
+  description?: string | null;
+  default_reasoning_effort?: string | null;
+  reasoning_efforts?: AgentReasoningOption[];
+};
+
+const AUTO_REASONING_VALUE = "__auto_reasoning__";
+
+function getModelOption(agent: Pick<AgentDraft, "available_models" | "default_model">) {
+  return agent.available_models.find((model) => model.value === agent.default_model);
+}
 
 const processAssignments = [
   {
@@ -257,6 +278,9 @@ export default function AgentsPage() {
 
   const promptOptions = promptsData || [];
   const assignmentsReady = Boolean(assignmentsData);
+  const selectedModelOption = selectedAgent ? getModelOption(selectedAgent) : undefined;
+  const reasoningOptions = selectedModelOption?.reasoning_efforts || [];
+  const reasoningValue = selectedAgent?.reasoning_effort || AUTO_REASONING_VALUE;
 
   const handleScopeChange = (value: string) => {
     setScopeProjectId(value);
@@ -325,6 +349,8 @@ export default function AgentsPage() {
       kind: agent.kind,
       enabled: agent.enabled,
       default_model: agent.default_model || "",
+      available_models: agent.available_models || [],
+      reasoning_effort: agent.reasoning_effort || "",
       command: agent.command || "",
       command_dir: agent.command_dir || "",
       endpoint: agent.endpoint || "",
@@ -362,6 +388,7 @@ export default function AgentsPage() {
       kind: toNullable(selectedAgent.kind),
       enabled: selectedAgent.enabled,
       default_model: toNullable(selectedAgent.default_model),
+      reasoning_effort: toNullable(selectedAgent.reasoning_effort),
       command: toNullable(selectedAgent.command),
       command_dir: toNullable(selectedAgent.command_dir),
       endpoint: toNullable(selectedAgent.endpoint),
@@ -398,6 +425,7 @@ export default function AgentsPage() {
       kind: toNullable(selectedAgent.kind),
       enabled: selectedAgent.enabled,
       default_model: toNullable(selectedAgent.default_model),
+      reasoning_effort: toNullable(selectedAgent.reasoning_effort),
       command: toNullable(selectedAgent.command),
       command_dir: toNullable(selectedAgent.command_dir),
       endpoint: toNullable(selectedAgent.endpoint),
@@ -847,15 +875,53 @@ export default function AgentsPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="agent-default-model">Default Model</Label>
-                  <Input
-                    id="agent-default-model"
-                    value={selectedAgent.default_model}
-                    onChange={(event) =>
-                      setSelectedAgent((prev) =>
-                        prev ? { ...prev, default_model: event.target.value } : prev
-                      )
-                    }
-                  />
+                  {selectedAgent.available_models.length > 0 ? (
+                    <Select
+                      value={selectedAgent.default_model || undefined}
+                      onValueChange={(value) =>
+                        setSelectedAgent((prev) => {
+                          if (!prev) return prev;
+                          const nextModel = prev.available_models.find((model) => model.value === value);
+                          const nextOptions = nextModel?.reasoning_efforts || [];
+                          const currentReasoning = prev.reasoning_effort;
+                          const nextReasoning = nextOptions.some(
+                            (option) => option.value === currentReasoning
+                          )
+                            ? currentReasoning
+                            : (nextModel?.default_reasoning_effort ?? "");
+                          return {
+                            ...prev,
+                            default_model: value,
+                            reasoning_effort: nextReasoning,
+                          };
+                        })
+                      }
+                    >
+                      <SelectTrigger id="agent-default-model" className="w-full">
+                        <SelectValue placeholder="Choose a model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedAgent.available_models.map((model) => (
+                          <SelectItem key={model.value} value={model.value}>
+                            {model.label || model.value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id="agent-default-model"
+                      value={selectedAgent.default_model}
+                      onChange={(event) =>
+                        setSelectedAgent((prev) =>
+                          prev ? { ...prev, default_model: event.target.value } : prev
+                        )
+                      }
+                    />
+                  )}
+                  {selectedModelOption?.description && (
+                    <p className="text-muted-foreground text-xs">{selectedModelOption.description}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="agent-command-dir">Command Dir</Label>
@@ -870,6 +936,53 @@ export default function AgentsPage() {
                   />
                 </div>
               </div>
+
+              {reasoningOptions.length > 0 && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="agent-reasoning-effort">Reasoning Effort</Label>
+                    <Select
+                      value={reasoningValue}
+                      onValueChange={(value) =>
+                        setSelectedAgent((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                reasoning_effort: value === AUTO_REASONING_VALUE ? "" : value,
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      <SelectTrigger id="agent-reasoning-effort" className="w-full">
+                        <SelectValue placeholder="Use model default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={AUTO_REASONING_VALUE}>Use model default</SelectItem>
+                        {reasoningOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {reasoningValue === AUTO_REASONING_VALUE ? (
+                      <p className="text-muted-foreground text-xs">
+                        Uses the model default
+                        {selectedModelOption?.default_reasoning_effort
+                          ? ` (${selectedModelOption.default_reasoning_effort})`
+                          : ""}
+                        .
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground text-xs">
+                        {reasoningOptions.find((option) => option.value === selectedAgent.reasoning_effort)
+                          ?.description || "Controls how much reasoning Codex spends on a task."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">

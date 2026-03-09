@@ -151,7 +151,13 @@ class ProtocolGenerationService(Service):
             working_dir=str(worktree_root),
             sandbox=SandboxMode.WORKSPACE_WRITE,
             timeout=timeout_seconds,
-            extra={"job_id": "protocol_generate"},
+            extra={
+                "job_id": "protocol_generate",
+                **AgentConfigService(self.context).get_runtime_options(
+                    engine_id,
+                    project_id=project_id,
+                ),
+            },
         )
         engine_result = engine.execute(req)
 

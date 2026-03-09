@@ -322,6 +322,10 @@ class DiscoveryAgentService(Service):
                     "job_id": "discovery",
                     "log_callback": _log_output,
                     "cli_execution_id": execution.execution_id,
+                    **AgentConfigService(self.context, db=self.db).get_runtime_options(
+                        engine_id,
+                        project_id=project_id,
+                    ),
                 },
             )
             engine_result = engine.execute(req)

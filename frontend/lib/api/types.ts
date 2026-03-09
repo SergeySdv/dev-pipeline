@@ -827,6 +827,17 @@ export interface Agent {
   capabilities: string[];
   status: "configured" | "available" | "busy" | "unavailable" | "disabled";
   default_model: string | null;
+  available_models?: Array<{
+    value: string;
+    label?: string | null;
+    description?: string | null;
+    default_reasoning_effort?: string | null;
+    reasoning_efforts?: Array<{
+      value: string;
+      description?: string | null;
+    }>;
+  }>;
+  reasoning_effort?: string | null;
   command_dir: string | null;
   enabled?: boolean | null;
   command?: string | null;
@@ -842,6 +853,7 @@ export interface AgentUpdate {
   kind?: string | null;
   enabled?: boolean | null;
   default_model?: string | null;
+  reasoning_effort?: string | null;
   capabilities?: string[] | null;
   command_dir?: string | null;
   command?: string | null;

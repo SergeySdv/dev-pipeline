@@ -183,7 +183,7 @@ def patch_prompt_gate(monkeypatch):
     """Ensure prompt QA gate does not depend on real engines in tests."""
     monkeypatch.setattr(
         "devgodzilla.services.quality.QualityService._build_prompt_gate",
-        lambda self: PromptGateStub(),
+        lambda self, *args, **kwargs: PromptGateStub(),
     )
 
 

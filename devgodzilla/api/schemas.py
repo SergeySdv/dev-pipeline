@@ -240,6 +240,8 @@ class AgentInfo(BaseModel):
     capabilities: List[str]
     status: str = "configured"
     default_model: Optional[str] = None
+    available_models: List[Dict[str, Any]] = Field(default_factory=list)
+    reasoning_effort: Optional[str] = None
     command_dir: Optional[str] = None
     enabled: Optional[bool] = None
     command: Optional[str] = None
@@ -254,6 +256,7 @@ class AgentConfigUpdate(BaseModel):
     kind: Optional[str] = None
     enabled: Optional[bool] = None
     default_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     capabilities: Optional[List[str]] = None
     command_dir: Optional[str] = None
     command: Optional[str] = None

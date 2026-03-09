@@ -98,11 +98,13 @@ class PromptQAGate(Gate):
         prompt_path: Path,
         model: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
+        runtime_options: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._engine = engine
         self._prompt_path = prompt_path
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._runtime_options = dict(runtime_options or {})
 
     @property
     def gate_id(self) -> str:
@@ -132,7 +134,7 @@ class PromptQAGate(Gate):
             working_dir=context.workspace_root,
             sandbox=SandboxMode.READ_ONLY,
             timeout=self._timeout_seconds,
-            extra={},
+            extra=dict(self._runtime_options),
         )
 
         result = self._engine.qa(req)

@@ -90,6 +90,10 @@ class CodexEngine(CLIEngine):
         
         # Add optional parameters from extra
         extra = req.extra or {}
+
+        reasoning_effort = extra.get("reasoning_effort")
+        if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+            cmd.extend(["-c", f'model_reasoning_effort="{reasoning_effort.strip()}"'])
         
         if extra.get("output_schema"):
             cmd.extend(["--output-schema", str(extra["output_schema"])])

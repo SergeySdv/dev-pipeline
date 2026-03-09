@@ -280,9 +280,13 @@ class TaskCycleService(Service):
     def implement(self, step_run_id: int, *, owner_agent: Optional[str] = None) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
         state = self._task_cycle_state(step, project)
+        implement_override = self._resolve_stage_assignment(project.id, "task_cycle_implement")
         resolved_owner_agent = self._resolve_owner_agent(
             project.id,
-            owner_agent or self._string_or_none(state.get("owner_agent")) or step.assigned_agent,
+            owner_agent
+            or implement_override.get("agent_id")
+            or self._string_or_none(state.get("owner_agent"))
+            or step.assigned_agent,
         )
         if resolved_owner_agent and resolved_owner_agent != step.assigned_agent:
             self.db.update_step_assigned_agent(step.id, resolved_owner_agent)
@@ -303,6 +307,10 @@ class TaskCycleService(Service):
         state["review_status"] = "pending"
         state["qa_status"] = "pending"
         state["pr_ready"] = False
+        state["active_stage_override"] = {
+            "stage": "implement",
+            **implement_override,
+        }
         self._persist_task_cycle_state(step, state)
 
         execution = ExecutionService(self.context, self.db)
@@ -418,6 +426,7 @@ class TaskCycleService(Service):
         step, run, project = self._load_work_item(step_run_id)
         refs = self._artifact_refs(project, step)
         state = self._task_cycle_state(step, project)
+        qa_override = self._resolve_stage_assignment(project.id, "task_cycle_qa")
         step_artifacts_dir = Path(refs["step_artifacts_dir"])
         context_pack_json = Path(refs["context_pack_json"])
         if not context_pack_json.exists():
@@ -445,7 +454,17 @@ class TaskCycleService(Service):
         # Task-cycle explicit gate selection should stay deterministic.
         # If the caller requested concrete QA gates, do not implicitly re-add prompt QA.
         skip_gates = ["prompt_qa"] if gates is not None else None
-        qa_result = quality.run_qa(step.id, gates=gates_to_run, skip_gates=skip_gates)
+        runtime_options = {}
+        if qa_override.get("reasoning_effort"):
+            runtime_options["reasoning_effort"] = qa_override["reasoning_effort"]
+        qa_result = quality.run_qa(
+            step.id,
+            gates=gates_to_run,
+            skip_gates=skip_gates,
+            engine_id=qa_override.get("agent_id"),
+            model=qa_override.get("model_override"),
+            runtime_options=runtime_options or None,
+        )
         task_dir = Path(refs["task_dir"])
         task_dir.mkdir(parents=True, exist_ok=True)
         qa_json_path = Path(refs["test_report_json"])
@@ -1002,6 +1021,24 @@ class TaskCycleService(Service):
         if candidate.lower() in {"dev", "developer", "default", "exec"}:
             return self._default_exec_engine_id(project_id)
         return candidate
+
+    def _resolve_stage_assignment(self, project_id: int, stage_key: str) -> Dict[str, Optional[str]]:
+        try:
+            cfg = AgentConfigService(self.context, db=self.db)
+            assignment = cfg.get_assignment(stage_key, project_id=project_id)
+        except Exception:
+            assignment = None
+
+        if not isinstance(assignment, dict):
+            return {}
+
+        metadata = assignment.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
+        return {
+            "agent_id": self._resolve_owner_agent(project_id, self._string_or_none(assignment.get("agent_id"))),
+            "model_override": self._string_or_none(assignment.get("model_override")),
+            "reasoning_effort": self._string_or_none(metadata_dict.get("reasoning_effort")),
+        }
 
     def _write_rework_pack(
         self,

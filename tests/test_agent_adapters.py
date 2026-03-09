@@ -126,6 +126,29 @@ class TestQoderEngine:
         assert engine.metadata.id == "qoder"
 
 
+class TestCodexEngine:
+    """Tests for Codex CLI engine adapter."""
+
+    def test_codex_engine_build_command_with_reasoning_effort(self, tmp_path: Path):
+        from devgodzilla.engines.codex import CodexEngine
+
+        engine = CodexEngine(default_model="gpt-5.3-codex")
+        req = EngineRequest(
+            project_id=1,
+            protocol_run_id=2,
+            step_run_id=3,
+            prompt_text="Test",
+            working_dir=str(tmp_path),
+            extra={"reasoning_effort": "high"},
+        )
+
+        cmd = engine._build_command(req, SandboxMode.WORKSPACE_WRITE)
+
+        assert "-c" in cmd
+        config_idx = cmd.index("-c")
+        assert cmd[config_idx + 1] == 'model_reasoning_effort="high"'
+
+
 class TestQwenEngine:
     """Tests for Qwen Code CLI engine adapter."""
 

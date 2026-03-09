@@ -226,7 +226,13 @@ class QualityService(Service):
         repo_root = Path(__file__).resolve().parents[2]
         return repo_root / "prompts" / "quality-validator.prompt.md"
 
-    def _resolve_qa_engine(self, *, project_id: Optional[int] = None):
+    def _resolve_qa_engine(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
         registry = get_registry()
         if not registry.list_ids():
             try:
@@ -242,32 +248,32 @@ class QualityService(Service):
                 bootstrap_default_engines(replace=False)
             except Exception:
                 pass
-        engine_id = None
-        model = None
+        resolved_engine_id = engine_id
+        resolved_model = model
         cfg: Optional["AgentConfigService"] = None
         try:
             from devgodzilla.services.agent_config import AgentConfigService
 
             cfg = AgentConfigService(self.context, db=self.db)
-            engine_id = cfg.get_default_engine_id(
-                "qa",
-                project_id=project_id,
-                fallback=self.context.config.engine_defaults.get("qa"),  # type: ignore[union-attr]
-            )
-            model = self.context.config.qa_model  # type: ignore[union-attr]
+            if not resolved_engine_id:
+                resolved_engine_id = cfg.get_default_engine_id(
+                    "qa",
+                    project_id=project_id,
+                    fallback=self.context.config.engine_defaults.get("qa"),  # type: ignore[union-attr]
+                )
+            if not resolved_model:
+                resolved_model = self.context.config.qa_model  # type: ignore[union-attr]
         except Exception:
-            engine_id = None
-            model = None
             cfg = None
-        if not engine_id:
-            engine_id = "opencode"
+        if not resolved_engine_id:
+            resolved_engine_id = "opencode"
         try:
-            engine = registry.get(engine_id)
+            engine = registry.get(resolved_engine_id)
         except EngineNotFoundError:
             if registry.has("dummy"):
                 engine = registry.get("dummy")
             else:
-                raise RuntimeError(f"QA engine not registered: {engine_id}")
+                raise RuntimeError(f"QA engine not registered: {resolved_engine_id}")
         try:
             available = engine.check_availability()
         except Exception as exc:
@@ -283,7 +289,7 @@ class QualityService(Service):
                 if availability_error:
                     error = f"{error} ({availability_error})"
                 raise RuntimeError(error)
-        if not model:
+        if not resolved_model:
             resolved_agent_model: Optional[str] = None
             try:
                 if cfg is not None:
@@ -292,20 +298,28 @@ class QualityService(Service):
                         resolved_agent_model = agent_cfg.default_model.strip()
             except Exception:
                 resolved_agent_model = None
-            model = resolved_agent_model or engine.metadata.default_model
-        return engine, model
+            resolved_model = resolved_agent_model or engine.metadata.default_model
+        return engine, resolved_model
 
     def _build_prompt_gate(
         self,
         *,
         project_id: Optional[int] = None,
         prompt_path: Optional[Path] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+        runtime_options: Optional[Dict[str, Any]] = None,
     ) -> PromptQAGate:
-        engine, model = self._resolve_qa_engine(project_id=project_id)
+        engine, resolved_model = self._resolve_qa_engine(
+            project_id=project_id,
+            engine_id=engine_id,
+            model=model,
+        )
         return PromptQAGate(
             engine=engine,
             prompt_path=prompt_path or self._qa_prompt_path(),
-            model=model,
+            model=resolved_model,
+            runtime_options=runtime_options,
         )
 
     @staticmethod
@@ -346,6 +360,9 @@ class QualityService(Service):
         job_id: Optional[str] = None,
         gates: Optional[List[Gate]] = None,
         skip_gates: Optional[List[str]] = None,
+        engine_id: Optional[str] = None,
+        model: Optional[str] = None,
+        runtime_options: Optional[Dict[str, Any]] = None,
     ) -> QAResult:
         """
         Run QA for a step.
@@ -445,7 +462,13 @@ class QualityService(Service):
                         raise FileNotFoundError(f"QA prompt not found: {candidate}")
                     prompt_path = candidate
 
-                prompt_gate = self._build_prompt_gate(project_id=project.id, prompt_path=prompt_path)
+                prompt_gate = self._build_prompt_gate(
+                    project_id=project.id,
+                    prompt_path=prompt_path,
+                    engine_id=engine_id,
+                    model=model,
+                    runtime_options=runtime_options,
+                )
             except Exception as exc:
                 prompt_gate_error = str(exc)
                 self.logger.error(

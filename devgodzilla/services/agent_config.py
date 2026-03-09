@@ -32,6 +32,7 @@ class AgentConfig:
     command_dir: Optional[str] = None
     endpoint: Optional[str] = None
     default_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     sandbox: str = "none"  # none, workspace-write, cloud
     capabilities: List[str] = field(default_factory=list)
     enabled: bool = True
@@ -105,6 +106,7 @@ class AgentConfigService(Service):
         self._health_config: Dict[str, Any] = {}
         self._prompts: Dict[str, Dict[str, Any]] = {}
         self._projects: Dict[str, Dict[str, Any]] = {}
+        self._codex_models_cache: Optional[List[Dict[str, Any]]] = None
         self._loaded = False
 
     def _get_db(self):
@@ -209,6 +211,7 @@ class AgentConfigService(Service):
                 "command_dir": base.command_dir,
                 "endpoint": base.endpoint,
                 "default_model": base.default_model,
+                "reasoning_effort": base.reasoning_effort,
                 "sandbox": base.sandbox,
                 "capabilities": list(base.capabilities),
                 "enabled": base.enabled,
@@ -225,6 +228,7 @@ class AgentConfigService(Service):
                 "command_dir": None,
                 "endpoint": None,
                 "default_model": None,
+                "reasoning_effort": None,
                 "sandbox": "none",
                 "capabilities": [],
                 "enabled": True,
@@ -245,6 +249,8 @@ class AgentConfigService(Service):
             values["endpoint"] = agent_data.get("endpoint")
         if "default_model" in agent_data:
             values["default_model"] = agent_data.get("default_model")
+        if "reasoning_effort" in agent_data:
+            values["reasoning_effort"] = agent_data.get("reasoning_effort")
         if "sandbox" in agent_data:
             values["sandbox"] = agent_data.get("sandbox") or values["sandbox"]
         if "capabilities" in agent_data:
@@ -456,6 +462,124 @@ class AgentConfigService(Service):
         # Look in devgodzilla package directory
         package_dir = Path(__file__).parent.parent
         return package_dir / self.DEFAULT_CONFIG_PATH
+
+    def _resolve_codex_home(self) -> Path:
+        codex_home = os.environ.get("CODEX_HOME")
+        if isinstance(codex_home, str) and codex_home.strip():
+            return Path(codex_home).expanduser()
+        return Path.home() / ".codex"
+
+    def _load_codex_models_cache(self) -> List[Dict[str, Any]]:
+        if self._codex_models_cache is not None:
+            return self._codex_models_cache
+
+        cache_path = self._resolve_codex_home() / "models_cache.json"
+        try:
+            raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            self._codex_models_cache = []
+            return self._codex_models_cache
+
+        models = raw.get("models") if isinstance(raw, dict) else None
+        if not isinstance(models, list):
+            self._codex_models_cache = []
+            return self._codex_models_cache
+
+        visible_models = [model for model in models if isinstance(model, dict) and model.get("visibility") == "list"]
+        visible_models.sort(key=lambda model: int(model.get("priority", 9999)))
+        self._codex_models_cache = visible_models
+        return self._codex_models_cache
+
+    def get_runtime_options(
+        self,
+        agent_id: str,
+        *,
+        project_id: Optional[int | str] = None,
+    ) -> Dict[str, Any]:
+        agent = self.get_agent(agent_id, project_id=project_id)
+        if not agent:
+            return {}
+
+        cmd_base = Path((agent.command or agent.id)).name.lower()
+        options: Dict[str, Any] = {}
+        if cmd_base == "codex":
+            reasoning_effort = (agent.reasoning_effort or "").strip()
+            if reasoning_effort:
+                options["reasoning_effort"] = reasoning_effort
+        return options
+
+    def get_agent_ui_metadata(
+        self,
+        agent_id: str,
+        *,
+        project_id: Optional[int | str] = None,
+    ) -> Dict[str, Any]:
+        agent = self.get_agent(agent_id, project_id=project_id)
+        if not agent:
+            return {"available_models": [], "reasoning_effort": None}
+
+        metadata: Dict[str, Any] = {
+            "available_models": [],
+            "reasoning_effort": (agent.reasoning_effort or "").strip() or None,
+        }
+
+        cmd_base = Path((agent.command or agent.id)).name.lower()
+        if cmd_base != "codex":
+            return metadata
+
+        selected_model = (agent.default_model or "").strip()
+        available_models: List[Dict[str, Any]] = []
+        for model in self._load_codex_models_cache():
+            slug = str(model.get("slug") or "").strip()
+            if not slug:
+                continue
+            reasoning_options = []
+            for option in model.get("supported_reasoning_levels") or []:
+                if not isinstance(option, dict):
+                    continue
+                effort = str(option.get("effort") or "").strip()
+                if not effort:
+                    continue
+                reasoning_options.append(
+                    {
+                        "value": effort,
+                        "description": option.get("description"),
+                    }
+                )
+            available_models.append(
+                {
+                    "value": slug,
+                    "label": str(model.get("display_name") or slug),
+                    "description": model.get("description"),
+                    "default_reasoning_effort": model.get("default_reasoning_level"),
+                    "reasoning_efforts": reasoning_options,
+                }
+            )
+
+        if selected_model and not any(model.get("value") == selected_model for model in available_models):
+            available_models.insert(
+                0,
+                {
+                    "value": selected_model,
+                    "label": selected_model,
+                    "description": "Configured model",
+                    "default_reasoning_effort": None,
+                    "reasoning_efforts": [],
+                },
+            )
+
+        if not metadata["reasoning_effort"] and selected_model:
+            selected_entry = next(
+                (model for model in available_models if model.get("value") == selected_model),
+                None,
+            )
+            if isinstance(selected_entry, dict):
+                default_effort = selected_entry.get("default_reasoning_effort")
+                if isinstance(default_effort, str) and default_effort.strip():
+                    metadata["reasoning_effort"] = default_effort.strip()
+
+        metadata["available_models"] = available_models
+        return metadata
     
     def _create_default_config(self, path: Path) -> None:
         """Create a default configuration file."""
@@ -971,6 +1095,7 @@ class AgentConfigService(Service):
         *,
         enabled: Optional[bool] = None,
         default_model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         command_dir: Optional[str] = None,
         name: Optional[str] = None,
@@ -994,6 +1119,8 @@ class AgentConfigService(Service):
             update_data["enabled"] = enabled
         if default_model is not None:
             update_data["default_model"] = default_model
+        if reasoning_effort is not None:
+            update_data["reasoning_effort"] = reasoning_effort
         if capabilities is not None:
             update_data["capabilities"] = capabilities
         if command_dir is not None:
