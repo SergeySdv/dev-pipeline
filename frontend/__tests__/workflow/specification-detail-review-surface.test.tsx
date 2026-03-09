@@ -62,18 +62,18 @@ vi.mock("@/lib/api", () => ({
 
 describe("Specification detail review surface", () => {
   it("exposes analysis content as part of the implementation review surface", async () => {
-    let container: HTMLElement;
+    let view!: ReturnType<typeof render>;
     await act(async () => {
-      ({ container } = render(
+      view = render(
         <Suspense fallback={<div>Loading...</div>}>
           <SpecificationDetailPage params={Promise.resolve({ id: "77" })} />
         </Suspense>
-      ));
+      );
     });
 
     expect(await screen.findByRole("tab", { name: /analysis/i })).toBeTruthy();
-    expect(container.textContent).toContain("Review StatusReview Ready");
-    expect(container.textContent).toContain("AnalysisGenerated");
+    expect(view.container.textContent).toContain("Review StatusReview Ready");
+    expect(view.container.textContent).toContain("AnalysisGenerated");
     expect(screen.getAllByText(/review ready/i).length).toBeGreaterThan(0);
   });
 });

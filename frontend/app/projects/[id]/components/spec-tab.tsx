@@ -45,6 +45,7 @@ import {
   useSpecifications,
   useSpecKitStatus,
 } from "@/lib/api";
+import { getProjectSpecWorkflowPath } from "@/lib/project-routes";
 import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 interface SpecTabProps {
@@ -367,9 +368,9 @@ export function SpecTab({ projectId }: SpecTabProps) {
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" asChild>
-            <Link href={`/projects/${projectId}?wizard=generate-specs&tab=spec`}>
+            <Link href={getProjectSpecWorkflowPath(projectId)}>
               <Sparkles className="mr-2 h-4 w-4" />
-              Launch SpecKit Wizard
+              Run Spec Workflow
             </Link>
           </Button>
           <Button variant="outline" size="sm" onClick={handleRefresh}>

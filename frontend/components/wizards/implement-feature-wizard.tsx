@@ -56,7 +56,11 @@ import {
   useSpecKitStatus,
   useSprints,
 } from "@/lib/api";
-import { getProjectExecutionPath } from "@/lib/project-routes";
+import {
+  getProjectExecutionPath,
+  getProjectSpecWorkflowPath,
+  getProjectSpecWorkspacePath,
+} from "@/lib/project-routes";
 import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 const WORKFLOW_STEPS = [
@@ -326,11 +330,8 @@ export function ImplementFeatureWizardModal({
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     <AlertDescription>
                       SpecKit is not initialized.{" "}
-                      <Link
-                        href={`/projects/${projectId}?wizard=generate-specs`}
-                        className="underline"
-                      >
-                        Start with a specification
+                      <Link href={getProjectSpecWorkflowPath(projectId)} className="underline">
+                        Run the full SpecKit workflow first
                       </Link>
                     </AlertDescription>
                   </Alert>
@@ -341,11 +342,8 @@ export function ImplementFeatureWizardModal({
                     <FileText className="h-4 w-4 text-blue-500" />
                     <AlertDescription>
                       No implementation plans found.{" "}
-                      <Link
-                        href={`/projects/${projectId}?wizard=design-solution`}
-                        className="underline"
-                      >
-                        Create a plan first
+                      <Link href={getProjectSpecWorkspacePath(projectId)} className="underline">
+                        Open the spec workspace first
                       </Link>
                     </AlertDescription>
                   </Alert>

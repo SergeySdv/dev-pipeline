@@ -53,6 +53,7 @@ import {
   useRunImplement,
   useSpecKitStatus,
 } from "@/lib/api";
+import { getProjectSpecWorkflowPath } from "@/lib/project-routes";
 import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 const WORKFLOW_STEPS = [
@@ -277,13 +278,10 @@ export function DesignSolutionWizardModal({
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     <AlertDescription>
                       SpecKit is not initialized for this project.{" "}
-                      <Link
-                        href={`/projects/${projectId}?wizard=generate-specs`}
-                        className="underline"
-                      >
-                        Initialize it first
+                      <Link href={getProjectSpecWorkflowPath(projectId)} className="underline">
+                        Run the full SpecKit workflow first
                       </Link>{" "}
-                      to generate specifications.
+                      before using the manual planning tool.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -293,13 +291,10 @@ export function DesignSolutionWizardModal({
                     <FileText className="h-4 w-4 text-blue-500" />
                     <AlertDescription>
                       No specifications found.{" "}
-                      <Link
-                        href={`/projects/${projectId}?wizard=generate-specs`}
-                        className="underline"
-                      >
-                        Generate a specification first
+                      <Link href={getProjectSpecWorkflowPath(projectId)} className="underline">
+                        Run the full SpecKit workflow first
                       </Link>{" "}
-                      before creating an implementation plan.
+                      before creating an implementation plan manually.
                     </AlertDescription>
                   </Alert>
                 )}

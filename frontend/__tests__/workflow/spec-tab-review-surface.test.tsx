@@ -82,6 +82,9 @@ describe("SpecTab review surface", () => {
   it("shows review readiness and protocol linkage for implementation-ready specs", () => {
     const { container } = render(<SpecTab projectId={11} />);
 
+    expect(screen.getByRole("link", { name: /run spec workflow/i }).getAttribute("href")).toBe(
+      "/projects/11?wizard=generate-specs&tab=spec"
+    );
     expect(screen.getAllByText(/review ready/i).length).toBeGreaterThan(0);
     expect(container.textContent).toContain("Analysis: Ready");
     expect(container.textContent).toContain("Checklist: Ready");

@@ -67,7 +67,12 @@ import {
   useSpecKitStatus,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
-import { getProjectSpecWorkflowPath, getProjectSpecWorkspacePath } from "@/lib/project-routes";
+import {
+  getProjectManualPlanWizardPath,
+  getProjectManualTasksWizardPath,
+  getProjectSpecWorkflowPath,
+  getProjectSpecWorkspacePath,
+} from "@/lib/project-routes";
 
 interface OverviewTabProps {
   projectId: number;
@@ -455,13 +460,13 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
               </Link>
             </Button>
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=design-solution`}>
+              <Link href={getProjectManualPlanWizardPath(projectId)}>
                 <Lightbulb className="mr-2 h-4 w-4" />
                 Manual Plan Wizard
               </Link>
             </Button>
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=implement-feature`}>
+              <Link href={getProjectManualTasksWizardPath(projectId)}>
                 <Wand2 className="mr-2 h-4 w-4" />
                 Manual Tasks Wizard
               </Link>

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   getProjectExecutionPath,
+  getProjectManualPlanWizardPath,
+  getProjectManualTasksWizardPath,
   getProjectSpecWorkflowPath,
   getProjectSpecWorkspacePath,
 } from "@/lib/project-routes";
@@ -23,5 +25,13 @@ describe("spec workflow routes", () => {
 
   it("builds the canonical full workflow entry route", () => {
     expect(getProjectSpecWorkflowPath(12)).toBe("/projects/12?wizard=generate-specs&tab=spec");
+  });
+
+  it("builds the manual plan wizard route", () => {
+    expect(getProjectManualPlanWizardPath(12)).toBe("/projects/12?wizard=design-solution");
+  });
+
+  it("builds the manual tasks wizard route", () => {
+    expect(getProjectManualTasksWizardPath(12)).toBe("/projects/12?wizard=implement-feature");
   });
 });

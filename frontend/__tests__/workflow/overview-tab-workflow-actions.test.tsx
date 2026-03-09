@@ -83,7 +83,11 @@ describe("OverviewTab workflow actions", () => {
     expect(screen.getByRole("link", { name: /run spec workflow/i }).getAttribute("href")).toBe(
       "/projects/12?wizard=generate-specs&tab=spec"
     );
-    expect(screen.getByRole("link", { name: /manual plan wizard/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /manual tasks wizard/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /manual plan wizard/i }).getAttribute("href")).toBe(
+      "/projects/12?wizard=design-solution"
+    );
+    expect(screen.getByRole("link", { name: /manual tasks wizard/i }).getAttribute("href")).toBe(
+      "/projects/12?wizard=implement-feature"
+    );
   });
 });

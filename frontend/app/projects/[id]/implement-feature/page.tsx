@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { LoadingState } from "@/components/ui/loading-state";
+import { getProjectManualTasksWizardPath } from "@/lib/project-routes";
 
 export default function ImplementFeaturePage() {
   const params = useParams();
@@ -13,7 +14,7 @@ export default function ImplementFeaturePage() {
 
   useEffect(() => {
     if (projectId) {
-      router.replace(`/projects/${projectId}?wizard=implement-feature`);
+      router.replace(getProjectManualTasksWizardPath(projectId));
     }
   }, [projectId, router]);
 
