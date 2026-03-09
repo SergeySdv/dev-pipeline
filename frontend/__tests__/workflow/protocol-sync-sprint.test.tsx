@@ -6,6 +6,40 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProtocolDetailPage from "@/app/protocols/[id]/page";
 
 const syncToSprintMutateAsyncMock = vi.fn();
+type ProtocolDetailStub = {
+  id: number;
+  project_id: number;
+  protocol_name: string;
+  status: string;
+  base_branch: string;
+  description: string | null;
+  spec_hash: string | null;
+  policy_pack_key: string | null;
+  speckit_metadata: {
+    spec_run_id: number | null;
+  };
+  linked_sprint_id: number | null;
+};
+
+let protocolData: ProtocolDetailStub = {
+  id: 42,
+  project_id: 12,
+  protocol_name: "Auth Flow",
+  status: "running",
+  base_branch: "main",
+  description: null,
+  spec_hash: "abc123",
+  policy_pack_key: null,
+  speckit_metadata: {
+    spec_run_id: 77,
+  },
+  linked_sprint_id: 5,
+};
+let linkedSprintData = {
+  id: 5,
+  name: "Sprint Sync",
+  status: "active",
+};
 
 vi.mock("next/link", () => ({
   default: ({
@@ -24,20 +58,7 @@ vi.mock("next/link", () => ({
 
 vi.mock("@/lib/api", () => ({
   useProtocol: () => ({
-    data: {
-      id: 42,
-      project_id: 12,
-      protocol_name: "Auth Flow",
-      status: "running",
-      base_branch: "main",
-      description: null,
-      spec_hash: "abc123",
-      policy_pack_key: null,
-      speckit_metadata: {
-        spec_run_id: 77,
-      },
-      linked_sprint_id: 5,
-    },
+    data: protocolData,
     isLoading: false,
   }),
   useProject: () => ({
@@ -58,11 +79,7 @@ vi.mock("@/lib/api", () => ({
     isPending: false,
   }),
   useProtocolSprint: () => ({
-    data: {
-      id: 5,
-      name: "Sprint Sync",
-      status: "active",
-    },
+    data: linkedSprintData,
   }),
   useSyncProtocolToSprint: () => ({
     mutateAsync: syncToSprintMutateAsyncMock,
@@ -105,6 +122,25 @@ describe("Protocol sprint sync action", () => {
   beforeEach(() => {
     syncToSprintMutateAsyncMock.mockReset();
     syncToSprintMutateAsyncMock.mockResolvedValue({ sprint_id: 5, protocol_run_id: 42 });
+    protocolData = {
+      id: 42,
+      project_id: 12,
+      protocol_name: "Auth Flow",
+      status: "running",
+      base_branch: "main",
+      description: null,
+      spec_hash: "abc123",
+      policy_pack_key: null,
+      speckit_metadata: {
+        spec_run_id: 77,
+      },
+      linked_sprint_id: 5,
+    };
+    linkedSprintData = {
+      id: 5,
+      name: "Sprint Sync",
+      status: "active",
+    };
   });
 
   it("passes the linked sprint id to the sync mutation", async () => {
@@ -124,5 +160,23 @@ describe("Protocol sprint sync action", () => {
         sprintId: 5,
       });
     });
+  });
+
+  it("hides sprint controls when the protocol lacks a canonical sprint link", async () => {
+    protocolData = {
+      ...protocolData,
+      linked_sprint_id: null,
+    };
+
+    await act(async () => {
+      render(
+        <Suspense fallback={<div>Loading...</div>}>
+          <ProtocolDetailPage params={Promise.resolve({ id: "42" })} />
+        </Suspense>
+      );
+    });
+
+    expect(screen.queryByRole("button", { name: /sync sprint/i })).toBeNull();
+    expect(screen.queryByText(/sprint sync/i)).toBeNull();
   });
 });

@@ -30,9 +30,14 @@ import type {
 type RawProtocolFromSpecResponse = Omit<ProtocolFromSpecResponse, "protocol"> & {
   protocol: RawProtocolRun | null;
 };
+type ProtocolActionResponse = ActionResponse | OpenPRResponse | ProtocolRun;
 
 function adaptOptionalProtocol(protocol: RawProtocolRun | null | undefined): ProtocolRun | null {
   return protocol ? adaptProtocol(protocol) : null;
+}
+
+function isProtocolActionStateResponse(data: ProtocolActionResponse): data is ProtocolRun {
+  return typeof data === "object" && data !== null && "protocol_name" in data && "project_id" in data;
 }
 
 const useConditionalRefetchInterval = (baseInterval: number) => {
@@ -199,7 +204,7 @@ export function useProtocolClarifications(protocolId: number | undefined, status
 export function useProtocolAction() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       protocolId,
       action,
     }: {
@@ -212,8 +217,13 @@ export function useProtocolAction() {
         | "run_next_step"
         | "retry_latest"
         | "open_pr";
-    }) =>
-      apiClient.post<ActionResponse | OpenPRResponse>(`/protocols/${protocolId}/actions/${action}`),
+    }) => {
+      const path = `/protocols/${protocolId}/actions/${action}`;
+      if (["start", "pause", "resume", "cancel"].includes(action)) {
+        return adaptProtocol(await apiClient.post<RawProtocolRun>(path));
+      }
+      return apiClient.post<ActionResponse | OpenPRResponse>(path);
+    },
     onSuccess: (data, { protocolId, action }) => {
       // Show success toast
       const actionMessages: Record<string, string> = {
@@ -226,6 +236,18 @@ export function useProtocolAction() {
         open_pr: "Pull request created",
       };
       toast.success(actionMessages[action] || "Action completed");
+
+      if (isProtocolActionStateResponse(data)) {
+        queryClient.setQueryData(queryKeys.protocols.detail(protocolId), data);
+        queryClient.setQueryData(
+          queryKeys.projects.protocols(data.project_id),
+          (current: ProtocolRun[] | undefined) => {
+            const existing = Array.isArray(current) ? current : [];
+            const next = existing.map((protocol) => (protocol.id === data.id ? data : protocol));
+            return next.some((protocol) => protocol.id === data.id) ? next : [data, ...existing];
+          }
+        );
+      }
       
       // Invalidate queries
       queryClient.invalidateQueries({

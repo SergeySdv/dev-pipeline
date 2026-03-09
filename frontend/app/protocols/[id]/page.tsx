@@ -68,19 +68,29 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
   const protocolAction = useProtocolAction();
   const { data: flowInfo } = useProtocolFlow(protocolId);
   const createFlow = useCreateProtocolFlow();
-  const { data: linkedSprint } = useProtocolSprint(protocolId);
+  const linkedSprintProtocolId = protocol?.linked_sprint_id ? protocolId : undefined;
+  const { data: linkedSprint } = useProtocolSprint(linkedSprintProtocolId);
   const syncToSprint = useSyncProtocolToSprint();
   const [activeTab, setActiveTab] = useState("steps");
 
   if (protocolLoading) return <LoadingState message="Loading protocol..." />;
   if (!protocol) return <LoadingState message="Protocol not found" />;
 
+  const sprint = protocol.linked_sprint_id ? linkedSprint : null;
+
   const handleAction = async (
     action: Parameters<typeof protocolAction.mutateAsync>[0]["action"]
   ) => {
     try {
       const result = await protocolAction.mutateAsync({ protocolId, action });
-      toast.success(result.message || `Action ${action} executed`);
+      const message =
+        typeof result === "object" &&
+        result !== null &&
+        "message" in result &&
+        typeof result.message === "string"
+          ? result.message
+          : `Action ${action} executed`;
+      toast.success(message);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : `Failed to ${action}`);
     }
@@ -222,12 +232,12 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
                 Create Flow
               </Button>
             )}
-            {linkedSprint && (
+            {sprint && (
               <Button
                 variant="outline"
                 onClick={async () => {
                   try {
-                    await syncToSprint.mutateAsync({ protocolId, sprintId: linkedSprint.id });
+                    await syncToSprint.mutateAsync({ protocolId, sprintId: sprint.id });
                     toast.success("Synced to sprint");
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : "Failed to sync to sprint");
@@ -245,7 +255,7 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
         {protocol.description && (
           <p className="text-muted-foreground mt-4">{protocol.description}</p>
         )}
-        {(flowInfo?.flow_path || linkedSprint) && (
+        {(flowInfo?.flow_path || sprint) && (
           <div className="text-muted-foreground mt-3 flex items-center gap-4 text-sm">
             {flowInfo?.flow_path && (
               <span className="flex items-center gap-1">
@@ -253,9 +263,9 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
                 Flow: <code className="bg-muted rounded px-1 text-xs">{flowInfo.flow_path}</code>
               </span>
             )}
-            {linkedSprint && (
+            {sprint && (
               <span className="flex items-center gap-1">
-                Sprint: <strong className="text-foreground">{linkedSprint.name}</strong>
+                Sprint: <strong className="text-foreground">{sprint.name}</strong>
               </span>
             )}
           </div>
