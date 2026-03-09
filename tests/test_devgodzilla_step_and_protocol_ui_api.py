@@ -457,3 +457,100 @@ def test_create_global_protocol_persists_template_payloads(
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_create_global_protocol_accepts_canonical_request_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(name="demo", git_url="git@example.com:demo/repo.git", base_branch="main")
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.post(
+                    "/protocols",
+                    json={
+                        "project_id": project.id,
+                        "protocol_name": "canonical-protocol",
+                        "description": "Canonical request shape",
+                        "base_branch": "develop",
+                        "template_source": "./templates/canonical.yaml",
+                        "template_config": {"mode": "brownfield"},
+                    },
+                )
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["protocol_name"] == "canonical-protocol"
+            assert payload["base_branch"] == "develop"
+            assert payload["template_source"] == "./templates/canonical.yaml"
+            assert payload["template_config"] == {"mode": "brownfield"}
+            run = db.get_protocol_run(payload["id"])
+            assert run.protocol_name == "canonical-protocol"
+            assert run.base_branch == "develop"
+            assert run.template_source == "./templates/canonical.yaml"
+            assert run.template_config == {"mode": "brownfield"}
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_create_project_protocol_accepts_legacy_aliases_for_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(name="demo", git_url="git@example.com:demo/repo.git", base_branch="main")
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.post(
+                    f"/projects/{project.id}/protocols",
+                    json={
+                        "name": "legacy-project-protocol",
+                        "branch_name": "release",
+                        "template": "./templates/legacy.yaml",
+                        "inputs": {"mode": "guided"},
+                    },
+                )
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["protocol_name"] == "legacy-project-protocol"
+            assert payload["base_branch"] == "release"
+            assert payload["template_source"] == "./templates/legacy.yaml"
+            assert payload["template_config"] == {"mode": "guided"}
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()

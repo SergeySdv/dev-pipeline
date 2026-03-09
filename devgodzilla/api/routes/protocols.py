@@ -102,11 +102,7 @@ def _build_orchestrator(ctx: ServiceContext, db: Database) -> OrchestratorServic
     return OrchestratorService(context=ctx, db=db, windmill_client=windmill_client, mode=mode)
 
 
-class ProjectProtocolCreate(BaseModel):
-    protocol_name: str = Field(..., min_length=1)
-    description: Optional[str] = None
-    base_branch: str = "main"
-    template_source: Optional[Any] = None
+class ProjectProtocolCreate(schemas.ProtocolCreateBase):
     auto_start: bool = False
 
 
@@ -165,8 +161,12 @@ def create_project_protocol(
         base_branch=request.base_branch,
         description=request.description,
     )
-    if request.template_source is not None:
-        db.update_protocol_template(run.id, template_source=request.template_source)
+    if request.template_source is not None or request.template_config is not None:
+        db.update_protocol_template(
+            run.id,
+            template_source=request.template_source,
+            template_config=request.template_config,
+        )
     if request.auto_start:
         def run_planning() -> None:
             service = PlanningService(ctx, db)
@@ -187,16 +187,16 @@ def create_protocol(
     # Create the run record
     run = db.create_protocol_run(
         project_id=protocol.project_id,
-        protocol_name=protocol.name,
+        protocol_name=protocol.protocol_name,
         status="pending",
-        base_branch=protocol.branch_name or "main",
+        base_branch=protocol.base_branch,
         description=protocol.description,
     )
-    if protocol.template is not None or protocol.inputs is not None:
+    if protocol.template_source is not None or protocol.template_config is not None:
         db.update_protocol_template(
             run.id,
-            template_config=protocol.inputs,
-            template_source=protocol.template,
+            template_config=protocol.template_config,
+            template_source=protocol.template_source,
         )
     
     # If using planning service, we should trigger plan_protocol in background

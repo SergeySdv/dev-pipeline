@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 # =============================================================================
 # Enums
@@ -132,13 +132,33 @@ class DiscoveryRetryResponse(BaseModel):
 # Protocol Models
 # =============================================================================
 
-class ProtocolCreate(BaseModel):
-    project_id: int
-    name: str = Field(..., description="Name of the protocol run")
+class ProtocolCreateBase(BaseModel):
+    protocol_name: str = Field(..., min_length=1, description="Name of the protocol run")
     description: Optional[str] = None
-    branch_name: Optional[str] = None
-    template: Optional[str] = None
-    inputs: Optional[Dict[str, Any]] = None
+    base_branch: str = "main"
+    template_source: Optional[Any] = None
+    template_config: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_aliases(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        if "protocol_name" not in normalized and "name" in normalized:
+            normalized["protocol_name"] = normalized.pop("name")
+        if "base_branch" not in normalized and "branch_name" in normalized:
+            normalized["base_branch"] = normalized.pop("branch_name")
+        if "template_source" not in normalized and "template" in normalized:
+            normalized["template_source"] = normalized.pop("template")
+        if "template_config" not in normalized and "inputs" in normalized:
+            normalized["template_config"] = normalized.pop("inputs")
+        return normalized
+
+
+class ProtocolCreate(ProtocolCreateBase):
+    project_id: int
 
 class ProtocolAction(str, Enum):
     START = "start"
