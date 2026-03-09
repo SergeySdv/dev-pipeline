@@ -225,6 +225,12 @@ export interface CodexRun {
   protocol_run_id: number | null;
   step_run_id: number | null;
   spec_run_id?: number | null;
+  task_id?: number | null;
+  task_title?: string | null;
+  task_board_status?: string | null;
+  sprint_id?: number | null;
+  sprint_name?: string | null;
+  sprint_status?: string | null;
   attempt: number;
   worker_id: string | null;
   queue: string | null;

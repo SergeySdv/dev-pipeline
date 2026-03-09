@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from devgodzilla.api import schemas
+from devgodzilla.api.run_context import enrich_runs_with_agile_context
 from devgodzilla.api.dependencies import get_db, get_service_context, get_windmill_client
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
@@ -339,7 +340,7 @@ def list_protocol_runs(
         job_type=job_type,
         limit=limit,
     )
-    return [schemas.JobRunOut.model_validate(r) for r in runs]
+    return [schemas.JobRunOut.model_validate(r) for r in enrich_runs_with_agile_context(db, runs)]
 
 
 @router.post("/protocols/{protocol_id}/actions/open_pr", response_model=OpenPRResponse)

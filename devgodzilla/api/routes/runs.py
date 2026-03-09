@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from devgodzilla.api import schemas
+from devgodzilla.api.run_context import enrich_run_with_agile_context, enrich_runs_with_agile_context
 from devgodzilla.api.dependencies import get_db
 from devgodzilla.config import load_config
 from devgodzilla.db.database import Database
@@ -178,7 +179,7 @@ def list_runs(
                 runs = synced
         finally:
             windmill.close()
-    return [schemas.JobRunOut.model_validate(r) for r in runs]
+    return [schemas.JobRunOut.model_validate(run) for run in enrich_runs_with_agile_context(db, runs)]
 
 
 @router.get("/runs/{run_id}", response_model=schemas.JobRunOut)
@@ -196,7 +197,7 @@ def get_run(
             run = _sync_run_from_windmill(db, run, windmill)
         finally:
             windmill.close()
-    return schemas.JobRunOut.model_validate(run)
+    return schemas.JobRunOut.model_validate(enrich_run_with_agile_context(db, run))
 
 
 @router.get("/runs/{run_id}/logs", response_model=schemas.ArtifactContentOut)

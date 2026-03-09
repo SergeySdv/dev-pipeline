@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 
 import { ArrowLeft, ExternalLink, FileText, ListTodo, Package } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
@@ -42,6 +43,7 @@ export default function RunDetailPage() {
   if (!run) return <LoadingState message="Run not found" />;
   const reviewPath =
     typeof run.spec_run_id === "number" ? getSpecificationReviewPath(run.spec_run_id) : null;
+  const hasAgileContext = Boolean(run.task_id || run.sprint_id);
 
   return (
     <div className="container py-8">
@@ -73,7 +75,27 @@ export default function RunDetailPage() {
             </p>
             <div className="text-muted-foreground mt-2 flex items-center gap-2 text-sm">
               <ListTodo className="h-4 w-4 text-slate-400" />
-              <span>No sprint or task linkage recorded for this run.</span>
+              {hasAgileContext ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {typeof run.task_id === "number" && (
+                    <span className="font-medium text-foreground">Task #{run.task_id}</span>
+                  )}
+                  {run.task_title && <span>{run.task_title}</span>}
+                  {run.task_board_status && (
+                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px] capitalize">
+                      {run.task_board_status.replace(/_/g, " ")}
+                    </Badge>
+                  )}
+                  {(run.sprint_name || typeof run.sprint_id === "number") && (
+                    <span>
+                      {run.sprint_name || `Sprint #${run.sprint_id}`}
+                      {run.sprint_status ? ` (${run.sprint_status})` : ""}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <span>No sprint or task linkage recorded for this run.</span>
+              )}
             </div>
           </div>
 
@@ -318,6 +340,35 @@ export default function RunDetailPage() {
                   <h3 className="font-semibold">Recorded Links</h3>
                 </div>
                 <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Task:</span>
+                    {typeof run.task_id === "number" ? (
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">
+                          Task #{run.task_id}
+                          {run.task_title ? ` · ${run.task_title}` : ""}
+                        </span>
+                        {run.task_board_status && (
+                          <Badge variant="secondary" className="h-5 px-1.5 text-[10px] capitalize">
+                            {run.task_board_status.replace(/_/g, " ")}
+                          </Badge>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Sprint:</span>
+                    {run.sprint_name || typeof run.sprint_id === "number" ? (
+                      <span className="font-medium">
+                        {run.sprint_name || `Sprint #${run.sprint_id}`}
+                        {run.sprint_status ? ` (${run.sprint_status})` : ""}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Project:</span>
                     {run.project_id ? (

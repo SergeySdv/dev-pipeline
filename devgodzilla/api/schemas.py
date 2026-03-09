@@ -522,6 +522,12 @@ class JobRunOut(APIModel):
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
     spec_run_id: Optional[int] = None
+    task_id: Optional[int] = None
+    task_title: Optional[str] = None
+    task_board_status: Optional[str] = None
+    sprint_id: Optional[int] = None
+    sprint_name: Optional[str] = None
+    sprint_status: Optional[str] = None
     queue: Optional[str] = None
     attempt: Optional[int] = None
     worker_id: Optional[str] = None

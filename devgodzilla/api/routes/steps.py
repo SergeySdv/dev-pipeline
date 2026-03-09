@@ -16,6 +16,7 @@ from devgodzilla.qa.gates import LintGate, TypeGate, TestGate
 from devgodzilla.services.workspace_paths import WorkspacePathError, resolve_protocol_root, resolve_workspace_root
 
 from devgodzilla.api import schemas
+from devgodzilla.api.run_context import enrich_runs_with_agile_context
 from devgodzilla.api.dependencies import get_db
 from devgodzilla.db.database import Database
 
@@ -122,7 +123,7 @@ def list_step_runs_for_step(
         db.get_step_run(step_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Step not found")
-    return db.list_job_runs(step_run_id=step_id, limit=200)
+    return enrich_runs_with_agile_context(db, db.list_job_runs(step_run_id=step_id, limit=200))
 
 
 @router.get("/steps/{step_id}/policy/findings", response_model=List[schemas.PolicyFindingOut])

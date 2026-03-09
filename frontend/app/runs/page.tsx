@@ -7,6 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ExternalLink, ListTodo, PlayCircle, RefreshCw } from "lucide-react";
 
 import { CLIExecutionsList } from "@/components/cli-executions-list";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -45,6 +46,17 @@ const columns: ColumnDef<CodexRun>[] = [
 
       return context.isLinked ? (
         <div className="flex flex-col gap-1 text-xs">
+          {context.taskLabel && <span className="font-medium text-foreground">{context.taskLabel}</span>}
+          {row.original.task_board_status && (
+            <div>
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] capitalize">
+                {row.original.task_board_status.replace(/_/g, " ")}
+              </Badge>
+            </div>
+          )}
+          {context.sprintLabel && (
+            <span className="text-muted-foreground">{context.sprintLabel}</span>
+          )}
           {context.protocolLabel && (
             <span className="text-muted-foreground">{context.protocolLabel}</span>
           )}

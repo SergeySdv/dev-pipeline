@@ -349,6 +349,8 @@ class DatabaseProtocol(Protocol):
         self,
         project_id: Optional[int] = None,
         sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
         board_status: Optional[str] = None,
         assignee: Optional[str] = None,
         limit: int = 100,
@@ -2651,6 +2653,8 @@ class SQLiteDatabase:
         self,
         project_id: Optional[int] = None,
         sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
         board_status: Optional[str] = None,
         assignee: Optional[str] = None,
         limit: int = 100,
@@ -2664,6 +2668,12 @@ class SQLiteDatabase:
         if sprint_id is not None:
             where.append("sprint_id = ?")
             params.append(sprint_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = ?")
+            params.append(step_run_id)
         if board_status is not None:
             where.append("board_status = ?")
             params.append(board_status)
@@ -3237,6 +3247,8 @@ class PostgresDatabase:
         self,
         project_id: Optional[int] = None,
         sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
         board_status: Optional[str] = None,
         assignee: Optional[str] = None,
         limit: int = 100,
@@ -3250,6 +3262,12 @@ class PostgresDatabase:
         if sprint_id is not None:
             where.append("sprint_id = %s")
             params.append(sprint_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            params.append(step_run_id)
         if board_status is not None:
             where.append("board_status = %s")
             params.append(board_status)
