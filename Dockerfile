@@ -14,14 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Optional: install CLI agents (opencode/codex/claude/gemini) inside the container.
-# Enabled by compose via build-arg INSTALL_AGENT_CLIS=1.
-ARG INSTALL_AGENT_CLIS=0
+# Enabled by default for local/runtime parity. Set INSTALL_AGENT_CLIS=0 to skip.
+ARG INSTALL_AGENT_CLIS=1
 RUN if [ "${INSTALL_AGENT_CLIS}" = "1" ]; then \
       set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends nodejs npm; \
       rm -rf /var/lib/apt/lists/*; \
       curl -fsSL https://opencode.ai/install | bash; \
+      ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode; \
       npm install -g @openai/codex @anthropic-ai/claude-code @google/gemini-cli; \
       opencode --version; \
       codex --version; \

@@ -193,6 +193,9 @@ services:
         condition: service_started
     volumes:
       - ./projects:/app/projects
+      # Optional: reuse your host Codex login inside Docker (recommended for subscription-based local dev).
+      # Host path (macOS/Linux): `codex login` stores credentials under `~/.codex/auth.json`.
+      - ${HOME}/.codex:/root/.codex:rw
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
       interval: 10s

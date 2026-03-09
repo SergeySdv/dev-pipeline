@@ -890,17 +890,21 @@ class AgentConfigService(Service):
             # Best-effort: validate that auth is present via env var or login status.
             assume = os.environ.get("DEVGODZILLA_ASSUME_AGENT_AUTH", "").lower() in ("1", "true", "yes", "on")
             has_key = bool(os.environ.get("OPENAI_API_KEY"))
-            checks.append(
-                AgentTestCheckResult(
-                    name="openai_api_key",
-                    ok=assume or has_key,
-                    error=None if (assume or has_key) else "OPENAI_API_KEY not set (or set DEVGODZILLA_ASSUME_AGENT_AUTH=true)",
-                    details={"present": has_key, "assume_auth": assume},
-                )
-            )
             status_res = _run([cmd, "login", "status"], timeout=timeout)
             status_text = ((status_res.get("stdout") or "") + "\n" + (status_res.get("stderr") or "")).strip()
             logged_in = bool(status_res.get("ok")) and "not logged in" not in status_text.lower()
+            checks.append(
+                AgentTestCheckResult(
+                    name="openai_api_key",
+                    ok=assume or has_key or logged_in,
+                    error=(
+                        None
+                        if (assume or has_key or logged_in)
+                        else "OPENAI_API_KEY not set and Codex is not logged in (or set DEVGODZILLA_ASSUME_AGENT_AUTH=true)"
+                    ),
+                    details={"present": has_key, "assume_auth": assume, "logged_in": logged_in},
+                )
+            )
             checks.append(
                 AgentTestCheckResult(
                     name="login_status",

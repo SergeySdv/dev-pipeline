@@ -4,6 +4,7 @@ Integration tests for agent management API endpoints.
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -211,5 +212,61 @@ defaults:
 
                 resp = client.post("/agents/does-not-exist/test", json={"overrides": {}})
                 assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_agents_api_test_setup_accepts_codex_chatgpt_login(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  codex:
+    name: OpenAI Codex
+    kind: cli
+    command: codex
+    capabilities: [code_gen]
+    enabled: true
+defaults:
+  exec: codex
+""".strip()
+        )
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_ASSUME_AGENT_AUTH", raising=False)
+
+        def fake_run(args, capture_output, text, timeout):
+            if args == ["codex", "--version"]:
+                return subprocess.CompletedProcess(args, 0, stdout="codex-cli 0.112.0\n", stderr="")
+            if args == ["codex", "login", "status"]:
+                return subprocess.CompletedProcess(args, 0, stdout="Logged in using ChatGPT\n", stderr="")
+            raise AssertionError(f"unexpected subprocess args: {args}")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        db_path = tmp_path / "test.db"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        from devgodzilla.api.dependencies import get_db
+
+        app.dependency_overrides[get_db] = lambda: db
+
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.post("/agents/codex/test", json={"overrides": {}})
+                assert resp.status_code == 200
+                payload = resp.json()
+                assert payload["ok"] is True
+                checks = {check["name"]: check for check in payload["checks"]}
+                assert checks["version"]["ok"] is True
+                assert checks["openai_api_key"]["ok"] is True
+                assert checks["openai_api_key"]["details"]["logged_in"] is True
+                assert checks["login_status"]["ok"] is True
         finally:
             app.dependency_overrides.clear()
