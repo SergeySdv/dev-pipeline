@@ -202,11 +202,12 @@ export function usePolicyFindings(projectId: number | undefined) {
 
 // Clarifications
 export function useProjectClarifications(projectId: number | undefined, status?: string) {
+  const normalizedStatus = status && status !== "all" ? status : undefined;
   return useQuery({
-    queryKey: queryKeys.projects.clarifications(projectId as number, status),
+    queryKey: queryKeys.projects.clarifications(projectId as number, normalizedStatus),
     queryFn: () =>
       apiClient.get<Clarification[]>(
-        `/projects/${projectId}/clarifications${status ? `?status=${status}` : ""}`
+        `/projects/${projectId}/clarifications${normalizedStatus ? `?status=${normalizedStatus}` : ""}`
       ),
     enabled: !!projectId,
   });

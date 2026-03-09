@@ -56,6 +56,8 @@ import {
   useSpecKitStatus,
   useSprints,
 } from "@/lib/api";
+import { getProjectExecutionPath } from "@/lib/project-routes";
+import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 const WORKFLOW_STEPS = [
   { id: "spec", label: "Spec", description: "Specification ready" },
@@ -144,7 +146,7 @@ export function ImplementFeatureWizardModal({
               spec_path: result.tasks_path,
             });
             toast.success("Tasks imported to execution sprint");
-            router.push(`/projects/${projectId}/execution?sprint=${targetSprint}`);
+            router.push(getProjectExecutionPath(projectId, targetSprint));
             onOpenChange(false);
           } catch {
             toast.error("Tasks generated, but execution import failed");
@@ -264,7 +266,11 @@ export function ImplementFeatureWizardModal({
         spec_run_id: selectedSpecRunId ?? undefined,
       });
       if (result.success) {
-        toast.success("Implementation run initialized");
+        const outcome = getImplementSuccessOutcome(result);
+        toast.success(outcome.message);
+        if (outcome.targetPath) {
+          router.push(outcome.targetPath);
+        }
       } else {
         toast.error(result.error || "Implement init failed");
       }
@@ -519,7 +525,7 @@ export function ImplementFeatureWizardModal({
                         {activeSprints.length === 0 && (
                           <p className="text-muted-foreground mt-2 text-xs">
                             No active or planning executions.{" "}
-                            <Link href={`/projects/${projectId}/execution`} className="underline">
+                            <Link href={getProjectExecutionPath(projectId)} className="underline">
                               Create an execution sprint first
                             </Link>
                           </p>

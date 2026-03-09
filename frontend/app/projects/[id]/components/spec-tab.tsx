@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   AlertCircle,
@@ -38,11 +39,13 @@ import {
   useClarifySpec,
   useGenerateChecklist,
   useGenerateSpec,
+  useInitSpecKit,
   useProject,
   useRunImplement,
   useSpecifications,
   useSpecKitStatus,
 } from "@/lib/api";
+import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 interface SpecTabProps {
   projectId: number;
@@ -51,6 +54,7 @@ interface SpecTabProps {
 const LAST_UPDATED_BASE = Date.now();
 
 export function SpecTab({ projectId }: SpecTabProps) {
+  const router = useRouter();
   const { data: project, isLoading: projectLoading } = useProject(projectId);
   const {
     data: status,
@@ -67,6 +71,7 @@ export function SpecTab({ projectId }: SpecTabProps) {
   const analyzeSpec = useAnalyzeSpec();
   const runImplement = useRunImplement();
   const generateSpec = useGenerateSpec();
+  const initSpecKit = useInitSpecKit();
 
   const [clarifyOpen, setClarifyOpen] = useState(false);
   const [clarifySpecPath, setClarifySpecPath] = useState<string | null>(null);
@@ -79,6 +84,20 @@ export function SpecTab({ projectId }: SpecTabProps) {
 
   if (isLoading) return <LoadingState message="Loading specification..." />;
 
+  const handleInitialize = async () => {
+    try {
+      const result = await initSpecKit.mutateAsync({ project_id: projectId });
+      if (result.success) {
+        toast.success("SpecKit initialized successfully!");
+        refetchStatus();
+      } else {
+        toast.error(result.error || "Failed to initialize SpecKit");
+      }
+    } catch {
+      toast.error("Failed to initialize SpecKit");
+    }
+  };
+
   // Handle uninitialized SpecKit
   if (!status?.initialized) {
     return (
@@ -89,10 +108,15 @@ export function SpecTab({ projectId }: SpecTabProps) {
           <p className="text-muted-foreground mb-4 text-sm">
             This project hasn&apos;t been initialized with SpecKit yet.
           </p>
-          <p className="text-muted-foreground text-sm">
-            Use the CLI to initialize:{" "}
-            <code className="bg-muted rounded px-2 py-1">devgodzilla spec init</code>
-          </p>
+          <div className="space-y-3">
+            <Button onClick={handleInitialize} disabled={initSpecKit.isPending}>
+              {initSpecKit.isPending ? "Initializing..." : "Initialize SpecKit"}
+            </Button>
+            <p className="text-muted-foreground text-sm">
+              CLI fallback:{" "}
+              <code className="bg-muted rounded px-2 py-1">devgodzilla spec init</code>
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -192,7 +216,11 @@ export function SpecTab({ projectId }: SpecTabProps) {
         spec_run_id: specRunId ?? undefined,
       });
       if (result.success) {
-        toast.success("Implementation run initialized");
+        const outcome = getImplementSuccessOutcome(result);
+        toast.success(outcome.message);
+        if (outcome.targetPath) {
+          router.push(outcome.targetPath);
+        }
       } else {
         toast.error(result.error || "Implement initialization failed");
       }

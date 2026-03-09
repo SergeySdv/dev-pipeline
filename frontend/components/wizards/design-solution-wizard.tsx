@@ -53,6 +53,7 @@ import {
   useRunImplement,
   useSpecKitStatus,
 } from "@/lib/api";
+import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 const WORKFLOW_STEPS = [
   { id: "spec", label: "Spec", description: "Specification ready" },
@@ -239,7 +240,11 @@ export function DesignSolutionWizardModal({
         spec_run_id: selectedSpecRunId ?? undefined,
       });
       if (result.success) {
-        toast.success("Implementation run initialized");
+        const outcome = getImplementSuccessOutcome(result);
+        toast.success(outcome.message);
+        if (outcome.targetPath) {
+          router.push(outcome.targetPath);
+        }
       } else {
         toast.error(result.error || "Implement init failed");
       }

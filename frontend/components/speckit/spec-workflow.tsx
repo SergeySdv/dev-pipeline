@@ -22,6 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getProjectExecutionPath } from "@/lib/project-routes";
 import { cn } from "@/lib/utils";
 
 export type WorkflowStep =
@@ -125,7 +126,7 @@ function getStepHref(step: WorkflowStep, projectId: number): string {
     case "implement":
       return `/projects/${projectId}?tab=spec`;
     case "sprint":
-      return `/projects/${projectId}/execution`;
+      return getProjectExecutionPath(projectId);
     default:
       return `/projects/${projectId}`;
   }

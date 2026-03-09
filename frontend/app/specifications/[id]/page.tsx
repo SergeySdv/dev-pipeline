@@ -21,6 +21,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSpecification, useSpecificationContent } from "@/lib/api";
+import { getProjectExecutionPath } from "@/lib/project-routes";
 
 export default function SpecificationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -197,7 +198,7 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
                   {spec.sprint_id && (
                     <div className="mt-4">
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={`/projects/${spec.project_id}/execution`}>
+                        <Link href={getProjectExecutionPath(spec.project_id)}>
                           View in Execution
                           <ExternalLink className="ml-2 h-3 w-3" />
                         </Link>

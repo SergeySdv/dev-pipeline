@@ -47,9 +47,10 @@ import {
   useRunImplement,
   useSpecKitStatus,
 } from "@/lib/api";
+import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 // Minimum character length for description (matches backend validation)
-const MIN_DESCRIPTION_LENGTH = 5;
+const MIN_DESCRIPTION_LENGTH = 10;
 
 const WIZARD_STEPS = [
   { id: "feature-info", label: "Feature Info", description: "Describe the feature" },
@@ -323,7 +324,11 @@ export function GenerateSpecsWizardModal({
         spec_run_id: activeSpec?.spec_run_id ?? undefined,
       });
       if (result.success) {
-        toast.success("Implementation run initialized");
+        const outcome = getImplementSuccessOutcome(result);
+        toast.success(outcome.message);
+        if (outcome.targetPath) {
+          router.push(outcome.targetPath);
+        }
       } else {
         toast.error(result.error || "Implementation init failed");
       }

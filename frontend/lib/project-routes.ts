@@ -1,0 +1,10 @@
+export function getProjectExecutionPath(
+  projectId: number,
+  sprintId?: number | string | null
+): string {
+  const params = new URLSearchParams({ tab: "execution" });
+  if (sprintId !== undefined && sprintId !== null && sprintId !== "") {
+    params.set("sprint", String(sprintId));
+  }
+  return `/projects/${projectId}?${params.toString()}`;
+}

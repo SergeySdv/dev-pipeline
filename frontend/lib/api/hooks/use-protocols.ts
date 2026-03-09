@@ -158,11 +158,12 @@ export function useProtocolPolicySnapshot(protocolId: number | undefined) {
 
 // Protocol Clarifications
 export function useProtocolClarifications(protocolId: number | undefined, status?: string) {
+  const normalizedStatus = status && status !== "all" ? status : undefined;
   return useQuery({
-    queryKey: queryKeys.protocols.clarifications(protocolId as number, status),
+    queryKey: queryKeys.protocols.clarifications(protocolId as number, normalizedStatus),
     queryFn: () =>
       apiClient.get<Clarification[]>(
-        `/protocols/${protocolId}/clarifications${status ? `?status=${status}` : ""}`
+        `/protocols/${protocolId}/clarifications${normalizedStatus ? `?status=${normalizedStatus}` : ""}`
       ),
     enabled: !!protocolId,
   });
