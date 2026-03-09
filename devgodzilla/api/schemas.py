@@ -854,6 +854,9 @@ class CreateSprintFromProtocolRequest(BaseModel):
     end_date: Optional[datetime] = None
     auto_sync: bool = True
 
+class SyncProtocolToSprintRequest(BaseModel):
+    sprint_id: int
+
 class SprintVelocityOut(BaseModel):
     sprint_id: int
     velocity_actual: int

@@ -217,3 +217,66 @@ def test_create_sprint_from_protocol_persists_explicit_protocol_link_without_aut
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_protocol_sync_to_sprint_requires_body_sprint_id_and_persists_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(name="demo", git_url="git@example.com:demo/repo.git", base_branch="main")
+        sprint = db.create_sprint(project.id, "Sprint Sync", status="active")
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-protocol",
+            status="running",
+            base_branch="main",
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="pending",
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                missing_response = client.post(f"/protocols/{run.id}/actions/sync-to-sprint", json={})
+                sync_response = client.post(
+                    f"/protocols/{run.id}/actions/sync-to-sprint",
+                    json={"sprint_id": sprint.id},
+                )
+                sprint_response = client.get(f"/protocols/{run.id}/sprint")
+                protocol_response = client.get(f"/protocols/{run.id}")
+
+            assert missing_response.status_code == 422
+            assert sync_response.status_code == 200
+            assert sync_response.json()["sprint_id"] == sprint.id
+            assert sync_response.json()["protocol_run_id"] == run.id
+            assert sync_response.json()["tasks_synced"] == 1
+            assert sprint_response.json()["id"] == sprint.id
+            assert protocol_response.json()["linked_sprint_id"] == sprint.id
+
+            tasks = db.list_tasks(step_run_id=step.id, limit=10)
+            assert len(tasks) == 1
+            assert tasks[0].sprint_id == sprint.id
+            assert db.get_protocol_run(run.id).linked_sprint_id == sprint.id
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()

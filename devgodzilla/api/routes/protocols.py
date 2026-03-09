@@ -1187,18 +1187,22 @@ def get_protocol_sprint(
 @router.post("/protocols/{protocol_id}/actions/sync-to-sprint", response_model=schemas.SyncResult)
 async def sync_protocol_to_sprint(
     protocol_id: int,
-    sprint_id: int = Query(..., description="Target sprint ID"),
+    request: schemas.SyncProtocolToSprintRequest,
     service: SprintIntegrationService = Depends(get_sprint_integration),
 ):
-    """Sync protocol steps to an existing sprint as tasks."""
+    """Persist the protocol->sprint link and sync protocol steps into that sprint."""
     try:
+        await service.link_protocol_to_sprint(
+            protocol_run_id=protocol_id,
+            sprint_id=request.sprint_id,
+        )
         tasks = await service.sync_protocol_to_sprint(
             protocol_run_id=protocol_id,
-            sprint_id=sprint_id,
+            sprint_id=request.sprint_id,
             create_missing_tasks=True,
         )
         return schemas.SyncResult(
-            sprint_id=sprint_id,
+            sprint_id=request.sprint_id,
             protocol_run_id=protocol_id,
             tasks_synced=len(tasks),
             task_ids=[t.id for t in tasks],

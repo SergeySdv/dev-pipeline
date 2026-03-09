@@ -227,7 +227,7 @@ export default function ProtocolDetailPage({ params }: { params: Promise<{ id: s
                 variant="outline"
                 onClick={async () => {
                   try {
-                    await syncToSprint.mutateAsync(protocolId);
+                    await syncToSprint.mutateAsync({ protocolId, sprintId: linkedSprint.id });
                     toast.success("Synced to sprint");
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : "Failed to sync to sprint");

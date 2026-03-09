@@ -22,6 +22,7 @@ import type {
   ProtocolSpec,
   RunFilters,
   Sprint,
+  SyncResult,
   StepRun,
 } from "../types";
 
@@ -297,11 +298,16 @@ export function useProtocolSprint(protocolId: number | undefined) {
 export function useSyncProtocolToSprint() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (protocolId: number) =>
-      apiClient.post<ActionResponse>(`/protocols/${protocolId}/actions/sync-to-sprint`),
-    onSuccess: (_, protocolId) => {
+    mutationFn: ({ protocolId, sprintId }: { protocolId: number; sprintId: number }) =>
+      apiClient.post<SyncResult>(`/protocols/${protocolId}/actions/sync-to-sprint`, {
+        sprint_id: sprintId,
+      }),
+    onSuccess: (_, { protocolId }) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.sprint(protocolId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.protocols.detail(protocolId),
       });
     },
   });
