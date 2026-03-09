@@ -41,10 +41,10 @@ import {
   useAnalyzeSpec,
   useClarifySpec,
   useGenerateChecklist,
-  useGenerateSpec,
   useInitSpecKit,
   useProject,
   useRunImplement,
+  useRunWorkflow,
   useSpecKitStatus,
 } from "@/lib/api";
 import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
@@ -100,7 +100,7 @@ export function GenerateSpecsWizardModal({
   } = useSpecKitStatus(projectId);
 
   const initSpecKit = useInitSpecKit();
-  const generateSpec = useGenerateSpec();
+  const runWorkflow = useRunWorkflow();
   const clarifySpec = useClarifySpec();
   const generateChecklist = useGenerateChecklist();
   const analyzeSpec = useAnalyzeSpec();
@@ -194,14 +194,18 @@ export function GenerateSpecsWizardModal({
     }
 
     try {
-      const result = await generateSpec.mutateAsync({
+      const result = await runWorkflow.mutateAsync({
         project_id: projectId,
         description: fullDescription,
         feature_name: formData.featureName || undefined,
       });
 
       if (result.success) {
-        toast.success(`Specification generated: ${result.feature_name || "Feature"}`);
+        toast.success(
+          result.tasks_path
+            ? `Workflow completed: ${result.task_count} tasks generated`
+            : "Workflow completed"
+        );
         if (result.spec_path) {
           setLastSpecPath(result.spec_path);
           setLastSpecRunId(result.spec_run_id ?? null);
@@ -530,10 +534,24 @@ export function GenerateSpecsWizardModal({
                                 </span>
                                 <CheckCircle2 className="h-4 w-4 text-green-500" />
                               </div>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-2 text-sm">
+                                  <ListTodo className="h-4 w-4 text-emerald-500" />
+                                  Implementation Plan (plan.md)
+                                </span>
+                                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-2 text-sm">
+                                  <Target className="h-4 w-4 text-amber-500" />
+                                  Task Breakdown (tasks.md)
+                                </span>
+                                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                              </div>
                               <div className="border-t" />
                               <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                                <Target className="h-3 w-3" />
-                                <span>Next: Plan → Tasks → Execution</span>
+                                <Sparkles className="h-3 w-3" />
+                                <span>Default happy path: spec → plan → tasks</span>
                               </div>
                             </CardContent>
                           </Card>
@@ -556,8 +574,9 @@ export function GenerateSpecsWizardModal({
                             <div>
                               <p className="mb-1 font-medium">AI-Powered Generation</p>
                               <p className="text-muted-foreground text-sm">
-                                SpecKit will analyze your description and generate a detailed
-                                technical specification.
+                                SpecKit will analyze your description and run the default
+                                spec-driven workflow to generate the specification, plan, and task
+                                breakdown in one pass.
                               </p>
                             </div>
                           </div>
@@ -652,19 +671,19 @@ export function GenerateSpecsWizardModal({
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
-              <Button
-                onClick={handleGenerate}
-                disabled={generateSpec.isPending || !isInitialized || !isDescriptionValid}
-              >
-                {generateSpec.isPending ? (
+                <Button
+                  onClick={handleGenerate}
+                  disabled={runWorkflow.isPending || !isInitialized || !isDescriptionValid}
+                >
+                {runWorkflow.isPending ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Generating...
+                    Running workflow...
                   </>
                 ) : (
                   <>
                     <Sparkles className="mr-2 h-4 w-4" />
-                    Generate Specification
+                    Run Spec Workflow
                   </>
                 )}
               </Button>

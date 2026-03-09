@@ -36,6 +36,7 @@ interface MockState {
   specs: MockSpec[];
   requests: {
     init: Array<Record<string, unknown>>;
+    workflow: Array<Record<string, unknown>>;
     specify: Array<Record<string, unknown>>;
     plan: Array<Record<string, unknown>>;
     tasks: Array<Record<string, unknown>>;
@@ -99,6 +100,7 @@ async function installApiMocks(page: Page) {
     specs: [],
     requests: {
       init: [],
+      workflow: [],
       specify: [],
       plan: [],
       tasks: [],
@@ -202,6 +204,53 @@ async function installApiMocks(page: Page) {
         constitution_hash: "constitution-hash",
         error: null,
         warnings: [],
+      });
+      return;
+    }
+
+    if (request.method() === "POST" && pathname === "/speckit/workflow") {
+      const body = requestBody(route);
+      state.requests.workflow.push(body);
+      state.initialized = true;
+      state.specs = [
+        {
+          id: 1,
+          name: "001-auth-flow",
+          path: "specs/001-auth-flow",
+          spec_path: SPEC_PATH,
+          plan_path: PLAN_PATH,
+          tasks_path: TASKS_PATH,
+          checklist_path: null,
+          analysis_path: null,
+          implement_path: null,
+          has_spec: true,
+          has_plan: true,
+          has_tasks: true,
+          status: "completed",
+          spec_run_id: SPEC_RUN_ID,
+          worktree_path: "/tmp/demo-project",
+          branch_name: "spec/001-auth-flow",
+          base_branch: "main",
+          spec_number: 1,
+          feature_name: "Auth Flow",
+        },
+      ];
+      await json(route, {
+        success: true,
+        spec_path: SPEC_PATH,
+        plan_path: PLAN_PATH,
+        tasks_path: TASKS_PATH,
+        task_count: 5,
+        parallelizable_count: 2,
+        spec_run_id: SPEC_RUN_ID,
+        worktree_path: "/tmp/demo-project",
+        steps: [
+          { step: "spec", success: true, path: SPEC_PATH, error: null, skipped: false },
+          { step: "plan", success: true, path: PLAN_PATH, error: null, skipped: false },
+          { step: "tasks", success: true, path: TASKS_PATH, error: null, skipped: false },
+        ],
+        stopped_after: null,
+        error: null,
       });
       return;
     }
@@ -339,42 +388,20 @@ test("drives the deterministic SpecKit happy path", async ({ page }) => {
   );
   await page.getByLabel(/constraints/i).fill("Reuse existing auth tables and routes.");
   await page.getByRole("button", { name: /^Next$/ }).click();
-  await page.getByRole("button", { name: /generate specification/i }).click();
-  await expect.poll(() => state.requests.specify.length).toBe(1);
+  await page.getByRole("button", { name: /run spec workflow/i }).click();
+  await expect.poll(() => state.requests.workflow.length).toBe(1);
   await expect.poll(() => state.specs[0]?.spec_path).toBe(SPEC_PATH);
-  await expect(page.getByText(/001-auth-flow/i).first()).toBeVisible();
-
-  await page.goto(appPath(`/projects/${PROJECT_ID}?wizard=design-solution&tab=spec`));
-  await page.getByRole("combobox").click();
-  await page.getByRole("option", { name: /001-auth-flow/i }).click();
-  await page
-    .getByPlaceholder(/specific implementation preferences/i)
-    .fill("Prefer existing auth tables and avoid schema changes.");
-  await page.getByRole("button", { name: /generate implementation plan/i }).click();
-  await expect.poll(() => state.requests.plan.length).toBe(1);
   await expect.poll(() => state.specs[0]?.plan_path).toBe(PLAN_PATH);
-
-  await page.goto(appPath(`/projects/${PROJECT_ID}?wizard=implement-feature&tab=spec`));
-  await page.getByRole("combobox").first().click();
-  await page.getByRole("option", { name: /001-auth-flow/i }).click();
-  await page.getByRole("button", { name: /generate tasks/i }).click();
-  await expect.poll(() => state.requests.tasks.length).toBe(1);
   await expect.poll(() => state.specs[0]?.tasks_path).toBe(TASKS_PATH);
+  await expect(page.getByText(/001-auth-flow/i).first()).toBeVisible();
 
   await page.goto(appPath(`/projects/${PROJECT_ID}?tab=spec`));
   await page.getByRole("button", { name: /^Implement$/ }).first().click();
   await expect.poll(() => state.requests.implement.length).toBe(1);
 
   expect(state.requests.init[0]).toEqual({});
-  expect(state.requests.specify[0]).toMatchObject({
+  expect(state.requests.workflow[0]).toMatchObject({
     feature_name: "Auth Flow",
-  });
-  expect(state.requests.plan[0]).toMatchObject({
-    spec_path: SPEC_PATH,
-    context: "Prefer existing auth tables and avoid schema changes.",
-  });
-  expect(state.requests.tasks[0]).toMatchObject({
-    plan_path: PLAN_PATH,
   });
   expect(state.requests.implement[0]).toMatchObject({
     spec_path: SPEC_PATH,

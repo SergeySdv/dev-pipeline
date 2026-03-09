@@ -31,6 +31,10 @@ vi.mock("@/lib/api", () => ({
     mutateAsync: mutateAsyncMock,
     isPending: false,
   }),
+  useRunWorkflow: () => ({
+    mutateAsync: mutateAsyncMock,
+    isPending: false,
+  }),
   useClarifySpec: () => ({
     mutateAsync: mutateAsyncMock,
     isPending: false,
