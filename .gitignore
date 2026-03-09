@@ -43,6 +43,7 @@ docs/services-verification-report.md
 harness-output/
 reliability-output/
 validation-output/
+test-output/
 GEMINI.md
 .devgodzilla.sqlite
 .protocols/
@@ -52,5 +53,5 @@ windmill/apps/devgodzilla-react-app/.env.development
 specs/*/_runtime/runs/
 AGENTS.md
 CLAUDE.md
-projects/
+/projects/
 .coverage
