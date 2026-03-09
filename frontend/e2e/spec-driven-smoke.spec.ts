@@ -40,6 +40,8 @@ interface MockState {
     specify: Array<Record<string, unknown>>;
     plan: Array<Record<string, unknown>>;
     tasks: Array<Record<string, unknown>>;
+    checklist: Array<Record<string, unknown>>;
+    analyze: Array<Record<string, unknown>>;
     implement: Array<Record<string, unknown>>;
   };
 }
@@ -82,11 +84,11 @@ function buildProjectSpec(spec: MockSpec) {
     has_plan: spec.has_plan,
     has_tasks: spec.has_tasks,
     protocol_id: spec.implement_path ? 42 : null,
-    sprint_id: null,
-    sprint_name: null,
+    sprint_id: spec.implement_path ? 5 : null,
+    sprint_name: spec.implement_path ? "Sprint 5" : null,
     linked_tasks: spec.has_tasks ? 3 : 0,
     completed_tasks: 0,
-    story_points: 0,
+    story_points: spec.has_tasks ? 8 : 0,
   };
 }
 
@@ -104,6 +106,8 @@ async function installApiMocks(page: Page) {
       specify: [],
       plan: [],
       tasks: [],
+      checklist: [],
+      analyze: [],
       implement: [],
     },
   };
@@ -119,7 +123,7 @@ async function installApiMocks(page: Page) {
       !isApiRequest ||
       (!pathname.startsWith("/projects") &&
         !pathname.startsWith("/speckit") &&
-        pathname !== "/specifications")
+        !pathname.startsWith("/specifications"))
     ) {
       await route.continue();
       return;
@@ -190,6 +194,28 @@ async function installApiMocks(page: Page) {
         items: specs,
         total: specs.length,
         filters_applied: { project_id: PROJECT_ID },
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && pathname === "/specifications/1") {
+      await json(route, buildProjectSpec(state.specs[0]));
+      return;
+    }
+
+    if (request.method() === "GET" && pathname === "/specifications/1/content") {
+      const spec = state.specs[0];
+      await json(route, {
+        id: spec.id,
+        path: spec.path,
+        title: spec.feature_name,
+        spec_content: spec.spec_path ? "# Spec\n\nAuth flow" : null,
+        plan_content: spec.plan_path ? "# Plan\n\nReuse auth tables." : null,
+        tasks_content: spec.tasks_path ? "# Tasks\n\n- Build auth flow" : null,
+        checklist_content: spec.checklist_path ? "# Checklist\n\n- [x] Review inputs" : null,
+        analysis_content: spec.analysis_path
+          ? "# Analysis\n\nImplementation review is ready."
+          : null,
       });
       return;
     }
@@ -339,6 +365,41 @@ async function installApiMocks(page: Page) {
       return;
     }
 
+    if (request.method() === "POST" && pathname === `/projects/${PROJECT_ID}/speckit/checklist`) {
+      const body = requestBody(route);
+      state.requests.checklist.push(body);
+      state.specs = state.specs.map((spec) => ({
+        ...spec,
+        checklist_path: "specs/001-auth-flow/checklist.md",
+      }));
+      await json(route, {
+        success: true,
+        checklist_path: "specs/001-auth-flow/checklist.md",
+        item_count: 4,
+        spec_run_id: SPEC_RUN_ID,
+        worktree_path: "/tmp/demo-project",
+        error: null,
+      });
+      return;
+    }
+
+    if (request.method() === "POST" && pathname === `/projects/${PROJECT_ID}/speckit/analyze`) {
+      const body = requestBody(route);
+      state.requests.analyze.push(body);
+      state.specs = state.specs.map((spec) => ({
+        ...spec,
+        analysis_path: "specs/001-auth-flow/analysis.md",
+      }));
+      await json(route, {
+        success: true,
+        report_path: "specs/001-auth-flow/analysis.md",
+        spec_run_id: SPEC_RUN_ID,
+        worktree_path: "/tmp/demo-project",
+        error: null,
+      });
+      return;
+    }
+
     if (request.method() === "POST" && pathname === `/projects/${PROJECT_ID}/speckit/implement`) {
       const body = requestBody(route);
       state.requests.implement.push(body);
@@ -396,12 +457,38 @@ test("drives the deterministic SpecKit happy path", async ({ page }) => {
   await expect(page.getByText(/001-auth-flow/i).first()).toBeVisible();
 
   await page.goto(appPath(`/projects/${PROJECT_ID}?tab=spec`));
+  await page.getByRole("button", { name: /^Checklist$/ }).first().click();
+  await expect.poll(() => state.requests.checklist.length).toBe(1);
+  await expect.poll(() => state.specs[0]?.checklist_path).toBe("specs/001-auth-flow/checklist.md");
+
+  await page.getByRole("button", { name: /^Analyze$/ }).first().click();
+  await expect.poll(() => state.requests.analyze.length).toBe(1);
+  await expect.poll(() => state.specs[0]?.analysis_path).toBe("specs/001-auth-flow/analysis.md");
+
   await page.getByRole("button", { name: /^Implement$/ }).first().click();
   await expect.poll(() => state.requests.implement.length).toBe(1);
+
+  await page.getByRole("link", { name: /review implementation/i }).first().click();
+  await expect(page).toHaveURL(/\/console\/specifications\/1\?tab=analysis$/);
+  await expect(page.getByText(/implementation review is ready\./i)).toBeVisible();
+  await expect(page.getByRole("link", { name: /view protocol/i })).toHaveAttribute(
+    "href",
+    "/console/protocols/42"
+  );
+  await expect(page.getByRole("link", { name: /open execution/i })).toHaveAttribute(
+    "href",
+    "/console/projects/9?tab=execution&sprint=5"
+  );
 
   expect(state.requests.init[0]).toEqual({});
   expect(state.requests.workflow[0]).toMatchObject({
     feature_name: "Auth Flow",
+  });
+  expect(state.requests.checklist[0]).toMatchObject({
+    spec_path: SPEC_PATH,
+  });
+  expect(state.requests.analyze[0]).toMatchObject({
+    spec_path: SPEC_PATH,
   });
   expect(state.requests.implement[0]).toMatchObject({
     spec_path: SPEC_PATH,
