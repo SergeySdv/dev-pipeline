@@ -2450,7 +2450,7 @@ class SQLiteDatabase:
         protocol_run_id: int,
         *,
         template_config: Optional[dict] = None,
-        template_source: Optional[dict] = None,
+        template_source: Optional[Any] = None,
     ) -> ProtocolRun:
         """Update template config and source on a protocol run."""
         updates = ["updated_at = CURRENT_TIMESTAMP"]
@@ -3949,7 +3949,7 @@ class PostgresDatabase:
         protocol_run_id: int,
         *,
         template_config: Optional[dict] = None,
-        template_source: Optional[dict] = None,
+        template_source: Optional[Any] = None,
     ) -> ProtocolRun:
         """Update template config and source on a protocol run."""
         updates = ["updated_at = CURRENT_TIMESTAMP"]

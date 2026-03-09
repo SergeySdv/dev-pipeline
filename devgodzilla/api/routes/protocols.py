@@ -106,6 +106,7 @@ class ProjectProtocolCreate(BaseModel):
     protocol_name: str = Field(..., min_length=1)
     description: Optional[str] = None
     base_branch: str = "main"
+    template_source: Optional[Any] = None
     auto_start: bool = False
 
 
@@ -164,6 +165,8 @@ def create_project_protocol(
         base_branch=request.base_branch,
         description=request.description,
     )
+    if request.template_source is not None:
+        db.update_protocol_template(run.id, template_source=request.template_source)
     if request.auto_start:
         def run_planning() -> None:
             service = PlanningService(ctx, db)
@@ -189,12 +192,18 @@ def create_protocol(
         base_branch=protocol.branch_name or "main",
         description=protocol.description,
     )
+    if protocol.template is not None or protocol.inputs is not None:
+        db.update_protocol_template(
+            run.id,
+            template_config=protocol.inputs,
+            template_source=protocol.template,
+        )
     
     # If using planning service, we should trigger plan_protocol in background
     # But for now, we just return the pending run. The CLI triggers planning explicitly.
     # We could add an option 'plan: bool = False' to trigger it.
     
-    return run
+    return db.get_protocol_run(run.id)
 
 
 @router.post("/protocols/from-spec", response_model=ProtocolFromSpecResponse)

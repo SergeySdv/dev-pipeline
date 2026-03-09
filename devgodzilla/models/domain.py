@@ -112,7 +112,7 @@ class ProtocolRun:
     protocol_root: Optional[str] = None
     description: Optional[str] = None
     template_config: Optional[Dict[str, Any]] = None
-    template_source: Optional[Dict[str, Any]] = None
+    template_source: Optional[Any] = None
     # Policy audit
     policy_pack_key: Optional[str] = None
     policy_pack_version: Optional[str] = None

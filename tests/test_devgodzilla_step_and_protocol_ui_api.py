@@ -368,3 +368,92 @@ def test_get_protocol_exposes_canonical_protocol_fields(
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_create_project_protocol_persists_template_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(name="demo", git_url="git@example.com:demo/repo.git", base_branch="main")
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.post(
+                    f"/projects/{project.id}/protocols",
+                    json={
+                        "protocol_name": "demo-protocol",
+                        "base_branch": "main",
+                        "template_source": "./templates/feature.yaml",
+                    },
+                )
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["template_source"] == "./templates/feature.yaml"
+            assert db.get_protocol_run(payload["id"]).template_source == "./templates/feature.yaml"
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_create_global_protocol_persists_template_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(name="demo", git_url="git@example.com:demo/repo.git", base_branch="main")
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.post(
+                    "/protocols",
+                    json={
+                        "project_id": project.id,
+                        "name": "demo-protocol",
+                        "branch_name": "main",
+                        "template": "./templates/global.yaml",
+                        "inputs": {"mode": "brownfield"},
+                    },
+                )
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["template_source"] == "./templates/global.yaml"
+            assert payload["template_config"] == {"mode": "brownfield"}
+            run = db.get_protocol_run(payload["id"])
+            assert run.template_source == "./templates/global.yaml"
+            assert run.template_config == {"mode": "brownfield"}
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
