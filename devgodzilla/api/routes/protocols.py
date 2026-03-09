@@ -8,12 +8,15 @@ from devgodzilla.api import schemas
 from devgodzilla.api.dependencies import get_db, get_service_context, get_windmill_client
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
+from devgodzilla.models.domain import ProtocolStatus, StepStatus
+from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
 from devgodzilla.services.planning import PlanningService
 from devgodzilla.services.policy import PolicyService
+from devgodzilla.services.priority import sort_by_priority
 from devgodzilla.services.sprint_integration import SprintIntegrationService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
-from devgodzilla.windmill.client import WindmillClient
+from devgodzilla.windmill.client import WindmillClient, WindmillConfig
 
 router = APIRouter()
 
@@ -80,6 +83,32 @@ def _artifact_type_from_name(name: str) -> str:
     if lower.endswith(".txt") or lower.endswith(".md"):
         return "text"
     return "file"
+
+
+def _next_runnable_step_id(db: Database, protocol_id: int) -> Optional[int]:
+    steps = db.list_step_runs(protocol_id)
+    completed_ids = {step.id for step in steps if step.status == StepStatus.COMPLETED}
+    pending_steps = [step for step in steps if step.status == StepStatus.PENDING]
+    for step in sort_by_priority(pending_steps, priority_attr="priority"):
+        depends_on = step.depends_on or []
+        if all(dep in completed_ids for dep in depends_on):
+            return step.id
+    return None
+
+
+def _build_orchestrator(ctx: ServiceContext, db: Database) -> OrchestratorService:
+    windmill_client = None
+    mode = OrchestratorMode.LOCAL
+    if getattr(ctx.config, "windmill_enabled", False):
+        windmill_client = WindmillClient(
+            WindmillConfig(
+                base_url=ctx.config.windmill_url or "http://localhost:8000",
+                token=ctx.config.windmill_token or "",
+                workspace=getattr(ctx.config, "windmill_workspace", "devgodzilla"),
+            )
+        )
+        mode = OrchestratorMode.WINDMILL
+    return OrchestratorService(context=ctx, db=db, windmill_client=windmill_client, mode=mode)
 
 
 class ProjectProtocolCreate(BaseModel):
@@ -485,33 +514,53 @@ def start_protocol(
 @router.post("/protocols/{protocol_id}/actions/run_next_step", response_model=schemas.NextStepOut)
 def run_next_step(
     protocol_id: int,
+    ctx: ServiceContext = Depends(get_service_context),
     db: Database = Depends(get_db),
 ):
     """
-    Select the next runnable step for a protocol.
+    Execute the next runnable step for a protocol.
 
-    This does not execute the step; it only returns the next step_run_id whose
-    dependencies are satisfied and whose status is pending.
+    Returns the selected `step_run_id` after dispatching it for execution.
     """
     try:
         run = db.get_protocol_run(protocol_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Protocol not found")
 
-    if run.status in ["cancelled", "completed"]:
+    if run.status in [ProtocolStatus.CANCELLED, ProtocolStatus.COMPLETED]:
         return schemas.NextStepOut(step_run_id=None)
 
-    steps = db.list_step_runs(protocol_id)
-    completed_ids = {s.id for s in steps if s.status == "completed"}
+    step_run_id = _next_runnable_step_id(db, protocol_id)
+    if step_run_id is None:
+        return schemas.NextStepOut(step_run_id=None)
 
-    for step in steps:
-        if step.status != "pending":
-            continue
-        depends_on = step.depends_on or []
-        if all(dep in completed_ids for dep in depends_on):
-            return schemas.NextStepOut(step_run_id=step.id)
+    if getattr(ctx.config, "windmill_enabled", False):
+        orchestrator = _build_orchestrator(ctx, db)
+        result = orchestrator.run_step(step_run_id)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error or "Failed to run next step")
+        return schemas.NextStepOut(step_run_id=step_run_id)
 
-    return schemas.NextStepOut(step_run_id=None)
+    execution = ExecutionService(ctx, db)
+    execution.execute_step(step_run_id)
+    return schemas.NextStepOut(step_run_id=step_run_id)
+
+
+@router.get("/protocols/{protocol_id}/next-step", response_model=schemas.NextStepOut)
+def preview_next_step(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Preview the next runnable step without executing it."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    if run.status in [ProtocolStatus.CANCELLED, ProtocolStatus.COMPLETED]:
+        return schemas.NextStepOut(step_run_id=None)
+
+    return schemas.NextStepOut(step_run_id=_next_runnable_step_id(db, protocol_id))
 
 
 @router.post("/protocols/{protocol_id}/actions/pause", response_model=schemas.ProtocolOut)

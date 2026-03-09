@@ -242,6 +242,62 @@ class TestProjectSpecKitAPI:
             assert resp.status_code == 200
             assert resp.json()["success"] is True
 
+    def test_global_specify_emits_lifecycle_events(self, client, db, sample_project, tmp_path):
+        """Test global specify route emits the same lifecycle events as project-scoped route."""
+        with patch("devgodzilla.api.routes.speckit.SpecificationService") as MockService:
+            mock_service = MagicMock()
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.spec_path = str(tmp_path / "specs" / "0001-feature")
+            mock_result.spec_number = 1
+            mock_result.feature_name = "Auth Flow"
+            mock_result.spec_run_id = 123
+            mock_result.worktree_path = str(tmp_path / "worktree")
+            mock_result.branch_name = "spec/0001-auth-flow"
+            mock_result.base_branch = "main"
+            mock_result.spec_root = str(tmp_path / "specs")
+            mock_result.error = None
+            mock_service.run_specify.return_value = mock_result
+            MockService.return_value = mock_service
+
+            resp = client.post(
+                "/speckit/specify",
+                json={
+                    "project_id": sample_project.id,
+                    "description": "Add user authentication with OAuth2",
+                    "feature_name": "OAuth Auth",
+                    "base_branch": "main",
+                },
+            )
+
+            assert resp.status_code == 200
+
+        events = db.list_recent_events(project_id=sample_project.id, limit=10)
+        event_types = [event.event_type for event in events]
+        assert "speckit_specify_started" in event_types
+        assert "speckit_specify_completed" in event_types
+
+    def test_put_constitution_returns_warnings(self, client, sample_project, tmp_path):
+        """Test project-scoped constitution save returns warnings for parity with global route."""
+        with patch("devgodzilla.api.routes.project_speckit.SpecificationService") as MockService:
+            mock_service = MagicMock()
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.spec_path = str(tmp_path / "specs")
+            mock_result.constitution_hash = "newhash"
+            mock_result.error = None
+            mock_result.warnings = ["Existing constitution was replaced"]
+            mock_service.save_constitution.return_value = mock_result
+            MockService.return_value = mock_service
+
+            resp = client.put(
+                f"/projects/{sample_project.id}/speckit/constitution",
+                json={"content": "# Updated Constitution"},
+            )
+
+            assert resp.status_code == 200
+            assert resp.json()["warnings"] == ["Existing constitution was replaced"]
+
     # ==================== Plan Tests ====================
 
     def test_plan_success(self, client, sample_project, tmp_path):
@@ -268,6 +324,71 @@ class TestProjectSpecKitAPI:
             data = resp.json()
             assert data["success"] is True
             assert data["plan_path"] is not None
+
+    def test_project_plan_forwards_context(self, client, sample_project, tmp_path):
+        """Test project-scoped plan generation forwards optional context."""
+        with patch("devgodzilla.api.routes.project_speckit.SpecificationService") as MockService:
+            mock_service = MagicMock()
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.plan_path = str(tmp_path / "specs" / "0001" / "plan.md")
+            mock_result.data_model_path = str(tmp_path / "specs" / "0001" / "data-model.md")
+            mock_result.contracts_path = str(tmp_path / "specs" / "0001" / "contracts.md")
+            mock_result.spec_run_id = 123
+            mock_result.worktree_path = str(tmp_path / "worktree")
+            mock_result.error = None
+            mock_service.run_plan.return_value = mock_result
+            MockService.return_value = mock_service
+
+            resp = client.post(
+                f"/projects/{sample_project.id}/speckit/plan",
+                json={
+                    "spec_path": "specs/0001-feature/spec.md",
+                    "context": "Prioritize a minimal auth flow and reuse existing tables.",
+                },
+            )
+
+            assert resp.status_code == 200
+            mock_service.run_plan.assert_called_once_with(
+                sample_project.local_path,
+                "specs/0001-feature/spec.md",
+                spec_run_id=None,
+                project_id=sample_project.id,
+                context="Prioritize a minimal auth flow and reuse existing tables.",
+            )
+
+    def test_global_plan_forwards_context(self, client, sample_project, tmp_path):
+        """Test global plan generation forwards optional context."""
+        with patch("devgodzilla.api.routes.speckit.SpecificationService") as MockService:
+            mock_service = MagicMock()
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.plan_path = str(tmp_path / "specs" / "0001" / "plan.md")
+            mock_result.data_model_path = str(tmp_path / "specs" / "0001" / "data-model.md")
+            mock_result.contracts_path = str(tmp_path / "specs" / "0001" / "contracts.md")
+            mock_result.spec_run_id = 123
+            mock_result.worktree_path = str(tmp_path / "worktree")
+            mock_result.error = None
+            mock_service.run_plan.return_value = mock_result
+            MockService.return_value = mock_service
+
+            resp = client.post(
+                "/speckit/plan",
+                json={
+                    "project_id": sample_project.id,
+                    "spec_path": "specs/0001-feature/spec.md",
+                    "context": "Prefer additive API changes and keep migrations out of scope.",
+                },
+            )
+
+            assert resp.status_code == 200
+            mock_service.run_plan.assert_called_once_with(
+                sample_project.local_path,
+                "specs/0001-feature/spec.md",
+                spec_run_id=None,
+                project_id=sample_project.id,
+                context="Prefer additive API changes and keep migrations out of scope.",
+            )
 
     # ==================== Tasks Tests ====================
 
@@ -393,6 +514,10 @@ class TestProjectSpecKitAPI:
             mock_result.success = True
             mock_result.run_path = str(tmp_path / "specs" / "0001" / "_runtime" / "runs" / "001")
             mock_result.metadata_path = str(tmp_path / "specs" / "0001" / "_runtime" / "run-001.json")
+            mock_result.protocol_id = 456
+            mock_result.protocol_root = str(tmp_path / "specs" / "0001" / "_runtime")
+            mock_result.step_count = 3
+            mock_result.warnings = []
             mock_result.spec_run_id = 123
             mock_result.worktree_path = str(tmp_path / "worktree")
             mock_result.error = None
@@ -408,6 +533,43 @@ class TestProjectSpecKitAPI:
             data = resp.json()
             assert data["success"] is True
             assert data["run_path"] is not None
+            assert data["protocol_id"] == 456
+            assert data["protocol_root"] is not None
+            assert data["step_count"] == 3
+
+    def test_global_implement_returns_protocol_bootstrap_details(self, client, sample_project, tmp_path):
+        """Test global implement route returns protocol bootstrap details."""
+        with patch("devgodzilla.api.routes.speckit.SpecificationService") as MockService:
+            mock_service = MagicMock()
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.run_path = str(tmp_path / "specs" / "0001" / "_runtime")
+            mock_result.metadata_path = str(tmp_path / "specs" / "0001" / "_runtime" / "implement.json")
+            mock_result.protocol_id = 456
+            mock_result.protocol_root = str(tmp_path / "specs" / "0001" / "_runtime")
+            mock_result.step_count = 3
+            mock_result.warnings = ["Existing runtime steps found; leaving files unchanged"]
+            mock_result.spec_run_id = 123
+            mock_result.worktree_path = str(tmp_path / "worktree")
+            mock_result.error = None
+            mock_service.run_implement.return_value = mock_result
+            MockService.return_value = mock_service
+
+            resp = client.post(
+                "/speckit/implement",
+                json={
+                    "project_id": sample_project.id,
+                    "spec_path": "specs/0001-feature/spec.md",
+                },
+            )
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+            assert data["protocol_id"] == 456
+            assert data["protocol_root"] is not None
+            assert data["step_count"] == 3
+            assert data["warnings"] == ["Existing runtime steps found; leaving files unchanged"]
 
     def test_implement_error(self, client, sample_project):
         """Test implementation with error."""
@@ -417,6 +579,10 @@ class TestProjectSpecKitAPI:
             mock_result.success = False
             mock_result.run_path = None
             mock_result.metadata_path = None
+            mock_result.protocol_id = None
+            mock_result.protocol_root = None
+            mock_result.step_count = 0
+            mock_result.warnings = []
             mock_result.spec_run_id = None
             mock_result.worktree_path = None
             mock_result.error = "Worktree creation failed"
@@ -437,7 +603,14 @@ class TestProjectSpecKitAPI:
 
     def test_project_not_found(self, client, db):
         """Test error for non-existent project."""
-        # The route raises KeyError which propagates as 500
-        # This is a known behavior - we just verify it doesn't crash with 200
-        with pytest.raises(Exception):
-            client.get("/projects/99999/speckit/constitution")
+        resp = client.get("/projects/99999/speckit/constitution")
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Project not found"
+
+    def test_global_speckit_init_missing_project_returns_404(self, client):
+        """Test global SpecKit init returns 404 for missing project."""
+        resp = client.post("/speckit/init", json={"project_id": 99999})
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Project not found"

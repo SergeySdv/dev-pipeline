@@ -27,6 +27,7 @@ from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.speckit_adapter import SpecKitAdapter
 from devgodzilla.services.git import GitService
+from devgodzilla.services.spec_to_protocol import SpecToProtocolService
 from devgodzilla.models.domain import SpecRun, SpecRunStatus
 from devgodzilla.spec import resolve_spec_path
 
@@ -116,10 +117,14 @@ class AnalyzeResult:
 
 @dataclass
 class ImplementResult:
-    """Result from implementation run scaffolding."""
+    """Result from implementation bootstrap."""
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    protocol_id: Optional[int] = None
+    protocol_root: Optional[str] = None
+    step_count: int = 0
+    warnings: List[str] = field(default_factory=list)
     spec_run_id: Optional[int] = None
     worktree_path: Optional[str] = None
     error: Optional[str] = None
@@ -698,6 +703,7 @@ class SpecificationService(Service):
         spec_path: str,
         spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        context: Optional[str] = None,
     ) -> PlanResult:
         """
         Generate an implementation plan from a spec.
@@ -705,6 +711,7 @@ class SpecificationService(Service):
         Args:
             project_path: Path to the project root
             spec_path: Path to the spec.md file
+            context: Optional additional planning context from the caller
             project_id: Optional project ID for logging
 
         Returns:
@@ -790,6 +797,12 @@ class SpecificationService(Service):
                 ],
                 policy_guidelines,
             )
+            if context and context.strip():
+                prompt_context = (
+                    f"{prompt_context.rstrip()}\n\n"
+                    "Additional planning context:\n"
+                    f"{context.strip()}\n"
+                )
             agent_result = self._run_speckit_agent(
                 str(workspace_root),
                 prompt_name=self.PLAN_PROMPT,
@@ -1206,7 +1219,7 @@ class SpecificationService(Service):
         project_id: Optional[int] = None,
     ) -> ImplementResult:
         """
-        Scaffold a SpecKit implementation run directory.
+        Bootstrap execution for a SpecKit spec.
         """
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
@@ -1219,39 +1232,156 @@ class SpecificationService(Service):
             )
             spec_file = self._resolve_path_safely(spec_path, workspace_root)
             spec_dir = spec_file.parent
-            runtime_dir = spec_dir / "_runtime" / "runs"
-            runtime_dir.mkdir(parents=True, exist_ok=True)
-            run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
-            run_path = runtime_dir / run_id
-            run_path.mkdir(parents=True, exist_ok=True)
+            plan_path = spec_dir / "plan.md"
+            tasks_path = spec_dir / "tasks.md"
 
-            metadata_path = run_path / "metadata.json"
+            # Keep legacy scaffolding behavior for non-DB callers such as the
+            # direct service tests/CLI path that do not have enough context to
+            # create a protocol run.
+            if not self.db or not project_id:
+                runtime_dir = spec_dir / "_runtime" / "runs"
+                runtime_dir.mkdir(parents=True, exist_ok=True)
+                run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+                run_path = runtime_dir / run_id
+                run_path.mkdir(parents=True, exist_ok=True)
+
+                metadata_path = run_path / "metadata.json"
+                metadata = {
+                    "run_id": run_id,
+                    "status": "initialized",
+                    "spec_path": str(spec_file),
+                    "created_at": datetime.utcnow().isoformat(),
+                }
+                metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+                self._record_speckit_spec(
+                    str(workspace_root),
+                    project_id,
+                    spec_dir,
+                    spec_path=spec_file,
+                    implement_path=run_path,
+                )
+                self.logger.info(
+                    "implement_run_initialized",
+                    extra={**log_extra, "run_path": str(run_path)},
+                )
+                self._record_spec_run(
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    status=SpecRunStatus.IMPLEMENTED,
+                    implement_path=run_path,
+                    spec_path=spec_file,
+                )
+                return ImplementResult(
+                    success=True,
+                    run_path=str(run_path),
+                    metadata_path=str(metadata_path),
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    worktree_path=str(workspace_root),
+                )
+
+            if not tasks_path.exists():
+                return ImplementResult(
+                    success=False,
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    worktree_path=str(workspace_root),
+                    error=f"Implement requires tasks.md before execution bootstrap: {tasks_path}",
+                )
+
+            protocol_id: Optional[int] = None
+            protocol_root: Optional[Path] = None
+            step_count = 0
+            warnings: List[str] = []
+
+            if spec_run and spec_run.protocol_run_id:
+                try:
+                    protocol = self.db.get_protocol_run(spec_run.protocol_run_id)
+                    protocol_id = protocol.id
+                    step_count = len(self.db.list_step_runs(protocol.id))
+                    if protocol.protocol_root:
+                        candidate = Path(protocol.protocol_root).expanduser()
+                        protocol_root = (
+                            candidate
+                            if candidate.is_absolute()
+                            else (workspace_root / candidate)
+                        )
+                    else:
+                        protocol_root = spec_dir / "_runtime"
+                    warnings.append("Existing protocol already linked; reusing execution bootstrap")
+                except Exception:
+                    protocol_id = None
+                    protocol_root = None
+                    step_count = 0
+                    warnings = []
+
+            if protocol_id is None or protocol_root is None:
+                protocol_result = SpecToProtocolService(self.context, self.db).create_protocol_from_spec(
+                    project_id=project_id,
+                    spec_path=str(spec_file),
+                    tasks_path=str(tasks_path),
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                )
+                if not protocol_result.success:
+                    return ImplementResult(
+                        success=False,
+                        spec_run_id=spec_run.id if spec_run else spec_run_id,
+                        worktree_path=str(workspace_root),
+                        error=protocol_result.error or "Execution bootstrap failed",
+                        warnings=protocol_result.warnings,
+                    )
+                protocol_id = protocol_result.protocol_run_id
+                protocol_root = Path(protocol_result.protocol_root) if protocol_result.protocol_root else spec_dir / "_runtime"
+                step_count = protocol_result.step_count
+                warnings = protocol_result.warnings
+
+            metadata_path = protocol_root / "implement-bootstrap.json"
             metadata = {
-                "run_id": run_id,
-                "status": "initialized",
+                "status": "bootstrapped",
                 "spec_path": str(spec_file),
+                "plan_path": str(plan_path) if plan_path.exists() else None,
+                "tasks_path": str(tasks_path),
+                "protocol_id": protocol_id,
+                "protocol_root": str(protocol_root),
+                "step_count": step_count,
+                "warnings": warnings,
                 "created_at": datetime.utcnow().isoformat(),
             }
-            metadata_path.write_text(json.dumps(metadata, indent=2))
+            metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
             self._record_speckit_spec(
                 str(workspace_root),
                 project_id,
                 spec_dir,
                 spec_path=spec_file,
-                implement_path=run_path,
+                plan_path=plan_path if plan_path.exists() else None,
+                tasks_path=tasks_path,
+                implement_path=protocol_root,
             )
-            self.logger.info("implement_run_initialized", extra={**log_extra, "run_path": str(run_path)})
+            self.logger.info(
+                "implement_bootstrap_initialized",
+                extra={
+                    **log_extra,
+                    "protocol_run_id": protocol_id,
+                    "protocol_root": str(protocol_root),
+                    "step_count": step_count,
+                },
+            )
             self._record_spec_run(
                 spec_run_id=spec_run.id if spec_run else spec_run_id,
                 status=SpecRunStatus.IMPLEMENTED,
-                implement_path=run_path,
+                implement_path=protocol_root,
+                protocol_run_id=protocol_id,
                 spec_path=spec_file,
+                plan_path=plan_path if plan_path.exists() else None,
+                tasks_path=tasks_path,
             )
             return ImplementResult(
                 success=True,
-                run_path=str(run_path),
+                run_path=str(protocol_root),
                 metadata_path=str(metadata_path),
+                protocol_id=protocol_id,
+                protocol_root=str(protocol_root),
+                step_count=step_count,
+                warnings=warnings,
                 spec_run_id=spec_run.id if spec_run else spec_run_id,
                 worktree_path=str(workspace_root),
             )
