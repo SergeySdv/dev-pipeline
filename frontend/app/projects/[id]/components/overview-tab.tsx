@@ -72,6 +72,7 @@ import {
   getProjectManualTasksWizardPath,
   getProjectSpecWorkflowPath,
   getProjectSpecWorkspacePath,
+  getSpecificationReviewPath,
 } from "@/lib/project-routes";
 
 interface OverviewTabProps {
@@ -110,6 +111,20 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
       null
     );
   }, [activeSpecPath, specOptions]);
+  const activeSpecReviewPath = useMemo(() => {
+    if (!activeSpecMeta?.id) {
+      return null;
+    }
+
+    const hasReviewSurface = Boolean(
+      activeSpecMeta.has_tasks ||
+        activeSpecMeta.checklist_path ||
+        activeSpecMeta.analysis_path ||
+        activeSpecMeta.implement_path
+    );
+
+    return hasReviewSurface ? getSpecificationReviewPath(activeSpecMeta.id) : null;
+  }, [activeSpecMeta]);
 
   const workflowStatus = useMemo(() => {
     const hasSpec = Boolean(activeSpecMeta?.has_spec ?? activeSpecMeta?.spec_path ?? activeSpecMeta?.path);
@@ -447,6 +462,14 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
+            {activeSpecReviewPath && (
+              <Button variant="secondary" className="w-full justify-start" asChild>
+                <Link href={activeSpecReviewPath}>
+                  <FileSearch className="mr-2 h-4 w-4" />
+                  Review Active Implementation
+                </Link>
+              </Button>
+            )}
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
               <Link href={getProjectSpecWorkflowPath(projectId)}>
                 <Workflow className="mr-2 h-4 w-4" />

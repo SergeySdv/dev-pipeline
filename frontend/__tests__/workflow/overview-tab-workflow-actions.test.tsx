@@ -29,18 +29,19 @@ vi.mock("@/lib/api", () => ({
       spec_count: 1,
       specs: [
         {
+          id: 77,
           name: "001-auth-flow",
           path: "specs/001-auth-flow",
           spec_path: "specs/001-auth-flow/spec.md",
-          plan_path: null,
-          tasks_path: null,
-          checklist_path: null,
-          analysis_path: null,
-          implement_path: null,
+          plan_path: "specs/001-auth-flow/plan.md",
+          tasks_path: "specs/001-auth-flow/tasks.md",
+          checklist_path: "specs/001-auth-flow/checklist.md",
+          analysis_path: "specs/001-auth-flow/analysis.md",
+          implement_path: "specs/001-auth-flow/_runtime",
           has_spec: true,
-          has_plan: false,
-          has_tasks: false,
-          status: "draft",
+          has_plan: true,
+          has_tasks: true,
+          status: "completed",
         },
       ],
     },
@@ -80,6 +81,9 @@ describe("OverviewTab workflow actions", () => {
   it("promotes the canonical workflow and labels manual step-by-step tools as secondary", () => {
     render(<OverviewTab projectId={12} />);
 
+    expect(
+      screen.getByRole("link", { name: /review active implementation/i }).getAttribute("href")
+    ).toBe("/specifications/77?tab=analysis");
     expect(screen.getByRole("link", { name: /run spec workflow/i }).getAttribute("href")).toBe(
       "/projects/12?wizard=generate-specs&tab=spec"
     );

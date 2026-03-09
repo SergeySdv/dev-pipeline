@@ -45,7 +45,7 @@ import {
   useSpecifications,
   useSpecKitStatus,
 } from "@/lib/api";
-import { getProjectSpecWorkflowPath } from "@/lib/project-routes";
+import { getProjectSpecWorkflowPath, getSpecificationReviewPath } from "@/lib/project-routes";
 import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 interface SpecTabProps {
@@ -457,6 +457,14 @@ export function SpecTab({ projectId }: SpecTabProps) {
               const isFailed = spec.status === "failed";
               const specPath = spec.spec_path || spec.path || "";
               const reviewState = getReviewState(spec);
+              const reviewPath =
+                spec.id &&
+                (spec.has_tasks ||
+                  reviewState.hasChecklist ||
+                  reviewState.hasAnalysis ||
+                  reviewState.hasExecution)
+                  ? getSpecificationReviewPath(spec.id)
+                  : null;
               return (
                 <div
                   key={spec.id}
@@ -535,6 +543,14 @@ export function SpecTab({ projectId }: SpecTabProps) {
                       >
                         <RotateCcw className="mr-2 h-3.5 w-3.5" />
                         {generateSpec.isPending ? "Retrying..." : "Retry"}
+                      </Button>
+                    )}
+                    {reviewPath && (
+                      <Button variant="secondary" size="sm" asChild>
+                        <Link href={reviewPath}>
+                          <FileSearch className="mr-2 h-3.5 w-3.5" />
+                          Review Implementation
+                        </Link>
                       </Button>
                     )}
                     <Button

@@ -28,3 +28,29 @@ export function getProjectManualPlanWizardPath(projectId: number | string): stri
 export function getProjectManualTasksWizardPath(projectId: number | string): string {
   return `/projects/${projectId}?wizard=implement-feature`;
 }
+
+export type SpecificationDetailTab =
+  | "overview"
+  | "tasks"
+  | "spec_file"
+  | "plan_file"
+  | "tasks_file"
+  | "checklist"
+  | "analysis"
+  | "protocol";
+
+export function getSpecificationDetailPath(
+  specId: number | string,
+  tab?: SpecificationDetailTab
+): string {
+  const basePath = `/specifications/${specId}`;
+  if (!tab) {
+    return basePath;
+  }
+  const params = new URLSearchParams({ tab });
+  return `${basePath}?${params.toString()}`;
+}
+
+export function getSpecificationReviewPath(specId: number | string): string {
+  return getSpecificationDetailPath(specId, "analysis");
+}

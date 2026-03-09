@@ -6,6 +6,8 @@ import {
   getProjectManualTasksWizardPath,
   getProjectSpecWorkflowPath,
   getProjectSpecWorkspacePath,
+  getSpecificationDetailPath,
+  getSpecificationReviewPath,
 } from "@/lib/project-routes";
 
 describe("getProjectExecutionPath", () => {
@@ -33,5 +35,13 @@ describe("spec workflow routes", () => {
 
   it("builds the manual tasks wizard route", () => {
     expect(getProjectManualTasksWizardPath(12)).toBe("/projects/12?wizard=implement-feature");
+  });
+
+  it("builds a specification detail route", () => {
+    expect(getSpecificationDetailPath(77)).toBe("/specifications/77");
+  });
+
+  it("builds a specification review route", () => {
+    expect(getSpecificationReviewPath(77)).toBe("/specifications/77?tab=analysis");
   });
 });

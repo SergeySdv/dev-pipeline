@@ -1,6 +1,7 @@
 "use client";
 import { use } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import {
   ArrowLeft,
@@ -22,11 +23,29 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSpecification, useSpecificationContent } from "@/lib/api";
-import { getProjectExecutionPath } from "@/lib/project-routes";
+import {
+  getProjectExecutionPath,
+  getSpecificationDetailPath,
+  getSpecificationReviewPath,
+  type SpecificationDetailTab,
+} from "@/lib/project-routes";
+
+const SPECIFICATION_DETAIL_TABS: readonly SpecificationDetailTab[] = [
+  "overview",
+  "tasks",
+  "spec_file",
+  "plan_file",
+  "tasks_file",
+  "checklist",
+  "analysis",
+  "protocol",
+];
 
 export default function SpecificationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const id = Number.parseInt(resolvedParams.id);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: spec, isLoading } = useSpecification(id);
   const { data: specContent, isLoading: contentLoading } = useSpecificationContent(id);
 
@@ -67,6 +86,10 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
   const hasAnalysis = Boolean(spec.analysis_path);
   const hasExecution = Boolean(spec.protocol_id || spec.implement_path);
   const reviewReady = Boolean(spec.has_tasks && hasChecklist && hasAnalysis);
+  const searchTab = searchParams.get("tab");
+  const currentTab = SPECIFICATION_DETAIL_TABS.includes(searchTab as SpecificationDetailTab)
+    ? (searchTab as SpecificationDetailTab)
+    : "overview";
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
@@ -91,11 +114,25 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
           >
             {spec.status}
           </Badge>
+          <Button size="sm" variant={currentTab === "analysis" ? "secondary" : "default"} asChild>
+            <Link href={getSpecificationReviewPath(spec.id)}>
+              <FileSearch className="mr-2 h-4 w-4" />
+              Review Implementation
+            </Link>
+          </Button>
           {spec.protocol_id && (
-            <Button size="sm" asChild>
+            <Button size="sm" variant="outline" asChild>
               <Link href={`/protocols/${spec.protocol_id}`}>
                 <Play className="mr-2 h-4 w-4" />
                 View Protocol
+              </Link>
+            </Button>
+          )}
+          {spec.sprint_id && (
+            <Button size="sm" variant="outline" asChild>
+              <Link href={getProjectExecutionPath(spec.project_id, spec.sprint_id)}>
+                <Target className="mr-2 h-4 w-4" />
+                Open Execution
               </Link>
             </Button>
           )}
@@ -133,7 +170,13 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="flex-1">
+      <Tabs
+        value={currentTab}
+        onValueChange={(nextTab) =>
+          router.replace(getSpecificationDetailPath(spec.id, nextTab as SpecificationDetailTab))
+        }
+        className="flex-1"
+      >
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="tasks">Tasks ({spec.linked_tasks})</TabsTrigger>
@@ -220,7 +263,7 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
                   {spec.sprint_id && (
                     <div className="mt-4">
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={getProjectExecutionPath(spec.project_id)}>
+                        <Link href={getProjectExecutionPath(spec.project_id, spec.sprint_id)}>
                           View in Execution
                           <ExternalLink className="ml-2 h-3 w-3" />
                         </Link>
@@ -350,6 +393,13 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/protocols/${spec.protocol_id}`}>View Protocol Details</Link>
                   </Button>
+                  {spec.sprint_id && (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href={getProjectExecutionPath(spec.project_id, spec.sprint_id)}>
+                        Open Execution Sprint
+                      </Link>
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="text-muted-foreground text-sm">No protocol created yet</div>
