@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ClipboardCheck,
   ExternalLink,
+  FileSearch,
   FileText,
   ListTodo,
   Play,
@@ -15,7 +16,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription,CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -62,6 +63,10 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
     completed: "bg-green-500",
     failed: "bg-red-500",
   };
+  const hasChecklist = Boolean(spec.checklist_path);
+  const hasAnalysis = Boolean(spec.analysis_path);
+  const hasExecution = Boolean(spec.protocol_id || spec.implement_path);
+  const reviewReady = Boolean(spec.has_tasks && hasChecklist && hasAnalysis);
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
@@ -136,6 +141,7 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
           <TabsTrigger value="plan_file">Plan File</TabsTrigger>
           <TabsTrigger value="tasks_file">Tasks File</TabsTrigger>
           <TabsTrigger value="checklist">Checklist</TabsTrigger>
+          <TabsTrigger value="analysis">Analysis</TabsTrigger>
           <TabsTrigger value="protocol">Protocol</TabsTrigger>
         </TabsList>
 
@@ -163,6 +169,22 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
                 <div>
                   <p className="text-muted-foreground text-sm">Story Points</p>
                   <p className="text-sm">{spec.story_points}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-sm">Review Status</p>
+                  <p className="text-sm">{reviewReady ? "Review Ready" : "Missing review artifacts"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-sm">Execution Status</p>
+                  <p className="text-sm">{hasExecution ? "Execution bootstrapped" : "No protocol linked"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-sm">Checklist</p>
+                  <p className="text-sm">{hasChecklist ? "Generated" : "Not generated"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-sm">Analysis</p>
+                  <p className="text-sm">{hasAnalysis ? "Generated" : "Not generated"}</p>
                 </div>
               </div>
             </CardContent>
@@ -290,6 +312,29 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
           </Card>
         </TabsContent>
 
+        <TabsContent value="analysis" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileSearch className="h-4 w-4 text-sky-500" />
+                Analysis
+              </CardTitle>
+              <CardDescription>Implementation review summary for this specification</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {contentLoading ? (
+                <LoadingState message="Loading analysis content..." />
+              ) : specContent?.analysis_content ? (
+                <CodeBlock code={specContent.analysis_content} language="markdown" maxHeight="600px" />
+              ) : (
+                <div className="text-muted-foreground text-sm">
+                  No analysis generated yet. Run the analysis action from the SpecKit workspace.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="protocol" className="space-y-4">
           <Card>
             <CardHeader>
@@ -299,6 +344,9 @@ export default function SpecificationDetailPage({ params }: { params: Promise<{ 
               {spec.protocol_id ? (
                 <div className="space-y-2">
                   <p className="text-sm">Protocol ID: #{spec.protocol_id}</p>
+                  <p className="text-muted-foreground text-sm">
+                    {reviewReady ? "Implementation review is ready." : "Complete checklist and analysis for review readiness."}
+                  </p>
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/protocols/${spec.protocol_id}`}>View Protocol Details</Link>
                   </Button>

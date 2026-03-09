@@ -89,6 +89,7 @@ class SpecificationContentOut(BaseModel):
     plan_content: Optional[str] = None
     tasks_content: Optional[str] = None
     checklist_content: Optional[str] = None
+    analysis_content: Optional[str] = None
 
 
 class SpecificationsListOut(BaseModel):
@@ -411,6 +412,7 @@ def get_specification_content(
     plan_content = None
     tasks_content = None
     checklist_content = None
+    analysis_content = None
     
     # Read spec.md
     spec_file = spec_dir / "spec.md"
@@ -443,6 +445,14 @@ def get_specification_content(
             checklist_content = checklist_file.read_text()
         except Exception:
             pass
+
+    # Read analysis.md
+    analysis_file = spec_dir / "analysis.md"
+    if analysis_file.exists():
+        try:
+            analysis_content = analysis_file.read_text()
+        except Exception:
+            pass
     
     return SpecificationContentOut(
         id=spec_id,
@@ -452,6 +462,7 @@ def get_specification_content(
         plan_content=plan_content,
         tasks_content=tasks_content,
         checklist_content=checklist_content,
+        analysis_content=analysis_content,
     )
 
 

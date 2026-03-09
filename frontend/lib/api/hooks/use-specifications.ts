@@ -36,6 +36,7 @@ export interface SpecificationContent {
   plan_content: string | null;
   tasks_content: string | null;
   checklist_content: string | null;
+  analysis_content: string | null;
 }
 
 export interface LinkSprintRequest {

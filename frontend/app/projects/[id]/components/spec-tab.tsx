@@ -53,6 +53,25 @@ interface SpecTabProps {
 
 const LAST_UPDATED_BASE = Date.now();
 
+function getReviewState(spec: {
+  has_tasks?: boolean;
+  checklist_path?: string | null;
+  analysis_path?: string | null;
+  implement_path?: string | null;
+  protocol_id?: number | null;
+}) {
+  const hasChecklist = Boolean(spec.checklist_path);
+  const hasAnalysis = Boolean(spec.analysis_path);
+  const hasExecution = Boolean(spec.protocol_id || spec.implement_path);
+
+  return {
+    hasChecklist,
+    hasAnalysis,
+    hasExecution,
+    reviewReady: Boolean(spec.has_tasks && hasChecklist && hasAnalysis),
+  };
+}
+
 export function SpecTab({ projectId }: SpecTabProps) {
   const router = useRouter();
   const { data: project, isLoading: projectLoading } = useProject(projectId);
@@ -436,13 +455,24 @@ export function SpecTab({ projectId }: SpecTabProps) {
               const isCleaned = spec.status === "cleaned";
               const isFailed = spec.status === "failed";
               const specPath = spec.spec_path || spec.path || "";
+              const reviewState = getReviewState(spec);
               return (
                 <div
                   key={spec.id}
                   className={`space-y-2 rounded-lg border p-4 ${isFailed ? "border-red-500/50 bg-red-500/5" : ""}`}
                 >
                   <div className="flex items-center justify-between">
-                    <h4 className="font-medium">{spec.title}</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium">{spec.title}</h4>
+                      {reviewState.reviewReady && (
+                        <Badge
+                          variant="default"
+                          className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+                        >
+                          Review Ready
+                        </Badge>
+                      )}
+                    </div>
                     {getStatusBadge(spec)}
                   </div>
                   <div className="text-muted-foreground space-y-1 text-sm">
@@ -464,18 +494,32 @@ export function SpecTab({ projectId }: SpecTabProps) {
                         </span>
                       )}
                     </div>
+                    <div className="flex flex-wrap gap-4">
+                      <span>
+                        <span className="font-medium">Checklist:</span>{" "}
+                        {reviewState.hasChecklist ? "Ready" : "Missing"}
+                      </span>
+                      <span>
+                        <span className="font-medium">Analysis:</span>{" "}
+                        {reviewState.hasAnalysis ? "Ready" : "Missing"}
+                      </span>
+                      <span>
+                        <span className="font-medium">Execution:</span>{" "}
+                        {reviewState.hasExecution ? "Bootstrapped" : "Not started"}
+                      </span>
+                    </div>
                     {isFailed && spec.error_message && (
                       <div className="mt-2 rounded border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-600">
                         <span className="font-medium">Error:</span> {spec.error_message}
                       </div>
                     )}
-                    {isFailed && spec.protocol_id && (
+                    {spec.protocol_id && (
                       <div className="mt-1">
                         <Link
                           href={`/protocols/${spec.protocol_id}`}
                           className="text-xs text-blue-600 hover:underline"
                         >
-                          View protocol run for details →
+                          View Protocol #{spec.protocol_id}
                         </Link>
                       </div>
                     )}
