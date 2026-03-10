@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 
 import {
+  Archive,
   ArrowUpRight,
+  Ban,
   CheckCircle2,
   FileSearch,
   GitBranch,
@@ -15,12 +17,16 @@ import {
 import { toast } from "sonner";
 
 import {
+  useAgents,
+  useArchiveWorkItem,
   useBuildContextWorkItem,
+  useCancelWorkItem,
   useImplementWorkItem,
   useMarkPrReady,
   useProjectProtocols,
   useProjectTaskCycle,
   useQaWorkItem,
+  useReassignWorkItemOwner,
   useReviewWorkItem,
   useStartBrownfieldRun,
 } from "@/lib/api";
@@ -29,6 +35,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
 interface TaskCycleTabProps {
@@ -51,16 +64,26 @@ function toneClass(value: string | null | undefined): string {
 
 export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   const { data: protocols = [], isLoading: protocolsLoading } = useProjectProtocols(projectId);
-  const { data: workItems = [], isLoading: workItemsLoading } = useProjectTaskCycle(projectId);
+  const { data: agents = [] } = useAgents(projectId);
+  const [lifecycleFilter, setLifecycleFilter] = useState("active");
+  const { data: workItems = [], isLoading: workItemsLoading } = useProjectTaskCycle(
+    projectId,
+    undefined,
+    lifecycleFilter
+  );
   const startBrownfieldRun = useStartBrownfieldRun();
   const buildContext = useBuildContextWorkItem();
   const implementWorkItem = useImplementWorkItem();
   const reviewWorkItem = useReviewWorkItem();
   const qaWorkItem = useQaWorkItem();
   const markPrReady = useMarkPrReady();
+  const archiveWorkItem = useArchiveWorkItem();
+  const cancelWorkItem = useCancelWorkItem();
+  const reassignWorkItemOwner = useReassignWorkItemOwner();
 
   const [featureName, setFeatureName] = useState("");
   const [featureRequest, setFeatureRequest] = useState("");
+  const [ownerDrafts, setOwnerDrafts] = useState<Record<number, string>>({});
 
   const protocolNames = useMemo(
     () =>
@@ -68,6 +91,14 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
         protocols.map((protocol) => [protocol.id, protocol.protocol_name || `Protocol ${protocol.id}`])
       ),
     [protocols]
+  );
+  const enabledAgents = useMemo(
+    () => agents.filter((agent) => agent.enabled !== false),
+    [agents]
+  );
+  const agentNameById = useMemo(
+    () => new Map(enabledAgents.map((agent) => [agent.id, agent.name || agent.id])),
+    [enabledAgents]
   );
 
   if (protocolsLoading || workItemsLoading) {
@@ -124,7 +155,18 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
             implementation, review, QA, and PR readiness.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={lifecycleFilter} onValueChange={setLifecycleFilter}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filter lifecycle" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Active only</SelectItem>
+              <SelectItem value="all">All work items</SelectItem>
+              <SelectItem value="archived">Archived only</SelectItem>
+              <SelectItem value="canceled">Canceled only</SelectItem>
+            </SelectContent>
+          </Select>
           <Badge variant="secondary">{workItems.length} work items</Badge>
           <Badge variant="outline">{protocols.length} protocols</Badge>
         </div>
@@ -189,7 +231,9 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
         <CardHeader>
           <CardTitle className="text-base">Work Items</CardTitle>
           <CardDescription>
-            Active task-cycle work items for this project, across all linked protocols.
+            {lifecycleFilter === "active"
+              ? "Active task-cycle work items for this project, across all linked protocols."
+              : "Task-cycle work items for this project, including archived and canceled history."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -206,6 +250,9 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="font-medium">{item.title}</h4>
                       <Badge className={toneClass(item.status)}>{item.status}</Badge>
+                      {item.lifecycle_state !== "active" && (
+                        <Badge variant="outline">{item.lifecycle_state}</Badge>
+                      )}
                       <Badge className={toneClass(item.context_status)}>
                         Context {item.context_status}
                       </Badge>
@@ -215,6 +262,9 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       <Badge className={toneClass(item.qa_status)}>QA {item.qa_status}</Badge>
                     </div>
                     {item.summary && <p className="text-muted-foreground text-sm">{item.summary}</p>}
+                    {item.lifecycle_reason && item.lifecycle_state !== "active" && (
+                      <p className="text-muted-foreground text-sm">{item.lifecycle_reason}</p>
+                    )}
                     <div className="text-muted-foreground flex flex-wrap items-center gap-3 text-xs">
                       <span>Iterations: {item.iteration_count}/{item.max_iterations}</span>
                       <span>Clarifications: {item.blocking_clarifications}</span>
@@ -239,101 +289,200 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[220px] space-y-1">
+                    <div className="text-muted-foreground text-xs">Owner Agent</div>
+                    <Select
+                      value={ownerDrafts[item.id] ?? item.owner_agent ?? "__current_unset__"}
+                      onValueChange={(value) =>
+                        setOwnerDrafts((current) => ({ ...current, [item.id]: value }))
+                      }
+                      disabled={item.lifecycle_state !== "active"}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select owner agent" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {!agentNameById.has(item.owner_agent || "") && item.owner_agent && (
+                          <SelectItem value={item.owner_agent}>{item.owner_agent} (current)</SelectItem>
+                        )}
+                        {enabledAgents.map((agent) => (
+                          <SelectItem key={agent.id} value={agent.id}>
+                            {agent.name || agent.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={
+                      item.lifecycle_state !== "active" ||
+                      !(ownerDrafts[item.id] ?? item.owner_agent) ||
+                      (ownerDrafts[item.id] ?? item.owner_agent) === item.owner_agent
+                    }
                     onClick={() =>
                       withToast(
                         () =>
-                          buildContext.mutateAsync({
+                          reassignWorkItemOwner.mutateAsync({
                             projectId,
                             workItemId: item.id,
                             protocolRunId: item.protocol_run_id,
+                            data: {
+                              owner_agent: ownerDrafts[item.id] ?? item.owner_agent ?? "",
+                            },
                           }),
-                        "Context pack refreshed",
-                        "Failed to build context"
+                        "Owner reassigned",
+                        "Failed to reassign owner"
                       )
                     }
                   >
-                    <FileSearch className="mr-2 h-3.5 w-3.5" />
-                    Build Context
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      withToast(
-                        () =>
-                          implementWorkItem.mutateAsync({
-                            projectId,
-                            workItemId: item.id,
-                            protocolRunId: item.protocol_run_id,
-                          }),
-                        "Implementation started",
-                        "Failed to start implementation"
-                      )
-                    }
-                  >
-                    <Wrench className="mr-2 h-3.5 w-3.5" />
-                    Implement
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      withToast(
-                        () =>
-                          reviewWorkItem.mutateAsync({
-                            projectId,
-                            workItemId: item.id,
-                            protocolRunId: item.protocol_run_id,
-                          }),
-                        "Review generated",
-                        "Failed to run review"
-                      )
-                    }
-                  >
-                    Review
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      withToast(
-                        () =>
-                          qaWorkItem.mutateAsync({
-                            projectId,
-                            workItemId: item.id,
-                            protocolRunId: item.protocol_run_id,
-                          }),
-                        "QA completed",
-                        "Failed to run QA"
-                      )
-                    }
-                  >
-                    <ShieldCheck className="mr-2 h-3.5 w-3.5" />
-                    QA
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      withToast(
-                        () =>
-                          markPrReady.mutateAsync({
-                            projectId,
-                            workItemId: item.id,
-                            protocolRunId: item.protocol_run_id,
-                          }),
-                        "Marked PR ready",
-                        "Failed to mark PR ready"
-                      )
-                    }
-                  >
-                    Mark PR Ready
+                    Save Owner
                   </Button>
                 </div>
+
+                {item.lifecycle_state === "active" ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            buildContext.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                            }),
+                          "Context pack refreshed",
+                          "Failed to build context"
+                        )
+                      }
+                    >
+                      <FileSearch className="mr-2 h-3.5 w-3.5" />
+                      Build Context
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            implementWorkItem.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                            }),
+                          "Implementation started",
+                          "Failed to start implementation"
+                        )
+                      }
+                    >
+                      <Wrench className="mr-2 h-3.5 w-3.5" />
+                      Implement
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            reviewWorkItem.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                            }),
+                          "Review generated",
+                          "Failed to run review"
+                        )
+                      }
+                    >
+                      Review
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            qaWorkItem.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                            }),
+                          "QA completed",
+                          "Failed to run QA"
+                        )
+                      }
+                    >
+                      <ShieldCheck className="mr-2 h-3.5 w-3.5" />
+                      QA
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            markPrReady.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                            }),
+                          "Marked PR ready",
+                          "Failed to mark PR ready"
+                        )
+                      }
+                    >
+                      Mark PR Ready
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            archiveWorkItem.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                              data: {},
+                            }),
+                          "Work item archived",
+                          "Failed to archive work item"
+                        )
+                      }
+                    >
+                      <Archive className="mr-2 h-3.5 w-3.5" />
+                      Archive
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            cancelWorkItem.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                              data: {},
+                            }),
+                          "Work item canceled",
+                          "Failed to cancel work item"
+                        )
+                      }
+                    >
+                      <Ban className="mr-2 h-3.5 w-3.5" />
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground text-sm">
+                    This work item is {item.lifecycle_state} and is now read-only.
+                  </div>
+                )}
               </div>
             ))
           )}

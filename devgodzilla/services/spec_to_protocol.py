@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from devgodzilla.logging import get_logger
 from devgodzilla.speckit_metadata import with_spec_run_id
@@ -31,6 +31,8 @@ class SpecToProtocolResult:
 
 
 class SpecToProtocolService(Service):
+    TERMINAL_PROTOCOL_STATUSES = {"completed", "cancelled"}
+
     def __init__(self, context: ServiceContext, db) -> None:
         super().__init__(context)
         self.db = db
@@ -44,6 +46,7 @@ class SpecToProtocolService(Service):
         protocol_name: Optional[str] = None,
         spec_run_id: Optional[int] = None,
         overwrite: bool = False,
+        collapse_to_single_step: bool = False,
     ) -> SpecToProtocolResult:
         project = self.db.get_project(project_id)
         if not project.local_path:
@@ -72,6 +75,7 @@ class SpecToProtocolService(Service):
         protocol_name = protocol_name or (spec_run.spec_name if spec_run else spec_dir.name)
         protocol_root = spec_dir / "_runtime"
         protocol_root.mkdir(parents=True, exist_ok=True)
+        protocol_root_value = self._protocol_root_value(repo_root, protocol_root)
 
         warnings: List[str] = []
         existing_steps = sorted(protocol_root.glob("step-*.md"))
@@ -81,36 +85,63 @@ class SpecToProtocolService(Service):
             phases = self._parse_tasks_by_phase(resolved_tasks_path.read_text(encoding="utf-8"))
             if not phases:
                 return SpecToProtocolResult(success=False, error="No tasks found in tasks.md")
-            self._write_step_files(
-                protocol_root=protocol_root,
-                phases=phases,
-                spec_path=resolved_spec_path,
-                plan_path=spec_dir / "plan.md",
-                tasks_path=resolved_tasks_path,
-            )
+            if collapse_to_single_step:
+                self._write_collapsed_step_file(
+                    protocol_root=protocol_root,
+                    protocol_name=protocol_name,
+                    phases=phases,
+                    spec_path=resolved_spec_path,
+                    plan_path=spec_dir / "plan.md",
+                    tasks_path=resolved_tasks_path,
+                )
+                phase_titles = [protocol_name]
+            else:
+                self._write_step_files(
+                    protocol_root=protocol_root,
+                    phases=phases,
+                    spec_path=resolved_spec_path,
+                    plan_path=spec_dir / "plan.md",
+                    tasks_path=resolved_tasks_path,
+                )
+                phase_titles = [title for title, _ in phases]
             self._write_runtime_plan(
                 protocol_root=protocol_root,
                 spec_path=resolved_spec_path,
                 plan_path=spec_dir / "plan.md",
                 tasks_path=resolved_tasks_path,
-                phase_titles=[title for title, _ in phases],
+                phase_titles=phase_titles,
                 overwrite=overwrite,
             )
             self._ensure_runtime_support_files(protocol_root, protocol_name)
 
-        run = self.db.create_protocol_run(
-            project_id=project_id,
-            protocol_name=protocol_name,
-            status="planned",
-            base_branch=project.base_branch or "main",
-            description=f"SpecKit protocol for {protocol_name}",
-            worktree_path=str(repo_root),
-        )
-        try:
-            protocol_root_value = str(protocol_root.relative_to(repo_root))
-        except Exception:
-            protocol_root_value = str(protocol_root)
-        self.db.update_protocol_paths(run.id, protocol_root=protocol_root_value)
+        run = None
+        if not overwrite:
+            run = self._find_reusable_protocol_run(
+                project_id=project_id,
+                protocol_name=protocol_name,
+                repo_root=repo_root,
+                protocol_root_value=protocol_root_value,
+            )
+            if run is not None:
+                warnings.append(f"Reusing existing protocol run {run.id}")
+
+        if run is None:
+            run = self.db.create_protocol_run(
+                project_id=project_id,
+                protocol_name=protocol_name,
+                status="planned",
+                base_branch=project.base_branch or "main",
+                description=f"SpecKit protocol for {protocol_name}",
+                worktree_path=str(repo_root),
+                protocol_root=protocol_root_value,
+            )
+        else:
+            self.db.update_protocol_paths(
+                run.id,
+                worktree_path=str(repo_root),
+                protocol_root=protocol_root_value,
+            )
+
         if spec_run_id:
             try:
                 self.db.update_spec_run(spec_run_id, protocol_run_id=run.id)
@@ -158,7 +189,16 @@ class SpecToProtocolService(Service):
         template_config = {PROTOCOL_SPEC_KEY: protocol_spec}
         self.db.update_protocol_template(run.id, template_config=template_config)
 
-        step_ids = create_steps_from_spec(self.db, run.id, protocol_spec)
+        existing_step_names: Set[str] = {
+            step.step_name for step in self.db.list_step_runs(run.id)
+        }
+        create_steps_from_spec(
+            self.db,
+            run.id,
+            protocol_spec,
+            existing_names=existing_step_names,
+        )
+        step_count = len(self.db.list_step_runs(run.id))
         self.db.update_protocol_status(run.id, "planned")
 
         speckit_metadata = self._build_speckit_metadata(
@@ -175,9 +215,42 @@ class SpecToProtocolService(Service):
             success=True,
             protocol_run_id=run.id,
             protocol_root=str(protocol_root),
-            step_count=len(step_ids),
+            step_count=step_count,
             warnings=warnings,
         )
+
+    def _find_reusable_protocol_run(
+        self,
+        *,
+        project_id: int,
+        protocol_name: str,
+        repo_root: Path,
+        protocol_root_value: str,
+    ):
+        repo_root_str = str(repo_root)
+        for run in self.db.list_protocol_runs(project_id):
+            if not self._is_reusable_run(run):
+                continue
+            run_worktree = (run.worktree_path or "").strip()
+            run_protocol_root = (run.protocol_root or "").strip()
+            if (
+                run.protocol_name == protocol_name
+                and run_worktree == repo_root_str
+                and run_protocol_root == protocol_root_value
+            ):
+                return run
+        return None
+
+    def _is_reusable_run(self, run) -> bool:
+        status = (run.status or "").strip().lower()
+        return status not in self.TERMINAL_PROTOCOL_STATUSES
+
+    @staticmethod
+    def _protocol_root_value(repo_root: Path, protocol_root: Path) -> str:
+        try:
+            return str(protocol_root.relative_to(repo_root))
+        except Exception:
+            return str(protocol_root)
 
     def _resolve_paths(
         self,
@@ -266,6 +339,28 @@ class SpecToProtocolService(Service):
             )
             step_path.write_text(content, encoding="utf-8")
 
+    def _write_collapsed_step_file(
+        self,
+        *,
+        protocol_root: Path,
+        protocol_name: str,
+        phases: List[Tuple[str, List[str]]],
+        spec_path: Optional[Path],
+        plan_path: Path,
+        tasks_path: Path,
+    ) -> None:
+        step_name = f"step-01-{self._slugify(protocol_name)}"
+        step_path = protocol_root / f"{step_name}.md"
+        content = self._render_collapsed_step_content(
+            step_name=step_name,
+            title=protocol_name,
+            phases=phases,
+            spec_path=spec_path,
+            plan_path=plan_path,
+            tasks_path=tasks_path,
+        )
+        step_path.write_text(content, encoding="utf-8")
+
     def _write_runtime_plan(
         self,
         *,
@@ -339,6 +434,44 @@ class SpecToProtocolService(Service):
             "## Notes",
             "- Follow project policy and constitution in `.specify/memory/constitution.md`.",
             "- Update relevant code/tests/docs as needed for this phase.",
+        ])
+        return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _render_collapsed_step_content(
+        *,
+        step_name: str,
+        title: str,
+        phases: List[Tuple[str, List[str]]],
+        spec_path: Optional[Path],
+        plan_path: Path,
+        tasks_path: Path,
+    ) -> str:
+        lines = [
+            f"# {step_name}: {title}",
+            "",
+            "## Goal",
+            f"Deliver the brownfield feature `{title}` end to end through the task-cycle stages.",
+            "",
+            "## Inputs",
+        ]
+        if spec_path:
+            lines.append(f"- Spec: {spec_path}")
+        if plan_path.exists():
+            lines.append(f"- Plan: {plan_path}")
+        if tasks_path.exists():
+            lines.append(f"- Tasks: {tasks_path}")
+        lines.append("")
+        lines.extend(["## Source Phases"])
+        for phase_title, phase_tasks in phases:
+            lines.append(f"### {phase_title}")
+            lines.extend(phase_tasks or ["- [ ] Review tasks.md and clarify missing items"])
+            lines.append("")
+        lines.extend([
+            "## Notes",
+            "- Treat this as a single work item; the Task Cycle stages provide the workflow.",
+            "- Follow project policy and constitution in `.specify/memory/constitution.md`.",
+            "- Update relevant code/tests/docs as needed for the feature.",
         ])
         return "\n".join(lines).rstrip() + "\n"
 

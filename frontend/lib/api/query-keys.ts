@@ -24,8 +24,8 @@ export const queryKeys = {
     pulls: (id: number) => [...queryKeys.projects.all, "pulls", id] as const,
     worktrees: (id: number) => [...queryKeys.projects.all, "worktrees", id] as const,
     taskCycleRoot: (id: number) => [...queryKeys.projects.all, "taskCycle", id] as const,
-    taskCycle: (id: number, protocolRunId?: number) =>
-      [...queryKeys.projects.all, "taskCycle", id, { protocolRunId }] as const,
+    taskCycle: (id: number, protocolRunId?: number, lifecycle?: string) =>
+      [...queryKeys.projects.all, "taskCycle", id, { protocolRunId, lifecycle: lifecycle ?? "active" }] as const,
   },
 
   workItems: {

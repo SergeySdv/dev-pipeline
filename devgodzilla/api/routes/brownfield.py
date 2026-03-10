@@ -29,6 +29,7 @@ def _task_cycle_service(
 def list_task_cycle_work_items(
     project_id: int,
     protocol_run_id: Optional[int] = Query(default=None),
+    lifecycle: str = Query(default="active"),
     db: Database = Depends(get_db),
     service: TaskCycleService = Depends(_task_cycle_service),
 ):
@@ -37,7 +38,7 @@ def list_task_cycle_work_items(
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
     try:
-        return service.list_work_items(project_id, protocol_run_id=protocol_run_id)
+        return service.list_work_items(project_id, protocol_run_id=protocol_run_id, lifecycle=lifecycle)
     except TaskCycleError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -147,6 +148,48 @@ def mark_pr_ready(
 ):
     try:
         return service.mark_pr_ready(work_item_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Work item not found")
+    except TaskCycleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/work-items/{work_item_id}/actions/archive", response_model=schemas.WorkItemOut)
+def archive_work_item(
+    work_item_id: int,
+    request: schemas.WorkItemLifecycleRequest,
+    service: TaskCycleService = Depends(_task_cycle_service),
+):
+    try:
+        return service.archive_work_item(work_item_id, reason=request.reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Work item not found")
+    except TaskCycleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/work-items/{work_item_id}/actions/cancel", response_model=schemas.WorkItemOut)
+def cancel_work_item(
+    work_item_id: int,
+    request: schemas.WorkItemLifecycleRequest,
+    service: TaskCycleService = Depends(_task_cycle_service),
+):
+    try:
+        return service.cancel_work_item(work_item_id, reason=request.reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Work item not found")
+    except TaskCycleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/work-items/{work_item_id}/actions/reassign-owner", response_model=schemas.WorkItemOut)
+def reassign_work_item_owner(
+    work_item_id: int,
+    request: schemas.WorkItemReassignRequest,
+    service: TaskCycleService = Depends(_task_cycle_service),
+):
+    try:
+        return service.reassign_owner(work_item_id, request.owner_agent)
     except KeyError:
         raise HTTPException(status_code=404, detail="Work item not found")
     except TaskCycleError as exc:

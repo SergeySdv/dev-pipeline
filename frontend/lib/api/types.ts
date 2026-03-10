@@ -294,6 +294,8 @@ export interface WorkItem {
   protocol_run_id: number;
   title: string;
   status: string;
+  lifecycle_state: string;
+  lifecycle_reason: string | null;
   context_status: string;
   review_status: string;
   qa_status: string;
@@ -320,6 +322,14 @@ export interface WorkItemReview {
 export interface WorkItemQA {
   work_item: WorkItem;
   qa: QAResult;
+}
+
+export interface WorkItemLifecycleUpdate {
+  reason?: string;
+}
+
+export interface WorkItemOwnerUpdate {
+  owner_agent: string;
 }
 
 export interface BrownfieldRunRequest {

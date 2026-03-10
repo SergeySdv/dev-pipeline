@@ -478,6 +478,8 @@ class WorkItemOut(BaseModel):
     protocol_run_id: int
     title: str
     status: str
+    lifecycle_state: str = "active"
+    lifecycle_reason: Optional[str] = None
     context_status: str
     review_status: str
     qa_status: str
@@ -500,6 +502,14 @@ class BuildContextRequest(BaseModel):
 
 class WorkItemImplementRequest(BaseModel):
     owner_agent: Optional[str] = None
+
+
+class WorkItemLifecycleRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class WorkItemReassignRequest(BaseModel):
+    owner_agent: str
 
 
 class WorkItemReviewOut(BaseModel):

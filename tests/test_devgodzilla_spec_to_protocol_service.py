@@ -93,6 +93,32 @@ class TestSpecToProtocolService:
         assert result.step_count == 2  # Two phases
         assert result.protocol_root is not None
 
+    def test_create_protocol_can_collapse_to_single_step(self, spec_service, sample_project, spec_dir, db):
+        """Task-cycle mode can collapse phase tasks into one work item."""
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text("""
+# Tasks
+
+## Phase 1: Setup
+- [ ] Initialize project
+
+## Phase 2: Implementation
+- [ ] Implement feature
+""")
+
+        result = spec_service.create_protocol_from_spec(
+            project_id=sample_project.id,
+            tasks_path=str(tasks_path),
+            protocol_name="collapsed-feature",
+            collapse_to_single_step=True,
+        )
+
+        assert result.success is True
+        assert result.step_count == 1
+        steps = db.list_step_runs(result.protocol_run_id)
+        assert len(steps) == 1
+        assert steps[0].step_name == "step-01-collapsed-feature"
+
     def test_create_protocol_with_spec_path(self, spec_service, sample_project, spec_dir):
         """Test protocol creation with explicit spec path."""
         spec_path = spec_dir / "spec.md"
@@ -254,6 +280,50 @@ class TestSpecToProtocolService:
         )
         assert result2.success is True
         assert "Existing runtime steps" in result2.warnings[0]
+        assert result2.protocol_run_id == result1.protocol_run_id
+        assert len(spec_service.db.list_protocol_runs(sample_project.id)) == 1
+
+    def test_create_protocol_repairs_existing_run_without_duplicate_steps(
+        self, spec_service, sample_project, spec_dir, db
+    ):
+        """An incomplete existing run should be repaired instead of duplicated."""
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text("## Phase 1\n- [ ] Task A\n\n## Phase 2\n- [ ] Task B\n")
+        protocol_root = spec_dir / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "step-01-phase-1.md").write_text("# step-01-phase-1\n", encoding="utf-8")
+        (protocol_root / "step-02-phase-2.md").write_text("# step-02-phase-2\n", encoding="utf-8")
+        (protocol_root / "plan.md").write_text("# Plan\n", encoding="utf-8")
+
+        existing_run = db.create_protocol_run(
+            project_id=sample_project.id,
+            protocol_name="repair-test",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(spec_dir.parents[1]),
+            protocol_root="specs/0001-feature/_runtime",
+        )
+        db.create_step_run(
+            protocol_run_id=existing_run.id,
+            step_index=0,
+            step_name="step-01-phase-1",
+            step_type="execute",
+            status="pending",
+            assigned_agent="opencode",
+        )
+
+        result = spec_service.create_protocol_from_spec(
+            project_id=sample_project.id,
+            tasks_path=str(tasks_path),
+            protocol_name="repair-test",
+            overwrite=False,
+        )
+
+        assert result.success is True
+        assert result.protocol_run_id == existing_run.id
+        steps = db.list_step_runs(existing_run.id)
+        assert [step.step_name for step in steps] == ["step-01-phase-1", "step-02-phase-2"]
+        assert len(db.list_protocol_runs(sample_project.id)) == 1
 
     # ==================== _parse_tasks_by_phase Tests ====================
 

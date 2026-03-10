@@ -234,7 +234,7 @@ def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeyp
         spec_path.write_text("# Demo feature\n", encoding="utf-8")
         plan_path.write_text("# Plan\n", encoding="utf-8")
         tasks_path.write_text(
-            "## Phase 1\n- [ ] update README.md\n- [ ] add tests/test_demo.py\n",
+            "## Phase 1: Setup\n- [ ] update README.md\n\n## Phase 2: Tests\n- [ ] add tests/test_demo.py\n",
             encoding="utf-8",
         )
 
@@ -324,6 +324,8 @@ def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeyp
                 assert payload["protocol"] is not None
                 assert payload["next_work_item_id"] is not None
                 assert len(payload["work_items"]) == 1
+                assert payload["work_items"][0]["title"].startswith("step-01-")
+                assert "demo-feature" in payload["work_items"][0]["title"]
                 assert payload["work_items"][0]["owner_agent"] == "opencode"
                 assert payload["work_items"][0]["helper_agents"] == ["trace", "tests"]
 
@@ -332,6 +334,115 @@ def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeyp
                 listed_ids = [item["id"] for item in listed.json()]
                 assert payload["work_items"][0]["id"] in listed_ids
                 assert other_step.id not in listed_ids
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_start_brownfield_run_reuses_existing_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+    from devgodzilla.services.specification import PlanResult, SpecifyResult, TasksResult
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        spec_dir = repo / "specs" / "001-demo-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        plan_path = spec_dir / "plan.md"
+        tasks_path = spec_dir / "tasks.md"
+        spec_path.write_text("# Demo feature\n", encoding="utf-8")
+        plan_path.write_text("# Plan\n", encoding="utf-8")
+        tasks_path.write_text(
+            "## Phase 1: Setup\n- [ ] update README.md\n\n## Phase 2: Tests\n- [ ] add tests/test_demo.py\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_specify",
+            lambda self, project_path, description, feature_name=None, base_branch=None, project_id=None: SpecifyResult(
+                success=True,
+                spec_path=str(spec_path),
+                spec_number=1,
+                feature_name="demo-feature",
+                spec_run_id=None,
+                worktree_path=str(repo),
+                branch_name="001-demo-feature",
+                base_branch="main",
+                spec_root=str(spec_dir),
+            ),
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_plan",
+            lambda self, project_path, spec_path, spec_run_id=None, project_id=None: PlanResult(
+                success=True,
+                plan_path=str(plan_path),
+                spec_run_id=spec_run_id,
+                worktree_path=str(repo),
+            ),
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_tasks",
+            lambda self, project_path, plan_path, spec_run_id=None, project_id=None: TasksResult(
+                success=True,
+                tasks_path=str(tasks_path),
+                task_count=2,
+                parallelizable_count=0,
+                spec_run_id=spec_run_id,
+                worktree_path=str(repo),
+            ),
+        )
+
+        payload = {
+            "feature_request": "Add demo behavior to the brownfield project",
+            "feature_name": "demo-feature",
+            "output_mode": "task_cycle",
+            "owner_agent": "dev",
+        }
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp1 = client.post(f"/projects/{project.id}/brownfield/run", json=payload)
+                resp2 = client.post(f"/projects/{project.id}/brownfield/run", json=payload)
+
+                assert resp1.status_code == 200
+                assert resp2.status_code == 200
+
+                first = resp1.json()
+                second = resp2.json()
+                assert first["protocol"] is not None
+                assert second["protocol"] is not None
+                assert second["protocol"]["id"] == first["protocol"]["id"]
+                assert second["work_items"][0]["id"] == first["work_items"][0]["id"]
+
+                protocol_runs = [
+                    run
+                    for run in db.list_protocol_runs(project.id)
+                    if run.protocol_name == first["protocol"]["protocol_name"]
+                ]
+                assert len(protocol_runs) == 1
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
@@ -733,6 +844,173 @@ def test_task_cycle_qa_applies_project_stage_override(monkeypatch: pytest.Monkey
                 assert captured["engine_id"] == "codex"
                 assert captured["model"] == "gpt-5.4-codex"
                 assert captured["runtime_options"] == {"reasoning_effort": "xhigh"}
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_lifecycle_actions_and_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        active_step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-active",
+            step_type="execute",
+            status="pending",
+            assigned_agent="dev",
+        )
+        archived_step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=2,
+            step_name="step-02-archived",
+            step_type="execute",
+            status="pending",
+            assigned_agent="dev",
+        )
+        canceled_step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=3,
+            step_name="step-03-canceled",
+            step_type="execute",
+            status="pending",
+            assigned_agent="dev",
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                archive_resp = client.post(
+                    f"/work-items/{archived_step.id}/actions/archive",
+                    json={"reason": "duplicate work item"},
+                )
+                assert archive_resp.status_code == 200
+                assert archive_resp.json()["lifecycle_state"] == "archived"
+
+                cancel_resp = client.post(
+                    f"/work-items/{canceled_step.id}/actions/cancel",
+                    json={"reason": "wrong feature"},
+                )
+                assert cancel_resp.status_code == 200
+                assert cancel_resp.json()["lifecycle_state"] == "canceled"
+
+                active_list = client.get(f"/projects/{project.id}/task-cycle")
+                assert active_list.status_code == 200
+                assert [item["id"] for item in active_list.json()] == [active_step.id]
+
+                all_list = client.get(f"/projects/{project.id}/task-cycle?lifecycle=all")
+                assert all_list.status_code == 200
+                assert {item["id"] for item in all_list.json()} == {
+                    active_step.id,
+                    archived_step.id,
+                    canceled_step.id,
+                }
+
+                archived_list = client.get(f"/projects/{project.id}/task-cycle?lifecycle=archived")
+                assert archived_list.status_code == 200
+                assert [item["id"] for item in archived_list.json()] == [archived_step.id]
+
+                canceled_list = client.get(f"/projects/{project.id}/task-cycle?lifecycle=canceled")
+                assert canceled_list.status_code == 200
+                assert [item["id"] for item in canceled_list.json()] == [canceled_step.id]
+
+                implement_resp = client.post(f"/work-items/{archived_step.id}/actions/implement", json={})
+                assert implement_resp.status_code == 409
+                assert "read-only" in implement_resp.json()["detail"].lower()
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_can_reassign_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.setenv("DEVGODZILLA_EXEC_ENGINE_ID", "opencode")
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="pending",
+            assigned_agent="dev",
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                reassign_resp = client.post(
+                    f"/work-items/{step.id}/actions/reassign-owner",
+                    json={"owner_agent": "codex"},
+                )
+                assert reassign_resp.status_code == 200
+                assert reassign_resp.json()["owner_agent"] == "codex"
+                assert db.get_step_run(step.id).assigned_agent == "codex"
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()

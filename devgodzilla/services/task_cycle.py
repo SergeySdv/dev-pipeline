@@ -32,6 +32,9 @@ class TaskCycleError(RuntimeError):
 
 class TaskCycleService(Service):
     RUNTIME_KEY = "task_cycle"
+    LIFECYCLE_ACTIVE = "active"
+    LIFECYCLE_ARCHIVED = "archived"
+    LIFECYCLE_CANCELED = "canceled"
     STATUS_QUEUED = "queued"
     STATUS_CONTEXT_READY = "context_ready"
     STATUS_IN_PROGRESS = "in_progress"
@@ -50,7 +53,12 @@ class TaskCycleService(Service):
         project_id: int,
         *,
         protocol_run_id: Optional[int] = None,
+        lifecycle: str = "active",
     ) -> List[schemas.WorkItemOut]:
+        lifecycle_filter = (lifecycle or "active").strip().lower()
+        allowed_filters = {"active", "all", self.LIFECYCLE_ARCHIVED, self.LIFECYCLE_CANCELED}
+        if lifecycle_filter not in allowed_filters:
+            raise TaskCycleError(f"Unknown lifecycle filter: {lifecycle}")
         if protocol_run_id is not None:
             run = self.db.get_protocol_run(protocol_run_id)
             if run.project_id != project_id:
@@ -62,7 +70,13 @@ class TaskCycleService(Service):
         items: List[schemas.WorkItemOut] = []
         for run in runs:
             for step in self.db.list_step_runs(run.id):
-                items.append(self.get_work_item(step.id))
+                item = self.get_work_item(step.id)
+                if lifecycle_filter == "active" and item.lifecycle_state != self.LIFECYCLE_ACTIVE:
+                    continue
+                if lifecycle_filter in {self.LIFECYCLE_ARCHIVED, self.LIFECYCLE_CANCELED}:
+                    if item.lifecycle_state != lifecycle_filter:
+                        continue
+                items.append(item)
         return sorted(items, key=lambda item: (item.protocol_run_id, item.id))
 
     def get_work_item(self, step_run_id: int) -> schemas.WorkItemOut:
@@ -75,6 +89,8 @@ class TaskCycleService(Service):
             protocol_run_id=run.id,
             title=step.step_name,
             status=str(state["status"]),
+            lifecycle_state=str(state["lifecycle_state"]),
+            lifecycle_reason=self._string_or_none(state.get("lifecycle_reason")),
             context_status=str(state["context_status"]),
             review_status=str(state["review_status"]),
             qa_status=str(state["qa_status"]),
@@ -145,6 +161,7 @@ class TaskCycleService(Service):
                 protocol_name=request.protocol_name,
                 spec_run_id=specify.spec_run_id,
                 overwrite=request.overwrite_protocol,
+                collapse_to_single_step=request.output_mode == "task_cycle",
             )
             if not protocol.success or not protocol.protocol_run_id:
                 raise TaskCycleError(protocol.error or "Protocol creation failed")
@@ -190,6 +207,7 @@ class TaskCycleService(Service):
 
     def build_context(self, step_run_id: int, *, refresh: bool = False) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
+        self._ensure_work_item_active(step, project)
         task_dir = self._task_dir(project, step)
         refs = self._artifact_refs(project, step)
         context_json = Path(refs["context_pack_json"])
@@ -280,6 +298,7 @@ class TaskCycleService(Service):
     def implement(self, step_run_id: int, *, owner_agent: Optional[str] = None) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
         state = self._task_cycle_state(step, project)
+        self._ensure_work_item_active(step, project, state=state)
         implement_override = self._resolve_stage_assignment(project.id, "task_cycle_implement")
         resolved_owner_agent = self._resolve_owner_agent(
             project.id,
@@ -338,6 +357,7 @@ class TaskCycleService(Service):
 
     def review(self, step_run_id: int) -> Tuple[schemas.WorkItemOut, schemas.WorkItemReviewOut]:
         step, run, project = self._load_work_item(step_run_id)
+        self._ensure_work_item_active(step, project)
         self.build_context(step.id, refresh=False)
         refs = self._artifact_refs(project, step)
         task_dir = Path(refs["task_dir"])
@@ -426,6 +446,7 @@ class TaskCycleService(Service):
         step, run, project = self._load_work_item(step_run_id)
         refs = self._artifact_refs(project, step)
         state = self._task_cycle_state(step, project)
+        self._ensure_work_item_active(step, project, state=state)
         qa_override = self._resolve_stage_assignment(project.id, "task_cycle_qa")
         step_artifacts_dir = Path(refs["step_artifacts_dir"])
         context_pack_json = Path(refs["context_pack_json"])
@@ -525,6 +546,7 @@ class TaskCycleService(Service):
 
     def mark_pr_ready(self, step_run_id: int) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
+        self._ensure_work_item_active(step, project)
         self.build_context(step.id, refresh=False)
         state = self._task_cycle_state(step, project)
         refs = self._artifact_refs(project, step)
@@ -554,6 +576,44 @@ class TaskCycleService(Service):
         self._persist_task_cycle_state(step, state)
         return self.get_work_item(step.id)
 
+    def archive_work_item(self, step_run_id: int, *, reason: Optional[str] = None) -> schemas.WorkItemOut:
+        step, _run, project = self._load_work_item(step_run_id)
+        state = self._task_cycle_state(step, project)
+        if state.get("lifecycle_state") == self.LIFECYCLE_CANCELED:
+            raise TaskCycleError("Canceled work items cannot be archived")
+        state["lifecycle_state"] = self.LIFECYCLE_ARCHIVED
+        state["lifecycle_reason"] = self._string_or_none(reason) or "Archived from task-cycle UI"
+        state["lifecycle_changed_at"] = self._now_iso()
+        self._persist_task_cycle_state(step, state)
+        return self.get_work_item(step.id)
+
+    def cancel_work_item(self, step_run_id: int, *, reason: Optional[str] = None) -> schemas.WorkItemOut:
+        step, _run, project = self._load_work_item(step_run_id)
+        state = self._task_cycle_state(step, project)
+        if state.get("lifecycle_state") == self.LIFECYCLE_ARCHIVED:
+            raise TaskCycleError("Archived work items cannot be canceled")
+        if state.get("pr_ready"):
+            raise TaskCycleError("PR-ready work items cannot be canceled")
+        state["lifecycle_state"] = self.LIFECYCLE_CANCELED
+        state["lifecycle_reason"] = self._string_or_none(reason) or "Canceled from task-cycle UI"
+        state["lifecycle_changed_at"] = self._now_iso()
+        self._persist_task_cycle_state(step, state)
+        return self.get_work_item(step.id)
+
+    def reassign_owner(self, step_run_id: int, owner_agent: str) -> schemas.WorkItemOut:
+        step, _run, project = self._load_work_item(step_run_id)
+        state = self._task_cycle_state(step, project)
+        self._ensure_work_item_active(step, project, state=state)
+        resolved_owner_agent = self._resolve_owner_agent(project.id, owner_agent)
+        if not resolved_owner_agent:
+            raise TaskCycleError("Owner agent is required")
+        if resolved_owner_agent != step.assigned_agent:
+            self.db.update_step_assigned_agent(step.id, resolved_owner_agent)
+            step = self.db.get_step_run(step.id)
+        state["owner_agent"] = resolved_owner_agent
+        self._persist_task_cycle_state(step, state)
+        return self.get_work_item(step.id)
+
     def _load_work_item(self, step_run_id: int):
         step = self.db.get_step_run(step_run_id)
         run = self.db.get_protocol_run(step.protocol_run_id)
@@ -566,6 +626,8 @@ class TaskCycleService(Service):
         refs = self._artifact_refs(project, step)
         state = {
             "status": current.get("status", self.STATUS_QUEUED),
+            "lifecycle_state": current.get("lifecycle_state", self.LIFECYCLE_ACTIVE),
+            "lifecycle_reason": current.get("lifecycle_reason"),
             "context_status": current.get("context_status", "ready" if Path(refs["context_pack_json"]).exists() else "missing"),
             "review_status": current.get("review_status", "pending"),
             "qa_status": current.get("qa_status", "pending"),
@@ -578,8 +640,17 @@ class TaskCycleService(Service):
             "artifact_refs": refs,
             "blocking_policy_findings": int(current.get("blocking_policy_findings", 0) or 0),
             "last_failure_source": current.get("last_failure_source"),
+            "lifecycle_changed_at": current.get("lifecycle_changed_at"),
         }
         return state
+
+    def _ensure_work_item_active(self, step: StepRun, project, *, state: Optional[Dict[str, Any]] = None) -> None:
+        current = state or self._task_cycle_state(step, project)
+        lifecycle_state = self._string_or_none(current.get("lifecycle_state")) or self.LIFECYCLE_ACTIVE
+        if lifecycle_state == self.LIFECYCLE_ARCHIVED:
+            raise TaskCycleError("Archived work items are read-only")
+        if lifecycle_state == self.LIFECYCLE_CANCELED:
+            raise TaskCycleError("Canceled work items are read-only")
 
     def _is_task_cycle_run(self, run) -> bool:
         metadata = dict(run.speckit_metadata or {})
