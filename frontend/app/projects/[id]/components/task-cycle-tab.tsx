@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   FileSearch,
   GitBranch,
+  Layers3,
   PlayCircle,
   ShieldCheck,
   Wrench,
@@ -43,6 +44,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+
+import { TaskCycleRuntimeDialog } from "./task-cycle-runtime-dialog";
 
 interface TaskCycleTabProps {
   projectId: number;
@@ -84,6 +87,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   const [featureName, setFeatureName] = useState("");
   const [featureRequest, setFeatureRequest] = useState("");
   const [ownerDrafts, setOwnerDrafts] = useState<Record<number, string>>({});
+  const [selectedWorkItemId, setSelectedWorkItemId] = useState<number | null>(null);
 
   const protocolNames = useMemo(
     () =>
@@ -203,18 +207,18 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Ready for Context</CardTitle>
+            <CardTitle className="text-sm">Context Active</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold">
-            {workItems.filter((item) => item.context_status !== "ready").length}
+            {workItems.filter((item) => item.active_stage === "build_context").length}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Awaiting Review</CardTitle>
+            <CardTitle className="text-sm">Review / QA Active</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold">
-            {workItems.filter((item) => item.review_status !== "approved").length}
+            {workItems.filter((item) => ["review", "qa"].includes(item.active_stage ?? "")).length}
           </CardContent>
         </Card>
         <Card>
@@ -253,6 +257,11 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       {item.lifecycle_state !== "active" && (
                         <Badge variant="outline">{item.lifecycle_state}</Badge>
                       )}
+                      {item.active_stage_label && (
+                        <Badge className={toneClass(item.active_stage_status)}>
+                          {item.active_stage_label}
+                        </Badge>
+                      )}
                       <Badge className={toneClass(item.context_status)}>
                         Context {item.context_status}
                       </Badge>
@@ -262,17 +271,35 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       <Badge className={toneClass(item.qa_status)}>QA {item.qa_status}</Badge>
                     </div>
                     {item.summary && <p className="text-muted-foreground text-sm">{item.summary}</p>}
+                    {item.progress_summary && (
+                      <p className="text-sm font-medium">{item.progress_summary}</p>
+                    )}
                     {item.lifecycle_reason && item.lifecycle_state !== "active" && (
                       <p className="text-muted-foreground text-sm">{item.lifecycle_reason}</p>
+                    )}
+                    {item.blocking_reason && item.lifecycle_state === "active" && (
+                      <p className="text-sm text-red-700">{item.blocking_reason}</p>
                     )}
                     <div className="text-muted-foreground flex flex-wrap items-center gap-3 text-xs">
                       <span>Iterations: {item.iteration_count}/{item.max_iterations}</span>
                       <span>Clarifications: {item.blocking_clarifications}</span>
                       <span>Policy findings: {item.blocking_policy_findings}</span>
                       {item.owner_agent && <span>Owner: {item.owner_agent}</span>}
+                      {item.latest_completed_stage && <span>Latest stage: {item.latest_completed_stage}</span>}
+                      {item.latest_artifact_summary && (
+                        <span>Latest artifact: {item.latest_artifact_summary}</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setSelectedWorkItemId(item.id)}
+                    >
+                      <Layers3 className="mr-2 h-3.5 w-3.5" />
+                      Runtime
+                    </Button>
                     <Link href={`/protocols/${item.protocol_run_id}`}>
                       <Button variant="outline" size="sm">
                         <GitBranch className="mr-2 h-3.5 w-3.5" />
@@ -488,6 +515,16 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
           )}
         </CardContent>
       </Card>
+
+      <TaskCycleRuntimeDialog
+        workItemId={selectedWorkItemId}
+        open={selectedWorkItemId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedWorkItemId(null);
+          }
+        }}
+      />
     </div>
   );
 }

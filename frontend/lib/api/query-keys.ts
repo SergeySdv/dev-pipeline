@@ -31,6 +31,7 @@ export const queryKeys = {
   workItems: {
     all: ["workItems"] as const,
     detail: (id: number) => [...queryKeys.workItems.all, "detail", id] as const,
+    runtime: (id: number) => [...queryKeys.workItems.all, "runtime", id] as const,
     artifactContent: (id: number, artifactKey: string) =>
       [...queryKeys.workItems.all, "artifactContent", id, artifactKey] as const,
   },

@@ -310,6 +310,13 @@ export interface WorkItem {
   iteration_count: number;
   max_iterations: number;
   summary: string | null;
+  active_stage?: string | null;
+  active_stage_label?: string | null;
+  active_stage_status?: string | null;
+  latest_completed_stage?: string | null;
+  latest_artifact_summary?: string | null;
+  blocking_reason?: string | null;
+  progress_summary?: string | null;
 }
 
 export interface WorkItemReview {
@@ -322,6 +329,81 @@ export interface WorkItemReview {
 export interface WorkItemQA {
   work_item: WorkItem;
   qa: QAResult;
+}
+
+export interface WorkItemRuntimeAgent {
+  agent_id: string;
+  role: string;
+  status: string;
+  model_override?: string | null;
+  reasoning_effort?: string | null;
+}
+
+export interface WorkItemRuntimeArtifact {
+  id: string;
+  key: string;
+  stage_id: string;
+  name: string;
+  type: string;
+  path: string;
+  source: "work_item" | "step";
+  exists: boolean;
+  size: number;
+  created_at: string | null;
+  content_source?: "work_item" | "step" | null;
+  content_id?: string | null;
+}
+
+export interface WorkItemRuntimeActivity {
+  id: string;
+  kind: string;
+  stage_id?: string | null;
+  status?: string | null;
+  message: string;
+  created_at?: string | null;
+  agent_id?: string | null;
+  run_id?: string | null;
+  windmill_job_id?: string | null;
+  artifact_key?: string | null;
+}
+
+export interface WorkItemStageRun {
+  stage_id: string;
+  stage_name: string;
+  order: number;
+  status: string;
+  mode?: string | null;
+  summary?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  agent_assignments: WorkItemRuntimeAgent[];
+  artifacts: WorkItemRuntimeArtifact[];
+  blocking_reasons: string[];
+  windmill_job_id?: string | null;
+  windmill_module_id?: string | null;
+  run_ids: string[];
+}
+
+export interface WorkItemRuntimeWindmill {
+  flow_id?: string | null;
+  job_id?: string | null;
+  module_id?: string | null;
+  run_id?: string | null;
+}
+
+export interface WorkItemRuntime {
+  work_item: WorkItem;
+  active_stage: string;
+  active_stage_label: string;
+  active_stage_status: string;
+  latest_completed_stage?: string | null;
+  progress_summary?: string | null;
+  blocking_reasons: string[];
+  active_agents: WorkItemRuntimeAgent[];
+  stage_runs: WorkItemStageRun[];
+  latest_artifacts: WorkItemRuntimeArtifact[];
+  activity: WorkItemRuntimeActivity[];
+  windmill?: WorkItemRuntimeWindmill | null;
 }
 
 export interface WorkItemLifecycleUpdate {

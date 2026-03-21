@@ -318,6 +318,79 @@ class TestSpecificationServicePlan:
         assert "Additional planning context:" in captured["prompt_context"]
         assert "Prefer the existing auth tables and avoid schema changes." in captured["prompt_context"]
 
+    def test_plan_fails_when_non_dummy_agent_leaves_placeholder_outputs(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_result = service.run_specify(str(initialized_workspace), "Store user metadata in sqlite")
+        assert spec_result.success
+
+        def fake_run_speckit_agent(*args, **kwargs):
+            return MagicMock(
+                success=True,
+                error=None,
+                stdout="plan complete",
+                stderr="",
+                metadata={"engine_id": "opencode"},
+            )
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_plan(str(initialized_workspace), spec_result.spec_path)
+
+        assert not result.success
+        assert "incomplete outputs" in (result.error or "").lower()
+        spec_dir = Path(spec_result.spec_path).parent
+        assert (spec_dir / "_runtime" / "plan.error.txt").exists()
+
+    def test_plan_accepts_populated_outputs_and_writes_runtime_trace(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_result = service.run_specify(str(initialized_workspace), "Store user metadata in sqlite")
+        assert spec_result.success
+        spec_dir = Path(spec_result.spec_path).parent
+
+        def fake_run_speckit_agent(*args, **kwargs):
+            (spec_dir / "plan.md").write_text(
+                "\n".join(
+                    [
+                        "# Implementation Plan: user-metadata",
+                        "",
+                        "## Proposed Changes",
+                        "- [ ] Update `src/user_metadata.py`",
+                        "- [ ] Add `tests/test_user_metadata.py`",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (spec_dir / "data-model.md").write_text(
+                "# Data Model\n\n## Entities\n\n- `user_metadata` table with `user_id`, `key`, `value`\n",
+                encoding="utf-8",
+            )
+            (spec_dir / "research.md").write_text(
+                "# Research\n\n- SQLite is acceptable for local single-process storage.\n",
+                encoding="utf-8",
+            )
+            (spec_dir / "quickstart.md").write_text(
+                "# Quickstart\n\n1. Run `pytest -q`.\n2. Verify metadata persists across restart.\n",
+                encoding="utf-8",
+            )
+            return MagicMock(
+                success=True,
+                error=None,
+                stdout="plan complete",
+                stderr="",
+                metadata={"engine_id": "opencode"},
+            )
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_plan(str(initialized_workspace), spec_result.spec_path)
+
+        assert result.success
+        assert (spec_dir / "_runtime" / "plan.prompt.md").exists()
+        assert (spec_dir / "_runtime" / "plan.result.json").exists()
+
 
 class TestSpecificationServiceTasks:
     """Tests for SpecificationService.run_tasks()"""
@@ -344,6 +417,34 @@ class TestSpecificationServiceTasks:
         assert result.success
         assert result.task_count >= 0
         assert result.parallelizable_count >= 0
+
+    def test_tasks_fail_when_non_dummy_agent_leaves_template_output(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_result = service.run_specify(str(initialized_workspace), "Store user metadata in sqlite")
+        assert spec_result.success
+        plan_path = Path(spec_result.spec_path).parent / "plan.md"
+        plan_path.write_text(
+            "# Implementation Plan\n\n## Proposed Changes\n- [ ] Update `src/user_metadata.py`\n",
+            encoding="utf-8",
+        )
+
+        def fake_run_speckit_agent(*args, **kwargs):
+            return MagicMock(
+                success=True,
+                error=None,
+                stdout="tasks complete",
+                stderr="",
+                metadata={"engine_id": "opencode"},
+            )
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_tasks(str(initialized_workspace), str(plan_path))
+
+        assert not result.success
+        assert "incomplete outputs" in (result.error or "").lower()
+        assert (plan_path.parent / "_runtime" / "tasks.error.txt").exists()
 
 
 class TestSpecificationServiceImplement:

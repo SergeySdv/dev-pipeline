@@ -494,6 +494,88 @@ class WorkItemOut(BaseModel):
     iteration_count: int = 0
     max_iterations: int = 0
     summary: Optional[str] = None
+    active_stage: Optional[str] = None
+    active_stage_label: Optional[str] = None
+    active_stage_status: Optional[str] = None
+    latest_completed_stage: Optional[str] = None
+    latest_artifact_summary: Optional[str] = None
+    blocking_reason: Optional[str] = None
+    progress_summary: Optional[str] = None
+
+
+class WorkItemRuntimeAgentOut(BaseModel):
+    agent_id: str
+    role: str
+    status: str
+    model_override: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+
+
+class WorkItemRuntimeArtifactOut(BaseModel):
+    id: str
+    key: str
+    stage_id: str
+    name: str
+    type: str
+    path: str
+    source: str
+    exists: bool
+    size: int = 0
+    created_at: Optional[str] = None
+    content_source: Optional[str] = None
+    content_id: Optional[str] = None
+
+
+class WorkItemRuntimeActivityOut(BaseModel):
+    id: str
+    kind: str
+    stage_id: Optional[str] = None
+    status: Optional[str] = None
+    message: str
+    created_at: Optional[str] = None
+    agent_id: Optional[str] = None
+    run_id: Optional[str] = None
+    windmill_job_id: Optional[str] = None
+    artifact_key: Optional[str] = None
+
+
+class WorkItemStageRunOut(BaseModel):
+    stage_id: str
+    stage_name: str
+    order: int
+    status: str
+    mode: Optional[str] = None
+    summary: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    agent_assignments: List[WorkItemRuntimeAgentOut] = Field(default_factory=list)
+    artifacts: List[WorkItemRuntimeArtifactOut] = Field(default_factory=list)
+    blocking_reasons: List[str] = Field(default_factory=list)
+    windmill_job_id: Optional[str] = None
+    windmill_module_id: Optional[str] = None
+    run_ids: List[str] = Field(default_factory=list)
+
+
+class WorkItemRuntimeWindmillOut(BaseModel):
+    flow_id: Optional[str] = None
+    job_id: Optional[str] = None
+    module_id: Optional[str] = None
+    run_id: Optional[str] = None
+
+
+class WorkItemRuntimeOut(BaseModel):
+    work_item: WorkItemOut
+    active_stage: str
+    active_stage_label: str
+    active_stage_status: str
+    latest_completed_stage: Optional[str] = None
+    progress_summary: Optional[str] = None
+    blocking_reasons: List[str] = Field(default_factory=list)
+    active_agents: List[WorkItemRuntimeAgentOut] = Field(default_factory=list)
+    stage_runs: List[WorkItemStageRunOut] = Field(default_factory=list)
+    latest_artifacts: List[WorkItemRuntimeArtifactOut] = Field(default_factory=list)
+    activity: List[WorkItemRuntimeActivityOut] = Field(default_factory=list)
+    windmill: Optional[WorkItemRuntimeWindmillOut] = None
 
 
 class BuildContextRequest(BaseModel):

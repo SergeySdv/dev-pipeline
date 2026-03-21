@@ -13,4 +13,6 @@ Follow these rules:
 - Prefer 3-7 phases unless the source material clearly requires more.
 - End with a final verification/testing phase when appropriate.
 - Keep tasks realistic, ordered, and specific.
+- Reference real files, functions, modules, tests, commands, and boundaries from the repo whenever the plan provides them.
+- Do not emit generic placeholders such as `Task 1`, `Task 2`, or file-free tasks.
 - Do not modify any files other than `tasks.md`.

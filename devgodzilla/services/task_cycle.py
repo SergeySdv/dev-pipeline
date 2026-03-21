@@ -43,10 +43,42 @@ class TaskCycleService(Service):
     STATUS_READY_FOR_PR = "ready_for_pr"
     STATUS_PR_READY = "pr_ready"
     STATUS_BLOCKED = "blocked"
+    STAGES: Tuple[Tuple[str, str], ...] = (
+        ("build_context", "Build Context"),
+        ("implement", "Implement"),
+        ("review", "Review"),
+        ("qa", "QA"),
+        ("pr_ready", "PR Ready"),
+    )
 
     def __init__(self, context: ServiceContext, db) -> None:
         super().__init__(context)
         self.db = db
+
+    def _append_project_event(
+        self,
+        project_id: int,
+        *,
+        event_type: str,
+        message: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
+    ) -> None:
+        try:
+            self.db.append_event(
+                protocol_run_id=protocol_run_id,
+                project_id=project_id,
+                step_run_id=step_run_id,
+                event_type=event_type,
+                message=message,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.warning(
+                "task_cycle_event_append_failed",
+                extra={"project_id": project_id, "event_type": event_type, "error": str(exc)},
+            )
 
     def list_work_items(
         self,
@@ -81,8 +113,24 @@ class TaskCycleService(Service):
 
     def get_work_item(self, step_run_id: int) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
+        return self._build_work_item_response(step, run, project)
+
+    def get_work_item_runtime(self, step_run_id: int) -> schemas.WorkItemRuntimeOut:
+        step, run, project = self._load_work_item(step_run_id)
+        work_item = self._build_work_item_response(step, run, project)
+        runtime = self._build_runtime_projection(step, run, project, work_item)
+        return runtime
+
+    def _build_work_item_response(self, step: StepRun, run, project) -> schemas.WorkItemOut:
         state = self._task_cycle_state(step, project)
         blocking_clarifications = self._blocking_clarifications(project.id, run.id, step.id)
+        stage_overview = self._build_stage_overview(
+            step,
+            run,
+            project,
+            state=state,
+            blocking_clarifications=blocking_clarifications,
+        )
         return schemas.WorkItemOut(
             id=step.id,
             project_id=project.id,
@@ -105,6 +153,13 @@ class TaskCycleService(Service):
             iteration_count=int(state.get("iteration_count", 0) or 0),
             max_iterations=int(state.get("max_iterations", self.config.task_cycle_max_iterations) or self.config.task_cycle_max_iterations),
             summary=step.summary,
+            active_stage=stage_overview["active_stage"],
+            active_stage_label=stage_overview["active_stage_label"],
+            active_stage_status=stage_overview["active_stage_status"],
+            latest_completed_stage=stage_overview["latest_completed_stage"],
+            latest_artifact_summary=stage_overview["latest_artifact_summary"],
+            blocking_reason=stage_overview["blocking_reason"],
+            progress_summary=stage_overview["progress_summary"],
         )
 
     def start_brownfield_run(
@@ -119,7 +174,25 @@ class TaskCycleService(Service):
 
         spec_service = SpecificationService(self.context, self.db)
         protocol_service = SpecToProtocolService(self.context, self.db)
+        event_metadata = {
+            "feature_name": request.feature_name,
+            "feature_request_preview": (request.feature_request or "")[:200],
+            "output_mode": request.output_mode,
+            "branch": request.branch,
+        }
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_run_started",
+            message=f"Starting brownfield run: {(request.feature_name or request.feature_request[:60]).strip()}",
+            metadata=event_metadata,
+        )
 
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_specify_started",
+            message="Starting brownfield specify stage",
+            metadata=event_metadata,
+        )
         specify = spec_service.run_specify(
             project.local_path,
             request.feature_request,
@@ -128,8 +201,34 @@ class TaskCycleService(Service):
             project_id=project_id,
         )
         if not specify.success or not specify.spec_path:
-            raise TaskCycleError(specify.error or "Spec generation failed")
+            error = specify.error or "Spec generation failed"
+            failure_metadata = {**event_metadata, "stage": "specify", "spec_run_id": specify.spec_run_id, "error": error}
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_specify_failed",
+                message=f"Brownfield specify failed: {error}",
+                metadata=failure_metadata,
+            )
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_run_failed",
+                message=f"Brownfield run failed during specify: {error}",
+                metadata=failure_metadata,
+            )
+            raise TaskCycleError(f"Brownfield specify failed: {error}")
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_specify_completed",
+            message="Brownfield specify stage completed",
+            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
+        )
 
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_plan_started",
+            message="Starting brownfield plan stage",
+            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
+        )
         plan = spec_service.run_plan(
             project.local_path,
             specify.spec_path,
@@ -137,8 +236,40 @@ class TaskCycleService(Service):
             project_id=project_id,
         )
         if not plan.success or not plan.plan_path:
-            raise TaskCycleError(plan.error or "Plan generation failed")
+            error = plan.error or "Plan generation failed"
+            failure_metadata = {
+                **event_metadata,
+                "stage": "plan",
+                "spec_run_id": specify.spec_run_id,
+                "spec_path": specify.spec_path,
+                "error": error,
+            }
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_plan_failed",
+                message=f"Brownfield plan failed: {error}",
+                metadata=failure_metadata,
+            )
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_run_failed",
+                message=f"Brownfield run failed during plan: {error}",
+                metadata=failure_metadata,
+            )
+            raise TaskCycleError(f"Brownfield plan failed: {error}")
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_plan_completed",
+            message="Brownfield plan stage completed",
+            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
+        )
 
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_tasks_started",
+            message="Starting brownfield tasks stage",
+            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
+        )
         tasks = spec_service.run_tasks(
             project.local_path,
             plan.plan_path,
@@ -146,7 +277,33 @@ class TaskCycleService(Service):
             project_id=project_id,
         )
         if not tasks.success or not tasks.tasks_path:
-            raise TaskCycleError(tasks.error or "Task generation failed")
+            error = tasks.error or "Task generation failed"
+            failure_metadata = {
+                **event_metadata,
+                "stage": "tasks",
+                "spec_run_id": specify.spec_run_id,
+                "plan_path": plan.plan_path,
+                "error": error,
+            }
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_tasks_failed",
+                message=f"Brownfield tasks failed: {error}",
+                metadata=failure_metadata,
+            )
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_run_failed",
+                message=f"Brownfield run failed during tasks: {error}",
+                metadata=failure_metadata,
+            )
+            raise TaskCycleError(f"Brownfield tasks failed: {error}")
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_tasks_completed",
+            message="Brownfield tasks stage completed",
+            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
+        )
 
         warnings: List[str] = []
         protocol_out = None
@@ -154,6 +311,12 @@ class TaskCycleService(Service):
         next_work_item_id: Optional[int] = None
 
         if request.output_mode in {"task_cycle", "protocol"}:
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_protocol_seed_started",
+                message="Starting brownfield protocol seed stage",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
+            )
             protocol = protocol_service.create_protocol_from_spec(
                 project_id=project_id,
                 spec_path=specify.spec_path,
@@ -164,7 +327,27 @@ class TaskCycleService(Service):
                 collapse_to_single_step=request.output_mode == "task_cycle",
             )
             if not protocol.success or not protocol.protocol_run_id:
-                raise TaskCycleError(protocol.error or "Protocol creation failed")
+                error = protocol.error or "Protocol creation failed"
+                failure_metadata = {
+                    **event_metadata,
+                    "stage": "protocol_seed",
+                    "spec_run_id": specify.spec_run_id,
+                    "tasks_path": tasks.tasks_path,
+                    "error": error,
+                }
+                self._append_project_event(
+                    project_id,
+                    event_type="brownfield_protocol_seed_failed",
+                    message=f"Brownfield protocol seed failed: {error}",
+                    metadata=failure_metadata,
+                )
+                self._append_project_event(
+                    project_id,
+                    event_type="brownfield_run_failed",
+                    message=f"Brownfield run failed during protocol seed: {error}",
+                    metadata=failure_metadata,
+                )
+                raise TaskCycleError(f"Brownfield protocol seed failed: {error}")
             warnings.extend(protocol.warnings)
             protocol_run = self.db.get_protocol_run(protocol.protocol_run_id)
             protocol_metadata = dict(protocol_run.speckit_metadata or {})
@@ -190,6 +373,31 @@ class TaskCycleService(Service):
             )
             work_items = self.list_work_items(project_id, protocol_run_id=protocol.protocol_run_id)
             next_work_item_id = next((item.id for item in work_items if not item.pr_ready), None)
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_protocol_seed_completed",
+                message="Brownfield protocol seed stage completed",
+                metadata={
+                    **event_metadata,
+                    "spec_run_id": specify.spec_run_id,
+                    "protocol_run_id": protocol.protocol_run_id,
+                    "tasks_path": tasks.tasks_path,
+                },
+                protocol_run_id=protocol.protocol_run_id,
+            )
+
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_run_completed",
+            message="Brownfield run completed",
+            metadata={
+                **event_metadata,
+                "spec_run_id": specify.spec_run_id,
+                "protocol_run_id": protocol_out.id if protocol_out is not None else None,
+                "next_work_item_id": next_work_item_id,
+            },
+            protocol_run_id=protocol_out.id if protocol_out is not None else None,
+        )
 
         return schemas.BrownfieldRunOut(
             success=True,
@@ -254,6 +462,7 @@ class TaskCycleService(Service):
 
         payload: Dict[str, Any] = {
             "context_version": "1",
+            "mode": "incremental_context_refresh" if refresh else "fresh_context",
             "work_item_id": f"step-{step.id}",
             "project_id": project.id,
             "protocol_run_id": run.id,
@@ -709,6 +918,695 @@ class TaskCycleService(Service):
             content=content,
             truncated=truncated,
         )
+
+    def _build_runtime_projection(
+        self,
+        step: StepRun,
+        run,
+        project,
+        work_item: schemas.WorkItemOut,
+    ) -> schemas.WorkItemRuntimeOut:
+        state = self._task_cycle_state(step, project)
+        blocking_clarifications = self._blocking_clarifications(project.id, run.id, step.id)
+        stage_runs = self._build_stage_runs(
+            step,
+            run,
+            project,
+            state=state,
+            blocking_clarifications=blocking_clarifications,
+        )
+        active_stage_run = next(
+            (stage_run for stage_run in stage_runs if stage_run.status not in {"completed", "skipped"}),
+            stage_runs[-1],
+        )
+        latest_completed_stage = next(
+            (stage_run.stage_id for stage_run in reversed(stage_runs) if stage_run.status == "completed"),
+            None,
+        )
+        latest_artifacts = sorted(
+            [artifact for stage_run in stage_runs for artifact in stage_run.artifacts if artifact.exists],
+            key=lambda artifact: artifact.created_at or "",
+            reverse=True,
+        )[:8]
+        blocking_reasons = self._blocking_reasons(
+            work_item,
+            state=state,
+            stage_runs=stage_runs,
+        )
+        active_agents = [agent for agent in active_stage_run.agent_assignments if agent.status == "running"]
+        if not active_agents and active_stage_run.agent_assignments:
+            active_agents = active_stage_run.agent_assignments
+        windmill = self._windmill_projection(run, step)
+
+        activity = self._build_activity_feed(
+            work_item,
+            stage_runs=stage_runs,
+            latest_artifacts=latest_artifacts,
+            windmill=windmill,
+            blocking_reasons=blocking_reasons,
+        )
+        progress_summary = (
+            active_stage_run.summary
+            or work_item.progress_summary
+            or f"{active_stage_run.stage_name} is {active_stage_run.status.replace('_', ' ')}"
+        )
+
+        return schemas.WorkItemRuntimeOut(
+            work_item=work_item,
+            active_stage=active_stage_run.stage_id,
+            active_stage_label=active_stage_run.stage_name,
+            active_stage_status=active_stage_run.status,
+            latest_completed_stage=latest_completed_stage,
+            progress_summary=progress_summary,
+            blocking_reasons=blocking_reasons,
+            active_agents=active_agents,
+            stage_runs=stage_runs,
+            latest_artifacts=latest_artifacts,
+            activity=activity,
+            windmill=windmill,
+        )
+
+    def _build_stage_overview(
+        self,
+        step: StepRun,
+        run,
+        project,
+        *,
+        state: Optional[Dict[str, Any]] = None,
+        blocking_clarifications: Optional[int] = None,
+    ) -> Dict[str, Optional[str]]:
+        current_state = state or self._task_cycle_state(step, project)
+        current_blocking_clarifications = (
+            blocking_clarifications
+            if blocking_clarifications is not None
+            else self._blocking_clarifications(project.id, run.id, step.id)
+        )
+        stage_runs = self._build_stage_runs(
+            step,
+            run,
+            project,
+            state=current_state,
+            blocking_clarifications=current_blocking_clarifications,
+        )
+        active_stage = next(
+            (stage_run for stage_run in stage_runs if stage_run.status not in {"completed", "skipped"}),
+            stage_runs[-1],
+        )
+        latest_completed_stage = next(
+            (stage_run.stage_name for stage_run in reversed(stage_runs) if stage_run.status == "completed"),
+            None,
+        )
+        latest_artifact = next(
+            (
+                artifact
+                for artifact in sorted(
+                    [artifact for stage_run in stage_runs for artifact in stage_run.artifacts if artifact.exists],
+                    key=lambda artifact: artifact.created_at or "",
+                    reverse=True,
+                )
+            ),
+            None,
+        )
+        work_item = schemas.WorkItemOut(
+            id=step.id,
+            project_id=project.id,
+            protocol_run_id=run.id,
+            title=step.step_name,
+            status=str(current_state["status"]),
+            lifecycle_state=str(current_state["lifecycle_state"]),
+            lifecycle_reason=self._string_or_none(current_state.get("lifecycle_reason")),
+            context_status=str(current_state["context_status"]),
+            review_status=str(current_state["review_status"]),
+            qa_status=str(current_state["qa_status"]),
+            owner_agent=self._string_or_none(current_state.get("owner_agent")) or step.assigned_agent,
+            helper_agents=self._string_list(current_state.get("helper_agents")),
+            task_dir=self._string_or_none(current_state.get("task_dir")),
+            artifact_refs=schemas.WorkItemArtifactRefsOut(**self._artifact_refs(project, step)),
+            depends_on=list(step.depends_on or []),
+            pr_ready=bool(current_state.get("pr_ready", False)),
+            blocking_clarifications=int(current_blocking_clarifications or 0),
+            blocking_policy_findings=int(current_state.get("blocking_policy_findings", 0) or 0),
+            iteration_count=int(current_state.get("iteration_count", 0) or 0),
+            max_iterations=int(current_state.get("max_iterations", self.config.task_cycle_max_iterations) or self.config.task_cycle_max_iterations),
+            summary=step.summary,
+        )
+        blocking_reasons = self._blocking_reasons(work_item, state=current_state, stage_runs=stage_runs)
+        return {
+            "active_stage": active_stage.stage_id,
+            "active_stage_label": active_stage.stage_name,
+            "active_stage_status": active_stage.status,
+            "latest_completed_stage": latest_completed_stage,
+            "latest_artifact_summary": (
+                f"{self._stage_name(latest_artifact.stage_id)}: {latest_artifact.name}" if latest_artifact else None
+            ),
+            "blocking_reason": blocking_reasons[0] if blocking_reasons else None,
+            "progress_summary": active_stage.summary or f"{active_stage.stage_name} is {active_stage.status.replace('_', ' ')}",
+        }
+
+    def _build_stage_runs(
+        self,
+        step: StepRun,
+        run,
+        project,
+        *,
+        state: Optional[Dict[str, Any]] = None,
+        blocking_clarifications: Optional[int] = None,
+    ) -> List[schemas.WorkItemStageRunOut]:
+        current_state = state or self._task_cycle_state(step, project)
+        current_blocking_clarifications = (
+            blocking_clarifications
+            if blocking_clarifications is not None
+            else self._blocking_clarifications(project.id, run.id, step.id)
+        )
+        refs = self._artifact_refs(project, step)
+        context_pack = self._read_json(Path(refs["context_pack_json"]))
+        review_report = self._read_json(Path(refs["review_report_json"]))
+        qa_report = self._read_json(Path(refs["test_report_json"]))
+        rework_pack = self._read_json(Path(refs["rework_pack_json"]))
+        step_job_runs = self.db.list_job_runs(step_run_id=step.id, limit=50)
+        latest_job_run = step_job_runs[0] if step_job_runs else None
+        implement_artifacts = self._runtime_stage_artifacts(step, project, stage_id="implement")
+
+        context_status = self._context_stage_status(
+            current_state=current_state,
+            blocking_clarifications=current_blocking_clarifications,
+            context_exists=Path(refs["context_pack_json"]).exists(),
+        )
+        implement_status = self._implement_stage_status(
+            step=step,
+            current_state=current_state,
+            implement_artifacts=implement_artifacts,
+        )
+        review_status = self._review_stage_status(
+            current_state=current_state,
+            implement_status=implement_status,
+            review_report=review_report,
+        )
+        qa_status = self._qa_stage_status(
+            current_state=current_state,
+            review_status=review_status,
+            qa_report=qa_report,
+        )
+        pr_ready_status = self._pr_ready_stage_status(
+            current_state=current_state,
+            review_status=review_status,
+            qa_status=qa_status,
+        )
+
+        stage_statuses = {
+            "build_context": context_status,
+            "implement": implement_status,
+            "review": review_status,
+            "qa": qa_status,
+            "pr_ready": pr_ready_status,
+        }
+
+        stage_runs: List[schemas.WorkItemStageRunOut] = []
+        for order, (stage_id, stage_name) in enumerate(self.STAGES, start=1):
+            stage_runs.append(
+                schemas.WorkItemStageRunOut(
+                    stage_id=stage_id,
+                    stage_name=stage_name,
+                    order=order,
+                    status=stage_statuses[stage_id],
+                    mode=self._stage_mode(stage_id, context_pack),
+                    summary=self._stage_summary(
+                        stage_id,
+                        status=stage_statuses[stage_id],
+                        step=step,
+                        current_state=current_state,
+                        context_pack=context_pack,
+                        review_report=review_report,
+                        qa_report=qa_report,
+                        rework_pack=rework_pack,
+                    ),
+                    started_at=self._stage_started_at(stage_id, step, latest_job_run),
+                    finished_at=self._stage_finished_at(
+                        stage_id,
+                        refs=refs,
+                        latest_job_run=latest_job_run,
+                        current_state=current_state,
+                    ),
+                    agent_assignments=self._stage_agents(
+                        stage_id,
+                        project_id=project.id,
+                        owner_agent=self._string_or_none(current_state.get("owner_agent")) or step.assigned_agent,
+                        helper_agents=self._string_list(current_state.get("helper_agents")),
+                        stage_status=stage_statuses[stage_id],
+                        active_stage=next(
+                            (
+                                candidate_stage_id
+                                for candidate_stage_id, status in stage_statuses.items()
+                                if status not in {"completed", "skipped"}
+                            ),
+                            "pr_ready",
+                        ),
+                    ),
+                    artifacts=self._runtime_stage_artifacts(
+                        step,
+                        project,
+                        stage_id=stage_id,
+                        rework_source=self._string_or_none(rework_pack.get("source")),
+                    ),
+                    blocking_reasons=self._stage_blocking_reasons(
+                        stage_id,
+                        current_state=current_state,
+                        blocking_clarifications=current_blocking_clarifications,
+                        review_report=review_report,
+                        qa_report=qa_report,
+                    ),
+                    windmill_job_id=latest_job_run.windmill_job_id if stage_id == "implement" and latest_job_run else None,
+                    windmill_module_id=self._job_run_module_id(latest_job_run) if stage_id == "implement" else None,
+                    run_ids=[job.run_id for job in step_job_runs] if stage_id == "implement" else [],
+                )
+            )
+        return stage_runs
+
+    def _context_stage_status(self, *, current_state: Dict[str, Any], blocking_clarifications: int, context_exists: bool) -> str:
+        if current_state.get("context_status") == "needs_clarification" or blocking_clarifications:
+            return "waiting_for_clarification"
+        if context_exists:
+            return "completed"
+        return "pending"
+
+    def _implement_stage_status(
+        self,
+        *,
+        step: StepRun,
+        current_state: Dict[str, Any],
+        implement_artifacts: List[schemas.WorkItemRuntimeArtifactOut],
+    ) -> str:
+        if step.status == StepStatus.RUNNING or current_state.get("status") == self.STATUS_IN_PROGRESS:
+            return "running"
+        if step.status in (StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED):
+            return "failed" if current_state.get("last_failure_source") == "implement" else "blocked"
+        if any(artifact.exists for artifact in implement_artifacts):
+            return "completed"
+        return "pending"
+
+    def _review_stage_status(
+        self,
+        *,
+        current_state: Dict[str, Any],
+        implement_status: str,
+        review_report: Dict[str, Any],
+    ) -> str:
+        verdict = self._string_or_none(current_state.get("review_status")) or self._string_or_none(review_report.get("verdict"))
+        if verdict == "passed":
+            if int(current_state.get("blocking_policy_findings", 0) or 0) > 0:
+                return "blocked"
+            return "completed"
+        if verdict in {"failed", "warning"}:
+            return "failed"
+        if implement_status == "completed":
+            return "pending"
+        return "pending"
+
+    def _qa_stage_status(
+        self,
+        *,
+        current_state: Dict[str, Any],
+        review_status: str,
+        qa_report: Dict[str, Any],
+    ) -> str:
+        verdict = self._string_or_none(current_state.get("qa_status")) or self._string_or_none(qa_report.get("verdict"))
+        if verdict == "passed":
+            return "completed"
+        if verdict in {"failed", "warning"}:
+            return "failed"
+        if review_status == "completed":
+            return "pending"
+        return "pending"
+
+    def _pr_ready_stage_status(self, *, current_state: Dict[str, Any], review_status: str, qa_status: str) -> str:
+        if bool(current_state.get("pr_ready")):
+            return "completed"
+        if review_status == "completed" and qa_status == "completed":
+            return "pending"
+        return "pending"
+
+    def _stage_mode(self, stage_id: str, context_pack: Dict[str, Any]) -> Optional[str]:
+        if stage_id != "build_context":
+            return None
+        return self._string_or_none(context_pack.get("mode"))
+
+    def _stage_summary(
+        self,
+        stage_id: str,
+        *,
+        status: str,
+        step: StepRun,
+        current_state: Dict[str, Any],
+        context_pack: Dict[str, Any],
+        review_report: Dict[str, Any],
+        qa_report: Dict[str, Any],
+        rework_pack: Dict[str, Any],
+    ) -> str:
+        if stage_id == "build_context":
+            if status == "waiting_for_clarification":
+                return "Context pack is ready, but blocking clarifications must be resolved"
+            goal = self._string_or_none(context_pack.get("goal"))
+            return goal or ("Context pack ready" if status == "completed" else "Context pack not built yet")
+        if stage_id == "implement":
+            if status == "running":
+                return "Implementation is running"
+            if status == "failed":
+                return "Implementation failed and requires rework"
+            if status == "completed":
+                return "Implementation artifacts available"
+            return "Implementation has not started"
+        if stage_id == "review":
+            if review_report.get("summary"):
+                return str(review_report["summary"])
+            if rework_pack.get("source") == "review":
+                return "Review findings require rework"
+            return "Review has not run yet"
+        if stage_id == "qa":
+            if qa_report.get("summary"):
+                return str(qa_report["summary"])
+            if rework_pack.get("source") == "qa":
+                return "QA findings require rework"
+            return "QA has not run yet"
+        if bool(current_state.get("pr_ready")):
+            return "Work item marked PR ready"
+        if current_state.get("review_status") == "passed" and current_state.get("qa_status") == "passed":
+            return "Ready to mark PR ready"
+        return "PR readiness is blocked by earlier stages"
+
+    def _stage_started_at(self, stage_id: str, step: StepRun, latest_job_run) -> Optional[str]:
+        if stage_id == "implement" and latest_job_run:
+            return latest_job_run.started_at or latest_job_run.created_at
+        return step.updated_at
+
+    def _stage_finished_at(
+        self,
+        stage_id: str,
+        *,
+        refs: Dict[str, str],
+        latest_job_run,
+        current_state: Dict[str, Any],
+    ) -> Optional[str]:
+        if stage_id == "build_context":
+            return self._path_timestamp_iso(Path(refs["context_pack_json"])) or self._path_timestamp_iso(Path(refs["context_pack_md"]))
+        if stage_id == "implement" and latest_job_run:
+            return latest_job_run.finished_at or self._path_timestamp_iso(Path(refs["step_artifacts_dir"]))
+        if stage_id == "review":
+            return self._path_timestamp_iso(Path(refs["review_report_json"])) or self._path_timestamp_iso(Path(refs["review_report_md"]))
+        if stage_id == "qa":
+            return self._path_timestamp_iso(Path(refs["test_report_json"])) or self._path_timestamp_iso(Path(refs["test_report_md"]))
+        if stage_id == "pr_ready" and bool(current_state.get("pr_ready")):
+            return self._string_or_none(current_state.get("lifecycle_changed_at"))
+        return None
+
+    def _stage_agents(
+        self,
+        stage_id: str,
+        *,
+        project_id: int,
+        owner_agent: Optional[str],
+        helper_agents: List[str],
+        stage_status: str,
+        active_stage: str,
+    ) -> List[schemas.WorkItemRuntimeAgentOut]:
+        agent_status = "ready"
+        if active_stage == stage_id:
+            if stage_status in {"running", "waiting_for_clarification", "blocked", "failed"}:
+                agent_status = stage_status
+        agents: List[schemas.WorkItemRuntimeAgentOut] = []
+        if stage_id in {"build_context", "implement", "pr_ready"} and owner_agent:
+            agents.append(
+                schemas.WorkItemRuntimeAgentOut(
+                    agent_id=owner_agent,
+                    role="owner" if stage_id != "build_context" else "context_builder",
+                    status=agent_status,
+                )
+            )
+        if stage_id == "implement":
+            for helper in helper_agents:
+                agents.append(
+                    schemas.WorkItemRuntimeAgentOut(
+                        agent_id=helper,
+                        role="helper",
+                        status=agent_status,
+                    )
+                )
+        if stage_id in {"review", "qa"}:
+            assignment = self._resolve_stage_assignment(
+                project_id,
+                "task_cycle_review" if stage_id == "review" else "task_cycle_qa",
+            )
+            agent_id = assignment.get("agent_id") or owner_agent
+            if agent_id:
+                agents.append(
+                    schemas.WorkItemRuntimeAgentOut(
+                        agent_id=agent_id,
+                        role="reviewer" if stage_id == "review" else "qa",
+                        status=agent_status,
+                        model_override=assignment.get("model_override"),
+                        reasoning_effort=assignment.get("reasoning_effort"),
+                    )
+                )
+        return agents
+
+    def _runtime_stage_artifacts(
+        self,
+        step: StepRun,
+        project,
+        *,
+        stage_id: str,
+        rework_source: Optional[str] = None,
+    ) -> List[schemas.WorkItemRuntimeArtifactOut]:
+        refs = self._artifact_refs(project, step)
+        stage_ref_map = {
+            "build_context": ("context_pack_json", "context_pack_md"),
+            "review": ("review_report_json", "review_report_md"),
+            "qa": ("test_report_json", "test_report_md"),
+        }
+        artifacts: List[schemas.WorkItemRuntimeArtifactOut] = []
+        if stage_id == "implement":
+            artifacts.extend(self._step_runtime_artifacts(step))
+        for key in stage_ref_map.get(stage_id, ()):
+            artifacts.append(self._work_item_runtime_artifact(refs[key], stage_id=stage_id, key=key))
+        if Path(refs["rework_pack_json"]).exists() and rework_source and (
+            stage_id == rework_source or (stage_id == "implement" and rework_source not in {"review", "qa"})
+        ):
+            artifacts.append(
+                self._work_item_runtime_artifact(
+                    refs["rework_pack_json"],
+                    stage_id=stage_id,
+                    key="rework_pack_json",
+                )
+            )
+        return sorted(artifacts, key=lambda artifact: artifact.created_at or "", reverse=True)
+
+    def _work_item_runtime_artifact(self, path_str: str, *, stage_id: str, key: str) -> schemas.WorkItemRuntimeArtifactOut:
+        path = Path(path_str)
+        stat = path.stat() if path.exists() else None
+        return schemas.WorkItemRuntimeArtifactOut(
+            id=key,
+            key=key,
+            stage_id=stage_id,
+            name=path.name,
+            type=self._artifact_type_from_name(path.name),
+            path=str(path),
+            source="work_item",
+            exists=path.exists(),
+            size=int(stat.st_size) if stat else 0,
+            created_at=self._path_timestamp_iso(path),
+            content_source="work_item" if path.exists() else None,
+            content_id=key if path.exists() else None,
+        )
+
+    def _step_runtime_artifacts(self, step: StepRun) -> List[schemas.WorkItemRuntimeArtifactOut]:
+        artifacts_dir = self._step_artifacts_dir(step)
+        if not artifacts_dir.exists():
+            return []
+        artifacts: List[schemas.WorkItemRuntimeArtifactOut] = []
+        for path in sorted(artifacts_dir.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            artifacts.append(
+                schemas.WorkItemRuntimeArtifactOut(
+                    id=f"step:{path.name}",
+                    key=path.name,
+                    stage_id="implement",
+                    name=path.name,
+                    type=self._artifact_type_from_name(path.name),
+                    path=str(path),
+                    source="step",
+                    exists=True,
+                    size=int(stat.st_size),
+                    created_at=self._path_timestamp_iso(path),
+                    content_source="step",
+                    content_id=path.name,
+                )
+            )
+        return artifacts
+
+    def _stage_blocking_reasons(
+        self,
+        stage_id: str,
+        *,
+        current_state: Dict[str, Any],
+        blocking_clarifications: int,
+        review_report: Dict[str, Any],
+        qa_report: Dict[str, Any],
+    ) -> List[str]:
+        reasons: List[str] = []
+        if stage_id == "build_context" and blocking_clarifications:
+            reasons.append(f"{blocking_clarifications} blocking clarification(s) open")
+        if stage_id == "implement" and current_state.get("last_failure_source") == "implement":
+            reasons.append("Implementation failed and produced a rework pack")
+        if stage_id == "review":
+            if int(current_state.get("blocking_policy_findings", 0) or 0) > 0:
+                reasons.append(f"{int(current_state.get('blocking_policy_findings', 0) or 0)} blocking policy finding(s)")
+            for finding in review_report.get("blocking_findings", [])[:2]:
+                reasons.append(str(finding))
+        if stage_id == "qa":
+            for gate in qa_report.get("gates", []):
+                findings = gate.get("findings") or []
+                if findings:
+                    reasons.append(str(findings[0].get("message") or "QA finding"))
+            reasons = reasons[:2]
+        if stage_id == "pr_ready":
+            if current_state.get("review_status") != "passed":
+                reasons.append("Review must pass before PR readiness")
+            if current_state.get("qa_status") != "passed":
+                reasons.append("QA must pass before PR readiness")
+        return reasons
+
+    def _blocking_reasons(
+        self,
+        work_item: schemas.WorkItemOut,
+        *,
+        state: Dict[str, Any],
+        stage_runs: List[schemas.WorkItemStageRunOut],
+    ) -> List[str]:
+        reasons: List[str] = []
+        if work_item.lifecycle_state != self.LIFECYCLE_ACTIVE:
+            reasons.append(f"Work item is {work_item.lifecycle_state} and read-only")
+        if work_item.blocking_clarifications:
+            reasons.append(f"{work_item.blocking_clarifications} blocking clarification(s) open")
+        if work_item.blocking_policy_findings:
+            reasons.append(f"{work_item.blocking_policy_findings} blocking policy finding(s)")
+        if state.get("last_failure_source") == "implement":
+            reasons.append("Implementation failed; rework required")
+        if state.get("last_failure_source") == "review":
+            reasons.append("Review failed; rework required")
+        if state.get("last_failure_source") == "qa":
+            reasons.append("QA failed; rework required")
+        if state.get("status") == self.STATUS_BLOCKED:
+            reasons.append("Task cycle is blocked")
+        for stage_run in stage_runs:
+            for reason in stage_run.blocking_reasons:
+                if reason not in reasons:
+                    reasons.append(reason)
+        return reasons
+
+    def _build_activity_feed(
+        self,
+        work_item: schemas.WorkItemOut,
+        *,
+        stage_runs: List[schemas.WorkItemStageRunOut],
+        latest_artifacts: List[schemas.WorkItemRuntimeArtifactOut],
+        windmill: Optional[schemas.WorkItemRuntimeWindmillOut],
+        blocking_reasons: List[str],
+    ) -> List[schemas.WorkItemRuntimeActivityOut]:
+        activity: List[schemas.WorkItemRuntimeActivityOut] = []
+        for stage_run in stage_runs:
+            activity.append(
+                schemas.WorkItemRuntimeActivityOut(
+                    id=f"stage:{stage_run.stage_id}",
+                    kind="stage",
+                    stage_id=stage_run.stage_id,
+                    status=stage_run.status,
+                    message=stage_run.summary or f"{stage_run.stage_name} is {stage_run.status.replace('_', ' ')}",
+                    created_at=stage_run.finished_at or stage_run.started_at,
+                    agent_id=stage_run.agent_assignments[0].agent_id if stage_run.agent_assignments else None,
+                    run_id=stage_run.run_ids[0] if stage_run.run_ids else None,
+                    windmill_job_id=stage_run.windmill_job_id,
+                )
+            )
+        for artifact in latest_artifacts[:5]:
+            activity.append(
+                schemas.WorkItemRuntimeActivityOut(
+                    id=f"artifact:{artifact.id}",
+                    kind="artifact",
+                    stage_id=artifact.stage_id,
+                    status="created",
+                    message=f"{self._stage_name(artifact.stage_id)} produced {artifact.name}",
+                    created_at=artifact.created_at,
+                    artifact_key=artifact.key,
+                )
+            )
+        for index, reason in enumerate(blocking_reasons):
+            activity.append(
+                schemas.WorkItemRuntimeActivityOut(
+                    id=f"blocker:{index}",
+                    kind="blocker",
+                    stage_id=work_item.active_stage,
+                    status="blocked",
+                    message=reason,
+                )
+            )
+        if windmill and windmill.job_id:
+            activity.append(
+                schemas.WorkItemRuntimeActivityOut(
+                    id="windmill:active",
+                    kind="windmill",
+                    stage_id="implement",
+                    status=work_item.active_stage_status,
+                    message=f"Windmill job {windmill.job_id}",
+                    run_id=windmill.run_id,
+                    windmill_job_id=windmill.job_id,
+                )
+            )
+        return sorted(activity, key=lambda item: item.created_at or "", reverse=True)
+
+    def _windmill_projection(self, run, step: StepRun) -> schemas.WorkItemRuntimeWindmillOut:
+        job_runs = self.db.list_job_runs(step_run_id=step.id, limit=5)
+        latest_job_run = job_runs[0] if job_runs else None
+        flow_id = None
+        if latest_job_run:
+            flow_id = self._string_or_none((latest_job_run.params or {}).get("flow_id"))
+        if not flow_id:
+            flow_id = self._string_or_none(run.windmill_flow_id)
+        return schemas.WorkItemRuntimeWindmillOut(
+            flow_id=flow_id,
+            job_id=latest_job_run.windmill_job_id if latest_job_run else None,
+            module_id=self._job_run_module_id(latest_job_run),
+            run_id=latest_job_run.run_id if latest_job_run else None,
+        )
+
+    def _job_run_module_id(self, job_run) -> Optional[str]:
+        if job_run is None:
+            return None
+        params = job_run.params or {}
+        result = job_run.result or {}
+        for key in ("module_id", "module", "script_path", "stage"):
+            value = params.get(key)
+            if value:
+                return str(value)
+        for key in ("module_id", "module", "script_path", "stage"):
+            value = result.get(key)
+            if value:
+                return str(value)
+        return None
+
+    def _stage_name(self, stage_id: str) -> str:
+        for current_stage_id, stage_name in self.STAGES:
+            if current_stage_id == stage_id:
+                return stage_name
+        return stage_id.replace("_", " ").title()
+
+    def _path_timestamp_iso(self, path: Path) -> Optional[str]:
+        if not path.exists():
+            return None
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            return None
 
     def _task_dir(self, project, step: StepRun) -> Path:
         run = self.db.get_protocol_run(step.protocol_run_id)

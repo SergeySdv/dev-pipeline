@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
+COMPOSE_FILE="${COMPOSE_FILE:-$PROJECT_DIR/docker-compose.devgodzilla.yml}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -73,6 +73,15 @@ FRONTEND_HOSTNAME="${FRONTEND_HOSTNAME:-0.0.0.0}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
+INFRA_SERVICES=(
+  db
+  redis
+  windmill
+  windmill_worker
+  windmill_worker_native
+  lsp
+  nginx
+)
 
 ensure_run_dir() {
   mkdir -p "$RUN_DIR"
@@ -310,19 +319,20 @@ print_usage() {
 Usage: scripts/run-local-dev.sh <command>
 
 Commands:
-  up          Build and start full stack (infra + api + frontend)
+  up          Build and start Docker infra for hybrid local dev
   down        Stop Docker infra
   clean       Stop Docker infra and remove volumes
   status      Show Docker infra status
   logs        Tail Docker infra logs
   backend     Manage backend locally (start|stop|restart|status)
   frontend    Manage frontend locally (start|stop|restart|status)
-  dev         Start infra + run backend + frontend together
+  dev         Start infra + run backend + frontend locally
   import      Import Windmill assets into local Windmill
   env         Print local dev environment variables
   help        Show this help
 
 Notes:
+  - Default compose file: docker-compose.devgodzilla.yml (override with COMPOSE_FILE)
   - Default backend port: 8000 (override with BACKEND_PORT)
   - Default frontend port: 3000 (override with FRONTEND_PORT)
   - Default frontend hostname: 0.0.0.0 (override with FRONTEND_HOSTNAME)
@@ -331,7 +341,7 @@ EOF
 
 infra_up() {
   ensure_docker
-  compose_cmd up -d --build
+  compose_cmd up -d "${INFRA_SERVICES[@]}"
   log "Stack started. App: http://localhost:8080/console  Windmill: http://localhost:8080"
 }
 

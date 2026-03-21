@@ -213,6 +213,129 @@ def test_task_cycle_review_qa_and_pr_ready(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_runtime_projection_exposes_stage_timeline_and_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+    from devgodzilla.qa.gates.interface import GateResult, GateVerdict
+    from devgodzilla.services.quality import QAResult, QAVerdict
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "plan.md").write_text("# Plan\n", encoding="utf-8")
+        (protocol_root / "step-01-demo.md").write_text(
+            "# Demo step\n\n- [ ] update README.md\n- [ ] add tests\n",
+            encoding="utf-8",
+        )
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="running",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        run = db.update_protocol_windmill(run.id, windmill_flow_id="f/devgodzilla/brownfield_feature")
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="completed",
+            assigned_agent="dev",
+        )
+        artifacts_dir = protocol_root / ".devgodzilla" / "steps" / str(step.id) / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (artifacts_dir / "execution.log").write_text("implemented\n", encoding="utf-8")
+        (artifacts_dir / "changes.diff").write_text("diff --git a/README.md b/README.md\n", encoding="utf-8")
+        db.create_job_run(
+            run_id="run-step-1",
+            job_type="execute",
+            status="succeeded",
+            run_kind="engine",
+            project_id=project.id,
+            protocol_run_id=run.id,
+            step_run_id=step.id,
+            params={"flow_id": "f/devgodzilla/brownfield_feature", "module_id": "step_execute"},
+            windmill_job_id="wm-123",
+        )
+
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.PolicyService.evaluate_step",
+            lambda self, step_run_id, repo_root=None: [],
+        )
+
+        def _fake_run_qa(self, step_run_id, gates=None, skip_gates=None, **kwargs):
+            return QAResult(
+                step_run_id=step_run_id,
+                verdict=QAVerdict.PASS,
+                gate_results=[
+                    GateResult(gate_id="lint", gate_name="Lint", verdict=GateVerdict.PASS),
+                ],
+                duration_seconds=0.1,
+            )
+
+        monkeypatch.setattr("devgodzilla.services.task_cycle.QualityService.run_qa", _fake_run_qa)
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.QualityService.persist_verdict",
+            lambda self, qa_result, step_run_id, report_path=None: None,
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                assert client.post(f"/work-items/{step.id}/build-context", json={"refresh": False}).status_code == 200
+                assert client.post(f"/work-items/{step.id}/actions/review").status_code == 200
+                assert client.post(f"/work-items/{step.id}/actions/qa", json={"gates": ["lint"]}).status_code == 200
+
+                runtime_resp = client.get(f"/work-items/{step.id}/runtime")
+                assert runtime_resp.status_code == 200
+                payload = runtime_resp.json()
+                assert payload["active_stage"] == "pr_ready"
+                assert payload["active_stage_status"] == "pending"
+                assert payload["windmill"]["job_id"] == "wm-123"
+                assert payload["windmill"]["module_id"] == "step_execute"
+                assert payload["work_item"]["active_stage"] == "pr_ready"
+                assert payload["stage_runs"][0]["stage_id"] == "build_context"
+                assert payload["stage_runs"][0]["status"] == "completed"
+                assert payload["stage_runs"][0]["mode"] == "fresh_context"
+                assert payload["stage_runs"][1]["stage_id"] == "implement"
+                assert payload["stage_runs"][1]["status"] == "completed"
+                assert any(
+                    artifact["name"] == "execution.log"
+                    for artifact in payload["stage_runs"][1]["artifacts"]
+                )
+                assert payload["stage_runs"][2]["status"] == "completed"
+                assert payload["stage_runs"][3]["status"] == "completed"
+                assert payload["latest_artifacts"]
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
 def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeypatch: pytest.MonkeyPatch) -> None:
     from devgodzilla.api.dependencies import get_db
     from devgodzilla.config import _reset_config_for_tests
@@ -334,6 +457,14 @@ def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeyp
                 listed_ids = [item["id"] for item in listed.json()]
                 assert payload["work_items"][0]["id"] in listed_ids
                 assert other_step.id not in listed_ids
+
+                event_types = [event.event_type for event in db.list_recent_events(project_id=project.id, limit=20)]
+                assert "brownfield_run_started" in event_types
+                assert "brownfield_specify_completed" in event_types
+                assert "brownfield_plan_completed" in event_types
+                assert "brownfield_tasks_completed" in event_types
+                assert "brownfield_protocol_seed_completed" in event_types
+                assert "brownfield_run_completed" in event_types
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
@@ -443,6 +574,86 @@ def test_task_cycle_start_brownfield_run_reuses_existing_protocol(monkeypatch: p
                     if run.protocol_name == first["protocol"]["protocol_name"]
                 ]
                 assert len(protocol_runs) == 1
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_start_brownfield_run_emits_failure_events_for_plan_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+    from devgodzilla.services.specification import PlanResult, SpecifyResult
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        spec_dir = repo / "specs" / "001-demo-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Demo feature\n", encoding="utf-8")
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_specify",
+            lambda self, project_path, description, feature_name=None, base_branch=None, project_id=None: SpecifyResult(
+                success=True,
+                spec_path=str(spec_path),
+                spec_number=1,
+                feature_name="demo-feature",
+                spec_run_id=11,
+                worktree_path=str(repo),
+                branch_name="001-demo-feature",
+                base_branch="main",
+                spec_root=str(spec_dir),
+            ),
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_plan",
+            lambda self, project_path, spec_path, spec_run_id=None, project_id=None: PlanResult(
+                success=False,
+                error="Plan generation produced incomplete outputs",
+                spec_run_id=spec_run_id,
+                worktree_path=str(repo),
+            ),
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.post(
+                    f"/projects/{project.id}/brownfield/run",
+                    json={
+                        "feature_request": "Add demo behavior to the brownfield project",
+                        "feature_name": "demo-feature",
+                        "output_mode": "task_cycle",
+                    },
+                )
+                assert resp.status_code == 400
+                assert "Brownfield plan failed" in resp.json()["detail"]
+
+                event_types = [event.event_type for event in db.list_recent_events(project_id=project.id, limit=20)]
+                assert "brownfield_specify_completed" in event_types
+                assert "brownfield_plan_failed" in event_types
+                assert "brownfield_run_failed" in event_types
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()

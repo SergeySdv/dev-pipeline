@@ -23,6 +23,7 @@ import type {
   ProtocolRun,
   PullRequest,
   WorkItem,
+  WorkItemRuntime,
   WorkItemLifecycleUpdate,
   WorkItemOwnerUpdate,
   WorkItemQA,
@@ -435,6 +436,23 @@ export function useBuildContextWorkItem() {
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useWorkItemRuntime(workItemId: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.workItems.runtime(workItemId as number),
+    queryFn: () => apiClient.get<WorkItemRuntime>(`/work-items/${workItemId}/runtime`),
+    enabled: !!workItemId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      if (["running", "waiting_for_clarification"].includes(data.active_stage_status)) {
+        return 3000;
+      }
+      return false;
     },
   });
 }
@@ -462,6 +480,7 @@ export function useImplementWorkItem() {
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }
@@ -487,6 +506,7 @@ export function useReviewWorkItem() {
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.invalidateQueries({ queryKey: queryKeys.workItems.detail(workItemId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }
@@ -514,6 +534,7 @@ export function useQaWorkItem() {
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), result.work_item);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }
@@ -539,6 +560,7 @@ export function useMarkPrReady() {
         queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
       });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }
@@ -562,6 +584,7 @@ export function useArchiveWorkItem() {
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId) });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }
@@ -585,6 +608,7 @@ export function useCancelWorkItem() {
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId) });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }
@@ -608,6 +632,7 @@ export function useReassignWorkItemOwner() {
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId) });
       queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
     },
   });
 }

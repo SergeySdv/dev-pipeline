@@ -68,6 +68,17 @@ def get_work_item(
         raise HTTPException(status_code=404, detail="Work item not found")
 
 
+@router.get("/work-items/{work_item_id}/runtime", response_model=schemas.WorkItemRuntimeOut)
+def get_work_item_runtime(
+    work_item_id: int,
+    service: TaskCycleService = Depends(_task_cycle_service),
+):
+    try:
+        return service.get_work_item_runtime(work_item_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Work item not found")
+
+
 @router.get("/work-items/{work_item_id}/artifacts/{artifact_key}/content", response_model=schemas.ArtifactContentOut)
 def get_work_item_artifact_content(
     work_item_id: int,
