@@ -363,6 +363,15 @@ export function useProjectTaskCycle(
       );
     },
     enabled: !!projectId,
+    refetchInterval: (query) => {
+      const items = query.state.data ?? [];
+      return items.some((item) =>
+        ["running", "pending"].includes(item.active_stage_status ?? "") ||
+        (item.status === "queued" && item.active_stage === "build_context")
+      )
+        ? 3000
+        : false;
+    },
   });
 }
 

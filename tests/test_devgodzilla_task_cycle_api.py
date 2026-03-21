@@ -566,6 +566,7 @@ def test_task_cycle_start_brownfield_run_reuses_existing_protocol(monkeypatch: p
                 assert first["protocol"] is not None
                 assert second["protocol"] is not None
                 assert second["protocol"]["id"] == first["protocol"]["id"]
+                assert "Reusing existing brownfield run" in second["warnings"]
                 assert second["work_items"][0]["id"] == first["work_items"][0]["id"]
 
                 protocol_runs = [
@@ -647,13 +648,18 @@ def test_task_cycle_start_brownfield_run_emits_failure_events_for_plan_stage(mon
                         "output_mode": "task_cycle",
                     },
                 )
-                assert resp.status_code == 400
-                assert "Brownfield plan failed" in resp.json()["detail"]
+                assert resp.status_code == 200
+                payload = resp.json()
+                assert payload["protocol"] is not None
+                assert payload["next_work_item_id"] is not None
 
                 event_types = [event.event_type for event in db.list_recent_events(project_id=project.id, limit=20)]
                 assert "brownfield_specify_completed" in event_types
                 assert "brownfield_plan_failed" in event_types
                 assert "brownfield_run_failed" in event_types
+                work_item = client.get(f"/work-items/{payload['next_work_item_id']}").json()
+                assert work_item["status"] == "blocked"
+                assert "Plan generation produced incomplete outputs" in (work_item["blocking_reason"] or "")
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()

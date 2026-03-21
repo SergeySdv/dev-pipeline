@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from devgodzilla.api import schemas
@@ -47,10 +47,22 @@ def list_task_cycle_work_items(
 def start_brownfield_run(
     project_id: int,
     request: schemas.BrownfieldRunRequest,
-    service: TaskCycleService = Depends(_task_cycle_service),
+    background_tasks: BackgroundTasks,
+    ctx: ServiceContext = Depends(get_service_context),
+    db: Database = Depends(get_db),
 ):
     try:
-        return service.start_brownfield_run(project_id, request)
+        service = TaskCycleService(ctx, db)
+        result = service.start_brownfield_run(project_id, request)
+        if result.protocol and result.next_work_item_id:
+            background_tasks.add_task(
+                TaskCycleService(ctx, db).run_brownfield_bootstrap,
+                project_id,
+                request,
+                protocol_run_id=result.protocol.id,
+                step_run_id=result.next_work_item_id,
+            )
+        return result
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
     except TaskCycleError as exc:

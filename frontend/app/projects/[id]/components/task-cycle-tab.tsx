@@ -249,6 +249,30 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
           ) : (
             workItems.map((item) => (
               <div key={item.id} className="space-y-3 rounded-lg border p-4">
+                {(() => {
+                  const bootstrapRunning =
+                    item.active_stage === "build_context" &&
+                    item.active_stage_status === "running" &&
+                    item.context_status === "missing";
+                  const canBuildContext = !bootstrapRunning;
+                  const canImplement = !bootstrapRunning && item.context_status === "ready";
+                  const canReview =
+                    !bootstrapRunning &&
+                    item.context_status === "ready" &&
+                    ["awaiting_review", "needs_rework", "needs_qa", "ready_for_pr"].includes(
+                      item.status
+                    );
+                  const canQa =
+                    !bootstrapRunning &&
+                    item.context_status === "ready" &&
+                    item.review_status === "approved";
+                  const canMarkPrReady =
+                    !bootstrapRunning &&
+                    item.context_status === "ready" &&
+                    item.review_status === "approved" &&
+                    item.qa_status === "passed";
+                  return (
+                    <>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -374,6 +398,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={!canBuildContext}
                       onClick={() =>
                         withToast(
                           () =>
@@ -393,6 +418,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={!canImplement}
                       onClick={() =>
                         withToast(
                           () =>
@@ -412,6 +438,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={!canReview}
                       onClick={() =>
                         withToast(
                           () =>
@@ -430,6 +457,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={!canQa}
                       onClick={() =>
                         withToast(
                           () =>
@@ -449,6 +477,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={!canMarkPrReady}
                       onClick={() =>
                         withToast(
                           () =>
@@ -510,6 +539,9 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     This work item is {item.lifecycle_state} and is now read-only.
                   </div>
                 )}
+                    </>
+                  );
+                })()}
               </div>
             ))
           )}

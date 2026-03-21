@@ -45,6 +45,7 @@ class SpecToProtocolService(Service):
         tasks_path: Optional[str] = None,
         protocol_name: Optional[str] = None,
         spec_run_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
         overwrite: bool = False,
         collapse_to_single_step: bool = False,
     ) -> SpecToProtocolResult:
@@ -115,7 +116,17 @@ class SpecToProtocolService(Service):
             self._ensure_runtime_support_files(protocol_root, protocol_name)
 
         run = None
-        if not overwrite:
+        if protocol_run_id:
+            try:
+                existing = self.db.get_protocol_run(protocol_run_id)
+            except Exception:
+                existing = None
+            if existing is None:
+                return SpecToProtocolResult(success=False, error=f"Protocol run not found: {protocol_run_id}")
+            if existing.project_id != project_id:
+                return SpecToProtocolResult(success=False, error="Protocol run does not belong to the requested project")
+            run = existing
+        elif not overwrite:
             run = self._find_reusable_protocol_run(
                 project_id=project_id,
                 protocol_name=protocol_name,

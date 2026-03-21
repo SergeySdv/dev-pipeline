@@ -171,7 +171,84 @@ class TaskCycleService(Service):
         if not project.local_path:
             raise TaskCycleError("Project has no local path")
         resolved_owner_agent = self._resolve_owner_agent(project.id, request.owner_agent)
+        protocol_name = self._brownfield_protocol_name(request)
+        existing_run = self._find_reusable_brownfield_run(project_id, protocol_name, request.output_mode)
+        if existing_run is not None:
+            existing_items = self.list_work_items(project_id, protocol_run_id=existing_run.id)
+            next_work_item_id = next((item.id for item in existing_items if not item.pr_ready), None)
+            return schemas.BrownfieldRunOut(
+                success=True,
+                project_id=project_id,
+                output_mode=request.output_mode,
+                protocol=schemas.ProtocolOut.model_validate(existing_run),
+                work_items=existing_items,
+                next_work_item_id=next_work_item_id,
+                warnings=["Reusing existing brownfield run"],
+            )
+        protocol_run = self.db.create_protocol_run(
+            project_id=project_id,
+            protocol_name=protocol_name,
+            status="planning",
+            base_branch=request.branch or project.base_branch or "main",
+            worktree_path=project.local_path,
+            description=request.feature_request,
+        )
+        helper_agents = request.helper_agents if (request.allow_helper_agents or request.helper_agents) else []
+        protocol_metadata = {
+            "task_cycle": request.output_mode == "task_cycle",
+            "brownfield_output_mode": request.output_mode,
+            "brownfield_bootstrap_status": "queued",
+            "brownfield_bootstrap_stage": "queued",
+            "feature_name": request.feature_name,
+            "feature_request_preview": (request.feature_request or "")[:200],
+        }
+        protocol_run = self.db.update_protocol_windmill(protocol_run.id, speckit_metadata=protocol_metadata)
 
+        step = self.db.create_step_run(
+            protocol_run_id=protocol_run.id,
+            step_index=1,
+            step_name=self._brownfield_step_name(protocol_name),
+            step_type="execute",
+            status="pending",
+            assigned_agent=resolved_owner_agent,
+        )
+        step = self.db.update_step_run(step.id, summary=request.feature_request[:1000])
+        self._seed_task_cycle_metadata(
+            protocol_run.id,
+            owner_agent=resolved_owner_agent,
+            helper_agents=helper_agents,
+        )
+        self._set_brownfield_bootstrap_state(
+            protocol_run_id=protocol_run.id,
+            step_run_id=step.id,
+            project_id=project_id,
+            stage="queued",
+            status="queued",
+            message="Brownfield run queued",
+        )
+        work_item = self.get_work_item(step.id)
+        return schemas.BrownfieldRunOut(
+            success=True,
+            project_id=project_id,
+            output_mode=request.output_mode,
+            protocol=schemas.ProtocolOut.model_validate(protocol_run),
+            work_items=[work_item],
+            next_work_item_id=work_item.id,
+            warnings=[],
+        )
+
+    def run_brownfield_bootstrap(
+        self,
+        project_id: int,
+        request: schemas.BrownfieldRunRequest,
+        *,
+        protocol_run_id: int,
+        step_run_id: int,
+    ) -> None:
+        project = self.db.get_project(project_id)
+        protocol_run = self.db.get_protocol_run(protocol_run_id)
+        resolved_owner_agent = self._resolve_owner_agent(project.id, request.owner_agent)
+        helper_agents = request.helper_agents if (request.allow_helper_agents or request.helper_agents) else []
         spec_service = SpecificationService(self.context, self.db)
         protocol_service = SpecToProtocolService(self.context, self.db)
         event_metadata = {
@@ -179,243 +256,354 @@ class TaskCycleService(Service):
             "feature_request_preview": (request.feature_request or "")[:200],
             "output_mode": request.output_mode,
             "branch": request.branch,
+            "protocol_run_id": protocol_run_id,
+            "step_run_id": step_run_id,
         }
         self._append_project_event(
             project_id,
             event_type="brownfield_run_started",
             message=f"Starting brownfield run: {(request.feature_name or request.feature_request[:60]).strip()}",
             metadata=event_metadata,
+            protocol_run_id=protocol_run_id,
+            step_run_id=step_run_id,
         )
 
-        self._append_project_event(
-            project_id,
-            event_type="brownfield_specify_started",
-            message="Starting brownfield specify stage",
-            metadata=event_metadata,
-        )
-        specify = spec_service.run_specify(
-            project.local_path,
-            request.feature_request,
-            feature_name=request.feature_name,
-            base_branch=request.branch,
-            project_id=project_id,
-        )
-        if not specify.success or not specify.spec_path:
-            error = specify.error or "Spec generation failed"
-            failure_metadata = {**event_metadata, "stage": "specify", "spec_run_id": specify.spec_run_id, "error": error}
+        try:
             self._append_project_event(
                 project_id,
-                event_type="brownfield_specify_failed",
-                message=f"Brownfield specify failed: {error}",
-                metadata=failure_metadata,
+                event_type="brownfield_specify_started",
+                message="Starting brownfield specify stage",
+                metadata=event_metadata,
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
             )
-            self._append_project_event(
-                project_id,
-                event_type="brownfield_run_failed",
-                message=f"Brownfield run failed during specify: {error}",
-                metadata=failure_metadata,
-            )
-            raise TaskCycleError(f"Brownfield specify failed: {error}")
-        self._append_project_event(
-            project_id,
-            event_type="brownfield_specify_completed",
-            message="Brownfield specify stage completed",
-            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
-        )
-
-        self._append_project_event(
-            project_id,
-            event_type="brownfield_plan_started",
-            message="Starting brownfield plan stage",
-            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
-        )
-        plan = spec_service.run_plan(
-            project.local_path,
-            specify.spec_path,
-            spec_run_id=specify.spec_run_id,
-            project_id=project_id,
-        )
-        if not plan.success or not plan.plan_path:
-            error = plan.error or "Plan generation failed"
-            failure_metadata = {
-                **event_metadata,
-                "stage": "plan",
-                "spec_run_id": specify.spec_run_id,
-                "spec_path": specify.spec_path,
-                "error": error,
-            }
-            self._append_project_event(
-                project_id,
-                event_type="brownfield_plan_failed",
-                message=f"Brownfield plan failed: {error}",
-                metadata=failure_metadata,
-            )
-            self._append_project_event(
-                project_id,
-                event_type="brownfield_run_failed",
-                message=f"Brownfield run failed during plan: {error}",
-                metadata=failure_metadata,
-            )
-            raise TaskCycleError(f"Brownfield plan failed: {error}")
-        self._append_project_event(
-            project_id,
-            event_type="brownfield_plan_completed",
-            message="Brownfield plan stage completed",
-            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
-        )
-
-        self._append_project_event(
-            project_id,
-            event_type="brownfield_tasks_started",
-            message="Starting brownfield tasks stage",
-            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
-        )
-        tasks = spec_service.run_tasks(
-            project.local_path,
-            plan.plan_path,
-            spec_run_id=specify.spec_run_id,
-            project_id=project_id,
-        )
-        if not tasks.success or not tasks.tasks_path:
-            error = tasks.error or "Task generation failed"
-            failure_metadata = {
-                **event_metadata,
-                "stage": "tasks",
-                "spec_run_id": specify.spec_run_id,
-                "plan_path": plan.plan_path,
-                "error": error,
-            }
-            self._append_project_event(
-                project_id,
-                event_type="brownfield_tasks_failed",
-                message=f"Brownfield tasks failed: {error}",
-                metadata=failure_metadata,
-            )
-            self._append_project_event(
-                project_id,
-                event_type="brownfield_run_failed",
-                message=f"Brownfield run failed during tasks: {error}",
-                metadata=failure_metadata,
-            )
-            raise TaskCycleError(f"Brownfield tasks failed: {error}")
-        self._append_project_event(
-            project_id,
-            event_type="brownfield_tasks_completed",
-            message="Brownfield tasks stage completed",
-            metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
-        )
-
-        warnings: List[str] = []
-        protocol_out = None
-        work_items: List[schemas.WorkItemOut] = []
-        next_work_item_id: Optional[int] = None
-
-        if request.output_mode in {"task_cycle", "protocol"}:
-            self._append_project_event(
-                project_id,
-                event_type="brownfield_protocol_seed_started",
-                message="Starting brownfield protocol seed stage",
-                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
-            )
-            protocol = protocol_service.create_protocol_from_spec(
+            self._set_brownfield_bootstrap_state(
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
                 project_id=project_id,
-                spec_path=specify.spec_path,
-                tasks_path=tasks.tasks_path,
-                protocol_name=request.protocol_name,
-                spec_run_id=specify.spec_run_id,
-                overwrite=request.overwrite_protocol,
-                collapse_to_single_step=request.output_mode == "task_cycle",
+                stage="specify",
+                status="running",
+                message="Bootstrapping brownfield run: specify",
             )
-            if not protocol.success or not protocol.protocol_run_id:
-                error = protocol.error or "Protocol creation failed"
-                failure_metadata = {
-                    **event_metadata,
-                    "stage": "protocol_seed",
-                    "spec_run_id": specify.spec_run_id,
-                    "tasks_path": tasks.tasks_path,
-                    "error": error,
-                }
-                self._append_project_event(
+            specify = spec_service.run_specify(
+                project.local_path,
+                request.feature_request,
+                feature_name=request.feature_name,
+                base_branch=request.branch,
+                project_id=project_id,
+            )
+            if not specify.success or not specify.spec_path:
+                error = specify.error or "Spec generation failed"
+                self._mark_brownfield_bootstrap_failed(
                     project_id,
-                    event_type="brownfield_protocol_seed_failed",
-                    message=f"Brownfield protocol seed failed: {error}",
-                    metadata=failure_metadata,
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=step_run_id,
+                    stage="specify",
+                    error=error,
+                    metadata={**event_metadata, "spec_run_id": specify.spec_run_id},
                 )
-                self._append_project_event(
-                    project_id,
-                    event_type="brownfield_run_failed",
-                    message=f"Brownfield run failed during protocol seed: {error}",
-                    metadata=failure_metadata,
-                )
-                raise TaskCycleError(f"Brownfield protocol seed failed: {error}")
-            warnings.extend(protocol.warnings)
-            protocol_run = self.db.get_protocol_run(protocol.protocol_run_id)
-            protocol_metadata = dict(protocol_run.speckit_metadata or {})
-            protocol_metadata.update(
-                {
-                    "task_cycle": request.output_mode == "task_cycle",
-                    "brownfield_output_mode": request.output_mode,
-                    "spec_run_id": specify.spec_run_id,
-                    "spec_path": specify.spec_path,
-                    "plan_path": plan.plan_path,
-                    "tasks_path": tasks.tasks_path,
-                }
-            )
-            protocol_run = self.db.update_protocol_windmill(
-                protocol.protocol_run_id,
-                speckit_metadata=protocol_metadata,
-            )
-            protocol_out = schemas.ProtocolOut.model_validate(protocol_run)
-            self._seed_task_cycle_metadata(
-                protocol.protocol_run_id,
-                owner_agent=resolved_owner_agent,
-                helper_agents=request.helper_agents if (request.allow_helper_agents or request.helper_agents) else [],
-            )
-            work_items = self.list_work_items(project_id, protocol_run_id=protocol.protocol_run_id)
-            next_work_item_id = next((item.id for item in work_items if not item.pr_ready), None)
+                return
             self._append_project_event(
                 project_id,
-                event_type="brownfield_protocol_seed_completed",
-                message="Brownfield protocol seed stage completed",
-                metadata={
-                    **event_metadata,
-                    "spec_run_id": specify.spec_run_id,
-                    "protocol_run_id": protocol.protocol_run_id,
-                    "tasks_path": tasks.tasks_path,
-                },
-                protocol_run_id=protocol.protocol_run_id,
+                event_type="brownfield_specify_completed",
+                message="Brownfield specify stage completed",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
             )
 
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_plan_started",
+                message="Starting brownfield plan stage",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+            self._set_brownfield_bootstrap_state(
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+                project_id=project_id,
+                stage="plan",
+                status="running",
+                message="Bootstrapping brownfield run: plan",
+                spec_run_id=specify.spec_run_id,
+            )
+            plan = spec_service.run_plan(
+                project.local_path,
+                specify.spec_path,
+                spec_run_id=specify.spec_run_id,
+                project_id=project_id,
+            )
+            if not plan.success or not plan.plan_path:
+                error = plan.error or "Plan generation failed"
+                self._mark_brownfield_bootstrap_failed(
+                    project_id,
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=step_run_id,
+                    stage="plan",
+                    error=error,
+                    metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "spec_path": specify.spec_path},
+                )
+                return
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_plan_completed",
+                message="Brownfield plan stage completed",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_tasks_started",
+                message="Starting brownfield tasks stage",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+            self._set_brownfield_bootstrap_state(
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+                project_id=project_id,
+                stage="tasks",
+                status="running",
+                message="Bootstrapping brownfield run: tasks",
+                spec_run_id=specify.spec_run_id,
+            )
+            tasks = spec_service.run_tasks(
+                project.local_path,
+                plan.plan_path,
+                spec_run_id=specify.spec_run_id,
+                project_id=project_id,
+            )
+            if not tasks.success or not tasks.tasks_path:
+                error = tasks.error or "Task generation failed"
+                self._mark_brownfield_bootstrap_failed(
+                    project_id,
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=step_run_id,
+                    stage="tasks",
+                    error=error,
+                    metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "plan_path": plan.plan_path},
+                )
+                return
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_tasks_completed",
+                message="Brownfield tasks stage completed",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+
+            if request.output_mode in {"task_cycle", "protocol"}:
+                self._append_project_event(
+                    project_id,
+                    event_type="brownfield_protocol_seed_started",
+                    message="Starting brownfield protocol seed stage",
+                    metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=step_run_id,
+                )
+                self._set_brownfield_bootstrap_state(
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=step_run_id,
+                    project_id=project_id,
+                    stage="protocol_seed",
+                    status="running",
+                    message="Bootstrapping brownfield run: protocol seed",
+                    spec_run_id=specify.spec_run_id,
+                )
+                protocol = protocol_service.create_protocol_from_spec(
+                    project_id=project_id,
+                    spec_path=specify.spec_path,
+                    tasks_path=tasks.tasks_path,
+                    protocol_name=protocol_run.protocol_name,
+                    spec_run_id=specify.spec_run_id,
+                    protocol_run_id=protocol_run_id,
+                    overwrite=True,
+                    collapse_to_single_step=request.output_mode == "task_cycle",
+                )
+                if not protocol.success or not protocol.protocol_run_id:
+                    error = protocol.error or "Protocol creation failed"
+                    self._mark_brownfield_bootstrap_failed(
+                        project_id,
+                        protocol_run_id=protocol_run_id,
+                        step_run_id=step_run_id,
+                        stage="protocol_seed",
+                        error=error,
+                        metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
+                    )
+                    return
+                protocol_run = self.db.get_protocol_run(protocol_run_id)
+                protocol_metadata = dict(protocol_run.speckit_metadata or {})
+                protocol_metadata.update(
+                    {
+                        "task_cycle": request.output_mode == "task_cycle",
+                        "brownfield_output_mode": request.output_mode,
+                        "brownfield_bootstrap_status": "completed",
+                        "brownfield_bootstrap_stage": "completed",
+                        "spec_run_id": specify.spec_run_id,
+                        "spec_path": specify.spec_path,
+                        "plan_path": plan.plan_path,
+                        "tasks_path": tasks.tasks_path,
+                    }
+                )
+                self.db.update_protocol_windmill(protocol_run_id, speckit_metadata=protocol_metadata)
+                self._seed_task_cycle_metadata(
+                    protocol_run_id,
+                    owner_agent=resolved_owner_agent,
+                    helper_agents=helper_agents,
+                )
+                self._append_project_event(
+                    project_id,
+                    event_type="brownfield_protocol_seed_completed",
+                    message="Brownfield protocol seed stage completed",
+                    metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "tasks_path": tasks.tasks_path},
+                    protocol_run_id=protocol_run_id,
+                    step_run_id=step_run_id,
+                )
+
+            self._set_brownfield_bootstrap_state(
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+                project_id=project_id,
+                stage="completed",
+                status="completed",
+                message="Brownfield bootstrap completed",
+                spec_run_id=specify.spec_run_id,
+            )
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_run_completed",
+                message="Brownfield run completed",
+                metadata={**event_metadata, "spec_run_id": specify.spec_run_id, "next_work_item_id": step_run_id},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+        except Exception as exc:
+            self._mark_brownfield_bootstrap_failed(
+                project_id,
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+                stage="internal",
+                error=str(exc),
+                metadata=event_metadata,
+            )
+
+    def _brownfield_protocol_name(self, request: schemas.BrownfieldRunRequest) -> str:
+        raw = (
+            self._string_or_none(request.protocol_name)
+            or self._string_or_none(request.feature_name)
+            or (request.feature_request or "").strip()[:50]
+            or "brownfield-task"
+        )
+        return self._slugify(raw) or "brownfield-task"
+
+    def _brownfield_step_name(self, protocol_name: str) -> str:
+        return f"step-01-{self._slugify(protocol_name) or 'brownfield-task'}"
+
+    def _find_reusable_brownfield_run(self, project_id: int, protocol_name: str, output_mode: str):
+        for run in self.db.list_protocol_runs(project_id):
+            metadata = dict(run.speckit_metadata or {})
+            if run.protocol_name != protocol_name:
+                continue
+            if (metadata.get("brownfield_output_mode") or "task_cycle") != output_mode:
+                continue
+            if run.status in {"failed", "completed", "cancelled"}:
+                continue
+            if metadata.get("task_cycle") or metadata.get("brownfield_output_mode"):
+                return run
+        return None
+
+    def _set_brownfield_bootstrap_state(
+        self,
+        *,
+        protocol_run_id: int,
+        step_run_id: int,
+        project_id: int,
+        stage: str,
+        status: str,
+        message: str,
+        spec_run_id: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        protocol_run = self.db.get_protocol_run(protocol_run_id)
+        protocol_metadata = dict(protocol_run.speckit_metadata or {})
+        protocol_metadata.update(
+            {
+                "task_cycle": bool(protocol_metadata.get("task_cycle")),
+                "brownfield_bootstrap_stage": stage,
+                "brownfield_bootstrap_status": status,
+                "brownfield_bootstrap_error": error,
+            }
+        )
+        if spec_run_id is not None:
+            protocol_metadata["spec_run_id"] = spec_run_id
+        self.db.update_protocol_windmill(protocol_run_id, speckit_metadata=protocol_metadata)
+
+        step = self.db.get_step_run(step_run_id)
+        project = self.db.get_project(project_id)
+        state = self._task_cycle_state(step, project)
+        state["bootstrap_stage"] = stage
+        state["bootstrap_status"] = status
+        state["bootstrap_error"] = error
+        if spec_run_id is not None:
+            state["spec_run_id"] = spec_run_id
+        if status == "failed":
+            state["status"] = self.STATUS_BLOCKED
+            state["last_failure_source"] = "bootstrap"
+        elif status in {"queued", "running"}:
+            state["status"] = self.STATUS_QUEUED
+            state["last_failure_source"] = None
+        self._persist_task_cycle_state(step, state)
+        self.db.update_step_run(step_run_id, summary=message)
+
+    def _mark_brownfield_bootstrap_failed(
+        self,
+        project_id: int,
+        *,
+        protocol_run_id: int,
+        step_run_id: int,
+        stage: str,
+        error: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        failure_metadata = {**(metadata or {}), "stage": stage, "error": error}
+        self._set_brownfield_bootstrap_state(
+            protocol_run_id=protocol_run_id,
+            step_run_id=step_run_id,
+            project_id=project_id,
+            stage=stage,
+            status="failed",
+            message=f"Brownfield bootstrap failed during {stage}: {error}",
+            spec_run_id=failure_metadata.get("spec_run_id"),
+            error=error,
+        )
+        self.db.update_protocol_status(protocol_run_id, "failed")
         self._append_project_event(
             project_id,
-            event_type="brownfield_run_completed",
-            message="Brownfield run completed",
-            metadata={
-                **event_metadata,
-                "spec_run_id": specify.spec_run_id,
-                "protocol_run_id": protocol_out.id if protocol_out is not None else None,
-                "next_work_item_id": next_work_item_id,
-            },
-            protocol_run_id=protocol_out.id if protocol_out is not None else None,
+            event_type=f"brownfield_{stage}_failed",
+            message=f"Brownfield {stage} failed: {error}",
+            metadata=failure_metadata,
+            protocol_run_id=protocol_run_id,
+            step_run_id=step_run_id,
         )
-
-        return schemas.BrownfieldRunOut(
-            success=True,
-            project_id=project_id,
-            output_mode=request.output_mode,
-            spec_run_id=specify.spec_run_id,
-            spec_path=specify.spec_path,
-            plan_path=plan.plan_path,
-            tasks_path=tasks.tasks_path,
-            protocol=protocol_out,
-            work_items=work_items,
-            next_work_item_id=next_work_item_id,
-            warnings=warnings,
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_run_failed",
+            message=f"Brownfield run failed during {stage}: {error}",
+            metadata=failure_metadata,
+            protocol_run_id=protocol_run_id,
+            step_run_id=step_run_id,
         )
 
     def build_context(self, step_run_id: int, *, refresh: bool = False) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
         self._ensure_work_item_active(step, project)
+        self._ensure_bootstrap_ready(step, project)
         task_dir = self._task_dir(project, step)
         refs = self._artifact_refs(project, step)
         context_json = Path(refs["context_pack_json"])
@@ -508,6 +696,7 @@ class TaskCycleService(Service):
         step, run, project = self._load_work_item(step_run_id)
         state = self._task_cycle_state(step, project)
         self._ensure_work_item_active(step, project, state=state)
+        self._ensure_bootstrap_ready(step, project, state=state)
         implement_override = self._resolve_stage_assignment(project.id, "task_cycle_implement")
         resolved_owner_agent = self._resolve_owner_agent(
             project.id,
@@ -567,6 +756,7 @@ class TaskCycleService(Service):
     def review(self, step_run_id: int) -> Tuple[schemas.WorkItemOut, schemas.WorkItemReviewOut]:
         step, run, project = self._load_work_item(step_run_id)
         self._ensure_work_item_active(step, project)
+        self._ensure_bootstrap_ready(step, project)
         self.build_context(step.id, refresh=False)
         refs = self._artifact_refs(project, step)
         task_dir = Path(refs["task_dir"])
@@ -656,6 +846,7 @@ class TaskCycleService(Service):
         refs = self._artifact_refs(project, step)
         state = self._task_cycle_state(step, project)
         self._ensure_work_item_active(step, project, state=state)
+        self._ensure_bootstrap_ready(step, project, state=state)
         qa_override = self._resolve_stage_assignment(project.id, "task_cycle_qa")
         step_artifacts_dir = Path(refs["step_artifacts_dir"])
         context_pack_json = Path(refs["context_pack_json"])
@@ -756,6 +947,7 @@ class TaskCycleService(Service):
     def mark_pr_ready(self, step_run_id: int) -> schemas.WorkItemOut:
         step, run, project = self._load_work_item(step_run_id)
         self._ensure_work_item_active(step, project)
+        self._ensure_bootstrap_ready(step, project)
         self.build_context(step.id, refresh=False)
         state = self._task_cycle_state(step, project)
         refs = self._artifact_refs(project, step)
@@ -850,6 +1042,10 @@ class TaskCycleService(Service):
             "blocking_policy_findings": int(current.get("blocking_policy_findings", 0) or 0),
             "last_failure_source": current.get("last_failure_source"),
             "lifecycle_changed_at": current.get("lifecycle_changed_at"),
+            "bootstrap_stage": current.get("bootstrap_stage"),
+            "bootstrap_status": current.get("bootstrap_status"),
+            "bootstrap_error": current.get("bootstrap_error"),
+            "spec_run_id": current.get("spec_run_id"),
         }
         return state
 
@@ -860,6 +1056,16 @@ class TaskCycleService(Service):
             raise TaskCycleError("Archived work items are read-only")
         if lifecycle_state == self.LIFECYCLE_CANCELED:
             raise TaskCycleError("Canceled work items are read-only")
+
+    def _ensure_bootstrap_ready(self, step: StepRun, project, *, state: Optional[Dict[str, Any]] = None) -> None:
+        current = state or self._task_cycle_state(step, project)
+        bootstrap_status = self._string_or_none(current.get("bootstrap_status"))
+        if bootstrap_status in {"queued", "running"}:
+            stage = self._string_or_none(current.get("bootstrap_stage")) or "bootstrap"
+            raise TaskCycleError(f"Brownfield bootstrap is still running ({stage})")
+        if bootstrap_status == "failed":
+            detail = self._string_or_none(current.get("bootstrap_error")) or "Brownfield bootstrap failed"
+            raise TaskCycleError(detail)
 
     def _is_task_cycle_run(self, run) -> bool:
         metadata = dict(run.speckit_metadata or {})
@@ -1183,6 +1389,11 @@ class TaskCycleService(Service):
         return stage_runs
 
     def _context_stage_status(self, *, current_state: Dict[str, Any], blocking_clarifications: int, context_exists: bool) -> str:
+        bootstrap_status = self._string_or_none(current_state.get("bootstrap_status"))
+        if bootstrap_status == "running":
+            return "running"
+        if bootstrap_status == "failed":
+            return "failed"
         if current_state.get("context_status") == "needs_clarification" or blocking_clarifications:
             return "waiting_for_clarification"
         if context_exists:
@@ -1263,6 +1474,12 @@ class TaskCycleService(Service):
         rework_pack: Dict[str, Any],
     ) -> str:
         if stage_id == "build_context":
+            bootstrap_status = self._string_or_none(current_state.get("bootstrap_status"))
+            if bootstrap_status == "running":
+                stage = self._string_or_none(current_state.get("bootstrap_stage")) or "bootstrap"
+                return f"Bootstrapping brownfield run: {stage.replace('_', ' ')}"
+            if bootstrap_status == "failed":
+                return self._string_or_none(current_state.get("bootstrap_error")) or "Brownfield bootstrap failed"
             if status == "waiting_for_clarification":
                 return "Context pack is ready, but blocking clarifications must be resolved"
             goal = self._string_or_none(context_pack.get("goal"))
@@ -1456,6 +1673,8 @@ class TaskCycleService(Service):
         reasons: List[str] = []
         if stage_id == "build_context" and blocking_clarifications:
             reasons.append(f"{blocking_clarifications} blocking clarification(s) open")
+        if stage_id == "build_context" and self._string_or_none(current_state.get("bootstrap_status")) == "failed":
+            reasons.append(self._string_or_none(current_state.get("bootstrap_error")) or "Brownfield bootstrap failed")
         if stage_id == "implement" and current_state.get("last_failure_source") == "implement":
             reasons.append("Implementation failed and produced a rework pack")
         if stage_id == "review":
@@ -1496,6 +1715,8 @@ class TaskCycleService(Service):
             reasons.append("Review failed; rework required")
         if state.get("last_failure_source") == "qa":
             reasons.append("QA failed; rework required")
+        if state.get("last_failure_source") == "bootstrap":
+            reasons.append(self._string_or_none(state.get("bootstrap_error")) or "Brownfield bootstrap failed")
         if state.get("status") == self.STATUS_BLOCKED:
             reasons.append("Task cycle is blocked")
         for stage_run in stage_runs:
@@ -2065,6 +2286,9 @@ class TaskCycleService(Service):
             return None
         text = str(value).strip()
         return text or None
+
+    def _slugify(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
     def _read_json(self, path: Path) -> Dict[str, Any]:
         if not path.exists():
