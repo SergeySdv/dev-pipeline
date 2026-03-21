@@ -26,6 +26,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 interface TaskCycleRuntimeDialogProps {
   workItemId: number | null;
   open: boolean;
+  initialTab?: string;
+  initialArtifactId?: string | null;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -44,6 +46,8 @@ function artifactPreviewTitle(artifact: WorkItemRuntimeArtifact | null): string 
 export function TaskCycleRuntimeDialog({
   workItemId,
   open,
+  initialTab = "overview",
+  initialArtifactId = null,
   onOpenChange,
 }: TaskCycleRuntimeDialogProps) {
   const { data: runtime, isLoading } = useWorkItemRuntime(open ? workItemId ?? undefined : undefined);
@@ -52,10 +56,23 @@ export function TaskCycleRuntimeDialog({
     [runtime]
   );
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
+
+  useEffect(() => {
+    if (!open) {
+      setActiveTab("overview");
+      return;
+    }
+    setActiveTab(initialTab);
+  }, [initialTab, open, workItemId]);
 
   useEffect(() => {
     if (!open) {
       setSelectedArtifactId(null);
+      return;
+    }
+    if (initialArtifactId && allArtifacts.some((artifact) => artifact.id === initialArtifactId)) {
+      setSelectedArtifactId(initialArtifactId);
       return;
     }
     if (!allArtifacts.length) {
@@ -65,7 +82,7 @@ export function TaskCycleRuntimeDialog({
     if (!selectedArtifactId || !allArtifacts.some((artifact) => artifact.id === selectedArtifactId)) {
       setSelectedArtifactId(allArtifacts[0].id);
     }
-  }, [allArtifacts, open, selectedArtifactId]);
+  }, [allArtifacts, initialArtifactId, open, selectedArtifactId]);
 
   const selectedArtifact =
     allArtifacts.find((artifact) => artifact.id === selectedArtifactId) ?? allArtifacts[0] ?? null;
@@ -123,7 +140,7 @@ export function TaskCycleRuntimeDialog({
             {isLoading || !runtime ? (
               <LoadingState message="Loading work-item runtime..." />
             ) : (
-              <Tabs defaultValue="overview" className="gap-4">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
                 <TabsList>
                   <TabsTrigger value="overview">Overview</TabsTrigger>
                   <TabsTrigger value="timeline">Timeline</TabsTrigger>

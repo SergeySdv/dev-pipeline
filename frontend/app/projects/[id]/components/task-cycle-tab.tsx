@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Ban,
   CheckCircle2,
+  FileText,
   FileSearch,
   GitBranch,
   Layers3,
@@ -88,6 +89,8 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   const [featureRequest, setFeatureRequest] = useState("");
   const [ownerDrafts, setOwnerDrafts] = useState<Record<number, string>>({});
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<number | null>(null);
+  const [selectedRuntimeTab, setSelectedRuntimeTab] = useState<string>("overview");
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
 
   const protocolNames = useMemo(
     () =>
@@ -108,6 +111,12 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   if (protocolsLoading || workItemsLoading) {
     return <LoadingState message="Loading task cycle..." />;
   }
+
+  const openRuntime = (workItemId: number, tab = "overview", artifactId: string | null = null) => {
+    setSelectedRuntimeTab(tab);
+    setSelectedArtifactId(artifactId);
+    setSelectedWorkItemId(workItemId);
+  };
 
   const handleStart = async () => {
     const trimmedRequest = featureRequest.trim();
@@ -271,6 +280,26 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     item.context_status === "ready" &&
                     item.review_status === "approved" &&
                     item.qa_status === "passed";
+                  const cardArtifacts = [
+                    item.context_status === "ready"
+                      ? { key: "context_pack_md", label: "context_pack.md" }
+                      : null,
+                    item.context_status === "ready"
+                      ? { key: "context_pack_json", label: "context_pack.json" }
+                      : null,
+                    item.review_status !== "pending"
+                      ? { key: "review_report_md", label: "review_report.md" }
+                      : null,
+                    item.review_status !== "pending"
+                      ? { key: "review_report_json", label: "review_report.json" }
+                      : null,
+                    item.qa_status !== "pending"
+                      ? { key: "test_report_md", label: "test_report.md" }
+                      : null,
+                    item.qa_status !== "pending"
+                      ? { key: "test_report_json", label: "test_report.json" }
+                      : null,
+                  ].filter((artifact): artifact is { key: string; label: string } => Boolean(artifact));
                   return (
                     <>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -314,12 +343,29 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                         <span>Latest artifact: {item.latest_artifact_summary}</span>
                       )}
                     </div>
+                    {cardArtifacts.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-muted-foreground">Artifacts:</span>
+                        {cardArtifacts.map((artifact) => (
+                          <Button
+                            key={artifact.key}
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => openRuntime(item.id, "artifacts", artifact.key)}
+                          >
+                            <FileText className="mr-1 h-3.5 w-3.5" />
+                            {artifact.label}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => setSelectedWorkItemId(item.id)}
+                      onClick={() => openRuntime(item.id)}
                     >
                       <Layers3 className="mr-2 h-3.5 w-3.5" />
                       Runtime
@@ -551,9 +597,13 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
       <TaskCycleRuntimeDialog
         workItemId={selectedWorkItemId}
         open={selectedWorkItemId !== null}
+        initialTab={selectedRuntimeTab}
+        initialArtifactId={selectedArtifactId}
         onOpenChange={(open) => {
           if (!open) {
             setSelectedWorkItemId(null);
+            setSelectedRuntimeTab("overview");
+            setSelectedArtifactId(null);
           }
         }}
       />
