@@ -44,6 +44,7 @@ import {
   useWebSocketEventStream,
 } from "@/lib/api/hooks/use-events";
 import type { Event } from "@/lib/api/types";
+import { getDisplayEventCategory, getDisplayEventMessage, getDisplayEventType } from "@/lib/event-display";
 import { formatRelativeTime } from "@/lib/format";
 import { getSpecificationReviewPath } from "@/lib/project-routes";
 import { cn } from "@/lib/utils";
@@ -357,9 +358,12 @@ function renderEventDetails(
 
 function EventItem({ event: e }: { event: Event }) {
   const [showRaw, setShowRaw] = useState(false);
-  const Icon = getEventIcon(e.event_type, e.event_category);
-  const iconColor = getEventColor(e.event_type);
-  const details = renderEventDetails(e.event_type, e.metadata);
+  const displayType = getDisplayEventType(e);
+  const displayCategory = getDisplayEventCategory(e);
+  const displayMessage = getDisplayEventMessage(e);
+  const Icon = getEventIcon(displayType, displayCategory);
+  const iconColor = getEventColor(displayType);
+  const details = renderEventDetails(displayType, e.metadata);
   const hasMetadata = e.metadata && Object.keys(e.metadata).length > 0;
 
   const timestamp = e.created_at ? new Date(e.created_at).toLocaleTimeString() : "";
@@ -375,11 +379,11 @@ function EventItem({ event: e }: { event: Event }) {
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="font-mono text-[10px]">
-              {e.event_type}
+              {displayType}
             </Badge>
-            {e.event_category && (
+            {displayCategory && (
               <Badge variant="outline" className="text-[10px]">
-                {e.event_category}
+                {displayCategory}
               </Badge>
             )}
             <div className="text-muted-foreground ml-auto flex items-center gap-1 text-xs">
@@ -390,7 +394,7 @@ function EventItem({ event: e }: { event: Event }) {
             </div>
           </div>
 
-          <div className="text-sm font-medium">{e.message}</div>
+          <div className="text-sm font-medium">{displayMessage}</div>
 
           {details && <div className="pt-1">{details}</div>}
 

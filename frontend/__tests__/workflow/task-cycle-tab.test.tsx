@@ -6,6 +6,8 @@ import { TaskCycleTab } from "@/app/projects/[id]/components/task-cycle-tab";
 const startBrownfieldRunMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
+  useAgents: () => ({ data: [], isLoading: false }),
+  useArchiveWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useProjectProtocols: () => ({
     data: [{ id: 41, protocol_name: "brownfield-auth", status: "planned" }],
     isLoading: false,
@@ -19,10 +21,17 @@ vi.mock("@/lib/api", () => ({
     isPending: false,
   }),
   useBuildContextWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCancelWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  usePlanWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useImplementWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRefactorWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useReassignWorkItemOwner: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useReviewWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useQaWorkItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useMarkPrReady: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useStepArtifactContent: () => ({ data: null, isLoading: false }),
+  useWorkItemArtifactContent: () => ({ data: null, isLoading: false }),
+  useWorkItemRuntime: () => ({ data: null, isLoading: false }),
 }));
 
 describe("TaskCycleTab", () => {

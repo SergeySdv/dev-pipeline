@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -13,6 +16,7 @@ from devgodzilla.qa.gates.interface import GateResult, GateVerdict
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.execution import ExecutionService
+from devgodzilla.services.git import GitService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QAResult, QAVerdict, QualityService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
@@ -37,17 +41,28 @@ class TaskCycleService(Service):
     LIFECYCLE_CANCELED = "canceled"
     STATUS_QUEUED = "queued"
     STATUS_CONTEXT_READY = "context_ready"
+    STATUS_PLAN_READY = "plan_ready"
     STATUS_IN_PROGRESS = "in_progress"
     STATUS_AWAITING_REVIEW = "awaiting_review"
     STATUS_NEEDS_REWORK = "needs_rework"
+    STATUS_NEEDS_REFACTOR = "needs_refactor"
     STATUS_READY_FOR_PR = "ready_for_pr"
     STATUS_PR_READY = "pr_ready"
     STATUS_BLOCKED = "blocked"
+    MAX_PLAN_TOUCHED_FILES = 8
+    MAX_CHANGED_FILES = 8
+    MAX_PUBLIC_API_SURFACE_FILES = 2
+    MAX_PYTHON_MODULE_LINES = 1500
+    MAX_PYTHON_FUNCTION_LINES = 80
+    MAX_PYTHON_FUNCTION_ARGS = 6
+    MAX_PYTHON_NESTING_DEPTH = 4
     STAGES: Tuple[Tuple[str, str], ...] = (
         ("build_context", "Build Context"),
+        ("plan", "Plan"),
         ("implement", "Implement"),
         ("review", "Review"),
         ("qa", "QA"),
+        ("refactor", "Refactor"),
         ("pr_ready", "PR Ready"),
     )
 
@@ -140,8 +155,10 @@ class TaskCycleService(Service):
             lifecycle_state=str(state["lifecycle_state"]),
             lifecycle_reason=self._string_or_none(state.get("lifecycle_reason")),
             context_status=str(state["context_status"]),
+            plan_status=str(state["plan_status"]),
             review_status=str(state["review_status"]),
             qa_status=str(state["qa_status"]),
+            refactor_status=str(state["refactor_status"]),
             owner_agent=self._string_or_none(state.get("owner_agent")) or step.assigned_agent,
             helper_agents=self._string_list(state.get("helper_agents")),
             task_dir=self._string_or_none(state.get("task_dir")),
@@ -475,6 +492,12 @@ class TaskCycleService(Service):
                 message="Brownfield bootstrap completed",
                 spec_run_id=specify.spec_run_id,
             )
+            if request.output_mode == "task_cycle":
+                self._prepare_bootstrapped_task_cycle_item(
+                    step_run_id=step_run_id,
+                    protocol_run_id=protocol_run_id,
+                    project_id=project_id,
+                )
             self._append_project_event(
                 project_id,
                 event_type="brownfield_run_completed",
@@ -607,10 +630,12 @@ class TaskCycleService(Service):
         task_dir = self._task_dir(project, step)
         refs = self._artifact_refs(project, step)
         context_json = Path(refs["context_pack_json"])
+        plan_json = Path(refs["plan_pack_json"])
 
         if context_json.exists() and not refresh:
             state = self._task_cycle_state(step, project)
             state["context_status"] = "ready"
+            state["plan_status"] = self._default_plan_status(refs, current_state=state)
             state["status"] = state["status"] if state["status"] != self.STATUS_QUEUED else self.STATUS_CONTEXT_READY
             self._persist_task_cycle_state(step, state)
             return self.get_work_item(step.id)
@@ -665,6 +690,9 @@ class TaskCycleService(Service):
             "required_files": required_files,
             "candidate_files": required_files,
             "code_context_files": code_refs,
+            "allowed_files": [item["path"] for item in required_files[:8]],
+            "forbidden_paths": self._forbidden_paths(workspace_root),
+            "example_files": [item["path"] for item in code_refs[:3]],
             "contracts": [],
             "types": [],
             "schemas": [],
@@ -672,6 +700,7 @@ class TaskCycleService(Service):
             "style_guides": style_guides,
             "test_commands": test_commands,
             "review_focus": review_focus,
+            "architecture_notes": self._architecture_notes(required_files, code_refs),
             "risks": self._derive_risks(step, required_files),
             "assumptions": [],
             "open_questions": open_questions,
@@ -687,8 +716,116 @@ class TaskCycleService(Service):
 
         state = self._task_cycle_state(step, project)
         state["context_status"] = "needs_clarification" if open_questions else "ready"
+        state["plan_status"] = self._default_plan_status(refs, current_state=state)
         if state["status"] == self.STATUS_QUEUED:
             state["status"] = self.STATUS_CONTEXT_READY
+        self._persist_task_cycle_state(step, state)
+        return self.get_work_item(step.id)
+
+    def plan(self, step_run_id: int, *, refresh: bool = False) -> schemas.WorkItemOut:
+        step, run, project = self._load_work_item(step_run_id)
+        self._ensure_work_item_active(step, project)
+        self._ensure_bootstrap_ready(step, project)
+        self.build_context(step.id, refresh=False)
+        refs = self._artifact_refs(project, step)
+        plan_json = Path(refs["plan_pack_json"])
+        if plan_json.exists() and not refresh:
+            state = self._task_cycle_state(step, project)
+            state["plan_status"] = self._default_plan_status(refs, current_state=state)
+            if state["status"] in {self.STATUS_QUEUED, self.STATUS_CONTEXT_READY} and state["plan_status"] == "ready":
+                state["status"] = self.STATUS_PLAN_READY
+            elif state["plan_status"] == "needs_split":
+                state["status"] = self.STATUS_BLOCKED
+                state["last_failure_source"] = "plan"
+            self._persist_task_cycle_state(step, state)
+            return self.get_work_item(step.id)
+
+        context_pack = self._read_json(Path(refs["context_pack_json"]))
+        if not context_pack:
+            raise TaskCycleError("Build context before generating a plan")
+
+        protocol_root = self._protocol_root(run, self._workspace_root(run, project))
+        source_plan_path = protocol_root / "plan.md"
+        plan_source_text = source_plan_path.read_text(encoding="utf-8") if source_plan_path.exists() else ""
+        candidate_files = self._string_list(
+            [item.get("path") for item in context_pack.get("candidate_files", []) if isinstance(item, dict)]
+        )
+        required_files = self._string_list(
+            [item.get("path") for item in context_pack.get("required_files", []) if isinstance(item, dict)]
+        )
+        files_to_modify = [
+            path
+            for path in dict.fromkeys(required_files + candidate_files)
+            if path
+            and not path.endswith(".md")
+            and not path.endswith(".json")
+            and not path.startswith("specs/")
+        ][:8]
+        api_surface_files = self._api_surface_files(files_to_modify)
+        scope_blocking_findings = self._plan_scope_blocking_findings(
+            files_to_modify=files_to_modify,
+            public_api_changes=api_surface_files,
+        )
+
+        plan_payload: Dict[str, Any] = {
+            "plan_version": "1",
+            "work_item_id": step.id,
+            "protocol_run_id": run.id,
+            "project_id": project.id,
+            "title": step.step_name,
+            "goal": context_pack.get("goal") or step.summary or step.step_name,
+            "acceptance_criteria": context_pack.get("acceptance_criteria") or [],
+            "files_to_modify": files_to_modify,
+            "files_to_create": [],
+            "public_api_changes": api_surface_files,
+            "data_model_changes": [],
+            "test_plan": context_pack.get("test_commands") or [],
+            "rollback_risks": context_pack.get("risks") or [],
+            "scope_assessment": {
+                "touched_file_count": len(files_to_modify),
+                "context_candidate_count": len(candidate_files),
+                "public_api_surface_count": len(api_surface_files),
+                "status": "needs_split" if scope_blocking_findings else "bounded",
+                "blocking_findings": scope_blocking_findings,
+                "limits": {
+                    "max_touched_files": self.MAX_PLAN_TOUCHED_FILES,
+                    "max_public_api_surface_files": self.MAX_PUBLIC_API_SURFACE_FILES,
+                },
+            },
+            "constraints": {
+                "allowed_files": context_pack.get("allowed_files") or files_to_modify,
+                "forbidden_paths": context_pack.get("forbidden_paths") or [],
+                "example_files": context_pack.get("example_files") or [],
+            },
+            "source_refs": {
+                "context_pack_json": refs["context_pack_json"],
+                "protocol_plan_md": str(source_plan_path) if source_plan_path.exists() else None,
+                "step_prompt": next(
+                    (
+                        item.get("path")
+                        for item in context_pack.get("entry_points", [])
+                        if isinstance(item, dict) and str(item.get("path", "")).endswith(".md")
+                    ),
+                    None,
+                ),
+            },
+            "notes": self._plan_notes_from_source(plan_source_text),
+            "generated_at": self._now_iso(),
+        }
+
+        task_dir = Path(refs["task_dir"])
+        task_dir.mkdir(parents=True, exist_ok=True)
+        Path(refs["plan_pack_json"]).write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
+        Path(refs["plan_pack_md"]).write_text(self._render_plan_markdown(plan_payload), encoding="utf-8")
+
+        state = self._task_cycle_state(step, project)
+        state["plan_status"] = "needs_split" if scope_blocking_findings else "ready"
+        if scope_blocking_findings:
+            state["status"] = self.STATUS_BLOCKED
+            state["last_failure_source"] = "plan"
+        elif state["status"] in {self.STATUS_QUEUED, self.STATUS_CONTEXT_READY, self.STATUS_BLOCKED}:
+            state["status"] = self.STATUS_PLAN_READY
+            state["last_failure_source"] = None
         self._persist_task_cycle_state(step, state)
         return self.get_work_item(step.id)
 
@@ -697,6 +834,10 @@ class TaskCycleService(Service):
         state = self._task_cycle_state(step, project)
         self._ensure_work_item_active(step, project, state=state)
         self._ensure_bootstrap_ready(step, project, state=state)
+        if state.get("context_status") != "ready":
+            raise TaskCycleError("Build context before implementation")
+        if state.get("plan_status") != "ready" or not Path(self._artifact_refs(project, step)["plan_pack_json"]).exists():
+            raise TaskCycleError("Generate a plan before implementation")
         implement_override = self._resolve_stage_assignment(project.id, "task_cycle_implement")
         resolved_owner_agent = self._resolve_owner_agent(
             project.id,
@@ -723,6 +864,9 @@ class TaskCycleService(Service):
         state["status"] = self.STATUS_IN_PROGRESS
         state["review_status"] = "pending"
         state["qa_status"] = "pending"
+        state["refactor_status"] = "not_needed"
+        state["refactor_started_at"] = None
+        state["refactor_completed_at"] = None
         state["pr_ready"] = False
         state["active_stage_override"] = {
             "stage": "implement",
@@ -753,20 +897,98 @@ class TaskCycleService(Service):
         self._persist_task_cycle_state(step, state)
         return self.get_work_item(step.id)
 
+    def refactor(self, step_run_id: int, *, owner_agent: Optional[str] = None) -> schemas.WorkItemOut:
+        step, run, project = self._load_work_item(step_run_id)
+        state = self._task_cycle_state(step, project)
+        self._ensure_work_item_active(step, project, state=state)
+        self._ensure_bootstrap_ready(step, project, state=state)
+        if state.get("plan_status") != "ready":
+            raise TaskCycleError("Generate a bounded plan before running refactor")
+        if state.get("review_status") != "needs_refactor":
+            raise TaskCycleError("Review must require refactor before running this stage")
+        if state.get("qa_status") != "passed":
+            raise TaskCycleError("QA must pass before running refactor")
+
+        implement_override = self._resolve_stage_assignment(project.id, "task_cycle_implement")
+        resolved_owner_agent = self._resolve_owner_agent(
+            project.id,
+            owner_agent
+            or implement_override.get("agent_id")
+            or self._string_or_none(state.get("owner_agent"))
+            or step.assigned_agent,
+        )
+        if resolved_owner_agent and resolved_owner_agent != step.assigned_agent:
+            self.db.update_step_assigned_agent(step.id, resolved_owner_agent)
+            step = self.db.get_step_run(step.id)
+
+        iterations = int(state.get("iteration_count", 0) or 0)
+        max_iterations = int(state.get("max_iterations", self.config.task_cycle_max_iterations) or self.config.task_cycle_max_iterations)
+        if iterations >= max_iterations:
+            state["status"] = self.STATUS_BLOCKED
+            state["last_failure_source"] = "iteration_limit"
+            self._persist_task_cycle_state(step, state)
+            raise TaskCycleError(f"Max task-cycle iterations reached ({max_iterations})")
+
+        state["iteration_count"] = iterations + 1
+        state["max_iterations"] = max_iterations
+        state["owner_agent"] = resolved_owner_agent or step.assigned_agent or state.get("owner_agent")
+        state["status"] = self.STATUS_IN_PROGRESS
+        state["refactor_status"] = "in_progress"
+        state["pr_ready"] = False
+        state["active_stage_override"] = {
+            "stage": "implement",
+            **implement_override,
+        }
+        state["refactor_started_at"] = self._now_iso()
+        self._persist_task_cycle_state(step, state)
+
+        execution = ExecutionService(self.context, self.db)
+        result = execution.execute_step(step.id)
+        step = self.db.get_step_run(step.id)
+        state = self._task_cycle_state(step, project)
+
+        if not result.success or step.status in (StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED):
+            state["status"] = self.STATUS_NEEDS_REFACTOR
+            state["refactor_status"] = "failed"
+            state["last_failure_source"] = "refactor"
+            state["refactor_completed_at"] = self._now_iso()
+            self._write_rework_pack(
+                project=project,
+                run=run,
+                step=step,
+                source="refactor",
+                findings=[result.error or f"Refactor ended in {step.status}"],
+            )
+        else:
+            state["status"] = self.STATUS_AWAITING_REVIEW
+            state["review_status"] = "pending"
+            state["qa_status"] = "pending"
+            state["refactor_status"] = "completed"
+            state["last_failure_source"] = None
+            state["refactor_completed_at"] = self._now_iso()
+            self._clear_rework_pack(self._artifact_refs(project, step))
+        self._persist_task_cycle_state(step, state)
+        return self.get_work_item(step.id)
+
     def review(self, step_run_id: int) -> Tuple[schemas.WorkItemOut, schemas.WorkItemReviewOut]:
         step, run, project = self._load_work_item(step_run_id)
         self._ensure_work_item_active(step, project)
         self._ensure_bootstrap_ready(step, project)
         self.build_context(step.id, refresh=False)
+        self.plan(step.id, refresh=False)
         refs = self._artifact_refs(project, step)
         task_dir = Path(refs["task_dir"])
         context_pack = self._read_json(Path(refs["context_pack_json"]))
+        plan_pack = self._read_json(Path(refs["plan_pack_json"]))
         blocking_findings: List[str] = []
+        maintainability_findings: List[str] = []
         warnings: List[str] = []
 
         step_artifacts_dir = Path(refs["step_artifacts_dir"])
         if not Path(refs["context_pack_json"]).exists():
             blocking_findings.append("Missing context_pack.json")
+        if not Path(refs["plan_pack_json"]).exists():
+            blocking_findings.append("Missing plan_pack.json")
         if not step_artifacts_dir.exists():
             blocking_findings.append("Missing step artifacts directory")
         if step_artifacts_dir.exists() and not any(step_artifacts_dir.iterdir()):
@@ -784,6 +1006,25 @@ class TaskCycleService(Service):
                 warnings.append(f"Referenced style guide missing: {item.get('path')}")
         if not context_pack.get("test_commands"):
             warnings.append("ContextPack does not define test commands")
+        if not plan_pack.get("files_to_modify"):
+            warnings.append("Plan pack does not define files_to_modify")
+        plan_scope = plan_pack.get("scope_assessment") if isinstance(plan_pack.get("scope_assessment"), dict) else {}
+        for finding in plan_scope.get("blocking_findings", []) if isinstance(plan_scope, dict) else []:
+            if isinstance(finding, str) and finding not in blocking_findings:
+                blocking_findings.append(finding)
+        scope_blockers, scope_warnings, structure_findings, scope_analysis = self._review_scope_findings(
+            step=step,
+            run=run,
+            project=project,
+            context_pack=context_pack,
+            plan_pack=plan_pack,
+        )
+        blocking_findings.extend(scope_blockers)
+        warnings.extend(scope_warnings)
+        maintainability_findings.extend(structure_findings)
+        artifact_errors, artifact_warnings = self._validate_implement_artifacts(step)
+        blocking_findings.extend(artifact_errors)
+        warnings.extend(artifact_warnings)
 
         blocking_policy_findings = self._evaluate_blocking_policy_findings(step.id, run, project)
         if blocking_policy_findings:
@@ -794,9 +1035,12 @@ class TaskCycleService(Service):
         if blocking_findings:
             verdict = "failed"
             summary = f"Review failed with {len(blocking_findings)} blocking findings"
+        elif maintainability_findings:
+            verdict = "needs_refactor"
+            summary = f"Review requires refactor for {len(maintainability_findings)} maintainability finding(s)"
         elif warnings:
-            verdict = "warning"
-            summary = f"Review produced {len(warnings)} warnings"
+            verdict = "passed_with_debt"
+            summary = f"Review passed with {len(warnings)} maintainability warning(s)"
 
         report = {
             "work_item_id": step.id,
@@ -805,7 +1049,9 @@ class TaskCycleService(Service):
             "verdict": verdict,
             "summary": summary,
             "blocking_findings": blocking_findings,
+            "maintainability_findings": maintainability_findings,
             "warnings": warnings,
+            "scope_analysis": scope_analysis,
             "checked_at": self._now_iso(),
             "context_pack_json": refs["context_pack_json"],
         }
@@ -816,14 +1062,32 @@ class TaskCycleService(Service):
         state = self._task_cycle_state(step, project)
         state["review_status"] = verdict
         state["blocking_policy_findings"] = blocking_policy_findings
-        if verdict == "passed":
+        if verdict in {"passed", "passed_with_debt"}:
+            if state.get("refactor_status") in {"required", "in_progress", "failed", "completed"}:
+                state["refactor_status"] = "completed"
             state["status"] = (
                 self.STATUS_READY_FOR_PR if state.get("qa_status") == "passed" else self.STATUS_AWAITING_REVIEW
             )
             state["last_failure_source"] = None
+            self._clear_rework_pack(refs)
+        elif verdict == "needs_refactor":
+            state["refactor_status"] = "required"
+            state["status"] = (
+                self.STATUS_NEEDS_REFACTOR if state.get("qa_status") == "passed" else self.STATUS_AWAITING_REVIEW
+            )
+            state["last_failure_source"] = None
+            self._write_rework_pack(
+                project=project,
+                run=run,
+                step=step,
+                source="review",
+                findings=maintainability_findings,
+                warnings=warnings,
+            )
         else:
             state["status"] = self.STATUS_NEEDS_REWORK
             state["last_failure_source"] = "review"
+            state["refactor_status"] = "not_needed"
             self._write_rework_pack(
                 project=project,
                 run=run,
@@ -838,7 +1102,9 @@ class TaskCycleService(Service):
             verdict=verdict,
             summary=summary,
             blocking_findings=blocking_findings,
+            maintainability_findings=maintainability_findings,
             warnings=warnings,
+            scope_analysis=scope_analysis,
         )
 
     def qa(self, step_run_id: int, *, gates: Optional[List[str]] = None) -> schemas.WorkItemQAOut:
@@ -850,14 +1116,20 @@ class TaskCycleService(Service):
         qa_override = self._resolve_stage_assignment(project.id, "task_cycle_qa")
         step_artifacts_dir = Path(refs["step_artifacts_dir"])
         context_pack_json = Path(refs["context_pack_json"])
+        plan_pack_json = Path(refs["plan_pack_json"])
         if not context_pack_json.exists():
             raise TaskCycleError("Build context before running QA")
+        if not plan_pack_json.exists():
+            raise TaskCycleError("Generate a plan before running QA")
         if step.status in (StepStatus.FAILED, StepStatus.TIMEOUT, StepStatus.BLOCKED):
             raise TaskCycleError(f"Step is not in a QA-ready state: {step.status}")
-        if state.get("review_status") in {"failed", "warning"}:
-            raise TaskCycleError("Resolve review findings before running QA")
+        if state.get("review_status") not in {"passed", "passed_with_debt", "needs_refactor"}:
+            raise TaskCycleError("Review must pass before running QA")
         if not step_artifacts_dir.exists() or not any(step_artifacts_dir.iterdir()):
             raise TaskCycleError("Implementation artifacts are missing; run Implement successfully before QA")
+        artifact_errors, _artifact_warnings = self._validate_implement_artifacts(step)
+        if artifact_errors:
+            raise TaskCycleError(f"Implementation artifacts are incomplete: {'; '.join(artifact_errors)}")
         gate_map = {
             "lint": __import__("devgodzilla.qa.gates", fromlist=["LintGate"]).LintGate,
             "type": __import__("devgodzilla.qa.gates", fromlist=["TypeGate"]).TypeGate,
@@ -871,10 +1143,12 @@ class TaskCycleService(Service):
             if unknown:
                 raise TaskCycleError(f"Unknown QA gates: {', '.join(unknown)}")
             gates_to_run = [gate_map[gate]() for gate in gates]
+        else:
+            gates_to_run = [gate_map["lint"](), gate_map["type"](), gate_map["test"]()]
 
         # Task-cycle explicit gate selection should stay deterministic.
-        # If the caller requested concrete QA gates, do not implicitly re-add prompt QA.
-        skip_gates = ["prompt_qa"] if gates is not None else None
+        # Brownfield task-cycle QA defaults to deterministic repository checks.
+        skip_gates = ["prompt_qa"]
         runtime_options = {}
         if qa_override.get("reasoning_effort"):
             runtime_options["reasoning_effort"] = qa_override["reasoning_effort"]
@@ -890,7 +1164,12 @@ class TaskCycleService(Service):
         task_dir.mkdir(parents=True, exist_ok=True)
         qa_json_path = Path(refs["test_report_json"])
         qa_md_path = Path(refs["test_report_md"])
-        qa_report = self._serialize_qa_report(qa_result)
+        qa_report = self._serialize_qa_report(
+            qa_result,
+            deterministic_default=gates is None,
+            requested_gates=gates if gates is not None else ["lint", "type", "test"],
+            prompt_gate_included=False,
+        )
         qa_json_path.write_text(json.dumps(qa_report, indent=2), encoding="utf-8")
         qa_md_path.write_text(self._render_qa_markdown(qa_report), encoding="utf-8")
         quality.persist_verdict(qa_result, step.id, report_path=qa_md_path)
@@ -921,11 +1200,22 @@ class TaskCycleService(Service):
 
         state["qa_status"] = qa_out.verdict
         if qa_out.verdict == "passed":
-            state["status"] = self.STATUS_READY_FOR_PR if state.get("review_status") == "passed" else self.STATUS_AWAITING_REVIEW
+            if state.get("review_status") == "needs_refactor":
+                state["status"] = self.STATUS_NEEDS_REFACTOR
+                state["refactor_status"] = "required"
+            else:
+                state["status"] = (
+                    self.STATUS_READY_FOR_PR
+                    if state.get("review_status") in {"passed", "passed_with_debt"}
+                    else self.STATUS_AWAITING_REVIEW
+                )
             state["last_failure_source"] = None
+            if state.get("review_status") != "needs_refactor":
+                self._clear_rework_pack(refs)
         else:
             state["status"] = self.STATUS_NEEDS_REWORK
             state["last_failure_source"] = "qa"
+            state["refactor_status"] = "not_needed"
             findings = [
                 finding.message
                 for gate in qa_out.gates
@@ -949,31 +1239,87 @@ class TaskCycleService(Service):
         self._ensure_work_item_active(step, project)
         self._ensure_bootstrap_ready(step, project)
         self.build_context(step.id, refresh=False)
+        self.plan(step.id, refresh=False)
         state = self._task_cycle_state(step, project)
         refs = self._artifact_refs(project, step)
         blocking_clarifications = self._blocking_clarifications(project.id, run.id, step.id)
         blocking_policy_findings = self._evaluate_blocking_policy_findings(step.id, run, project)
+        qa_report = self._read_json(Path(refs["test_report_json"]))
+        artifact_errors, _artifact_warnings = self._validate_implement_artifacts(step)
 
         required_paths = [
             refs["context_pack_json"],
+            refs["plan_pack_json"],
             refs["review_report_json"],
             refs["test_report_json"],
         ]
         missing = [path for path in required_paths if not Path(path).exists()]
         if missing:
             raise TaskCycleError(f"Missing required artifacts: {', '.join(missing)}")
-        if state.get("review_status") != "passed":
+        if state.get("review_status") not in {"passed", "passed_with_debt"}:
             raise TaskCycleError("Review must pass before marking PR-ready")
         if state.get("qa_status") != "passed":
             raise TaskCycleError("QA must pass before marking PR-ready")
+        if state.get("refactor_status") in {"required", "in_progress", "failed"}:
+            raise TaskCycleError("Required refactor must complete before marking PR-ready")
+        if artifact_errors:
+            raise TaskCycleError(f"Implementation artifacts are incomplete: {'; '.join(artifact_errors)}")
+        if not self._qa_report_has_real_gates(qa_report):
+            raise TaskCycleError("QA must include at least one deterministic repository gate before marking PR-ready")
         if blocking_clarifications:
             raise TaskCycleError("Blocking clarifications must be resolved before marking PR-ready")
         if blocking_policy_findings:
             raise TaskCycleError("Blocking policy findings must be resolved before marking PR-ready")
 
+        workspace_root = self._workspace_root(run, project)
+        changed_files = self._changed_files_from_artifacts(step)
+        precommit_report = self._run_pr_ready_precommit(
+            workspace_root,
+            changed_files=changed_files,
+        )
+        if precommit_report["status"] == "failed":
+            findings = self._string_list(precommit_report.get("findings")) or [str(precommit_report.get("summary") or "Pre-commit validation failed")]
+            warnings = self._string_list(precommit_report.get("warnings"))
+            pr_ready_report = self._build_pr_ready_report(
+                step=step,
+                run=run,
+                project=project,
+                precommit_report=precommit_report,
+                pr_result=None,
+            )
+            self._write_pr_ready_report(refs, pr_ready_report)
+            self._write_rework_pack(
+                project=project,
+                run=run,
+                step=step,
+                source="pr_ready",
+                findings=findings,
+                warnings=warnings,
+            )
+            state["pr_ready"] = False
+            state["status"] = self.STATUS_NEEDS_REWORK
+            state["last_failure_source"] = "pr_ready"
+            state["blocking_policy_findings"] = blocking_policy_findings
+            self._persist_task_cycle_state(step, state)
+            return self.get_work_item(step.id)
+
+        pr_result = self._open_task_cycle_pr(run, project, workspace_root=workspace_root)
+        pr_ready_report = self._build_pr_ready_report(
+            step=step,
+            run=run,
+            project=project,
+            precommit_report=precommit_report,
+            pr_result=pr_result,
+        )
+        self._write_pr_ready_report(refs, pr_ready_report)
+        if not pr_result.get("success"):
+            raise TaskCycleError(str(pr_result.get("message") or "Failed to push branch or create pull request"))
+
         state["pr_ready"] = True
         state["status"] = self.STATUS_PR_READY
         state["blocking_policy_findings"] = blocking_policy_findings
+        state["last_failure_source"] = None
+        self._clear_rework_pack(refs)
         self._persist_task_cycle_state(step, state)
         return self.get_work_item(step.id)
 
@@ -1019,19 +1365,120 @@ class TaskCycleService(Service):
         step = self.db.get_step_run(step_run_id)
         run = self.db.get_protocol_run(step.protocol_run_id)
         project = self.db.get_project(run.project_id)
+        step, run = self._reconcile_brownfield_work_item(step, run, project)
         return step, run, project
+
+    def _prepare_bootstrapped_task_cycle_item(
+        self,
+        *,
+        step_run_id: int,
+        protocol_run_id: int,
+        project_id: int,
+    ) -> None:
+        try:
+            self.build_context(step_run_id, refresh=False)
+            self.plan(step_run_id, refresh=False)
+        except Exception as exc:
+            step = self.db.get_step_run(step_run_id)
+            project = self.db.get_project(project_id)
+            state = self._task_cycle_state(step, project)
+            state["status"] = self.STATUS_BLOCKED
+            state["last_failure_source"] = "bootstrap_prepare"
+            self._persist_task_cycle_state(step, state)
+            self.db.update_step_run(
+                step_run_id,
+                summary=f"Brownfield bootstrap completed; task-cycle preparation failed: {exc}",
+            )
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_task_cycle_prepare_failed",
+                message=f"Brownfield task-cycle preparation failed: {exc}",
+                metadata={
+                    "protocol_run_id": protocol_run_id,
+                    "step_run_id": step_run_id,
+                    "error": str(exc),
+                },
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+
+    def _reconcile_brownfield_work_item(self, step: StepRun, run, project):
+        metadata = dict(run.speckit_metadata or {})
+        if not (metadata.get("task_cycle") or metadata.get("brownfield_output_mode") == "task_cycle"):
+            return step, run
+
+        current_state = self._task_cycle_state(step, project)
+        bootstrap_status = self._string_or_none(current_state.get("bootstrap_status")) or self._string_or_none(
+            metadata.get("brownfield_bootstrap_status")
+        )
+        needs_completion_reconcile = bootstrap_status in {"queued", "running"}
+        needs_protocol_root_reconcile = not self._resolve_existing_repo_path(
+            self._workspace_root(run, project),
+            run.protocol_root or metadata.get("protocol_root"),
+        )
+        if not needs_completion_reconcile and not needs_protocol_root_reconcile:
+            return step, run
+
+        workspace_root = self._workspace_root(run, project)
+        inferred_paths = self._infer_protocol_paths(run, step, workspace_root)
+        protocol_root = inferred_paths.get("protocol_root")
+        step_prompt_path = inferred_paths.get("step_prompt_path")
+        tasks_path = inferred_paths.get("tasks_path")
+        runtime_ready = bool(protocol_root and step_prompt_path and Path(step_prompt_path).exists() and tasks_path and Path(tasks_path).exists())
+
+        changed = False
+        protocol_root_value = self._protocol_root_value(workspace_root, protocol_root) if protocol_root else None
+        if protocol_root_value and run.protocol_root != protocol_root_value:
+            self.db.update_protocol_paths(
+                run.id,
+                worktree_path=str(workspace_root),
+                protocol_root=protocol_root_value,
+            )
+            changed = True
+
+        updated_metadata = dict(metadata)
+        if protocol_root_value and updated_metadata.get("protocol_root") != protocol_root_value:
+            updated_metadata["protocol_root"] = protocol_root_value
+            changed = True
+        for key in ("spec_path", "plan_path", "tasks_path"):
+            value = inferred_paths.get(key)
+            if value and updated_metadata.get(key) != str(value):
+                updated_metadata[key] = str(value)
+                changed = True
+
+        if runtime_ready and bootstrap_status in {"queued", "running"}:
+            updated_metadata["brownfield_bootstrap_stage"] = "completed"
+            updated_metadata["brownfield_bootstrap_status"] = "completed"
+            updated_metadata["brownfield_bootstrap_error"] = None
+            current_state["bootstrap_stage"] = "completed"
+            current_state["bootstrap_status"] = "completed"
+            current_state["bootstrap_error"] = None
+            self._persist_task_cycle_state(step, current_state)
+            if run.status == "planning":
+                self.db.update_protocol_status(run.id, "planned")
+            self.db.update_step_run(step.id, summary="Brownfield bootstrap completed")
+            changed = True
+
+        if changed:
+            self.db.update_protocol_windmill(run.id, speckit_metadata=updated_metadata)
+            step = self.db.get_step_run(step.id)
+            run = self.db.get_protocol_run(run.id)
+        return step, run
 
     def _task_cycle_state(self, step: StepRun, project) -> Dict[str, Any]:
         runtime_state = dict(step.runtime_state or {})
         current = dict(runtime_state.get(self.RUNTIME_KEY) or {})
         refs = self._artifact_refs(project, step)
+        default_plan_status = self._default_plan_status(refs, current_state=current)
         state = {
             "status": current.get("status", self.STATUS_QUEUED),
             "lifecycle_state": current.get("lifecycle_state", self.LIFECYCLE_ACTIVE),
             "lifecycle_reason": current.get("lifecycle_reason"),
             "context_status": current.get("context_status", "ready" if Path(refs["context_pack_json"]).exists() else "missing"),
+            "plan_status": current.get("plan_status", default_plan_status),
             "review_status": current.get("review_status", "pending"),
             "qa_status": current.get("qa_status", "pending"),
+            "refactor_status": current.get("refactor_status", "not_needed"),
             "pr_ready": bool(current.get("pr_ready", False)),
             "owner_agent": current.get("owner_agent") or step.assigned_agent,
             "helper_agents": self._string_list(current.get("helper_agents")),
@@ -1046,6 +1493,8 @@ class TaskCycleService(Service):
             "bootstrap_status": current.get("bootstrap_status"),
             "bootstrap_error": current.get("bootstrap_error"),
             "spec_run_id": current.get("spec_run_id"),
+            "refactor_started_at": current.get("refactor_started_at"),
+            "refactor_completed_at": current.get("refactor_completed_at"),
         }
         return state
 
@@ -1088,10 +1537,14 @@ class TaskCycleService(Service):
             "task_dir": str(task_dir),
             "context_pack_json": str(task_dir / "context_pack.json"),
             "context_pack_md": str(task_dir / "context_pack.md"),
+            "plan_pack_json": str(task_dir / "plan_pack.json"),
+            "plan_pack_md": str(task_dir / "plan_pack.md"),
             "review_report_json": str(task_dir / "review_report.json"),
             "review_report_md": str(task_dir / "review_report.md"),
             "test_report_json": str(task_dir / "test_report.json"),
             "test_report_md": str(task_dir / "test_report.md"),
+            "pr_ready_report_json": str(task_dir / "pr_ready_report.json"),
+            "pr_ready_report_md": str(task_dir / "pr_ready_report.md"),
             "rework_pack_json": str(task_dir / "rework_pack.json"),
             "step_artifacts_dir": str(self._step_artifacts_dir(step)),
         }
@@ -1242,8 +1695,10 @@ class TaskCycleService(Service):
             lifecycle_state=str(current_state["lifecycle_state"]),
             lifecycle_reason=self._string_or_none(current_state.get("lifecycle_reason")),
             context_status=str(current_state["context_status"]),
+            plan_status=str(current_state["plan_status"]),
             review_status=str(current_state["review_status"]),
             qa_status=str(current_state["qa_status"]),
+            refactor_status=str(current_state["refactor_status"]),
             owner_agent=self._string_or_none(current_state.get("owner_agent")) or step.assigned_agent,
             helper_agents=self._string_list(current_state.get("helper_agents")),
             task_dir=self._string_or_none(current_state.get("task_dir")),
@@ -1286,8 +1741,10 @@ class TaskCycleService(Service):
         )
         refs = self._artifact_refs(project, step)
         context_pack = self._read_json(Path(refs["context_pack_json"]))
+        plan_pack = self._read_json(Path(refs["plan_pack_json"]))
         review_report = self._read_json(Path(refs["review_report_json"]))
         qa_report = self._read_json(Path(refs["test_report_json"]))
+        pr_ready_report = self._read_json(Path(refs["pr_ready_report_json"]))
         rework_pack = self._read_json(Path(refs["rework_pack_json"]))
         step_job_runs = self.db.list_job_runs(step_run_id=step.id, limit=50)
         latest_job_run = step_job_runs[0] if step_job_runs else None
@@ -1298,6 +1755,11 @@ class TaskCycleService(Service):
             blocking_clarifications=current_blocking_clarifications,
             context_exists=Path(refs["context_pack_json"]).exists(),
         )
+        plan_status = self._plan_stage_status(
+            current_state=current_state,
+            context_status=context_status,
+            plan_exists=Path(refs["plan_pack_json"]).exists(),
+        )
         implement_status = self._implement_stage_status(
             step=step,
             current_state=current_state,
@@ -1305,6 +1767,7 @@ class TaskCycleService(Service):
         )
         review_status = self._review_stage_status(
             current_state=current_state,
+            plan_status=plan_status,
             implement_status=implement_status,
             review_report=review_report,
         )
@@ -1313,17 +1776,25 @@ class TaskCycleService(Service):
             review_status=review_status,
             qa_report=qa_report,
         )
-        pr_ready_status = self._pr_ready_stage_status(
+        refactor_status = self._refactor_stage_status(
             current_state=current_state,
             review_status=review_status,
             qa_status=qa_status,
         )
+        pr_ready_status = self._pr_ready_stage_status(
+            current_state=current_state,
+            review_status=review_status,
+            qa_status=qa_status,
+            refactor_status=refactor_status,
+        )
 
         stage_statuses = {
             "build_context": context_status,
+            "plan": plan_status,
             "implement": implement_status,
             "review": review_status,
             "qa": qa_status,
+            "refactor": refactor_status,
             "pr_ready": pr_ready_status,
         }
 
@@ -1342,8 +1813,10 @@ class TaskCycleService(Service):
                         step=step,
                         current_state=current_state,
                         context_pack=context_pack,
+                        plan_pack=plan_pack,
                         review_report=review_report,
                         qa_report=qa_report,
+                        pr_ready_report=pr_ready_report,
                         rework_pack=rework_pack,
                     ),
                     started_at=self._stage_started_at(stage_id, step, latest_job_run),
@@ -1380,10 +1853,11 @@ class TaskCycleService(Service):
                         blocking_clarifications=current_blocking_clarifications,
                         review_report=review_report,
                         qa_report=qa_report,
+                        pr_ready_report=pr_ready_report,
                     ),
                     windmill_job_id=latest_job_run.windmill_job_id if stage_id == "implement" and latest_job_run else None,
-                    windmill_module_id=self._job_run_module_id(latest_job_run) if stage_id == "implement" else None,
-                    run_ids=[job.run_id for job in step_job_runs] if stage_id == "implement" else [],
+                    windmill_module_id=self._job_run_module_id(latest_job_run) if stage_id in {"implement", "refactor"} else None,
+                    run_ids=[job.run_id for job in step_job_runs] if stage_id in {"implement", "refactor"} else [],
                 )
             )
         return stage_runs
@@ -1415,20 +1889,39 @@ class TaskCycleService(Service):
             return "completed"
         return "pending"
 
+    def _plan_stage_status(
+        self,
+        *,
+        current_state: Dict[str, Any],
+        context_status: str,
+        plan_exists: bool,
+    ) -> str:
+        plan_status = self._string_or_none(current_state.get("plan_status"))
+        if plan_status == "needs_split":
+            return "failed"
+        if plan_status in {"ready", "legacy"} or (plan_exists and plan_status != "needs_split"):
+            return "completed"
+        if context_status == "completed":
+            return "pending"
+        return "pending"
+
     def _review_stage_status(
         self,
         *,
         current_state: Dict[str, Any],
+        plan_status: str,
         implement_status: str,
         review_report: Dict[str, Any],
     ) -> str:
         verdict = self._string_or_none(current_state.get("review_status")) or self._string_or_none(review_report.get("verdict"))
-        if verdict == "passed":
+        if verdict in {"passed", "passed_with_debt", "needs_refactor"}:
             if int(current_state.get("blocking_policy_findings", 0) or 0) > 0:
                 return "blocked"
             return "completed"
         if verdict in {"failed", "warning"}:
             return "failed"
+        if plan_status != "completed":
+            return "pending"
         if implement_status == "completed":
             return "pending"
         return "pending"
@@ -1449,10 +1942,41 @@ class TaskCycleService(Service):
             return "pending"
         return "pending"
 
-    def _pr_ready_stage_status(self, *, current_state: Dict[str, Any], review_status: str, qa_status: str) -> str:
+    def _refactor_stage_status(
+        self,
+        *,
+        current_state: Dict[str, Any],
+        review_status: str,
+        qa_status: str,
+    ) -> str:
+        refactor_status = self._string_or_none(current_state.get("refactor_status")) or "not_needed"
+        if refactor_status == "completed":
+            return "completed"
+        if refactor_status == "failed":
+            return "failed"
+        if refactor_status == "in_progress":
+            return "running"
+        if refactor_status == "required" or self._string_or_none(current_state.get("review_status")) == "needs_refactor":
+            if qa_status != "completed":
+                return "blocked"
+            return "pending"
+        if review_status == "completed":
+            return "skipped"
+        return "pending"
+
+    def _pr_ready_stage_status(
+        self,
+        *,
+        current_state: Dict[str, Any],
+        review_status: str,
+        qa_status: str,
+        refactor_status: str,
+    ) -> str:
         if bool(current_state.get("pr_ready")):
             return "completed"
-        if review_status == "completed" and qa_status == "completed":
+        if current_state.get("last_failure_source") == "pr_ready":
+            return "failed"
+        if review_status == "completed" and qa_status == "completed" and refactor_status in {"completed", "skipped"}:
             return "pending"
         return "pending"
 
@@ -1469,8 +1993,10 @@ class TaskCycleService(Service):
         step: StepRun,
         current_state: Dict[str, Any],
         context_pack: Dict[str, Any],
+        plan_pack: Dict[str, Any],
         review_report: Dict[str, Any],
         qa_report: Dict[str, Any],
+        pr_ready_report: Dict[str, Any],
         rework_pack: Dict[str, Any],
     ) -> str:
         if stage_id == "build_context":
@@ -1484,6 +2010,16 @@ class TaskCycleService(Service):
                 return "Context pack is ready, but blocking clarifications must be resolved"
             goal = self._string_or_none(context_pack.get("goal"))
             return goal or ("Context pack ready" if status == "completed" else "Context pack not built yet")
+        if stage_id == "plan":
+            if status == "completed":
+                if not plan_pack:
+                    return "Legacy work item predates explicit plan artifacts"
+                count = len(plan_pack.get("files_to_modify") or [])
+                return f"Plan ready with {count} proposed file change(s)"
+            if status == "failed":
+                count = len((plan_pack.get("scope_assessment") or {}).get("blocking_findings") or [])
+                return f"Plan exceeds brownfield scope limits ({count} blocking scope finding(s))"
+            return "Plan has not been generated yet"
         if stage_id == "implement":
             if status == "running":
                 return "Implementation is running"
@@ -1504,15 +2040,33 @@ class TaskCycleService(Service):
             if rework_pack.get("source") == "qa":
                 return "QA findings require rework"
             return "QA has not run yet"
+        if stage_id == "refactor":
+            if current_state.get("refactor_status") == "completed":
+                return "Refactor completed and awaits re-review"
+            if current_state.get("refactor_status") == "in_progress":
+                return "Refactor is running"
+            if current_state.get("refactor_status") == "failed":
+                return "Refactor failed and needs another pass"
+            if current_state.get("review_status") == "needs_refactor":
+                return "Review requires structural refactor before PR readiness"
+            return "Refactor is not required"
+        if stage_id == "pr_ready" and pr_ready_report.get("summary"):
+            return str(pr_ready_report["summary"])
         if bool(current_state.get("pr_ready")):
             return "Work item marked PR ready"
-        if current_state.get("review_status") == "passed" and current_state.get("qa_status") == "passed":
+        if current_state.get("review_status") in {"passed", "passed_with_debt"} and current_state.get("qa_status") == "passed":
             return "Ready to mark PR ready"
         return "PR readiness is blocked by earlier stages"
 
     def _stage_started_at(self, stage_id: str, step: StepRun, latest_job_run) -> Optional[str]:
         if stage_id == "implement" and latest_job_run:
             return latest_job_run.started_at or latest_job_run.created_at
+        if stage_id == "refactor":
+            runtime_state = step.runtime_state if isinstance(step.runtime_state, dict) else {}
+            task_cycle = runtime_state.get(self.RUNTIME_KEY) if isinstance(runtime_state, dict) else {}
+            if isinstance(task_cycle, dict):
+                return self._string_or_none(task_cycle.get("refactor_started_at"))
+            return None
         return step.updated_at
 
     def _stage_finished_at(
@@ -1525,14 +2079,18 @@ class TaskCycleService(Service):
     ) -> Optional[str]:
         if stage_id == "build_context":
             return self._path_timestamp_iso(Path(refs["context_pack_json"])) or self._path_timestamp_iso(Path(refs["context_pack_md"]))
+        if stage_id == "plan":
+            return self._path_timestamp_iso(Path(refs["plan_pack_json"])) or self._path_timestamp_iso(Path(refs["plan_pack_md"]))
         if stage_id == "implement" and latest_job_run:
             return latest_job_run.finished_at or self._path_timestamp_iso(Path(refs["step_artifacts_dir"]))
         if stage_id == "review":
             return self._path_timestamp_iso(Path(refs["review_report_json"])) or self._path_timestamp_iso(Path(refs["review_report_md"]))
         if stage_id == "qa":
             return self._path_timestamp_iso(Path(refs["test_report_json"])) or self._path_timestamp_iso(Path(refs["test_report_md"]))
-        if stage_id == "pr_ready" and bool(current_state.get("pr_ready")):
-            return self._string_or_none(current_state.get("lifecycle_changed_at"))
+        if stage_id == "refactor":
+            return self._string_or_none(current_state.get("refactor_completed_at"))
+        if stage_id == "pr_ready":
+            return self._path_timestamp_iso(Path(refs["pr_ready_report_json"])) or self._path_timestamp_iso(Path(refs["pr_ready_report_md"]))
         return None
 
     def _stage_agents(
@@ -1550,15 +2108,23 @@ class TaskCycleService(Service):
             if stage_status in {"running", "waiting_for_clarification", "blocked", "failed"}:
                 agent_status = stage_status
         agents: List[schemas.WorkItemRuntimeAgentOut] = []
-        if stage_id in {"build_context", "implement", "pr_ready"} and owner_agent:
+        if stage_id in {"build_context", "plan", "implement", "refactor", "pr_ready"} and owner_agent:
             agents.append(
                 schemas.WorkItemRuntimeAgentOut(
                     agent_id=owner_agent,
-                    role="owner" if stage_id != "build_context" else "context_builder",
+                    role=(
+                        "context_builder"
+                        if stage_id == "build_context"
+                        else "planner"
+                        if stage_id == "plan"
+                        else "refactor_owner"
+                        if stage_id == "refactor"
+                        else "owner"
+                    ),
                     status=agent_status,
                 )
             )
-        if stage_id == "implement":
+        if stage_id in {"implement", "refactor"}:
             for helper in helper_agents:
                 agents.append(
                     schemas.WorkItemRuntimeAgentOut(
@@ -1596,16 +2162,18 @@ class TaskCycleService(Service):
         refs = self._artifact_refs(project, step)
         stage_ref_map = {
             "build_context": ("context_pack_json", "context_pack_md"),
+            "plan": ("plan_pack_json", "plan_pack_md"),
             "review": ("review_report_json", "review_report_md"),
             "qa": ("test_report_json", "test_report_md"),
+            "pr_ready": ("pr_ready_report_json", "pr_ready_report_md"),
         }
         artifacts: List[schemas.WorkItemRuntimeArtifactOut] = []
-        if stage_id == "implement":
+        if stage_id in {"implement", "refactor"}:
             artifacts.extend(self._step_runtime_artifacts(step))
         for key in stage_ref_map.get(stage_id, ()):
             artifacts.append(self._work_item_runtime_artifact(refs[key], stage_id=stage_id, key=key))
         if Path(refs["rework_pack_json"]).exists() and rework_source and (
-            stage_id == rework_source or (stage_id == "implement" and rework_source not in {"review", "qa"})
+            stage_id == rework_source or (stage_id in {"implement", "refactor"} and rework_source not in {"review", "qa"})
         ):
             artifacts.append(
                 self._work_item_runtime_artifact(
@@ -1669,14 +2237,21 @@ class TaskCycleService(Service):
         blocking_clarifications: int,
         review_report: Dict[str, Any],
         qa_report: Dict[str, Any],
+        pr_ready_report: Dict[str, Any],
     ) -> List[str]:
         reasons: List[str] = []
         if stage_id == "build_context" and blocking_clarifications:
             reasons.append(f"{blocking_clarifications} blocking clarification(s) open")
         if stage_id == "build_context" and self._string_or_none(current_state.get("bootstrap_status")) == "failed":
             reasons.append(self._string_or_none(current_state.get("bootstrap_error")) or "Brownfield bootstrap failed")
+        if stage_id == "plan" and current_state.get("context_status") != "ready":
+            reasons.append("Context must be ready before planning")
+        if stage_id == "plan" and current_state.get("plan_status") == "needs_split":
+            reasons.append("Plan scope is too broad and should be split")
         if stage_id == "implement" and current_state.get("last_failure_source") == "implement":
             reasons.append("Implementation failed and produced a rework pack")
+        if stage_id == "implement" and current_state.get("plan_status") not in {"ready", "legacy"}:
+            reasons.append("Plan must be generated before implementation")
         if stage_id == "review":
             if int(current_state.get("blocking_policy_findings", 0) or 0) > 0:
                 reasons.append(f"{int(current_state.get('blocking_policy_findings', 0) or 0)} blocking policy finding(s)")
@@ -1688,11 +2263,21 @@ class TaskCycleService(Service):
                 if findings:
                     reasons.append(str(findings[0].get("message") or "QA finding"))
             reasons = reasons[:2]
+        if stage_id == "refactor":
+            if current_state.get("review_status") == "needs_refactor" or current_state.get("refactor_status") in {"required", "in_progress", "failed"}:
+                if current_state.get("review_status") != "needs_refactor":
+                    reasons.append("Refactor is only used when review requires structural cleanup")
+                if current_state.get("qa_status") != "passed":
+                    reasons.append("QA must pass before refactor")
         if stage_id == "pr_ready":
-            if current_state.get("review_status") != "passed":
+            if current_state.get("review_status") not in {"passed", "passed_with_debt"}:
                 reasons.append("Review must pass before PR readiness")
             if current_state.get("qa_status") != "passed":
                 reasons.append("QA must pass before PR readiness")
+            if current_state.get("refactor_status") in {"required", "in_progress", "failed"}:
+                reasons.append("Required refactor must complete before PR readiness")
+            for finding in pr_ready_report.get("blocking_findings", [])[:2]:
+                reasons.append(str(finding))
         return reasons
 
     def _blocking_reasons(
@@ -1715,6 +2300,14 @@ class TaskCycleService(Service):
             reasons.append("Review failed; rework required")
         if state.get("last_failure_source") == "qa":
             reasons.append("QA failed; rework required")
+        if state.get("last_failure_source") == "pr_ready":
+            reasons.append("PR-ready validation failed; rework required")
+        if state.get("last_failure_source") == "refactor":
+            reasons.append("Refactor failed; another pass is required")
+        if state.get("last_failure_source") == "plan":
+            reasons.append("Plan scope is too broad and should be decomposed")
+        if state.get("refactor_status") == "required":
+            reasons.append("Review requires structural refactor before PR readiness")
         if state.get("last_failure_source") == "bootstrap":
             reasons.append(self._string_or_none(state.get("bootstrap_error")) or "Brownfield bootstrap failed")
         if state.get("status") == self.STATUS_BLOCKED:
@@ -1776,7 +2369,7 @@ class TaskCycleService(Service):
                 schemas.WorkItemRuntimeActivityOut(
                     id="windmill:active",
                     kind="windmill",
-                    stage_id="implement",
+                    stage_id="refactor" if work_item.refactor_status == "in_progress" else "implement",
                     status=work_item.active_stage_status,
                     message=f"Windmill job {windmill.job_id}",
                     run_id=windmill.run_id,
@@ -1842,6 +2435,70 @@ class TaskCycleService(Service):
 
     def _protocol_root(self, run, workspace_root: Path) -> Path:
         return resolve_protocol_root(run, workspace_root)
+
+    def _resolve_existing_repo_path(self, workspace_root: Path, value: Optional[str]) -> Optional[Path]:
+        if not value:
+            return None
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = workspace_root / candidate
+        candidate = candidate.resolve()
+        return candidate if candidate.exists() else None
+
+    def _infer_protocol_paths(self, run, step: StepRun, workspace_root: Path) -> Dict[str, Path]:
+        metadata = dict(run.speckit_metadata or {})
+        inferred: Dict[str, Path] = {}
+
+        protocol_root = self._resolve_existing_repo_path(workspace_root, run.protocol_root)
+        if protocol_root is None:
+            protocol_root = self._resolve_existing_repo_path(workspace_root, self._string_or_none(metadata.get("protocol_root")))
+
+        for key in ("spec_path", "plan_path", "tasks_path"):
+            resolved = self._resolve_existing_repo_path(workspace_root, self._string_or_none(metadata.get(key)))
+            if resolved is not None:
+                inferred[key] = resolved
+
+        if protocol_root is None:
+            for parent_key in ("tasks_path", "plan_path", "spec_path"):
+                parent_path = inferred.get(parent_key)
+                if parent_path is not None:
+                    candidate = (parent_path.parent / "_runtime").resolve()
+                    if candidate.exists():
+                        protocol_root = candidate
+                        break
+
+        if protocol_root is None:
+            for base_name in ("specs", ".protocols"):
+                base = workspace_root / base_name
+                if not base.exists():
+                    continue
+                matches = sorted(base.glob(f"*/_runtime/{step.step_name}.md"))
+                if matches:
+                    protocol_root = matches[0].parent.resolve()
+                    break
+
+        if protocol_root is not None:
+            inferred["protocol_root"] = protocol_root
+            step_prompt_path = (protocol_root / f"{step.step_name}.md").resolve()
+            plan_prompt_path = (protocol_root / "plan.md").resolve()
+            if step_prompt_path.exists():
+                inferred["step_prompt_path"] = step_prompt_path
+            if plan_prompt_path.exists():
+                inferred["protocol_plan_path"] = plan_prompt_path
+
+            spec_root = protocol_root.parent
+            for key, name in (("spec_path", "spec.md"), ("plan_path", "plan.md"), ("tasks_path", "tasks.md")):
+                if key not in inferred:
+                    candidate = (spec_root / name).resolve()
+                    if candidate.exists():
+                        inferred[key] = candidate
+        return inferred
+
+    def _protocol_root_value(self, workspace_root: Path, protocol_root: Path) -> str:
+        try:
+            return str(protocol_root.relative_to(workspace_root))
+        except Exception:
+            return str(protocol_root)
 
     def _step_artifacts_dir(self, step: StepRun) -> Path:
         run = self.db.get_protocol_run(step.protocol_run_id)
@@ -2026,11 +2683,52 @@ class TaskCycleService(Service):
         lines.extend(["", "## Required Files"])
         for item in payload.get("required_files", []):
             lines.append(f"- `{item['path']}`: {item['reason']}")
+        lines.extend(["", "## Allowed Files"])
+        for item in payload.get("allowed_files", []) or ["None identified"]:
+            lines.append(f"- `{item}`")
+        lines.extend(["", "## Forbidden Paths"])
+        for item in payload.get("forbidden_paths", []) or ["None"]:
+            lines.append(f"- `{item}`")
+        lines.extend(["", "## Example Files"])
+        for item in payload.get("example_files", []) or ["None identified"]:
+            lines.append(f"- `{item}`")
         lines.extend(["", "## Test Commands"])
         for command in payload.get("test_commands", []) or ["No explicit test commands detected"]:
             lines.append(f"- `{command}`")
+        lines.extend(["", "## Architecture Notes"])
+        for item in payload.get("architecture_notes", []) or ["Prefer narrow edits to existing extension points"]:
+            lines.append(f"- {item}")
         lines.extend(["", "## Open Questions"])
         for item in payload.get("open_questions", []) or ["None"]:
+            lines.append(f"- {item}")
+        return "\n".join(lines) + "\n"
+
+    def _render_plan_markdown(self, payload: Dict[str, Any]) -> str:
+        lines = [
+            f"# Plan Pack: {payload['title']}",
+            "",
+            f"- Goal: {payload['goal']}",
+            f"- Generated: {payload['generated_at']}",
+            f"- Scope: `{payload.get('scope_assessment', {}).get('status', 'unknown')}`",
+            "",
+            "## Files To Modify",
+        ]
+        for item in payload.get("files_to_modify", []) or ["None identified"]:
+            lines.append(f"- `{item}`")
+        lines.extend(["", "## Files To Create"])
+        for item in payload.get("files_to_create", []) or ["None proposed"]:
+            lines.append(f"- `{item}`")
+        lines.extend(["", "## Test Plan"])
+        for item in payload.get("test_plan", []) or ["No explicit test plan"]:
+            lines.append(f"- `{item}`")
+        lines.extend(["", "## Constraints"])
+        constraints = payload.get("constraints") or {}
+        for item in constraints.get("allowed_files", []) or ["No allowed-file list"]:
+            lines.append(f"- Allowed: `{item}`")
+        for item in constraints.get("forbidden_paths", []) or []:
+            lines.append(f"- Forbidden: `{item}`")
+        lines.extend(["", "## Notes"])
+        for item in payload.get("notes", []) or ["No additional notes"]:
             lines.append(f"- {item}")
         return "\n".join(lines) + "\n"
 
@@ -2046,12 +2744,33 @@ class TaskCycleService(Service):
         ]
         for item in report.get("blocking_findings") or ["None"]:
             lines.append(f"- {item}")
+        lines.extend(["", "## Maintainability Findings"])
+        for item in report.get("maintainability_findings") or ["None"]:
+            lines.append(f"- {item}")
         lines.extend(["", "## Warnings"])
         for item in report.get("warnings") or ["None"]:
             lines.append(f"- {item}")
+        scope_analysis = report.get("scope_analysis") if isinstance(report.get("scope_analysis"), dict) else {}
+        if scope_analysis:
+            lines.extend(
+                [
+                    "",
+                    "## Scope Analysis",
+                    f"- Planned files: {len(scope_analysis.get('planned_files') or [])}",
+                    f"- Changed files: {len(scope_analysis.get('changed_files') or [])}",
+                    f"- Out of scope files: {len(scope_analysis.get('out_of_scope_files') or [])}",
+                ]
+            )
         return "\n".join(lines) + "\n"
 
-    def _serialize_qa_report(self, qa_result: QAResult) -> Dict[str, Any]:
+    def _serialize_qa_report(
+        self,
+        qa_result: QAResult,
+        *,
+        deterministic_default: bool,
+        requested_gates: List[str],
+        prompt_gate_included: bool,
+    ) -> Dict[str, Any]:
         gates = []
         for result in qa_result.gate_results:
             gates.append(
@@ -2078,6 +2797,10 @@ class TaskCycleService(Service):
             "verdict": self._map_qa_verdict(qa_result.verdict.value),
             "summary": summary,
             "duration_seconds": qa_result.duration_seconds,
+            "deterministic_default": deterministic_default,
+            "requested_gates": requested_gates,
+            "prompt_gate_included": prompt_gate_included,
+            "real_gate_count": sum(1 for gate in gates if gate["id"] != "prompt_qa"),
             "gates": gates,
             "generated_at": self._now_iso(),
         }
@@ -2088,6 +2811,7 @@ class TaskCycleService(Service):
             "",
             f"- Verdict: `{report['verdict']}`",
             f"- Summary: {report['summary']}",
+            f"- Deterministic: `{report.get('deterministic_default', False)}`",
             f"- Generated: {report['generated_at']}",
             "",
             "## Gates",
@@ -2095,6 +2819,189 @@ class TaskCycleService(Service):
         for gate in report.get("gates", []):
             lines.append(f"- `{gate['id']}`: {gate['status']}")
         return "\n".join(lines) + "\n"
+
+    def _render_pr_ready_markdown(self, report: Dict[str, Any]) -> str:
+        lines = [
+            f"# PR Ready Report: {report['work_item_id']}",
+            "",
+            f"- Summary: {report['summary']}",
+            f"- Generated: {report['generated_at']}",
+            "",
+            "## Pre-commit",
+            f"- Status: `{report.get('precommit', {}).get('status', 'unknown')}`",
+            f"- Command: `{report.get('precommit', {}).get('command', 'n/a')}`",
+        ]
+        for item in report.get("precommit", {}).get("findings", []) or ["None"]:
+            lines.append(f"- {item}")
+        lines.extend(["", "## Pull Request"])
+        pull_request = report.get("pull_request") if isinstance(report.get("pull_request"), dict) else {}
+        lines.append(f"- Status: `{pull_request.get('status', 'skipped')}`")
+        if pull_request.get("url"):
+            lines.append(f"- URL: {pull_request['url']}")
+        if pull_request.get("message"):
+            lines.append(f"- Message: {pull_request['message']}")
+        lines.extend(["", "## Blocking Findings"])
+        for item in report.get("blocking_findings") or ["None"]:
+            lines.append(f"- {item}")
+        return "\n".join(lines) + "\n"
+
+    def _qa_report_has_real_gates(self, qa_report: Dict[str, Any]) -> bool:
+        gates = qa_report.get("gates")
+        if isinstance(gates, list):
+            return any(isinstance(gate, dict) and gate.get("id") != "prompt_qa" for gate in gates)
+        return False
+
+    def _project_github_token(self, project) -> Optional[str]:
+        return ((getattr(project, "secrets", None) or {}).get("github_token") or "").strip() or None
+
+    def _detect_precommit_command(self, workspace_root: Path) -> Optional[List[str]]:
+        repo_venv_precommit = workspace_root / ".venv" / "bin" / "pre-commit"
+        if repo_venv_precommit.exists():
+            return [str(repo_venv_precommit)]
+        installed = shutil.which("pre-commit")
+        if installed:
+            return [installed]
+        return None
+
+    def _summarize_precommit_output(self, stdout: str, stderr: str) -> List[str]:
+        combined = f"{stdout or ''}\n{stderr or ''}"
+        findings: List[str] = []
+        ansi_pattern = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+        for raw in combined.splitlines():
+            line = ansi_pattern.sub("", raw).strip()
+            if not line:
+                continue
+            if line not in findings:
+                findings.append(line)
+            if len(findings) >= 10:
+                break
+        return findings
+
+    def _run_pr_ready_precommit(
+        self,
+        workspace_root: Path,
+        *,
+        changed_files: List[str],
+    ) -> Dict[str, Any]:
+        config_path = workspace_root / ".pre-commit-config.yaml"
+        if not config_path.exists():
+            return {
+                "status": "skipped",
+                "summary": "No pre-commit config found; PR-ready validation skipped",
+                "command": "n/a",
+                "checked_files": changed_files,
+                "findings": [],
+                "warnings": [],
+            }
+
+        command = self._detect_precommit_command(workspace_root)
+        if not command:
+            return {
+                "status": "failed",
+                "summary": "pre-commit is configured but no executable was found in the repo venv or PATH",
+                "command": "pre-commit",
+                "checked_files": changed_files,
+                "findings": ["Install pre-commit in the managed repository before marking PR ready"],
+                "warnings": [],
+            }
+
+        checked_files = [
+            path for path in changed_files
+            if path and not Path(path).is_absolute() and (workspace_root / path).exists()
+        ]
+        run_command = [*command, "run"]
+        if checked_files:
+            run_command.extend(["--files", *checked_files])
+        else:
+            run_command.append("--all-files")
+
+        result = subprocess.run(
+            run_command,
+            cwd=workspace_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        findings = self._summarize_precommit_output(result.stdout or "", result.stderr or "")
+        status = "passed" if result.returncode == 0 else "failed"
+        summary = (
+            f"Pre-commit passed on {len(checked_files) or 'all'} file set(s)"
+            if status == "passed"
+            else "Pre-commit validation failed; rework is required before PR creation"
+        )
+        return {
+            "status": status,
+            "summary": summary,
+            "command": " ".join(run_command),
+            "checked_files": checked_files,
+            "returncode": result.returncode,
+            "findings": findings,
+            "warnings": [],
+        }
+
+    def _build_pr_ready_report(
+        self,
+        *,
+        step: StepRun,
+        run,
+        project,
+        precommit_report: Dict[str, Any],
+        pr_result: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        blocking_findings = []
+        if precommit_report.get("status") == "failed":
+            blocking_findings.extend(self._string_list(precommit_report.get("findings")))
+        if pr_result and not pr_result.get("success"):
+            blocking_findings.append(str(pr_result.get("message") or "Failed to create pull request"))
+        summary = (
+            str(pr_result.get("message"))
+            if pr_result and pr_result.get("success")
+            else str(precommit_report.get("summary") or "PR-ready validation incomplete")
+        )
+        return {
+            "work_item_id": step.id,
+            "protocol_run_id": run.id,
+            "project_id": project.id,
+            "summary": summary,
+            "precommit": precommit_report,
+            "pull_request": pr_result or {"status": "skipped", "message": "Pull request not attempted"},
+            "blocking_findings": blocking_findings,
+            "generated_at": self._now_iso(),
+        }
+
+    def _write_pr_ready_report(self, refs: Dict[str, str], report: Dict[str, Any]) -> None:
+        Path(refs["pr_ready_report_json"]).write_text(json.dumps(report, indent=2), encoding="utf-8")
+        Path(refs["pr_ready_report_md"]).write_text(self._render_pr_ready_markdown(report), encoding="utf-8")
+
+    def _open_task_cycle_pr(
+        self,
+        run,
+        project,
+        *,
+        workspace_root: Path,
+    ) -> Dict[str, Any]:
+        git_service = GitService(self.context)
+        github_token = self._project_github_token(project)
+        success = git_service.push_and_open_pr(
+            workspace_root,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=project.id,
+            github_token=github_token,
+        )
+        pr_url = None
+        git_url = (getattr(project, "git_url", None) or "").strip()
+        if git_url and "github.com" in git_url:
+            owner_repo = git_url.split("github.com/", 1)[-1].replace(".git", "").strip("/")
+            if owner_repo:
+                pr_url = f"https://github.com/{owner_repo}/compare/{run.base_branch}...{run.protocol_name}"
+        return {
+            "success": success,
+            "status": "created" if success else "failed",
+            "url": pr_url,
+            "message": "Pull request created or compare view prepared" if success else "Failed to push branch or create pull request",
+        }
 
     def _blocking_clarifications(self, project_id: int, protocol_run_id: int, step_run_id: int) -> int:
         clarifications = self.db.list_clarifications(
@@ -2166,6 +3073,258 @@ class TaskCycleService(Service):
                 }
             )
         return refs
+
+    def _forbidden_paths(self, workspace_root: Path) -> List[str]:
+        candidates = ["Origins", "archive", "node_modules", ".venv", ".git"]
+        return [name for name in candidates if (workspace_root / name).exists()]
+
+    def _architecture_notes(
+        self,
+        required_files: List[Dict[str, str]],
+        code_refs: List[Dict[str, str]],
+    ) -> List[str]:
+        notes = ["Prefer narrow edits to existing modules before introducing new files."]
+        if required_files:
+            notes.append(f"Keep the change scoped to the curated context set ({min(len(required_files), 8)} files shown).")
+        if code_refs:
+            notes.append("Copy nearby patterns from the discovered code-context files instead of introducing a new style.")
+        return notes
+
+    def _plan_notes_from_source(self, plan_source_text: str) -> List[str]:
+        notes: List[str] = []
+        for raw in (plan_source_text or "").splitlines():
+            line = raw.strip()
+            if line.startswith("- ") or line.startswith("* "):
+                notes.append(line[2:].strip())
+            elif re.match(r"^\d+\.\s+", line):
+                notes.append(re.sub(r"^\d+\.\s+", "", line).strip())
+            if len(notes) >= 5:
+                break
+        return notes
+
+    def _default_plan_status(
+        self,
+        refs: Dict[str, str],
+        *,
+        current_state: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        plan_path = Path(refs["plan_pack_json"])
+        if not plan_path.exists():
+            if self._should_infer_legacy_plan(current_state):
+                return "legacy"
+            return "missing"
+        payload = self._read_json(plan_path)
+        scope = payload.get("scope_assessment") if isinstance(payload.get("scope_assessment"), dict) else {}
+        if scope.get("status") == "needs_split":
+            return "needs_split"
+        return "ready"
+
+    def _should_infer_legacy_plan(self, current_state: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(current_state, dict):
+            return False
+        if bool(current_state.get("pr_ready")):
+            return True
+        status = self._string_or_none(current_state.get("status"))
+        if status in {
+            self.STATUS_IN_PROGRESS,
+            self.STATUS_AWAITING_REVIEW,
+            self.STATUS_NEEDS_REWORK,
+            self.STATUS_NEEDS_REFACTOR,
+            self.STATUS_READY_FOR_PR,
+            self.STATUS_PR_READY,
+        }:
+            return True
+        if self._string_or_none(current_state.get("review_status")) not in {None, "", "pending"}:
+            return True
+        if self._string_or_none(current_state.get("qa_status")) not in {None, "", "pending"}:
+            return True
+        if self._string_or_none(current_state.get("last_failure_source")) in {"implement", "review", "qa", "refactor"}:
+            return True
+        return False
+
+    def _api_surface_files(self, files_to_modify: List[str]) -> List[str]:
+        api_patterns = (
+            "/api/",
+            "/routes/",
+            "/schemas",
+            "/cli/",
+            "/main.py",
+            "frontend/lib/api/",
+        )
+        return [
+            path
+            for path in files_to_modify
+            if path.endswith("__init__.py") or any(pattern in path for pattern in api_patterns)
+        ]
+
+    def _plan_scope_blocking_findings(self, *, files_to_modify: List[str], public_api_changes: List[str]) -> List[str]:
+        findings: List[str] = []
+        if len(files_to_modify) > self.MAX_PLAN_TOUCHED_FILES:
+            findings.append(
+                f"Plan touches {len(files_to_modify)} files which exceeds the brownfield limit of {self.MAX_PLAN_TOUCHED_FILES}"
+            )
+        if len(public_api_changes) > self.MAX_PUBLIC_API_SURFACE_FILES:
+            findings.append(
+                f"Plan changes {len(public_api_changes)} API-surface files which exceeds the brownfield limit of {self.MAX_PUBLIC_API_SURFACE_FILES}"
+            )
+        return findings
+
+    def _review_scope_findings(
+        self,
+        *,
+        step: StepRun,
+        run,
+        project,
+        context_pack: Dict[str, Any],
+        plan_pack: Dict[str, Any],
+    ) -> Tuple[List[str], List[str], List[str], Dict[str, Any]]:
+        workspace_root = self._workspace_root(run, project)
+        changed_files = self._changed_files_from_artifacts(step)
+        planned_files = self._string_list(plan_pack.get("files_to_modify"))
+        allowed_files = set(self._string_list(context_pack.get("allowed_files")))
+        effective_files = changed_files or planned_files
+        out_of_scope_files = sorted(
+            path for path in changed_files if allowed_files and path not in allowed_files and path not in planned_files
+        )
+
+        blocking_findings: List[str] = []
+        warnings: List[str] = []
+        maintainability_findings: List[str] = []
+
+        if len(effective_files) > self.MAX_CHANGED_FILES:
+            blocking_findings.append(
+                f"Change touches {len(effective_files)} files which exceeds the brownfield limit of {self.MAX_CHANGED_FILES}"
+            )
+        if out_of_scope_files:
+            warnings.append(f"Changed files outside the bounded plan: {', '.join(out_of_scope_files[:5])}")
+
+        maintainability_findings.extend(self._python_structure_findings(workspace_root, effective_files))
+
+        scope_analysis = {
+            "planned_files": planned_files,
+            "changed_files": changed_files,
+            "allowed_files": sorted(allowed_files),
+            "out_of_scope_files": out_of_scope_files,
+            "limits": {
+                "max_changed_files": self.MAX_CHANGED_FILES,
+                "max_python_module_lines": self.MAX_PYTHON_MODULE_LINES,
+                "max_python_function_lines": self.MAX_PYTHON_FUNCTION_LINES,
+                "max_python_function_args": self.MAX_PYTHON_FUNCTION_ARGS,
+                "max_python_nesting_depth": self.MAX_PYTHON_NESTING_DEPTH,
+            },
+        }
+        return blocking_findings, warnings, maintainability_findings, scope_analysis
+
+    def _changed_files_from_artifacts(self, step: StepRun) -> List[str]:
+        refs = self._artifact_refs(self.db.get_project(self.db.get_protocol_run(step.protocol_run_id).project_id), step)
+        artifacts_dir = Path(refs["step_artifacts_dir"])
+        if not artifacts_dir.exists():
+            return []
+
+        changed: List[str] = []
+        status_path = artifacts_dir / "git-status.txt"
+        if status_path.exists():
+            for raw in status_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    changed.append(parts[1].strip())
+
+        diff_path = artifacts_dir / "changes.diff"
+        if diff_path.exists():
+            for raw in diff_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if raw.startswith("+++ b/"):
+                    changed.append(raw[6:].strip())
+
+        return list(dict.fromkeys(path for path in changed if path and path != "/dev/null"))
+
+    def _python_structure_findings(self, workspace_root: Path, files: List[str]) -> List[str]:
+        findings: List[str] = []
+        for raw_path in files:
+            if not raw_path.endswith(".py"):
+                continue
+            path = self._resolve_workspace_path(workspace_root, raw_path)
+            if path is None or not path.exists() or not path.is_file():
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+                tree = ast.parse(source)
+            except Exception as exc:
+                findings.append(f"{raw_path}: unable to analyze Python structure ({exc})")
+                continue
+
+            line_count = len(source.splitlines())
+            if line_count > self.MAX_PYTHON_MODULE_LINES:
+                findings.append(
+                    f"{raw_path}: module is {line_count} lines (limit {self.MAX_PYTHON_MODULE_LINES})"
+                )
+
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                end_lineno = getattr(node, "end_lineno", node.lineno)
+                function_lines = max(1, int(end_lineno) - int(node.lineno) + 1)
+                arg_count = len(getattr(node.args, "args", [])) + len(getattr(node.args, "kwonlyargs", []))
+                nesting_depth = self._python_nesting_depth(node)
+                if function_lines > self.MAX_PYTHON_FUNCTION_LINES:
+                    findings.append(
+                        f"{raw_path}:{node.lineno} {node.name} is {function_lines} lines (limit {self.MAX_PYTHON_FUNCTION_LINES})"
+                    )
+                if arg_count > self.MAX_PYTHON_FUNCTION_ARGS:
+                    findings.append(
+                        f"{raw_path}:{node.lineno} {node.name} has {arg_count} parameters (limit {self.MAX_PYTHON_FUNCTION_ARGS})"
+                    )
+                if nesting_depth > self.MAX_PYTHON_NESTING_DEPTH:
+                    findings.append(
+                        f"{raw_path}:{node.lineno} {node.name} nests to depth {nesting_depth} (limit {self.MAX_PYTHON_NESTING_DEPTH})"
+                    )
+                if len(findings) >= 10:
+                    return findings
+        return findings
+
+    def _python_nesting_depth(self, node: ast.AST) -> int:
+        branch_nodes = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try, ast.Match)
+
+        def _walk(current: ast.AST, depth: int) -> int:
+            max_depth = depth
+            for child in ast.iter_child_nodes(current):
+                next_depth = depth + 1 if isinstance(child, branch_nodes) else depth
+                max_depth = max(max_depth, _walk(child, next_depth))
+            return max_depth
+
+        return _walk(node, 0)
+
+    def _validate_implement_artifacts(self, step: StepRun) -> Tuple[List[str], List[str]]:
+        refs = self._artifact_refs(self.db.get_project(self.db.get_protocol_run(step.protocol_run_id).project_id), step)
+        artifacts_dir = Path(refs["step_artifacts_dir"])
+        errors: List[str] = []
+        warnings: List[str] = []
+        if not artifacts_dir.exists():
+            return ["Missing step artifacts directory"], warnings
+        files = [path for path in artifacts_dir.iterdir() if path.is_file()]
+        if not files:
+            return ["Step artifacts directory is empty"], warnings
+
+        diff_path = artifacts_dir / "changes.diff"
+        status_path = artifacts_dir / "git-status.txt"
+        if diff_path.exists() and diff_path.stat().st_size == 0:
+            errors.append("changes.diff is empty")
+        if status_path.exists() and status_path.stat().st_size == 0:
+            errors.append("git-status.txt is empty")
+        if not diff_path.exists():
+            warnings.append("changes.diff is missing")
+        if not status_path.exists():
+            warnings.append("git-status.txt is missing")
+        if not any(path.name in {"execution.json", "stdout.log", "stderr.log", "execution.log"} for path in files):
+            warnings.append("Execution log artifacts are missing")
+        return errors, warnings
+
+    def _clear_rework_pack(self, refs: Dict[str, str]) -> None:
+        path = Path(refs["rework_pack_json"])
+        if path.exists():
+            path.unlink()
 
     def _seed_task_cycle_metadata(
         self,

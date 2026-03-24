@@ -8,8 +8,8 @@ import {
   ArrowUpRight,
   Ban,
   CheckCircle2,
-  FileText,
   FileSearch,
+  FileText,
   GitBranch,
   Layers3,
   PlayCircle,
@@ -18,20 +18,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  useAgents,
-  useArchiveWorkItem,
-  useBuildContextWorkItem,
-  useCancelWorkItem,
-  useImplementWorkItem,
-  useMarkPrReady,
-  useProjectProtocols,
-  useProjectTaskCycle,
-  useQaWorkItem,
-  useReassignWorkItemOwner,
-  useReviewWorkItem,
-  useStartBrownfieldRun,
-} from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +31,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  useAgents,
+  useArchiveWorkItem,
+  useBuildContextWorkItem,
+  useCancelWorkItem,
+  useImplementWorkItem,
+  useMarkPrReady,
+  usePlanWorkItem,
+  useProjectProtocols,
+  useProjectTaskCycle,
+  useQaWorkItem,
+  useReassignWorkItemOwner,
+  useRefactorWorkItem,
+  useReviewWorkItem,
+  useStartBrownfieldRun,
+} from "@/lib/api";
 
 import { TaskCycleRuntimeDialog } from "./task-cycle-runtime-dialog";
 
@@ -54,10 +56,13 @@ interface TaskCycleTabProps {
 
 function toneClass(value: string | null | undefined): string {
   const normalized = (value || "").toLowerCase();
-  if (["done", "completed", "ready", "approved", "passed", "available"].includes(normalized)) {
+  if (["done", "completed", "ready", "approved", "passed", "available", "legacy"].includes(normalized)) {
     return "bg-green-500/10 text-green-700";
   }
-  if (["failed", "blocked", "needs_changes", "missing"].includes(normalized)) {
+  if (["passed_with_debt", "warning", "needs_refactor", "required"].includes(normalized)) {
+    return "bg-yellow-500/10 text-yellow-700";
+  }
+  if (["failed", "blocked", "needs_changes", "missing", "needs_split"].includes(normalized)) {
     return "bg-red-500/10 text-red-700";
   }
   if (["running", "in_progress", "review", "pending"].includes(normalized)) {
@@ -77,7 +82,9 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   );
   const startBrownfieldRun = useStartBrownfieldRun();
   const buildContext = useBuildContextWorkItem();
+  const planWorkItem = usePlanWorkItem();
   const implementWorkItem = useImplementWorkItem();
+  const refactorWorkItem = useRefactorWorkItem();
   const reviewWorkItem = useReviewWorkItem();
   const qaWorkItem = useQaWorkItem();
   const markPrReady = useMarkPrReady();
@@ -164,8 +171,8 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
         <div>
           <h3 className="text-lg font-semibold">Task Cycle</h3>
           <p className="text-muted-foreground text-sm">
-            Run the brownfield discovery to work-item loop and review items through context,
-            implementation, review, QA, and PR readiness.
+            Run the brownfield discovery to work-item loop and move items through context,
+            planning, implementation, review, QA, and PR readiness.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -264,21 +271,33 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     item.active_stage_status === "running" &&
                     item.context_status === "missing";
                   const canBuildContext = !bootstrapRunning;
-                  const canImplement = !bootstrapRunning && item.context_status === "ready";
+                  const canPlan = !bootstrapRunning && item.context_status === "ready";
+                  const canImplement =
+                    !bootstrapRunning &&
+                    item.context_status === "ready" &&
+                    item.plan_status === "ready";
                   const canReview =
                     !bootstrapRunning &&
                     item.context_status === "ready" &&
                     ["awaiting_review", "needs_rework", "needs_qa", "ready_for_pr"].includes(
                       item.status
                     );
+                  const reviewPassed = ["passed", "passed_with_debt"].includes(item.review_status);
+                  const reviewAllowsQa = ["passed", "passed_with_debt", "needs_refactor"].includes(
+                    item.review_status
+                  );
                   const canQa =
+                    !bootstrapRunning && item.context_status === "ready" && reviewAllowsQa;
+                  const canRefactor =
                     !bootstrapRunning &&
                     item.context_status === "ready" &&
-                    item.review_status === "approved";
+                    item.review_status === "needs_refactor" &&
+                    item.qa_status === "passed";
                   const canMarkPrReady =
                     !bootstrapRunning &&
                     item.context_status === "ready" &&
-                    item.review_status === "approved" &&
+                    item.status === "ready_for_pr" &&
+                    reviewPassed &&
                     item.qa_status === "passed";
                   const cardArtifacts = [
                     item.context_status === "ready"
@@ -286,6 +305,12 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       : null,
                     item.context_status === "ready"
                       ? { key: "context_pack_json", label: "context_pack.json" }
+                      : null,
+                    item.plan_status === "ready"
+                      ? { key: "plan_pack_md", label: "plan_pack.md" }
+                      : null,
+                    item.plan_status === "ready"
+                      ? { key: "plan_pack_json", label: "plan_pack.json" }
                       : null,
                     item.review_status !== "pending"
                       ? { key: "review_report_md", label: "review_report.md" }
@@ -298,6 +323,12 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       : null,
                     item.qa_status !== "pending"
                       ? { key: "test_report_json", label: "test_report.json" }
+                      : null,
+                    item.pr_ready || item.active_stage === "pr_ready" || item.latest_completed_stage === "PR Ready"
+                      ? { key: "pr_ready_report_md", label: "pr_ready_report.md" }
+                      : null,
+                    item.pr_ready || item.active_stage === "pr_ready" || item.latest_completed_stage === "PR Ready"
+                      ? { key: "pr_ready_report_json", label: "pr_ready_report.json" }
                       : null,
                   ].filter((artifact): artifact is { key: string; label: string } => Boolean(artifact));
                   return (
@@ -318,12 +349,18 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       <Badge className={toneClass(item.context_status)}>
                         Context {item.context_status}
                       </Badge>
+                      <Badge className={toneClass(item.plan_status)}>Plan {item.plan_status}</Badge>
                       <Badge className={toneClass(item.review_status)}>
                         Review {item.review_status}
                       </Badge>
                       <Badge className={toneClass(item.qa_status)}>QA {item.qa_status}</Badge>
+                      <Badge className={toneClass(item.refactor_status)}>
+                        Refactor {item.refactor_status}
+                      </Badge>
                     </div>
-                    {item.summary && <p className="text-muted-foreground text-sm">{item.summary}</p>}
+                    {item.summary && !item.progress_summary && (
+                      <p className="text-muted-foreground text-sm">{item.summary}</p>
+                    )}
                     {item.progress_summary && (
                       <p className="text-sm font-medium">{item.progress_summary}</p>
                     )}
@@ -464,6 +501,26 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={!canPlan}
+                      onClick={() =>
+                        withToast(
+                          () =>
+                            planWorkItem.mutateAsync({
+                              projectId,
+                              workItemId: item.id,
+                              protocolRunId: item.protocol_run_id,
+                            }),
+                          "Plan generated",
+                          "Failed to generate plan"
+                        )
+                      }
+                    >
+                      <FileText className="mr-2 h-3.5 w-3.5" />
+                      Plan
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       disabled={!canImplement}
                       onClick={() =>
                         withToast(
@@ -523,19 +580,46 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={!canMarkPrReady}
+                      disabled={!canRefactor}
                       onClick={() =>
                         withToast(
                           () =>
-                            markPrReady.mutateAsync({
+                            refactorWorkItem.mutateAsync({
                               projectId,
                               workItemId: item.id,
                               protocolRunId: item.protocol_run_id,
+                              data: { owner_agent: item.owner_agent },
                             }),
-                          "Marked PR ready",
-                          "Failed to mark PR ready"
+                          "Refactor started",
+                          "Failed to start refactor"
                         )
                       }
+                    >
+                      <Wrench className="mr-2 h-3.5 w-3.5" />
+                      Refactor
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!canMarkPrReady}
+                      onClick={async () => {
+                        try {
+                          const result = await markPrReady.mutateAsync({
+                            projectId,
+                            workItemId: item.id,
+                            protocolRunId: item.protocol_run_id,
+                          });
+                          if (result.pr_ready) {
+                            toast.success("Marked PR ready and opened PR");
+                            return;
+                          }
+                          toast.error(
+                            result.blocking_reason || "PR-ready checks failed; rework is required"
+                          );
+                        } catch (error) {
+                          toast.error(error instanceof Error ? error.message : "Failed to mark PR ready");
+                        }
+                      }}
                     >
                       Mark PR Ready
                     </Button>

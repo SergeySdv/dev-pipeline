@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { useProjects,useRecentEvents } from "@/lib/api";
 import type { EventFilters } from "@/lib/api/types";
+import { getDisplayEventCategory, getDisplayEventMessage, getDisplayEventType } from "@/lib/event-display";
 import { formatRelativeTime,formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +40,9 @@ const eventTypeColors: Record<string, string> = {
   qa_started: "text-yellow-500",
   qa_passed: "text-green-500",
   qa_failed: "text-destructive",
+  execution_qa_started: "text-blue-500",
+  execution_qa_passed: "text-green-500",
+  execution_qa_failed: "text-destructive",
   planning_started: "text-blue-500",
   planning_completed: "text-green-500",
   protocol_started: "text-blue-500",
@@ -404,9 +408,11 @@ export default function EventsPage() {
           <CardContent>
             <div className="space-y-4">
               {events.map((event) => {
-                const category = event.event_category || "other";
+                const displayType = getDisplayEventType(event);
+                const displayMessage = getDisplayEventMessage(event);
+                const category = getDisplayEventCategory(event) || "other";
                 const color =
-                  eventTypeColors[event.event_type] ||
+                  eventTypeColors[displayType] ||
                   categoryColors[category] ||
                   "text-muted-foreground";
                 const hasMetadata = event.metadata && Object.keys(event.metadata).length > 0;
@@ -423,7 +429,7 @@ export default function EventsPage() {
                     </div>
                     <div className="flex-1 pb-4">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={cn("font-mono text-sm", color)}>{event.event_type}</span>
+                        <span className={cn("font-mono text-sm", color)}>{displayType}</span>
                         <span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 text-xs">
                           {categoryLabels[category] ?? category}
                         </span>
@@ -447,7 +453,7 @@ export default function EventsPage() {
                           </button>
                         )}
                       </div>
-                      <p className="mt-1 text-sm">{event.message}</p>
+                      <p className="mt-1 text-sm">{displayMessage}</p>
                       <p className="text-muted-foreground mt-1 text-xs">
                         {formatRelativeTime(event.created_at)}
                       </p>

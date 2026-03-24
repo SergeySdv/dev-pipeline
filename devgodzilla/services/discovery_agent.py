@@ -57,8 +57,9 @@ def _resolve_prompt(repo_root: Path, *, prompt_name: str) -> Path:
 
 
 class DiscoveryAgentService(Service):
-    def __init__(self, context: ServiceContext) -> None:
+    def __init__(self, context: ServiceContext, db=None) -> None:
         super().__init__(context)
+        self.db = db
 
     @staticmethod
     def _write_fallback_outputs(*, repo_root: Path, pipeline: bool) -> None:

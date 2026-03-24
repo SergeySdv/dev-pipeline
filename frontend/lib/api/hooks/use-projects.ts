@@ -8,9 +8,9 @@ import { queryKeys } from "../query-keys";
 import type {
   ActionResponse,
   ArtifactContent,
+  Branch,
   BrownfieldRunRequest,
   BrownfieldRunResponse,
-  Branch,
   Clarification,
   Commit,
   DiscoveryRetryResponse,
@@ -23,11 +23,11 @@ import type {
   ProtocolRun,
   PullRequest,
   WorkItem,
-  WorkItemRuntime,
   WorkItemLifecycleUpdate,
   WorkItemOwnerUpdate,
   WorkItemQA,
   WorkItemReview,
+  WorkItemRuntime,
   Worktree,
 } from "../types";
 
@@ -428,7 +428,7 @@ export function useBuildContextWorkItem() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
       refresh = false,
     }: {
       projectId: number;
@@ -437,6 +437,34 @@ export function useBuildContextWorkItem() {
       refresh?: boolean;
     }) =>
       apiClient.post<WorkItem>(`/work-items/${workItemId}/build-context`, { refresh }, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function usePlanWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      refresh = false,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      refresh?: boolean;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/plan`, { refresh }, { projectId }),
     onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.taskCycleRoot(projectId),
@@ -472,7 +500,7 @@ export function useImplementWorkItem() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
       data,
     }: {
       projectId: number;
@@ -494,13 +522,41 @@ export function useImplementWorkItem() {
   });
 }
 
+export function useRefactorWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      data,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      data?: { owner_agent?: string | null };
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/refactor`, data ?? {}, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
 export function useReviewWorkItem() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
     }: {
       projectId: number;
       workItemId: number;
@@ -526,7 +582,7 @@ export function useQaWorkItem() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
       gates,
     }: {
       projectId: number;
@@ -554,7 +610,7 @@ export function useMarkPrReady() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
     }: {
       projectId: number;
       workItemId: number;
@@ -580,7 +636,7 @@ export function useArchiveWorkItem() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
       data,
     }: {
       projectId: number;
@@ -604,7 +660,7 @@ export function useCancelWorkItem() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
       data,
     }: {
       projectId: number;
@@ -628,7 +684,7 @@ export function useReassignWorkItemOwner() {
     mutationFn: ({
       projectId,
       workItemId,
-      protocolRunId,
+      protocolRunId: _protocolRunId,
       data,
     }: {
       projectId: number;

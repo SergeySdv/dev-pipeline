@@ -464,10 +464,14 @@ class WorkItemArtifactRefsOut(BaseModel):
     task_dir: str
     context_pack_json: str
     context_pack_md: str
+    plan_pack_json: str
+    plan_pack_md: str
     review_report_json: str
     review_report_md: str
     test_report_json: str
     test_report_md: str
+    pr_ready_report_json: str
+    pr_ready_report_md: str
     rework_pack_json: str
     step_artifacts_dir: str
 
@@ -481,8 +485,10 @@ class WorkItemOut(BaseModel):
     lifecycle_state: str = "active"
     lifecycle_reason: Optional[str] = None
     context_status: str
+    plan_status: str
     review_status: str
     qa_status: str
+    refactor_status: str = "not_needed"
     owner_agent: Optional[str] = None
     helper_agents: List[str] = Field(default_factory=list)
     task_dir: Optional[str] = None
@@ -582,6 +588,10 @@ class BuildContextRequest(BaseModel):
     refresh: bool = False
 
 
+class BuildPlanRequest(BaseModel):
+    refresh: bool = False
+
+
 class WorkItemImplementRequest(BaseModel):
     owner_agent: Optional[str] = None
 
@@ -598,7 +608,9 @@ class WorkItemReviewOut(BaseModel):
     verdict: str
     summary: str
     blocking_findings: List[str] = Field(default_factory=list)
+    maintainability_findings: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    scope_analysis: Dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkItemQAOut(BaseModel):

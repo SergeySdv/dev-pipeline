@@ -280,10 +280,14 @@ export interface WorkItemArtifactRefs {
   task_dir: string;
   context_pack_json: string;
   context_pack_md: string;
+  plan_pack_json: string;
+  plan_pack_md: string;
   review_report_json: string;
   review_report_md: string;
   test_report_json: string;
   test_report_md: string;
+  pr_ready_report_json: string;
+  pr_ready_report_md: string;
   rework_pack_json: string;
   step_artifacts_dir: string;
 }
@@ -297,8 +301,10 @@ export interface WorkItem {
   lifecycle_state: string;
   lifecycle_reason: string | null;
   context_status: string;
+  plan_status: string;
   review_status: string;
   qa_status: string;
+  refactor_status: string;
   owner_agent: string | null;
   helper_agents: string[];
   task_dir: string | null;
@@ -323,7 +329,9 @@ export interface WorkItemReview {
   verdict: string;
   summary: string;
   blocking_findings: string[];
+  maintainability_findings: string[];
   warnings: string[];
+  scope_analysis: Record<string, unknown>;
 }
 
 export interface WorkItemQA {

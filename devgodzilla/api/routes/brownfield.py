@@ -122,6 +122,20 @@ def build_context(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/work-items/{work_item_id}/plan", response_model=schemas.WorkItemOut)
+def build_plan(
+    work_item_id: int,
+    request: schemas.BuildPlanRequest,
+    service: TaskCycleService = Depends(_task_cycle_service),
+):
+    try:
+        return service.plan(work_item_id, refresh=request.refresh)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Work item not found")
+    except TaskCycleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/work-items/{work_item_id}/actions/implement", response_model=schemas.WorkItemOut)
 def implement_work_item(
     work_item_id: int,
@@ -130,6 +144,20 @@ def implement_work_item(
 ):
     try:
         return service.implement(work_item_id, owner_agent=request.owner_agent)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Work item not found")
+    except TaskCycleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/work-items/{work_item_id}/actions/refactor", response_model=schemas.WorkItemOut)
+def refactor_work_item(
+    work_item_id: int,
+    request: schemas.WorkItemImplementRequest,
+    service: TaskCycleService = Depends(_task_cycle_service),
+):
+    try:
+        return service.refactor(work_item_id, owner_agent=request.owner_agent)
     except KeyError:
         raise HTTPException(status_code=404, detail="Work item not found")
     except TaskCycleError as exc:

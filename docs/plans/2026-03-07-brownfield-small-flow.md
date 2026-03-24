@@ -1,177 +1,319 @@
 # Brownfield Small Flow
 
-## Why this exists
+## Goal
 
-The current journey exposes too many internal orchestration concepts to the operator:
+Make brownfield task execution in DevGodzilla produce smaller, safer, more maintainable code changes by enforcing structure in the workflow rather than relying on post-hoc prompt QA.
 
-- project onboarding is separate from feature delivery
-- SpecKit generation is split across multiple wizard steps
-- protocol creation is a separate mental model after tasks already exist
-- Windmill apps and the Next.js console both surface overlapping project/protocol controls
+This plan is based on observed behavior in the current task-cycle flow:
 
-For a small brownfield change, the operator usually wants one narrow path:
+- stage transitions work, but maintainability is weakly enforced
+- prompt QA is too soft to represent real repository health
+- artifact quality is inconsistent, which weakens auditability
+- successful tasks can still leave confusing stale artifacts behind
+- the system is better at finishing a task than proving the task was finished well
 
-1. pick an existing project
-2. describe the requested change
-3. review generated plan and tasks
-4. hand off either to backlog/tasks or to a planned execution protocol
+## Problem Statement
 
-## Current friction in the repo
+The current brownfield flow is operationally useful, but it does not consistently optimize for good code structure.
 
-- The main project page exposes multiple parallel entry points and tabs for spec, workflow, onboarding, execution, and settings instead of one primary delivery path: `frontend/app/projects/[id]/page.tsx`
-- The SpecKit workflow component shows eight visible stages, many of which are implementation details rather than user decisions: `frontend/components/speckit/spec-workflow.tsx`
-- The implementation wizard chains clarify, checklist, analysis, implement, sprint import, and protocol creation in one modal, which is powerful but too heavy for a small brownfield request: `frontend/components/wizards/implement-feature-wizard.tsx`
-- Windmill already ships long serial flows that mirror every internal phase, especially `spec_to_tasks.flow.json`, `spec_to_protocol.flow.json`, and `onboard_to_tasks.flow.json`: `windmill/flows/devgodzilla/`
-- The protocol wizard is mostly placeholder UI and adds another layer of abstraction instead of simplifying entry into execution: `frontend/components/wizards/protocol-wizard.tsx`
+Current strengths:
 
-## Proposed user journey
+- context, implement, review, QA, and PR-ready are explicit stages
+- work items map well to existing `step_runs`
+- runtime visibility is improving
+- agents can complete useful work and generate artifacts
 
-Use four operator-facing states:
+Current weaknesses:
 
-1. `Context`
-   Refresh repo/spec context only when needed.
-2. `Intent`
-   Capture the feature request and optional clarification answers.
-3. `Plan`
-   Produce spec, plan, tasks, and optional analysis/checklist.
-4. `Handoff`
-   Stop at tasks or create a planned protocol.
+- context packs focus on file collection more than architectural constraints
+- implementation can proceed without a bounded edit contract
+- review is mostly result-oriented, not structure-oriented
+- QA can pass without running concrete repo checks
+- artifact sets can be incomplete or misleading
+- PR-ready can reflect workflow completion more than evidence quality
 
-This keeps the UI contract smaller:
+## Design Principle
 
-- one launch form for brownfield work
-- one progress view with four sections
-- one result card showing generated artifacts and next action
+Brownfield flow should optimize for:
 
-## V1 execution contract
+1. narrow scope
+2. explicit constraints
+3. real repository validation
+4. strong artifact traceability
+5. maintainability as a first-class gate
 
-For implementation, keep `task_cycle` inside the same intake flow instead of creating a second user-facing flow.
+The target is not “agent completed the task”.
 
-- `brownfield_feature` remains the single entry point
-- `output_mode` gains `task_cycle`
-- the flow branches into the task-cycle loop when that mode is selected
+The target is “agent completed a small, auditable, structurally sound change that a maintainer would actually merge”.
 
-For v1, a work item should be a higher-level view over the existing backend `step_runs` model, not a brand new top-level table:
+## Target Flow
 
-- one work item maps to one `StepRun`
-- the UI and API present `work_item` language
-- the backend reuses existing step execution, artifact, and QA plumbing
+Use seven operator-visible stages for brownfield delivery:
 
-Execution ownership should also stay simple in v1:
+1. `Build Context`
+2. `Plan`
+3. `Implement`
+4. `Review`
+5. `QA`
+6. `Refactor` when needed
+7. `PR Ready`
 
-- one `owner_agent` is accountable for the work item
-- the owner may spawn helper agents for bounded parallel subtasks
-- helper agents are internal delegation, not first-class workflow lanes
-- review, QA, and `PR-ready` run once on the consolidated result
+`Refactor` is conditional. It appears only when implementation works functionally but the resulting code quality is below threshold.
 
-Before coding starts, the flow should create a reusable context artifact pair:
+## Stage Contracts
 
-- `context_pack.json` as the canonical machine-readable contract
-- `context_pack.md` as the human-readable debug and operator view
+### 1. Build Context
 
-Store work-item artifacts under the project temp folder in task-specific subfolders so they are easy to inspect and reuse:
+The context stage should produce more than a file bundle.
 
-- project temp root
-- `task-cycle/`
-- `task-cycle/work-items/<step_run_id>/`
+Required outputs:
 
-That folder should contain at minimum:
+- task goal
+- acceptance criteria
+- allowed files to edit
+- forbidden files or high-risk modules
+- existing extension points
+- nearby example files that represent the preferred style
+- test commands
+- architectural notes
+- risk notes
 
-- `context_pack.json`
-- `context_pack.md`
-- `review_report.json`
-- `review_report.md`
-- `test_report.json`
-- `test_report.md`
-- optional `rework_pack.json`
+The main improvement is to turn context into a constrained contract.
 
-The JSON artifact should include at minimum:
+The agent should know:
 
-- `work_item_id`
-- `project_id`
-- `protocol_run_id`
-- `step_run_id`
-- `title`
-- `goal`
-- `acceptance_criteria`
-- `entry_points`
-- `required_files`
-- `contracts`
-- `types`
-- `schemas`
-- `manifest_files`
-- `style_guides`
-- `test_commands`
-- `review_focus`
-- `risks`
-- `assumptions`
-- `artifact_refs`
+- where to work
+- where not to work
+- what pattern to copy
+- what boundaries must remain intact
 
-The default v1 task-cycle reference should be:
+### 2. Plan
 
-- `docs/DevGodzilla/task-cycle-flow.md`
+Implementation should not start directly after context for brownfield tasks.
 
-Later, a flow manager can be added to select or generate custom task-cycle variants, but v1 should not depend on that abstraction.
+The plan stage should declare:
 
-## New Windmill flow
+- files to modify
+- files to create
+- public API changes
+- data model changes
+- migration risk
+- test plan
+- rollback or failure risk
 
-New flow export: `windmill/flows/devgodzilla/brownfield_feature.flow.json`
+Hard rules:
 
-It reuses existing API-wrapper scripts and keeps configuration intentionally small. `task_cycle` should be implemented as another `output_mode` branch inside this same flow:
+- if the change touches too many files, fail and split the work item
+- if the plan mixes unrelated concerns, fail and split the work item
+- if the plan crosses module boundaries without justification, fail review early
 
-- optional context refresh via `u/devgodzilla/project_onboard_api`
-- spec generation via `u/devgodzilla/speckit_specify_api`
-- optional clarification append via `u/devgodzilla/speckit_clarify_api`
-- plan and tasks via `u/devgodzilla/speckit_plan_api` and `u/devgodzilla/speckit_tasks_api`
-- optional checklist and analysis via `u/devgodzilla/speckit_checklist_api` and `u/devgodzilla/speckit_analyze_api`
-- optional protocol handoff via `u/devgodzilla/protocol_from_spec_api`
-- optional task-cycle branch over projected work items backed by `step_runs`
+This stage is the main guardrail against “agent solved it by editing half the repo”.
 
-## Recommended UI/backend contract
+### 3. Implement
 
-The UI should call this flow with a compact payload:
+Implementation should remain focused on execution, but artifact capture must improve.
 
-```json
-{
-  "project_id": 42,
-  "feature_request": "Add audit trail to invoice status changes",
-  "feature_name": "invoice-audit-trail",
-  "output_mode": "task_cycle",
-  "run_discovery_agent": false,
-  "clarification_entries": [],
-  "clarification_notes": "",
-  "run_analysis": true,
-  "owner_agent": "dev",
-  "allow_helper_agents": true
-}
-```
+Required implement artifacts:
 
-That contract is easier to explain than the current split across onboarding, SpecKit, protocol creation, and execution-specific screens.
+- actual `git diff`
+- actual `git status`
+- changed file summary
+- execution log
+- test command output
 
-## Basic v1 review and PR-ready rules
+The system should fail the implement artifact set if:
 
-The task-cycle branch should include a dedicated `review` stage with a separate review agent.
+- code changed but `changes.diff` is empty
+- code changed but `git-status.txt` is empty
+- logs claim files changed but the captured diff does not support that
 
-The review agent should read:
+This is essential for brownfield work because auditability matters almost as much as correctness.
 
-- task details and current work-item status
-- `context_pack.json`
-- changed files and diff summary
-- project manifests
-- project style guides and conventions
-- exact test commands
+### 4. Review
 
-The review stage should produce:
+Review should explicitly assess maintainability, not just correctness.
 
-- `review_report.json`
-- `review_report.md`
+The review stage should check:
 
-Basic v1 `PR-ready` criteria should be:
+- scope discipline
+- module boundaries
+- dependency direction
+- function size
+- file size
+- nesting depth
+- duplication
+- hidden side effects
+- naming clarity
+- test relevance
 
-- `context_pack.json` exists
-- implementation finished successfully
-- latest review passed or only contains non-blocking warnings
-- latest QA passed
-- no blocking clarifications remain open
+Review verdicts should be:
+
+- `passed`
+- `passed_with_debt`
+- `needs_refactor`
+- `failed`
+
+`needs_refactor` is important because it distinguishes “works but ugly” from “actually broken”.
+
+### 5. QA
+
+Prompt QA should remain optional and supplemental.
+
+Brownfield QA should be primarily deterministic.
+
+For Python repos, default gates should include:
+
+- `pytest`
+- `ruff`
+- unused import check
+- complexity check
+- file-length check
+- lightweight type/import smoke if configured
+
+QA should not say “passed with high confidence” when only a prompt gate was skipped or when no real repo gate ran.
+
+### 6. Refactor
+
+This stage is only triggered when:
+
+- functionality is correct
+- tests pass
+- structural quality is below threshold
+
+The refactor stage should be narrow:
+
+- reduce file size
+- reduce function complexity
+- isolate side effects
+- extract helpers
+- align with repo patterns
+
+This gives the workflow a place to fix maintainability issues without pretending the entire task failed.
+
+### 7. PR Ready
+
+PR-ready should depend on artifact integrity and quality evidence, not just stage completion.
+
+Required conditions:
+
+- context artifacts exist
+- plan exists
+- implement artifacts are internally consistent
+- review is `passed` or `passed_with_debt`
+- QA ran real gates and passed
+- no blocking clarifications remain
 - no blocking policy findings remain
-- latest required artifacts are present and linked from the work item
+- stale rework artifacts are cleared or superseded explicitly
+
+## New Quality Policy For Brownfield Tasks
+
+To consistently produce better structured code, brownfield tasks should adopt these limits:
+
+- max touched files per work item
+- max file size threshold
+- max function complexity threshold
+- max nesting threshold
+- max public API surface change per task
+
+When a task exceeds these bounds, the system should prefer decomposition instead of allowing the task to sprawl.
+
+## Artifact Rules
+
+Artifacts should become part of the contract, not just byproducts.
+
+### Required Artifact Quality
+
+- `context_pack.json` must identify allowed files, test commands, and review focus
+- `review_report.json` must distinguish correctness from maintainability
+- `test_report.json` must list actual gates run
+- `rework_pack.json` must be removed or superseded after success
+- `changes.diff` and `git-status.txt` must reflect the real workspace state at the end of implement
+
+### Anti-Patterns To Eliminate
+
+- empty diff artifacts after successful code edits
+- QA reports claiming confidence without deterministic checks
+- stale rework artifacts on successful work items
+- review reports that say “passed” without discussing structure
+
+## Recommended Backend Changes
+
+Main implementation area:
+
+- `devgodzilla/services/task_cycle.py`
+
+Recommended changes:
+
+- add `plan` stage support and storage
+- extend context pack generation with architectural constraints
+- tighten implement artifact validation
+- expand review schema to include maintainability findings
+- make QA gate selection repo-aware and deterministic by default
+- add refactor verdict/state support
+- clear or supersede stale rework artifacts after success
+
+## Recommended Frontend Changes
+
+Main implementation areas:
+
+- `frontend/app/projects/[id]/components/task-cycle-tab.tsx`
+- `frontend/app/projects/[id]/components/task-cycle-runtime-dialog.tsx`
+- `frontend/app/projects/[id]/components/settings-tab.tsx`
+
+Recommended changes:
+
+- surface plan stage in the brownfield flow
+- distinguish functional pass from structural debt
+- show actual QA gates run, not just a green status
+- show artifact integrity warnings when diff/status evidence is missing
+- make `PR Ready` visually dependent on evidence quality
+
+## Rollout Plan
+
+### Phase 1
+
+Improve evidence quality without changing the whole flow:
+
+- require real `git diff` and `git status` artifacts
+- make QA report show actual gates run
+- clear stale rework artifacts on success
+- distinguish skipped QA from passed QA
+
+### Phase 2
+
+Add structure enforcement:
+
+- add `Plan` stage
+- add maintainability review checks
+- add deterministic brownfield QA defaults
+
+### Phase 3
+
+Add quality recovery:
+
+- introduce `needs_refactor`
+- add optional `Refactor` stage
+- support automatic task splitting when change scope is too large
+
+## Success Criteria
+
+This plan is successful when:
+
+- brownfield tasks touch fewer files on average
+- PR-ready work items have trustworthy diff/status artifacts
+- QA reports reflect real repository validation
+- maintainability issues are caught before PR-ready
+- successful tasks produce code that follows existing repo patterns more often
+- maintainers can trust brownfield task-cycle output without manually re-auditing every artifact
+
+## Practical Recommendation
+
+The first high-value change is not a new agent prompt.
+
+It is this:
+
+1. add a `Plan` stage
+2. strengthen brownfield QA with real repo gates
+3. make PR-ready fail when artifact evidence is weak
+
+That combination will improve both code structure and trust in the workflow faster than adding more model-side instructions.

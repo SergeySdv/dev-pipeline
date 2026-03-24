@@ -3,10 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-import { AlertCircle, Bot, ExternalLink, FileText, GitBranch, Layers3, ShieldAlert } from "lucide-react";
+import {
+  AlertCircle,
+  Bot,
+  ExternalLink,
+  FileText,
+  GitBranch,
+  Layers3,
+  ShieldAlert,
+} from "lucide-react";
 
-import { useWorkItemRuntime, useWorkItemArtifactContent, useStepArtifactContent } from "@/lib/api";
-import type { WorkItemRuntimeArtifact } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +28,12 @@ import { LoadingState } from "@/components/ui/loading-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  useStepArtifactContent,
+  useWorkItemArtifactContent,
+  useWorkItemRuntime,
+  type WorkItemRuntimeArtifact,
+} from "@/lib/api";
 
 interface TaskCycleRuntimeDialogProps {
   workItemId: number | null;
@@ -50,9 +62,14 @@ export function TaskCycleRuntimeDialog({
   initialArtifactId = null,
   onOpenChange,
 }: TaskCycleRuntimeDialogProps) {
-  const { data: runtime, isLoading } = useWorkItemRuntime(open ? workItemId ?? undefined : undefined);
+  const { data: runtime, isLoading } = useWorkItemRuntime(
+    open ? (workItemId ?? undefined) : undefined
+  );
   const allArtifacts = useMemo(
-    () => runtime?.stage_runs.flatMap((stageRun) => stageRun.artifacts.filter((artifact) => artifact.exists)) ?? [],
+    () =>
+      runtime?.stage_runs.flatMap((stageRun) =>
+        stageRun.artifacts.filter((artifact) => artifact.exists)
+      ) ?? [],
     [runtime]
   );
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
@@ -79,7 +96,10 @@ export function TaskCycleRuntimeDialog({
       setSelectedArtifactId(null);
       return;
     }
-    if (!selectedArtifactId || !allArtifacts.some((artifact) => artifact.id === selectedArtifactId)) {
+    if (
+      !selectedArtifactId ||
+      !allArtifacts.some((artifact) => artifact.id === selectedArtifactId)
+    ) {
       setSelectedArtifactId(allArtifacts[0].id);
     }
   }, [allArtifacts, initialArtifactId, open, selectedArtifactId]);
@@ -89,12 +109,14 @@ export function TaskCycleRuntimeDialog({
 
   const taskCycleArtifactContent = useWorkItemArtifactContent(
     runtime?.work_item.id,
-    selectedArtifact?.content_source === "work_item" ? selectedArtifact.content_id ?? null : null,
+    selectedArtifact?.content_source === "work_item" ? (selectedArtifact.content_id ?? null) : null,
     open && selectedArtifact?.content_source === "work_item"
   );
   const stepArtifactContent = useStepArtifactContent(
     runtime?.work_item.id,
-    selectedArtifact?.content_source === "step" ? selectedArtifact.content_id ?? undefined : undefined
+    selectedArtifact?.content_source === "step"
+      ? (selectedArtifact.content_id ?? undefined)
+      : undefined
   );
 
   const previewContent =
@@ -157,7 +179,9 @@ export function TaskCycleRuntimeDialog({
                       </CardHeader>
                       <CardContent>
                         <div className="text-lg font-semibold">{runtime.active_stage_label}</div>
-                        <div className="text-muted-foreground text-sm">{runtime.progress_summary}</div>
+                        <div className="text-muted-foreground text-sm">
+                          {runtime.progress_summary}
+                        </div>
                       </CardContent>
                     </Card>
                     <Card>
@@ -169,7 +193,8 @@ export function TaskCycleRuntimeDialog({
                           {runtime.work_item.owner_agent ?? "Unassigned"}
                         </div>
                         <div className="text-muted-foreground text-sm">
-                          Iteration {runtime.work_item.iteration_count}/{runtime.work_item.max_iterations}
+                          Iteration {runtime.work_item.iteration_count}/
+                          {runtime.work_item.max_iterations}
                         </div>
                       </CardContent>
                     </Card>
@@ -193,7 +218,9 @@ export function TaskCycleRuntimeDialog({
                         <CardTitle className="text-sm">Blockers</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-lg font-semibold">{runtime.blocking_reasons.length}</div>
+                        <div className="text-lg font-semibold">
+                          {runtime.blocking_reasons.length}
+                        </div>
                         <div className="text-muted-foreground text-sm">
                           {runtime.blocking_reasons[0] ?? "No active blockers"}
                         </div>
@@ -223,7 +250,9 @@ export function TaskCycleRuntimeDialog({
                       </CardHeader>
                       <CardContent className="space-y-3">
                         {runtime.active_agents.length === 0 ? (
-                          <div className="text-muted-foreground text-sm">No active agents projected.</div>
+                          <div className="text-muted-foreground text-sm">
+                            No active agents projected.
+                          </div>
                         ) : (
                           runtime.active_agents.map((agent) => (
                             <div
@@ -256,7 +285,9 @@ export function TaskCycleRuntimeDialog({
                     <Card>
                       <CardHeader>
                         <CardTitle className="text-base">Latest Artifacts</CardTitle>
-                        <CardDescription>Newest stage outputs across the task cycle</CardDescription>
+                        <CardDescription>
+                          Newest stage outputs across the task cycle
+                        </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-2">
                         {runtime.latest_artifacts.length === 0 ? (
@@ -272,7 +303,8 @@ export function TaskCycleRuntimeDialog({
                               <div>
                                 <div className="font-medium">{artifact.name}</div>
                                 <div className="text-muted-foreground text-xs">
-                                  {artifact.stage_id.replace(/_/g, " ")} · {formatDate(artifact.created_at)}
+                                  {artifact.stage_id.replace(/_/g, " ")} ·{" "}
+                                  {formatDate(artifact.created_at)}
                                 </div>
                               </div>
                               <Badge variant="outline">{artifact.type}</Badge>
@@ -294,7 +326,9 @@ export function TaskCycleRuntimeDialog({
                             <CardDescription>{stageRun.summary}</CardDescription>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
-                            {stageRun.mode && <Badge variant="outline">{stageRun.mode.replace(/_/g, " ")}</Badge>}
+                            {stageRun.mode && (
+                              <Badge variant="outline">{stageRun.mode.replace(/_/g, " ")}</Badge>
+                            )}
                             <StatusPill status={stageRun.status} size="sm" />
                           </div>
                         </div>
@@ -323,7 +357,9 @@ export function TaskCycleRuntimeDialog({
                             <div>
                               <span className="text-muted-foreground">Windmill:</span>{" "}
                               {stageRun.windmill_job_id}
-                              {stageRun.windmill_module_id ? ` · ${stageRun.windmill_module_id}` : ""}
+                              {stageRun.windmill_module_id
+                                ? ` · ${stageRun.windmill_module_id}`
+                                : ""}
                             </div>
                           )}
                         </div>
@@ -346,7 +382,9 @@ export function TaskCycleRuntimeDialog({
                           )}
                           {stageRun.blocking_reasons.length > 0 && (
                             <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                              <div className="mb-2 text-sm font-medium text-red-700">Blocking reasons</div>
+                              <div className="mb-2 text-sm font-medium text-red-700">
+                                Blocking reasons
+                              </div>
                               <div className="space-y-1 text-sm text-red-700">
                                 {stageRun.blocking_reasons.map((reason) => (
                                   <div key={reason}>{reason}</div>
@@ -361,15 +399,19 @@ export function TaskCycleRuntimeDialog({
                 </TabsContent>
 
                 <TabsContent value="artifacts">
-                  <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
-                    <Card>
+                  <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+                    <Card className="min-w-0">
                       <CardHeader>
                         <CardTitle className="text-base">Artifacts by Stage</CardTitle>
-                        <CardDescription>Select an artifact to preview its contents</CardDescription>
+                        <CardDescription>
+                          Select an artifact to preview its contents
+                        </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-4">
                         {runtime.stage_runs.map((stageRun) => {
-                          const visibleArtifacts = stageRun.artifacts.filter((artifact) => artifact.exists);
+                          const visibleArtifacts = stageRun.artifacts.filter(
+                            (artifact) => artifact.exists
+                          );
                           return (
                             <div key={stageRun.stage_id} className="space-y-2">
                               <div className="flex items-center justify-between">
@@ -404,14 +446,16 @@ export function TaskCycleRuntimeDialog({
                       </CardContent>
                     </Card>
 
-                    <Card>
+                    <Card className="min-w-0">
                       <CardHeader>
                         <CardTitle className="text-base">Artifact Preview</CardTitle>
                         <CardDescription>{artifactPreviewTitle(selectedArtifact)}</CardDescription>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="min-w-0">
                         {!selectedArtifact ? (
-                          <div className="text-muted-foreground text-sm">Select an artifact to preview it.</div>
+                          <div className="text-muted-foreground text-sm">
+                            Select an artifact to preview it.
+                          </div>
                         ) : previewLoading ? (
                           <LoadingState message="Loading artifact preview..." />
                         ) : previewContent ? (
@@ -419,6 +463,7 @@ export function TaskCycleRuntimeDialog({
                             code={previewContent.content}
                             language={selectedArtifact.type === "json" ? "json" : "text"}
                             maxHeight="520px"
+                            wrapLongLines
                           />
                         ) : (
                           <Alert>
@@ -438,11 +483,15 @@ export function TaskCycleRuntimeDialog({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">Runtime Activity</CardTitle>
-                      <CardDescription>Derived stage, artifact, and Windmill updates</CardDescription>
+                      <CardDescription>
+                        Derived stage, artifact, and Windmill updates
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {runtime.activity.length === 0 ? (
-                        <div className="text-muted-foreground text-sm">No runtime activity available.</div>
+                        <div className="text-muted-foreground text-sm">
+                          No runtime activity available.
+                        </div>
                       ) : (
                         runtime.activity.map((item) => (
                           <div key={item.id} className="flex gap-3 rounded-lg border p-3">
@@ -452,7 +501,7 @@ export function TaskCycleRuntimeDialog({
                               ) : item.kind === "artifact" ? (
                                 <FileText className="h-4 w-4 text-blue-600" />
                               ) : (
-                                <Layers3 className="h-4 w-4 text-muted-foreground" />
+                                <Layers3 className="text-muted-foreground h-4 w-4" />
                               )}
                             </div>
                             <div className="min-w-0 flex-1 space-y-1">
@@ -461,7 +510,9 @@ export function TaskCycleRuntimeDialog({
                                 {item.stage_id && <span>{item.stage_id.replace(/_/g, " ")}</span>}
                                 {item.agent_id && <span>Agent: {item.agent_id}</span>}
                                 {item.run_id && <span>Run: {item.run_id}</span>}
-                                {item.windmill_job_id && <span>Windmill: {item.windmill_job_id}</span>}
+                                {item.windmill_job_id && (
+                                  <span>Windmill: {item.windmill_job_id}</span>
+                                )}
                                 {item.created_at && <span>{formatDate(item.created_at)}</span>}
                               </div>
                             </div>
@@ -485,7 +536,8 @@ export function TaskCycleRuntimeDialog({
                           {runtime.work_item.protocol_run_id}
                         </div>
                         <div>
-                          <span className="text-muted-foreground">Step run:</span> {runtime.work_item.id}
+                          <span className="text-muted-foreground">Step run:</span>{" "}
+                          {runtime.work_item.id}
                         </div>
                         <div>
                           <span className="text-muted-foreground">Lifecycle:</span>{" "}
@@ -493,7 +545,9 @@ export function TaskCycleRuntimeDialog({
                         </div>
                         <div>
                           <span className="text-muted-foreground">Task dir:</span>{" "}
-                          <span className="break-all">{runtime.work_item.task_dir ?? "Not available"}</span>
+                          <span className="break-all">
+                            {runtime.work_item.task_dir ?? "Not available"}
+                          </span>
                         </div>
                       </CardContent>
                     </Card>
