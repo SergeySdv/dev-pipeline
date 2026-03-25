@@ -64,6 +64,10 @@ class DatabaseProtocol(Protocol):
         default_models: Optional[dict] = None,
         secrets: Optional[dict] = None,
         local_path: Optional[str] = None,
+        repo_mode: Optional[str] = None,
+        managed_repo_root_override: Optional[str] = None,
+        worktrees_root_override: Optional[str] = None,
+        artifacts_root_override: Optional[str] = None,
         project_classification: Optional[str] = None,
         policy_pack_key: Optional[str] = None,
         policy_pack_version: Optional[str] = None,
@@ -404,7 +408,22 @@ class SQLiteDatabase:
         
         with self._transaction() as conn:
             conn.executescript(SCHEMA_SQLITE)
+            self._ensure_project_storage_columns_sqlite(conn)
             conn.commit()
+
+    @staticmethod
+    def _ensure_project_storage_columns_sqlite(conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        required_columns = {
+            "repo_mode": "ALTER TABLE projects ADD COLUMN repo_mode TEXT",
+            "task_cycle_autonomous": "ALTER TABLE projects ADD COLUMN task_cycle_autonomous INTEGER DEFAULT 0",
+            "managed_repo_root_override": "ALTER TABLE projects ADD COLUMN managed_repo_root_override TEXT",
+            "worktrees_root_override": "ALTER TABLE projects ADD COLUMN worktrees_root_override TEXT",
+            "artifacts_root_override": "ALTER TABLE projects ADD COLUMN artifacts_root_override TEXT",
+        }
+        for column, statement in required_columns.items():
+            if column not in columns:
+                conn.execute(statement)
 
     # Helper methods for JSON and timestamp parsing
     @staticmethod
@@ -453,6 +472,11 @@ class SQLiteDatabase:
             git_url=row["git_url"],
             base_branch=row["base_branch"],
             local_path=row["local_path"] if "local_path" in keys else None,
+            repo_mode=row["repo_mode"] if "repo_mode" in keys else None,
+            task_cycle_autonomous=bool(row["task_cycle_autonomous"]) if "task_cycle_autonomous" in keys and row["task_cycle_autonomous"] is not None else False,
+            managed_repo_root_override=row["managed_repo_root_override"] if "managed_repo_root_override" in keys else None,
+            worktrees_root_override=row["worktrees_root_override"] if "worktrees_root_override" in keys else None,
+            artifacts_root_override=row["artifacts_root_override"] if "artifacts_root_override" in keys else None,
             ci_provider=row["ci_provider"],
             secrets=self._parse_json(row["secrets"]),
             github_token_configured=bool((self._parse_json(row["secrets"]) or {}).get("github_token")),
@@ -706,6 +730,11 @@ class SQLiteDatabase:
         default_models: Optional[dict] = None,
         secrets: Optional[dict] = None,
         local_path: Optional[str] = None,
+        repo_mode: Optional[str] = None,
+        task_cycle_autonomous: bool = False,
+        managed_repo_root_override: Optional[str] = None,
+        worktrees_root_override: Optional[str] = None,
+        artifacts_root_override: Optional[str] = None,
         project_classification: Optional[str] = None,
         policy_pack_key: Optional[str] = None,
         policy_pack_version: Optional[str] = None,
@@ -716,16 +745,18 @@ class SQLiteDatabase:
                 INSERT INTO projects (
                     name, git_url, base_branch, ci_provider,
                     default_models, secrets, local_path,
+                    repo_mode, task_cycle_autonomous, managed_repo_root_override, worktrees_root_override, artifacts_root_override,
                     project_classification, policy_pack_key, policy_pack_version,
                     policy_enforcement_mode
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'warn')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'warn')
                 """,
                 (
                     name, git_url, base_branch, ci_provider,
                     json.dumps(default_models) if default_models else None,
                     json.dumps(secrets) if secrets else None,
-                    local_path, project_classification,
+                    local_path, repo_mode, int(task_cycle_autonomous), managed_repo_root_override, worktrees_root_override, artifacts_root_override,
+                    project_classification,
                     policy_pack_key or "default",
                     policy_pack_version or "1.0",
                 ),
@@ -761,7 +792,12 @@ class SQLiteDatabase:
         git_url: Optional[str] = None,
         base_branch: Optional[str] = None,
         secrets: Optional[dict] = _UNSET,
-        local_path: Optional[str] = None,
+        local_path: Optional[str] = _UNSET,
+        repo_mode: Optional[str] = _UNSET,
+        task_cycle_autonomous: Optional[bool] = _UNSET,
+        managed_repo_root_override: Optional[str] = _UNSET,
+        worktrees_root_override: Optional[str] = _UNSET,
+        artifacts_root_override: Optional[str] = _UNSET,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
     ) -> Project:
@@ -786,9 +822,24 @@ class SQLiteDatabase:
         if secrets is not _UNSET:
             updates.append("secrets = ?")
             params.append(json.dumps(secrets) if secrets else None)
-        if local_path is not None:
+        if local_path is not _UNSET:
             updates.append("local_path = ?")
             params.append(local_path)
+        if repo_mode is not _UNSET:
+            updates.append("repo_mode = ?")
+            params.append(repo_mode)
+        if task_cycle_autonomous is not _UNSET:
+            updates.append("task_cycle_autonomous = ?")
+            params.append(None if task_cycle_autonomous is None else int(task_cycle_autonomous))
+        if managed_repo_root_override is not _UNSET:
+            updates.append("managed_repo_root_override = ?")
+            params.append(managed_repo_root_override)
+        if worktrees_root_override is not _UNSET:
+            updates.append("worktrees_root_override = ?")
+            params.append(worktrees_root_override)
+        if artifacts_root_override is not _UNSET:
+            updates.append("artifacts_root_override = ?")
+            params.append(artifacts_root_override)
         if constitution_version is not None:
             updates.append("constitution_version = ?")
             params.append(constitution_version)
@@ -2840,6 +2891,20 @@ class PostgresDatabase:
         with self._transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA_POSTGRES)
+                self._ensure_project_storage_columns_postgres(cur)
+
+    @staticmethod
+    def _ensure_project_storage_columns_postgres(cur) -> None:
+        cur.execute(
+            """
+            ALTER TABLE projects
+            ADD COLUMN IF NOT EXISTS repo_mode TEXT,
+            ADD COLUMN IF NOT EXISTS task_cycle_autonomous BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS managed_repo_root_override TEXT,
+            ADD COLUMN IF NOT EXISTS worktrees_root_override TEXT,
+            ADD COLUMN IF NOT EXISTS artifacts_root_override TEXT
+            """
+        )
 
     # Helper methods for JSON and timestamp parsing (reuse SQLite implementations)
     @staticmethod
@@ -2858,6 +2923,11 @@ class PostgresDatabase:
             git_url=row["git_url"],
             base_branch=row["base_branch"],
             local_path=row.get("local_path"),
+            repo_mode=row.get("repo_mode"),
+            task_cycle_autonomous=False if row.get("task_cycle_autonomous") is None else bool(row.get("task_cycle_autonomous")),
+            managed_repo_root_override=row.get("managed_repo_root_override"),
+            worktrees_root_override=row.get("worktrees_root_override"),
+            artifacts_root_override=row.get("artifacts_root_override"),
             ci_provider=row.get("ci_provider"),
             secrets=row.get("secrets"),
             github_token_configured=bool((row.get("secrets") or {}).get("github_token")),
@@ -3614,6 +3684,11 @@ class PostgresDatabase:
         default_models: Optional[dict] = None,
         secrets: Optional[dict] = None,
         local_path: Optional[str] = None,
+        repo_mode: Optional[str] = None,
+        task_cycle_autonomous: bool = False,
+        managed_repo_root_override: Optional[str] = None,
+        worktrees_root_override: Optional[str] = None,
+        artifacts_root_override: Optional[str] = None,
         project_classification: Optional[str] = None,
         policy_pack_key: Optional[str] = None,
         policy_pack_version: Optional[str] = None,
@@ -3625,17 +3700,19 @@ class PostgresDatabase:
                     INSERT INTO projects (
                         name, git_url, base_branch, ci_provider,
                         default_models, secrets, local_path,
+                        repo_mode, task_cycle_autonomous, managed_repo_root_override, worktrees_root_override, artifacts_root_override,
                         project_classification, policy_pack_key, policy_pack_version,
                         policy_enforcement_mode
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'warn')
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'warn')
                     RETURNING id
                     """,
                     (
                         name, git_url, base_branch, ci_provider,
                         json.dumps(default_models) if default_models else None,
                         json.dumps(secrets) if secrets else None,
-                        local_path, project_classification,
+                        local_path, repo_mode, task_cycle_autonomous, managed_repo_root_override, worktrees_root_override, artifacts_root_override,
+                        project_classification,
                         policy_pack_key or "default",
                         policy_pack_version or "1.0",
                     ),
@@ -3672,7 +3749,12 @@ class PostgresDatabase:
         git_url: Optional[str] = None,
         base_branch: Optional[str] = None,
         secrets: Optional[dict] = _UNSET,
-        local_path: Optional[str] = None,
+        local_path: Optional[str] = _UNSET,
+        repo_mode: Optional[str] = _UNSET,
+        task_cycle_autonomous: Optional[bool] = _UNSET,
+        managed_repo_root_override: Optional[str] = _UNSET,
+        worktrees_root_override: Optional[str] = _UNSET,
+        artifacts_root_override: Optional[str] = _UNSET,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
     ) -> Project:
@@ -3697,9 +3779,24 @@ class PostgresDatabase:
         if secrets is not _UNSET:
             updates.append("secrets = %s")
             params.append(json.dumps(secrets) if secrets else None)
-        if local_path is not None:
+        if local_path is not _UNSET:
             updates.append("local_path = %s")
             params.append(local_path)
+        if repo_mode is not _UNSET:
+            updates.append("repo_mode = %s")
+            params.append(repo_mode)
+        if task_cycle_autonomous is not _UNSET:
+            updates.append("task_cycle_autonomous = %s")
+            params.append(task_cycle_autonomous)
+        if managed_repo_root_override is not _UNSET:
+            updates.append("managed_repo_root_override = %s")
+            params.append(managed_repo_root_override)
+        if worktrees_root_override is not _UNSET:
+            updates.append("worktrees_root_override = %s")
+            params.append(worktrees_root_override)
+        if artifacts_root_override is not _UNSET:
+            updates.append("artifacts_root_override = %s")
+            params.append(artifacts_root_override)
         if constitution_version is not None:
             updates.append("constitution_version = %s")
             params.append(constitution_version)

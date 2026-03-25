@@ -210,6 +210,21 @@ function reworkWorkItem(): MockWorkItem {
   };
 }
 
+function prReadyWorkItem(): MockWorkItem {
+  return {
+    ...readyForPrWorkItem(),
+    status: "pr_ready",
+    pr_ready: true,
+    active_stage: "pr_ready",
+    active_stage_label: "PR Ready",
+    active_stage_status: "completed",
+    latest_completed_stage: "PR Ready",
+    blocking_reason: null,
+    progress_summary: "Pull request created with a bounded product-file commit scope",
+    latest_artifact_summary: "PR Ready: pr_ready_report.md",
+  };
+}
+
 function buildRuntime(workItem: MockWorkItem): MockRuntime {
   const prReadyArtifacts: MockRuntimeArtifact[] = [
     {
@@ -340,6 +355,142 @@ function buildRuntime(workItem: MockWorkItem): MockRuntime {
         message: "pre-commit failed; work item returned to rework",
         created_at: "2026-03-22T12:00:30Z",
         artifact_key: "pr_ready_report_md",
+      },
+    ],
+    windmill: null,
+  };
+}
+
+function buildSuccessfulRuntime(workItem: MockWorkItem): MockRuntime {
+  const prReadyArtifacts: MockRuntimeArtifact[] = [
+    {
+      id: "pr_ready_report_md",
+      key: "pr_ready_report_md",
+      stage_id: "pr_ready",
+      name: "pr_ready_report.md",
+      type: "text",
+      path: workItem.artifact_refs.pr_ready_report_md,
+      source: "work_item",
+      exists: true,
+      size: 290,
+      created_at: "2026-03-26T12:00:00Z",
+      content_source: "work_item",
+      content_id: "pr_ready_report_md",
+    },
+    {
+      id: "pr_ready_report_json",
+      key: "pr_ready_report_json",
+      stage_id: "pr_ready",
+      name: "pr_ready_report.json",
+      type: "json",
+      path: workItem.artifact_refs.pr_ready_report_json,
+      source: "work_item",
+      exists: true,
+      size: 480,
+      created_at: "2026-03-26T12:00:00Z",
+      content_source: "work_item",
+      content_id: "pr_ready_report_json",
+    },
+  ];
+
+  return {
+    work_item: workItem,
+    active_stage: "pr_ready",
+    active_stage_label: "PR Ready",
+    active_stage_status: "completed",
+    latest_completed_stage: "PR Ready",
+    progress_summary: workItem.progress_summary,
+    blocking_reasons: [],
+    active_agents: [
+      {
+        agent_id: "opencode",
+        role: "owner",
+        status: "completed",
+      },
+    ],
+    stage_runs: [
+      {
+        stage_id: "build_context",
+        stage_name: "Build Context",
+        order: 1,
+        status: "completed",
+        summary: "Context ready",
+        started_at: "2026-03-26T10:00:00Z",
+        finished_at: "2026-03-26T10:02:00Z",
+        agent_assignments: [],
+        artifacts: [],
+        blocking_reasons: [],
+        run_ids: [],
+      },
+      {
+        stage_id: "plan",
+        stage_name: "Plan",
+        order: 2,
+        status: "completed",
+        summary: "Plan generated",
+        started_at: "2026-03-26T10:03:00Z",
+        finished_at: "2026-03-26T10:04:00Z",
+        agent_assignments: [],
+        artifacts: [],
+        blocking_reasons: [],
+        run_ids: [],
+      },
+      {
+        stage_id: "review",
+        stage_name: "Review",
+        order: 3,
+        status: "completed",
+        summary: "Review passed",
+        started_at: "2026-03-26T10:05:00Z",
+        finished_at: "2026-03-26T10:06:00Z",
+        agent_assignments: [],
+        artifacts: [],
+        blocking_reasons: [],
+        run_ids: [],
+      },
+      {
+        stage_id: "qa",
+        stage_name: "QA",
+        order: 4,
+        status: "completed",
+        summary: "Deterministic QA passed",
+        started_at: "2026-03-26T10:07:00Z",
+        finished_at: "2026-03-26T10:08:00Z",
+        agent_assignments: [],
+        artifacts: [],
+        blocking_reasons: [],
+        run_ids: [],
+      },
+      {
+        stage_id: "pr_ready",
+        stage_name: "PR Ready",
+        order: 5,
+        status: "completed",
+        summary: "Pull request created with a bounded product-file commit scope",
+        started_at: "2026-03-26T12:00:00Z",
+        finished_at: "2026-03-26T12:00:30Z",
+        agent_assignments: [
+          {
+            agent_id: "opencode",
+            role: "owner",
+            status: "completed",
+          },
+        ],
+        artifacts: prReadyArtifacts,
+        blocking_reasons: [],
+        run_ids: [],
+      },
+    ],
+    latest_artifacts: prReadyArtifacts,
+    activity: [
+      {
+        id: "activity-pr-ready-success",
+        kind: "artifact",
+        stage_id: "pr_ready",
+        status: "completed",
+        message: "Pull request created with only product files staged",
+        created_at: "2026-03-26T12:00:30Z",
+        artifact_key: "pr_ready_report_json",
       },
     ],
     windmill: null,
@@ -527,6 +678,166 @@ async function installApiMocks(page: Page) {
   return state;
 }
 
+async function installSuccessfulPrReadyApiMocks(page: Page) {
+  const state: MockState = {
+    workItem: readyForPrWorkItem(),
+    runtime: buildSuccessfulRuntime(prReadyWorkItem()),
+    requests: {
+      markPrReady: [],
+    },
+  };
+
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const { pathname } = url;
+    const isApiRequest = !!request.headerValue("x-request-id");
+
+    if (request.resourceType() === "document" || !isApiRequest) {
+      await route.continue();
+      return;
+    }
+
+    if (pathname.includes("/_next/")) {
+      await route.continue();
+      return;
+    }
+
+    if (request.method() === "GET" && pathname.endsWith(`/projects/${PROJECT_ID}`)) {
+      await json(route, {
+        id: PROJECT_ID,
+        name: "Telegram Bot",
+        git_url: "https://github.com/example/telegram-bot",
+        local_path: "/tmp/telegram-bot",
+        base_branch: "main",
+        project_classification: null,
+        created_at: "2026-03-21T12:00:00Z",
+        updated_at: "2026-03-26T12:00:00Z",
+        policy_pack_key: null,
+        policy_pack_version: null,
+        policy_overrides: null,
+        policy_repo_local_enabled: true,
+        policy_effective_hash: null,
+        policy_enforcement_mode: null,
+        status: "active",
+        constitution_version: "1",
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && pathname.endsWith(`/projects/${PROJECT_ID}/onboarding`)) {
+      await json(route, {
+        project_id: PROJECT_ID,
+        status: "completed",
+        stages: [],
+        events: [],
+        blocking_clarifications: 0,
+      });
+      return;
+    }
+
+    if (request.method() === "GET" && pathname.endsWith(`/projects/${PROJECT_ID}/protocols`)) {
+      await json(route, [
+        {
+          id: PROTOCOL_RUN_ID,
+          project_id: PROJECT_ID,
+          protocol_name: "023-db-for-user-metadata",
+          status: "running",
+          base_branch: "main",
+          worktree_path: "/tmp/telegram-bot",
+          protocol_root: "/tmp/telegram-bot/specs/023-db-for-user-metadata/_runtime",
+          description: "Brownfield user metadata flow",
+          template_config: null,
+          template_source: null,
+          summary: null,
+          windmill_flow_id: null,
+          speckit_metadata: null,
+          policy_pack_key: null,
+          policy_pack_version: null,
+          policy_effective_hash: null,
+          policy_effective_json: null,
+          linked_sprint_id: null,
+          created_at: "2026-03-26T10:00:00Z",
+          updated_at: "2026-03-26T12:00:00Z",
+        },
+      ]);
+      return;
+    }
+
+    if (request.method() === "GET" && pathname.endsWith(`/projects/${PROJECT_ID}/task-cycle`)) {
+      await json(route, [state.workItem]);
+      return;
+    }
+
+    if (request.method() === "GET" && pathname.endsWith("/agents")) {
+      await json(route, [{ id: "opencode", name: "OpenCode", enabled: true }]);
+      return;
+    }
+
+    if (
+      request.method() === "POST" &&
+      pathname.endsWith(`/work-items/${WORK_ITEM_ID}/actions/mark-pr-ready`)
+    ) {
+      state.requests.markPrReady.push(requestBody(route));
+      state.workItem = prReadyWorkItem();
+      state.runtime = buildSuccessfulRuntime(state.workItem);
+      await json(route, state.workItem);
+      return;
+    }
+
+    if (request.method() === "GET" && pathname.endsWith(`/work-items/${WORK_ITEM_ID}/runtime`)) {
+      await json(route, state.runtime);
+      return;
+    }
+
+    if (
+      request.method() === "GET" &&
+      pathname.endsWith(`/work-items/${WORK_ITEM_ID}/artifacts/pr_ready_report_json/content`)
+    ) {
+      await json(route, {
+        id: "pr_ready_report_json",
+        name: "pr_ready_report.json",
+        type: "json",
+        truncated: false,
+        content: JSON.stringify(
+          {
+            precommit: {
+              status: "passed",
+              summary: "Pre-commit passed on 2 file set(s)",
+              checked_files: ["README.md", "src/telegram_bot_app/telegram_bot.py"],
+            },
+            commit_scope: {
+              staged_files: ["README.md", "src/telegram_bot_app/telegram_bot.py"],
+              excluded_generated_files: [
+                ".devgodzilla/task-cycle/protocols/24/work-items/60/context_pack.json",
+                ".specify/memory/constitution.md",
+                "specs/028-storage-path-e2e-20260325/plan.md",
+              ],
+            },
+            pull_request: {
+              status: "created",
+              url: "https://github.com/example/telegram-bot/pull/7",
+            },
+          },
+          null,
+          2
+        ),
+      });
+      return;
+    }
+
+    await json(
+      route,
+      {
+        error: `Unhandled mock request for ${request.method()} ${pathname}`,
+      },
+      500
+    );
+  });
+
+  return state;
+}
+
 test("returns a work item to rework when PR-ready pre-commit validation fails", async ({ page }) => {
   test.setTimeout(90_000);
   const state = await installApiMocks(page);
@@ -567,4 +878,36 @@ test("returns a work item to rework when PR-ready pre-commit validation fails", 
     page.getByText("Pre-commit validation failed; rework is required before PR creation.")
   ).toBeVisible();
   await expect(page.getByText("README.md:1 unused import")).toBeVisible();
+});
+
+test("shows a bounded commit scope after PR-ready succeeds", async ({ page }) => {
+  test.setTimeout(90_000);
+  const state = await installSuccessfulPrReadyApiMocks(page);
+
+  await page.goto(appPath(`/projects/${PROJECT_ID}?tab=task_cycle`));
+
+  await expect(page.getByRole("heading", { name: "Task Cycle" })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByRole("button", { name: /mark pr ready/i })).toBeEnabled();
+
+  await page.getByRole("button", { name: /mark pr ready/i }).click();
+
+  await expect.poll(() => state.requests.markPrReady.length).toBe(1);
+  await expect(
+    page.locator("#main-content").getByText("Pull request created with a bounded product-file commit scope")
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: /^Runtime$/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("tab", { name: /^Artifacts$/ }).click();
+  await page.getByRole("button", { name: /pr_ready_report\.json/i }).click();
+
+  await expect(page.getByText("pr_ready_report.json · task-cycle artifact")).toBeVisible();
+  await expect(page.getByText('"staged_files": [')).toBeVisible();
+  await expect(page.getByText("README.md")).toBeVisible();
+  await expect(page.getByText("src/telegram_bot_app/telegram_bot.py")).toBeVisible();
+  await expect(page.getByText('"excluded_generated_files": [')).toBeVisible();
+  await expect(page.getByText(".devgodzilla/task-cycle/protocols/24/work-items/60/context_pack.json")).toBeVisible();
+  await expect(page.getByText(".specify/memory/constitution.md")).toBeVisible();
 });

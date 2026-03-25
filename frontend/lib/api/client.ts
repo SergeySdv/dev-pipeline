@@ -279,11 +279,11 @@ class ApiClient {
     }
   }
 
-  get<T>(path: string, options?: { projectId?: number }) {
+  get<T>(path: string, options?: { projectId?: number; skipRetry?: boolean }) {
     return this.fetch<T>(path, { method: "GET", ...options });
   }
 
-  post<T>(path: string, body?: unknown, options?: { projectId?: number }) {
+  post<T>(path: string, body?: unknown, options?: { projectId?: number; skipRetry?: boolean }) {
     return this.fetch<T>(path, {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
@@ -291,7 +291,7 @@ class ApiClient {
     });
   }
 
-  put<T>(path: string, body?: unknown, options?: { projectId?: number }) {
+  put<T>(path: string, body?: unknown, options?: { projectId?: number; skipRetry?: boolean }) {
     return this.fetch<T>(path, {
       method: "PUT",
       body: body ? JSON.stringify(body) : undefined,
@@ -299,11 +299,11 @@ class ApiClient {
     });
   }
 
-  delete<T>(path: string, options?: { projectId?: number }) {
+  delete<T>(path: string, options?: { projectId?: number; skipRetry?: boolean }) {
     return this.fetch<T>(path, { method: "DELETE", ...options });
   }
 
-  patch<T>(path: string, body?: unknown, options?: { projectId?: number }) {
+  patch<T>(path: string, body?: unknown, options?: { projectId?: number; skipRetry?: boolean }) {
     return this.fetch<T>(path, {
       method: "PATCH",
       body: body ? JSON.stringify(body) : undefined,

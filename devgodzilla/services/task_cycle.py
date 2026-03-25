@@ -6,19 +6,18 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from devgodzilla.api import schemas
 from devgodzilla.logging import get_logger
 from devgodzilla.models.domain import StepRun, StepStatus
-from devgodzilla.qa.gates.interface import GateResult, GateVerdict
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.git import GitService
 from devgodzilla.services.policy import PolicyService
-from devgodzilla.services.quality import QAResult, QAVerdict, QualityService
+from devgodzilla.services.quality import QAResult, QualityService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
 from devgodzilla.services.specification import SpecificationService
 from devgodzilla.services.workspace_paths import (
@@ -498,6 +497,12 @@ class TaskCycleService(Service):
                     protocol_run_id=protocol_run_id,
                     project_id=project_id,
                 )
+                if self._task_cycle_autonomous_enabled(project):
+                    self._run_work_item_autonomously(
+                        step_run_id=step_run_id,
+                        protocol_run_id=protocol_run_id,
+                        project_id=project_id,
+                    )
             self._append_project_event(
                 project_id,
                 event_type="brownfield_run_completed",
@@ -514,6 +519,112 @@ class TaskCycleService(Service):
                 stage="internal",
                 error=str(exc),
                 metadata=event_metadata,
+            )
+
+    def _task_cycle_autonomous_enabled(self, project) -> bool:
+        value = getattr(project, "task_cycle_autonomous", None)
+        return False if value is None else bool(value)
+
+    def _run_work_item_autonomously(
+        self,
+        *,
+        step_run_id: int,
+        protocol_run_id: int,
+        project_id: int,
+    ) -> None:
+        step = self.db.get_step_run(step_run_id)
+        run = self.db.get_protocol_run(protocol_run_id)
+        project = self.db.get_project(project_id)
+        if not self._task_cycle_autonomous_enabled(project):
+            return
+
+        event_metadata = {
+            "protocol_run_id": protocol_run_id,
+            "step_run_id": step_run_id,
+        }
+        self._append_project_event(
+            project_id,
+            event_type="brownfield_task_cycle_autonomous_started",
+            message="Autonomous brownfield task-cycle execution started",
+            metadata=event_metadata,
+            protocol_run_id=protocol_run_id,
+            step_run_id=step_run_id,
+        )
+
+        try:
+            work_item = self.get_work_item(step_run_id)
+            loop_limit = max(int(self.config.task_cycle_max_iterations or 1), 1) + 2
+            for _ in range(loop_limit):
+                if work_item.lifecycle_state != self.LIFECYCLE_ACTIVE or work_item.pr_ready:
+                    break
+                if work_item.context_status != "ready":
+                    work_item = self.build_context(step_run_id, refresh=False)
+                    if work_item.context_status != "ready":
+                        break
+                    continue
+                if work_item.plan_status != "ready":
+                    work_item = self.plan(step_run_id, refresh=False)
+                    if work_item.plan_status != "ready":
+                        break
+                    continue
+                if work_item.status in {self.STATUS_BLOCKED, self.STATUS_NEEDS_REWORK}:
+                    break
+                if work_item.review_status == "needs_refactor" and work_item.qa_status == "passed":
+                    work_item = self.refactor(step_run_id, owner_agent=work_item.owner_agent)
+                    continue
+                if work_item.status in {self.STATUS_QUEUED, self.STATUS_CONTEXT_READY, self.STATUS_PLAN_READY}:
+                    work_item = self.implement(step_run_id, owner_agent=work_item.owner_agent)
+                    continue
+                if work_item.status in {
+                    self.STATUS_AWAITING_REVIEW,
+                    self.STATUS_READY_FOR_PR,
+                    self.STATUS_NEEDS_REFACTOR,
+                } or work_item.review_status in {"pending", "needs_refactor"}:
+                    work_item, review = self.review(step_run_id)
+                    if review.verdict == "failed":
+                        break
+                    qa_out = self.qa(step_run_id)
+                    work_item = qa_out.work_item
+                    if work_item.qa_status != "passed":
+                        break
+                    if work_item.review_status == "needs_refactor":
+                        continue
+                    work_item = self.mark_pr_ready(step_run_id)
+                    break
+                if work_item.status == self.STATUS_PR_READY:
+                    break
+                break
+
+            final_item = self.get_work_item(step_run_id)
+            self._append_project_event(
+                project_id,
+                event_type=(
+                    "brownfield_task_cycle_autonomous_completed"
+                    if final_item.pr_ready
+                    else "brownfield_task_cycle_autonomous_blocked"
+                ),
+                message=(
+                    "Autonomous brownfield task-cycle completed"
+                    if final_item.pr_ready
+                    else "Autonomous brownfield task-cycle paused for operator attention"
+                ),
+                metadata={
+                    **event_metadata,
+                    "status": final_item.status,
+                    "active_stage": final_item.active_stage,
+                    "blocking_reason": final_item.blocking_reason,
+                },
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
+            )
+        except Exception as exc:
+            self._append_project_event(
+                project_id,
+                event_type="brownfield_task_cycle_autonomous_failed",
+                message="Autonomous brownfield task-cycle failed",
+                metadata={**event_metadata, "error": str(exc)},
+                protocol_run_id=protocol_run_id,
+                step_run_id=step_run_id,
             )
 
     def _brownfield_protocol_name(self, request: schemas.BrownfieldRunRequest) -> str:
@@ -1272,7 +1383,16 @@ class TaskCycleService(Service):
             raise TaskCycleError("Blocking policy findings must be resolved before marking PR-ready")
 
         workspace_root = self._workspace_root(run, project)
-        changed_files = self._changed_files_from_artifacts(step)
+        commit_scope = self._build_pr_commit_scope(step=step, run=run, project=project)
+        changed_files = commit_scope["staged_files"]
+        if not changed_files:
+            excluded = commit_scope["excluded_generated_files"]
+            detail = (
+                f" after excluding generated paths ({', '.join(excluded[:5])})"
+                if excluded
+                else ""
+            )
+            raise TaskCycleError(f"No product files remain for PR creation{detail}")
         precommit_report = self._run_pr_ready_precommit(
             workspace_root,
             changed_files=changed_files,
@@ -1286,6 +1406,7 @@ class TaskCycleService(Service):
                 project=project,
                 precommit_report=precommit_report,
                 pr_result=None,
+                commit_scope=commit_scope,
             )
             self._write_pr_ready_report(refs, pr_ready_report)
             self._write_rework_pack(
@@ -1303,13 +1424,19 @@ class TaskCycleService(Service):
             self._persist_task_cycle_state(step, state)
             return self.get_work_item(step.id)
 
-        pr_result = self._open_task_cycle_pr(run, project, workspace_root=workspace_root)
+        pr_result = self._open_task_cycle_pr(
+            run,
+            project,
+            workspace_root=workspace_root,
+            changed_files=changed_files,
+        )
         pr_ready_report = self._build_pr_ready_report(
             step=step,
             run=run,
             project=project,
             precommit_report=precommit_report,
             pr_result=pr_result,
+            commit_scope=commit_scope,
         )
         self._write_pr_ready_report(refs, pr_ready_report)
         if not pr_result.get("success"):
@@ -2169,7 +2296,7 @@ class TaskCycleService(Service):
         }
         artifacts: List[schemas.WorkItemRuntimeArtifactOut] = []
         if stage_id in {"implement", "refactor"}:
-            artifacts.extend(self._step_runtime_artifacts(step))
+            artifacts.extend(self._step_runtime_artifacts(step, stage_id=stage_id))
         for key in stage_ref_map.get(stage_id, ()):
             artifacts.append(self._work_item_runtime_artifact(refs[key], stage_id=stage_id, key=key))
         if Path(refs["rework_pack_json"]).exists() and rework_source and (
@@ -2202,7 +2329,12 @@ class TaskCycleService(Service):
             content_id=key if path.exists() else None,
         )
 
-    def _step_runtime_artifacts(self, step: StepRun) -> List[schemas.WorkItemRuntimeArtifactOut]:
+    def _step_runtime_artifacts(
+        self,
+        step: StepRun,
+        *,
+        stage_id: str,
+    ) -> List[schemas.WorkItemRuntimeArtifactOut]:
         artifacts_dir = self._step_artifacts_dir(step)
         if not artifacts_dir.exists():
             return []
@@ -2213,9 +2345,9 @@ class TaskCycleService(Service):
             stat = path.stat()
             artifacts.append(
                 schemas.WorkItemRuntimeArtifactOut(
-                    id=f"step:{path.name}",
+                    id=f"{stage_id}:step:{path.name}",
                     key=path.name,
-                    stage_id="implement",
+                    stage_id=stage_id,
                     name=path.name,
                     type=self._artifact_type_from_name(path.name),
                     path=str(path),
@@ -2833,6 +2965,12 @@ class TaskCycleService(Service):
         ]
         for item in report.get("precommit", {}).get("findings", []) or ["None"]:
             lines.append(f"- {item}")
+        commit_scope = report.get("commit_scope") if isinstance(report.get("commit_scope"), dict) else {}
+        lines.extend(["", "## Commit Scope"])
+        for item in commit_scope.get("staged_files") or ["None"]:
+            lines.append(f"- Staged: `{item}`")
+        for item in commit_scope.get("excluded_generated_files") or []:
+            lines.append(f"- Excluded generated: `{item}`")
         lines.extend(["", "## Pull Request"])
         pull_request = report.get("pull_request") if isinstance(report.get("pull_request"), dict) else {}
         lines.append(f"- Status: `{pull_request.get('status', 'skipped')}`")
@@ -2947,6 +3085,7 @@ class TaskCycleService(Service):
         project,
         precommit_report: Dict[str, Any],
         pr_result: Optional[Dict[str, Any]],
+        commit_scope: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         blocking_findings = []
         if precommit_report.get("status") == "failed":
@@ -2964,6 +3103,10 @@ class TaskCycleService(Service):
             "project_id": project.id,
             "summary": summary,
             "precommit": precommit_report,
+            "commit_scope": commit_scope or {
+                "staged_files": [],
+                "excluded_generated_files": [],
+            },
             "pull_request": pr_result or {"status": "skipped", "message": "Pull request not attempted"},
             "blocking_findings": blocking_findings,
             "generated_at": self._now_iso(),
@@ -2979,6 +3122,7 @@ class TaskCycleService(Service):
         project,
         *,
         workspace_root: Path,
+        changed_files: List[str],
     ) -> Dict[str, Any]:
         git_service = GitService(self.context)
         github_token = self._project_github_token(project)
@@ -2989,6 +3133,7 @@ class TaskCycleService(Service):
             protocol_run_id=run.id,
             project_id=project.id,
             github_token=github_token,
+            changed_files=changed_files,
         )
         pr_url = None
         git_url = (getattr(project, "git_url", None) or "").strip()
@@ -3239,6 +3384,89 @@ class TaskCycleService(Service):
                     changed.append(raw[6:].strip())
 
         return list(dict.fromkeys(path for path in changed if path and path != "/dev/null"))
+
+    def _build_pr_commit_scope(
+        self,
+        *,
+        step: StepRun,
+        run,
+        project,
+    ) -> Dict[str, List[str]]:
+        workspace_root = self._workspace_root(run, project)
+        generated_roots = self._generated_pr_roots(
+            step=step,
+            run=run,
+            workspace_root=workspace_root,
+        )
+        staged_files: List[str] = []
+        excluded_generated_files: List[str] = []
+        for raw in self._changed_files_from_artifacts(step):
+            normalized = self._normalize_repo_relative_path(raw)
+            if not normalized:
+                continue
+            if self._is_generated_pr_path(normalized, generated_roots=generated_roots):
+                if normalized not in excluded_generated_files:
+                    excluded_generated_files.append(normalized)
+                continue
+            if normalized not in staged_files:
+                staged_files.append(normalized)
+        return {
+            "staged_files": staged_files,
+            "excluded_generated_files": excluded_generated_files,
+        }
+
+    def _generated_pr_roots(
+        self,
+        *,
+        step: StepRun,
+        run,
+        workspace_root: Path,
+    ) -> List[str]:
+        generated = [".devgodzilla", ".specify"]
+        protocol_root = self._resolve_existing_repo_path(workspace_root, run.protocol_root)
+        if protocol_root is None:
+            protocol_root = self._infer_protocol_paths(run, step, workspace_root).get("protocol_root")
+        if protocol_root is not None:
+            try:
+                protocol_relative = self._normalize_repo_relative_path(str(protocol_root.relative_to(workspace_root)))
+            except Exception:
+                protocol_relative = None
+            if protocol_relative:
+                generated.append(protocol_relative)
+                spec_root = self._normalize_repo_relative_path(str(PurePosixPath(protocol_relative).parent))
+                if spec_root and spec_root not in {"", "."}:
+                    generated.append(spec_root)
+        return list(dict.fromkeys(path for path in generated if path))
+
+    def _normalize_repo_relative_path(self, raw: Optional[str]) -> Optional[str]:
+        value = str(raw or "").strip().replace("\\", "/")
+        if value.startswith("./"):
+            value = value[2:]
+        parts = [part for part in PurePosixPath(value).parts if part not in {"", "."}]
+        if not parts or parts[0] == "..":
+            return None
+        normalized = PurePosixPath(*parts).as_posix()
+        return normalized or None
+
+    def _is_generated_pr_path(self, path: str, *, generated_roots: List[str]) -> bool:
+        normalized = self._normalize_repo_relative_path(path)
+        if not normalized:
+            return True
+        pure_path = PurePosixPath(normalized)
+        parts = pure_path.parts
+        name = pure_path.name.lower()
+        if any(part == "_runtime" for part in parts):
+            return True
+        if parts and parts[0] in {".devgodzilla", ".specify"}:
+            return True
+        if name.endswith((".prompt.md", ".result.json", ".stdout.log", ".stderr.log", ".error.txt")):
+            return True
+        for root in generated_roots:
+            if normalized == root or normalized.startswith(f"{root}/"):
+                return True
+            if root.startswith(f"{normalized}/"):
+                return True
+        return False
 
     def _python_structure_findings(self, workspace_root: Path, files: List[str]) -> List[str]:
         findings: List[str] = []

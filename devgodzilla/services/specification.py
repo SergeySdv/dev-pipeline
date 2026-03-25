@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode, get_registry
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.project_storage import resolve_effective_worktrees_root
 from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
@@ -458,6 +459,11 @@ class SpecificationService(Service):
                     base_branch_value,
                     spec_run_id=spec_run_id,
                     project_id=project_id,
+                    worktrees_root=(
+                        resolve_effective_worktrees_root(project, self.context.config)
+                        if project is not None
+                        else None
+                    ),
                 )
             except Exception as exc:
                 self._record_spec_run(

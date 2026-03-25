@@ -58,7 +58,7 @@ export const useProjectDetail = useProject;
 export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: ProjectCreate) => apiClient.post<Project>("/projects", data),
+    mutationFn: (data: ProjectCreate) => apiClient.post<Project>("/projects", data, { skipRetry: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.list() });
     },

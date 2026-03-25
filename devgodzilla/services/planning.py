@@ -16,6 +16,10 @@ from devgodzilla.logging import get_logger
 from devgodzilla.models.domain import ProtocolRun, ProtocolStatus, Project
 from devgodzilla.services.base import Service, ServiceContext
 from devgodzilla.services.events import get_event_bus, ProtocolStarted, ProtocolCompleted
+from devgodzilla.services.project_storage import (
+    resolve_effective_repo_path,
+    resolve_effective_worktrees_root,
+)
 from devgodzilla.spec import (
     PROTOCOL_SPEC_KEY,
     build_spec_from_protocol_files,
@@ -223,6 +227,7 @@ class PlanningService(Service):
                         run.base_branch,
                         protocol_run_id=protocol_run_id,
                         project_id=project.id,
+                        worktrees_root=resolve_effective_worktrees_root(project, self.context.config),
                     )
                     run = self.db.update_protocol_paths(protocol_run_id, worktree_path=str(worktree))
                     workspace = worktree
@@ -426,14 +431,18 @@ class PlanningService(Service):
             path = Path(project.local_path)
             if path.exists():
                 return path
-        
+
+        effective_repo_path = resolve_effective_repo_path(project, self.context.config)
+        if effective_repo_path and effective_repo_path.exists():
+            return effective_repo_path
+
         # Use git service to resolve
         if self.git_service:
             try:
                 return self.git_service.resolve_repo_path(
                     project.git_url,
                     project_name=project.name,
-                    local_path=project.local_path,
+                    local_path=str(effective_repo_path) if effective_repo_path else project.local_path,
                     project_id=project.id,
                 )
             except Exception:

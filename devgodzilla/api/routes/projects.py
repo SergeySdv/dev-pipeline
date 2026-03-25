@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 
@@ -23,10 +24,15 @@ from devgodzilla.db.database import Database, _UNSET
 from devgodzilla.events_catalog import normalize_event_type
 from devgodzilla.logging import get_logger, log_extra
 from devgodzilla.services.base import ServiceContext
+from devgodzilla.services.project_storage import (
+    normalize_storage_path,
+    project_storage_payload,
+    resolve_effective_repo_path,
+    validate_project_storage_settings,
+)
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.specification import SpecificationService
-from pathlib import Path
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -85,6 +91,54 @@ def _append_project_event(
         )
     except Exception:
         pass
+
+
+def _project_out(
+    project: Any,
+    ctx: Optional[ServiceContext] = None,
+    *,
+    onboarding_queued: Optional[bool] = None,
+    onboarding_error: Optional[str] = None,
+) -> schemas.ProjectOut:
+    config = ctx.config if ctx is not None else get_service_context().config
+    payload = schemas.ProjectOut.model_validate(project).model_dump()
+    payload.update(project_storage_payload(project, config))
+    payload["onboarding_queued"] = onboarding_queued
+    payload["onboarding_error"] = onboarding_error
+    return schemas.ProjectOut(**payload)
+
+
+def _validate_storage_or_400(
+    *,
+    repo_mode: Optional[schemas.RepoMode],
+    local_path: Optional[str],
+    managed_repo_root_override: Optional[str],
+    worktrees_root_override: Optional[str],
+    artifacts_root_override: Optional[str],
+    git_url: Optional[str],
+    ctx: ServiceContext,
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    normalized_local_path = normalize_storage_path(local_path)
+    normalized_managed_root = normalize_storage_path(managed_repo_root_override)
+    normalized_worktrees_root = normalize_storage_path(worktrees_root_override)
+    normalized_artifacts_root = normalize_storage_path(artifacts_root_override)
+    errors = validate_project_storage_settings(
+        repo_mode=repo_mode.value if repo_mode else None,
+        local_path=normalized_local_path,
+        managed_repo_root_override=normalized_managed_root,
+        worktrees_root_override=normalized_worktrees_root,
+        artifacts_root_override=normalized_artifacts_root,
+        git_url=git_url,
+        config=ctx.config,
+    )
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    return (
+        normalized_local_path,
+        normalized_managed_root,
+        normalized_worktrees_root,
+        normalized_artifacts_root,
+    )
 
 def _normalize_policy_enforcement_mode(mode: Optional[str]) -> Optional[str]:
     if mode is None:
@@ -286,10 +340,11 @@ def _resolve_onboarding_repo_path(
     github_token = project_github_token(project)
     repo_resolve_start = time.perf_counter()
     try:
+        effective_repo_path = resolve_effective_repo_path(project, ctx.config)
         repo_path = git.resolve_repo_path(
             project.git_url,
             project.name,
-            project.local_path,
+            str(effective_repo_path) if effective_repo_path else project.local_path,
             project_id=project.id,
             clone_if_missing=bool(request.clone_if_missing),
             github_token=github_token,
@@ -478,6 +533,20 @@ def create_project(
     )
     has_git_url = bool((project.git_url or "").strip())
     has_local_path = bool((project.local_path or "").strip())
+    (
+        normalized_local_path,
+        normalized_managed_root,
+        normalized_worktrees_root,
+        normalized_artifacts_root,
+    ) = _validate_storage_or_400(
+        repo_mode=project.repo_mode,
+        local_path=project.local_path,
+        managed_repo_root_override=project.managed_repo_root_override,
+        worktrees_root_override=project.worktrees_root_override,
+        artifacts_root_override=project.artifacts_root_override,
+        git_url=project.git_url,
+        ctx=ctx,
+    )
     if project.auto_onboard and not (has_git_url or has_local_path):
         raise HTTPException(status_code=400, detail="git_url or local_path is required for auto onboarding")
     if project.auto_onboard and has_git_url and not _looks_like_git_repository_url(project.git_url):
@@ -493,7 +562,12 @@ def create_project(
         git_url=project.git_url or "",
         base_branch=project.base_branch,
         secrets=_project_secrets_with_github_token(None, project.github_token),
-        local_path=project.local_path,
+        local_path=normalized_local_path,
+        repo_mode=project.repo_mode.value if project.repo_mode else None,
+        task_cycle_autonomous=bool(project.task_cycle_autonomous),
+        managed_repo_root_override=normalized_managed_root,
+        worktrees_root_override=normalized_worktrees_root,
+        artifacts_root_override=normalized_artifacts_root,
     )
     logger.info(
         "project_created",
@@ -505,6 +579,9 @@ def create_project(
             auto_onboard=bool(project.auto_onboard),
         ),
     )
+
+    onboarding_queued: Optional[bool] = None
+    onboarding_error: Optional[str] = None
 
     if project.auto_onboard:
         try:
@@ -535,41 +612,50 @@ def create_project(
                     duration_ms=enqueue_duration_ms,
                 ),
             )
+            onboarding_queued = True
         except Exception as exc:
+            onboarding_error = str(exc)
             logger.exception(
                 "onboarding_enqueue_exception",
-                extra=log_extra(project_id=created.id, error=str(exc)),
+                extra=log_extra(project_id=created.id, error=onboarding_error),
             )
             _append_project_event(
                 db,
                 project_id=created.id,
                 event_type="onboarding_enqueue_failed",
                 message="Failed to enqueue onboarding",
-                metadata={"error": str(exc)},
+                metadata={"error": onboarding_error},
             )
-            raise HTTPException(status_code=502, detail=f"Failed to enqueue onboarding: {exc}")
+            onboarding_queued = False
 
-    return created
+    return _project_out(
+        created,
+        ctx,
+        onboarding_queued=onboarding_queued,
+        onboarding_error=onboarding_error,
+    )
 
 @router.get("/projects", response_model=List[schemas.ProjectOut])
 def list_projects(
     status: Optional[str] = None,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    ctx: ServiceContext = Depends(get_service_context),
 ):
     """List all projects, optionally filtered by status."""
     projects = db.list_projects()
     if status:
         projects = [p for p in projects if p.status == status]
-    return projects
+    return [_project_out(project, ctx) for project in projects]
 
 @router.get("/projects/{project_id}", response_model=schemas.ProjectOut)
 def get_project(
     project_id: int,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    ctx: ServiceContext = Depends(get_service_context),
 ):
     """Get project by ID."""
     try:
-        return db.get_project(project_id)
+        return _project_out(db.get_project(project_id), ctx)
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -577,15 +663,50 @@ def get_project(
 def update_project(
     project_id: int,
     project: schemas.ProjectUpdate,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    ctx: ServiceContext = Depends(get_service_context),
 ):
     """Update a project."""
     try:
         existing = db.get_project(project_id)
+        next_git_url = project.git_url if project.git_url is not None else existing.git_url
+        next_local_path = project.local_path if "local_path" in project.model_fields_set else existing.local_path
+        next_repo_mode = project.repo_mode if "repo_mode" in project.model_fields_set else existing.repo_mode
+        next_managed_root = (
+            project.managed_repo_root_override
+            if "managed_repo_root_override" in project.model_fields_set
+            else existing.managed_repo_root_override
+        )
+        next_worktrees_root = (
+            project.worktrees_root_override
+            if "worktrees_root_override" in project.model_fields_set
+            else existing.worktrees_root_override
+        )
+        next_artifacts_root = (
+            project.artifacts_root_override
+            if "artifacts_root_override" in project.model_fields_set
+            else existing.artifacts_root_override
+        )
+        (
+            normalized_local_path,
+            normalized_managed_root,
+            normalized_worktrees_root,
+            normalized_artifacts_root,
+        ) = _validate_storage_or_400(
+            repo_mode=next_repo_mode if isinstance(next_repo_mode, schemas.RepoMode) else (
+                schemas.RepoMode(next_repo_mode) if next_repo_mode else None
+            ),
+            local_path=next_local_path,
+            managed_repo_root_override=next_managed_root,
+            worktrees_root_override=next_worktrees_root,
+            artifacts_root_override=next_artifacts_root,
+            git_url=next_git_url,
+            ctx=ctx,
+        )
         secrets = _UNSET
         if "github_token" in project.model_fields_set:
             secrets = _project_secrets_with_github_token(existing.secrets, project.github_token)
-        return db.update_project(
+        updated = db.update_project(
             project_id,
             name=project.name,
             description=project.description if project.description is not None else _UNSET,
@@ -593,30 +714,58 @@ def update_project(
             git_url=project.git_url,
             base_branch=project.base_branch,
             secrets=secrets,
-            local_path=project.local_path,
+            local_path=normalized_local_path if "local_path" in project.model_fields_set else _UNSET,
+            repo_mode=(
+                project.repo_mode.value
+                if "repo_mode" in project.model_fields_set and project.repo_mode is not None
+                else (None if "repo_mode" in project.model_fields_set else _UNSET)
+            ),
+            task_cycle_autonomous=(
+                project.task_cycle_autonomous
+                if "task_cycle_autonomous" in project.model_fields_set
+                else _UNSET
+            ),
+            managed_repo_root_override=(
+                normalized_managed_root
+                if "managed_repo_root_override" in project.model_fields_set
+                else _UNSET
+            ),
+            worktrees_root_override=(
+                normalized_worktrees_root
+                if "worktrees_root_override" in project.model_fields_set
+                else _UNSET
+            ),
+            artifacts_root_override=(
+                normalized_artifacts_root
+                if "artifacts_root_override" in project.model_fields_set
+                else _UNSET
+            ),
         )
+        return _project_out(updated, ctx)
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
 
 @router.post("/projects/{project_id}/archive", response_model=schemas.ProjectOut)
 def archive_project(
     project_id: int,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    ctx: ServiceContext = Depends(get_service_context),
 ):
     """Archive a project."""
     try:
-        return db.update_project(project_id, status="archived")
+        return _project_out(db.update_project(project_id, status="archived"), ctx)
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
 
 @router.post("/projects/{project_id}/unarchive", response_model=schemas.ProjectOut)
 def unarchive_project(
     project_id: int,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    ctx: ServiceContext = Depends(get_service_context),
 ):
     """Unarchive a project."""
     try:
-        return db.update_project(project_id, status="active")
+        return _project_out(db.update_project(project_id, status="active"), ctx)
     except KeyError:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1033,7 +1182,7 @@ def update_project_policy(
     except Exception:
         pass
 
-    return updated
+    return _project_out(updated, ctx)
 
 @router.get("/projects/{project_id}/policy/effective", response_model=schemas.EffectivePolicyOut)
 def get_effective_policy(

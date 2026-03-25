@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -24,21 +25,7 @@ import {
   useUpdateAgentAssignments,
   useUpdateProject,
 } from "@/lib/api";
-import type { Agent, AgentAssignments } from "@/lib/api/types";
-
-type AgentReasoningOption = {
-  value: string;
-  label?: string | null;
-  description?: string | null;
-};
-
-type AgentModelOption = {
-  value: string;
-  label?: string | null;
-  description?: string | null;
-  default_reasoning_effort?: string | null;
-  reasoning_efforts?: AgentReasoningOption[];
-};
+import type { Agent, AgentAssignments, Project, RepoMode } from "@/lib/api/types";
 
 type StageAssignmentDraft = {
   agent_id: string;
@@ -80,6 +67,80 @@ interface SettingsTabProps {
   projectId: number;
 }
 
+function normalizePathInput(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function trimTrailingSeparators(value: string): string {
+  return value.replace(/[\\/]+$/, "");
+}
+
+function joinPath(base: string, suffix: string): string {
+  return `${trimTrailingSeparators(base)}/${suffix}`;
+}
+
+function projectRepoSlug(project: Project, draftName: string, draftGitUrl: string): string {
+  const gitUrl = draftGitUrl.trim() || project.git_url || "";
+  if (gitUrl) {
+    const slug = gitUrl.replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/, "");
+    if (slug) {
+      return slug;
+    }
+  }
+  const name = draftName.trim() || project.name || "";
+  const slug = name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "").toLowerCase();
+  return slug || "project";
+}
+
+function deriveStoragePreview(args: {
+  project: Project;
+  draftName: string;
+  draftGitUrl: string;
+  repoMode: RepoMode;
+  serverRepoPath: string;
+  managedRepoRootOverride: string;
+  worktreesRootOverride: string;
+  artifactsRootOverride: string;
+}) {
+  const {
+    project,
+    draftName,
+    draftGitUrl,
+    repoMode,
+    serverRepoPath,
+    managedRepoRootOverride,
+    worktreesRootOverride,
+    artifactsRootOverride,
+  } = args;
+  const projectSuffix = `${project.id}/${projectRepoSlug(project, draftName, draftGitUrl)}`;
+  const externalRepoPath = normalizePathInput(serverRepoPath);
+  const managedRootOverride = normalizePathInput(managedRepoRootOverride);
+  const worktreesOverride = normalizePathInput(worktreesRootOverride);
+  const artifactsOverride = normalizePathInput(artifactsRootOverride);
+
+  const effectiveRepoPath =
+    repoMode === "external_repo"
+      ? externalRepoPath || project.effective_repo_path || project.local_path
+      : managedRootOverride
+        ? joinPath(managedRootOverride, projectSuffix)
+        : project.effective_repo_path;
+
+  const effectiveWorktreesRoot =
+    worktreesOverride ||
+    (repoMode === "external_repo" && effectiveRepoPath
+      ? joinPath(effectiveRepoPath, "worktrees")
+      : project.effective_worktrees_root);
+
+  const effectiveArtifactsRoot = artifactsOverride || project.effective_artifacts_root;
+
+  return {
+    effectiveRepoPath,
+    effectiveWorktreesRoot,
+    effectiveArtifactsRoot,
+  };
+}
+
 export function SettingsTab({ projectId }: SettingsTabProps) {
   const { data: project, isLoading } = useProject(projectId);
   const { data: agents = [] } = useAgents(projectId);
@@ -89,6 +150,12 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
   const [name, setName] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
+  const [repoMode, setRepoMode] = useState<RepoMode>("managed_clone");
+  const [taskCycleAutonomous, setTaskCycleAutonomous] = useState(false);
+  const [serverRepoPath, setServerRepoPath] = useState("");
+  const [managedRepoRootOverride, setManagedRepoRootOverride] = useState("");
+  const [worktreesRootOverride, setWorktreesRootOverride] = useState("");
+  const [artifactsRootOverride, setArtifactsRootOverride] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [githubTokenDirty, setGithubTokenDirty] = useState(false);
   const [stageDrafts, setStageDrafts] = useState<Record<string, StageAssignmentDraft>>({});
@@ -98,6 +165,12 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
       setName(project.name);
       setGitUrl(project.git_url);
       setBaseBranch(project.base_branch);
+      setRepoMode(project.repo_mode || "managed_clone");
+      setTaskCycleAutonomous(project.task_cycle_autonomous ?? false);
+      setServerRepoPath(project.repo_mode === "external_repo" ? project.local_path || "" : "");
+      setManagedRepoRootOverride(project.managed_repo_root_override || "");
+      setWorktreesRootOverride(project.worktrees_root_override || "");
+      setArtifactsRootOverride(project.artifacts_root_override || "");
       setGithubToken("");
       setGithubTokenDirty(false);
     }
@@ -121,6 +194,17 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
 
   if (isLoading || !project) return <LoadingState message="Loading settings..." />;
 
+  const storagePreview = deriveStoragePreview({
+    project,
+    draftName: name,
+    draftGitUrl: gitUrl,
+    repoMode,
+    serverRepoPath,
+    managedRepoRootOverride,
+    worktreesRootOverride,
+    artifactsRootOverride,
+  });
+
   const stageHasChanges = taskCycleStages.some((stage) => {
     const baseline = assignmentsData?.assignments?.[stage.key];
     const metadata =
@@ -142,6 +226,12 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
     name !== project.name ||
     gitUrl !== project.git_url ||
     baseBranch !== project.base_branch ||
+    repoMode !== (project.repo_mode || "managed_clone") ||
+    taskCycleAutonomous !== (project.task_cycle_autonomous ?? false) ||
+    serverRepoPath !== (project.repo_mode === "external_repo" ? project.local_path || "" : "") ||
+    managedRepoRootOverride !== (project.managed_repo_root_override || "") ||
+    worktreesRootOverride !== (project.worktrees_root_override || "") ||
+    artifactsRootOverride !== (project.artifacts_root_override || "") ||
     (githubTokenDirty && githubToken.trim().length > 0);
 
   const handleSave = async () => {
@@ -152,6 +242,12 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
           name,
           git_url: gitUrl,
           base_branch: baseBranch,
+          repo_mode: repoMode,
+          task_cycle_autonomous: taskCycleAutonomous,
+          local_path: repoMode === "external_repo" ? serverRepoPath.trim() || null : null,
+          managed_repo_root_override: managedRepoRootOverride.trim() || null,
+          worktrees_root_override: worktreesRootOverride.trim() || null,
+          artifacts_root_override: artifactsRootOverride.trim() || null,
           ...(githubTokenDirty && githubToken.trim()
             ? { github_token: githubToken.trim() }
             : {}),
@@ -257,6 +353,22 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
             <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="space-y-2">
+            <Label htmlFor="repo-mode">Repository Source</Label>
+            <Select value={repoMode} onValueChange={(value) => setRepoMode(value as RepoMode)}>
+              <SelectTrigger id="repo-mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="managed_clone">Managed by DevGodzilla</SelectItem>
+                <SelectItem value="external_repo">Existing repository on build server</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              Managed projects clone into the configured storage roots. Existing repositories keep
+              using the server path you provide.
+            </p>
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="git-url">Git URL</Label>
             <Input
               id="git-url"
@@ -264,6 +376,66 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
               onChange={(e) => setGitUrl(e.target.value)}
               placeholder="https://github.com/org/repo.git"
             />
+            <p className="text-sm text-muted-foreground">
+              Required for managed clones. Optional for existing server repositories if the remote
+              is already configured locally.
+            </p>
+          </div>
+          {repoMode === "external_repo" && (
+            <div className="space-y-2">
+              <Label htmlFor="server-repo-path">Server Repository Path</Label>
+              <Input
+                id="server-repo-path"
+                value={serverRepoPath}
+                onChange={(e) => setServerRepoPath(e.target.value)}
+                placeholder="/srv/repos/team/telegram-bot"
+              />
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor="managed-repo-root-override">Managed Repo Root Override</Label>
+            <Input
+              id="managed-repo-root-override"
+              value={managedRepoRootOverride}
+              onChange={(e) => setManagedRepoRootOverride(e.target.value)}
+              placeholder="Optional absolute path"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="worktrees-root-override">Worktrees Root Override</Label>
+            <Input
+              id="worktrees-root-override"
+              value={worktreesRootOverride}
+              onChange={(e) => setWorktreesRootOverride(e.target.value)}
+              placeholder="Optional absolute path"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="artifacts-root-override">Artifacts Root Override</Label>
+            <Input
+              id="artifacts-root-override"
+              value={artifactsRootOverride}
+              onChange={(e) => setArtifactsRootOverride(e.target.value)}
+              placeholder="Optional absolute path"
+            />
+          </div>
+          <div className="rounded-lg border border-dashed p-3 text-sm">
+            <div>
+              <span className="text-muted-foreground">Effective Repo Path:</span>
+              <span className="ml-2 font-mono text-xs">{storagePreview.effectiveRepoPath || "-"}</span>
+            </div>
+            <div className="mt-2">
+              <span className="text-muted-foreground">Effective Worktrees Root:</span>
+              <span className="ml-2 font-mono text-xs">
+                {storagePreview.effectiveWorktreesRoot || "-"}
+              </span>
+            </div>
+            <div className="mt-2">
+              <span className="text-muted-foreground">Effective Artifacts Root:</span>
+              <span className="ml-2 font-mono text-xs">
+                {storagePreview.effectiveArtifactsRoot || "-"}
+              </span>
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="base-branch">Base Branch</Label>
@@ -273,6 +445,22 @@ export function SettingsTab({ projectId }: SettingsTabProps) {
               onChange={(e) => setBaseBranch(e.target.value)}
               placeholder="main"
             />
+          </div>
+          <div className="rounded-lg border p-4">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="task-cycle-autonomous"
+                checked={taskCycleAutonomous}
+                onCheckedChange={(checked) => setTaskCycleAutonomous(checked === true)}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="task-cycle-autonomous">Run brownfield task cycle autonomously</Label>
+                <p className="text-sm text-muted-foreground">
+                  After a brownfield run is created, DevGodzilla continues through implement,
+                  review, QA, refactor, and PR readiness until a real blocker is hit.
+                </p>
+              </div>
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="github-token">GitHub Token</Label>

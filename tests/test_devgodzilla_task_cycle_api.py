@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -403,6 +404,208 @@ def test_task_cycle_mark_pr_ready_creates_rework_on_precommit_failure(monkeypatc
                 pr_ready_report = json.loads((work_item_dir / "pr_ready_report.json").read_text(encoding="utf-8"))
                 assert pr_ready_report["precommit"]["status"] == "failed"
                 assert pr_ready_report["pull_request"]["status"] == "skipped"
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_mark_pr_ready_filters_generated_files_from_commit_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url="https://github.com/example/demo.git",
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "plan.md").write_text("# Plan\n", encoding="utf-8")
+        (protocol_root / "step-01-demo.md").write_text("# Demo step\n\n- [ ] update README.md\n", encoding="utf-8")
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root.relative_to(repo)),
+        )
+        run = db.update_protocol_windmill(
+            run.id,
+            speckit_metadata={
+                "task_cycle": True,
+                "brownfield_output_mode": "task_cycle",
+                "protocol_root": str(protocol_root.relative_to(repo)),
+                "spec_path": str((repo / "specs" / "demo-feature" / "spec.md").relative_to(repo)),
+                "plan_path": str((repo / "specs" / "demo-feature" / "plan.md").relative_to(repo)),
+                "tasks_path": str((repo / "specs" / "demo-feature" / "tasks.md").relative_to(repo)),
+            },
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="pending",
+            assigned_agent="opencode",
+        )
+        refs_root = repo / ".devgodzilla" / "task-cycle" / "protocols" / str(run.id) / "work-items" / str(step.id)
+        refs_root.mkdir(parents=True, exist_ok=True)
+        (refs_root / "context_pack.json").write_text(
+            json.dumps(
+                {
+                    "goal": "Demo feature",
+                    "required_files": [{"path": "README.md", "reason": "doc"}],
+                    "candidate_files": [{"path": "README.md", "reason": "doc"}],
+                    "allowed_files": ["README.md", "src/telegram_bot_app/telegram_bot.py"],
+                    "test_commands": ["pytest -q"],
+                    "repo_root": str(repo),
+                }
+            ),
+            encoding="utf-8",
+        )
+        (refs_root / "context_pack.md").write_text("# Context\n", encoding="utf-8")
+        (refs_root / "plan_pack.json").write_text(
+            json.dumps(
+                {
+                    "goal": "Demo feature",
+                    "files_to_modify": ["README.md", "src/telegram_bot_app/telegram_bot.py"],
+                    "scope_assessment": {"status": "bounded"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (refs_root / "plan_pack.md").write_text("# Plan\n", encoding="utf-8")
+        (refs_root / "review_report.json").write_text(json.dumps({"verdict": "passed"}), encoding="utf-8")
+        (refs_root / "review_report.md").write_text("# Review\n", encoding="utf-8")
+        (refs_root / "test_report.json").write_text(
+            json.dumps(
+                {
+                    "verdict": "passed",
+                    "gates": [
+                        {"id": "lint", "status": "passed", "findings": []},
+                        {"id": "test", "status": "passed", "findings": []},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (refs_root / "test_report.md").write_text("# Test\n", encoding="utf-8")
+
+        artifacts_dir = protocol_root / ".devgodzilla" / "steps" / str(step.id) / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (artifacts_dir / "execution.json").write_text("{}", encoding="utf-8")
+        (artifacts_dir / "stdout.log").write_text("ok\n", encoding="utf-8")
+        (artifacts_dir / "stderr.log").write_text("", encoding="utf-8")
+        (artifacts_dir / "git-status.txt").write_text(
+            "\n".join(
+                [
+                    "M README.md",
+                    " M src/telegram_bot_app/telegram_bot.py",
+                    "?? .devgodzilla/",
+                    "?? .specify/",
+                    "?? specs/",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (artifacts_dir / "changes.diff").write_text(
+            "\n".join(
+                [
+                    "diff --git a/README.md b/README.md",
+                    "+++ b/README.md",
+                    "diff --git a/src/telegram_bot_app/telegram_bot.py b/src/telegram_bot_app/telegram_bot.py",
+                    "+++ b/src/telegram_bot_app/telegram_bot.py",
+                    "diff --git a/.devgodzilla/task-cycle/report.json b/.devgodzilla/task-cycle/report.json",
+                    "+++ b/.devgodzilla/task-cycle/report.json",
+                    "diff --git a/specs/demo-feature/plan.md b/specs/demo-feature/plan.md",
+                    "+++ b/specs/demo-feature/plan.md",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        state = {
+            "status": "ready_for_pr",
+            "context_status": "ready",
+            "plan_status": "ready",
+            "review_status": "passed",
+            "qa_status": "passed",
+            "refactor_status": "not_needed",
+            "pr_ready": False,
+        }
+        db.update_step_run(step.id, runtime_state={"task_cycle": state})
+
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.PolicyService.evaluate_step",
+            lambda self, step_run_id, repo_root=None: [],
+        )
+
+        captured: dict[str, object] = {}
+
+        def _fake_precommit(self, workspace_root, *, changed_files):
+            captured["precommit_files"] = list(changed_files)
+            return {
+                "status": "passed",
+                "summary": "pre-commit passed",
+                "command": "pre-commit run --files README.md src/telegram_bot_app/telegram_bot.py",
+                "checked_files": list(changed_files),
+                "findings": [],
+                "warnings": [],
+            }
+
+        def _fake_push_and_open_pr(self, worktree, protocol_name, base_branch, *, changed_files=None, **kwargs):
+            captured["push_files"] = list(changed_files or [])
+            return True
+
+        monkeypatch.setattr("devgodzilla.services.task_cycle.TaskCycleService._run_pr_ready_precommit", _fake_precommit)
+        monkeypatch.setattr("devgodzilla.services.task_cycle.GitService.push_and_open_pr", _fake_push_and_open_pr)
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                response = client.post(f"/work-items/{step.id}/actions/mark-pr-ready")
+                assert response.status_code == 200
+                payload = response.json()
+                assert payload["pr_ready"] is True
+                assert payload["status"] == "pr_ready"
+
+                assert captured["precommit_files"] == ["README.md", "src/telegram_bot_app/telegram_bot.py"]
+                assert captured["push_files"] == ["README.md", "src/telegram_bot_app/telegram_bot.py"]
+
+                report = json.loads((refs_root / "pr_ready_report.json").read_text(encoding="utf-8"))
+                assert report["commit_scope"]["staged_files"] == [
+                    "README.md",
+                    "src/telegram_bot_app/telegram_bot.py",
+                ]
+                assert sorted(report["commit_scope"]["excluded_generated_files"]) == [
+                    ".devgodzilla",
+                    ".devgodzilla/task-cycle/report.json",
+                    ".specify",
+                    "specs",
+                    "specs/demo-feature/plan.md",
+                ]
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
@@ -857,6 +1060,26 @@ def test_task_cycle_refactor_stage_unblocks_after_review_requires_structure_clea
                 assert refactor_resp.status_code == 200
                 assert refactor_resp.json()["refactor_status"] == "completed"
                 assert refactor_resp.json()["review_status"] == "pending"
+
+                runtime_resp = client.get(f"/work-items/{step.id}/runtime")
+                assert runtime_resp.status_code == 200
+                runtime = runtime_resp.json()
+                artifact_ids = [
+                    artifact["id"]
+                    for stage_run in runtime["stage_runs"]
+                    for artifact in stage_run["artifacts"]
+                ]
+                assert len(artifact_ids) == len(set(artifact_ids))
+                refactor_stage = next(
+                    stage_run for stage_run in runtime["stage_runs"] if stage_run["stage_id"] == "refactor"
+                )
+                assert refactor_stage["artifacts"]
+                assert all(
+                    artifact["stage_id"] == "refactor" for artifact in refactor_stage["artifacts"]
+                )
+                assert all(
+                    artifact["id"].startswith("refactor:step:") for artifact in refactor_stage["artifacts"]
+                )
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
@@ -1001,6 +1224,186 @@ def test_task_cycle_start_brownfield_run_creates_protocol_and_work_items(monkeyp
                 assert "brownfield_run_completed" in event_types
         finally:
             app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_autonomous_mode_runs_from_start_to_pr_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api import schemas
+    from devgodzilla.cli.main import get_service_context as cli_get_service_context
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+    from devgodzilla.qa.gates.interface import GateResult, GateVerdict
+    from devgodzilla.services.quality import QAResult, QAVerdict
+    from devgodzilla.services.specification import PlanResult, SpecifyResult, TasksResult
+    from devgodzilla.services.task_cycle import TaskCycleService
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        spec_dir = repo / "specs" / "001-demo-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        plan_path = spec_dir / "plan.md"
+        tasks_path = spec_dir / "tasks.md"
+        spec_path.write_text("# Demo feature\n", encoding="utf-8")
+        plan_path.write_text("# Plan\n", encoding="utf-8")
+        tasks_path.write_text(
+            "## Phase 1: Setup\n- [ ] update README.md\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+            task_cycle_autonomous=True,
+        )
+
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_specify",
+            lambda self, project_path, description, feature_name=None, base_branch=None, project_id=None: SpecifyResult(
+                success=True,
+                spec_path=str(spec_path),
+                spec_number=1,
+                feature_name="demo-feature",
+                spec_run_id=None,
+                worktree_path=str(repo),
+                branch_name="001-demo-feature",
+                base_branch="main",
+                spec_root=str(spec_dir),
+            ),
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_plan",
+            lambda self, project_path, spec_path, spec_run_id=None, project_id=None: PlanResult(
+                success=True,
+                plan_path=str(plan_path),
+                spec_run_id=spec_run_id,
+                worktree_path=str(repo),
+            ),
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.SpecificationService.run_tasks",
+            lambda self, project_path, plan_path, spec_run_id=None, project_id=None: TasksResult(
+                success=True,
+                tasks_path=str(tasks_path),
+                task_count=1,
+                parallelizable_count=0,
+                spec_run_id=spec_run_id,
+                worktree_path=str(repo),
+            ),
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.PolicyService.evaluate_step",
+            lambda self, step_run_id, repo_root=None: [],
+        )
+
+        def _fake_execute(self, step_run_id):
+            step = db.get_step_run(step_run_id)
+            run = db.get_protocol_run(step.protocol_run_id)
+            protocol_root = Path(run.protocol_root)
+            if not protocol_root.is_absolute():
+                protocol_root = Path(run.worktree_path) / protocol_root
+            artifacts_dir = protocol_root / ".devgodzilla" / "steps" / str(step_run_id) / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "execution.log").write_text("implemented\n", encoding="utf-8")
+            (artifacts_dir / "git-status.txt").write_text("M README.md\n", encoding="utf-8")
+            (artifacts_dir / "changes.diff").write_text(
+                "diff --git a/README.md b/README.md\n+++ b/README.md\n",
+                encoding="utf-8",
+            )
+            db.update_step_status(step_run_id, "completed", summary="implemented")
+            return type("ExecutionResult", (), {"success": True, "error": None})()
+
+        def _fake_run_qa(self, step_run_id, gates=None, skip_gates=None, **kwargs):
+            return QAResult(
+                step_run_id=step_run_id,
+                verdict=QAVerdict.PASS,
+                gate_results=[
+                    GateResult(gate_id="lint", gate_name="Lint", verdict=GateVerdict.PASS),
+                    GateResult(gate_id="type", gate_name="Type", verdict=GateVerdict.PASS),
+                    GateResult(gate_id="test", gate_name="Test", verdict=GateVerdict.PASS),
+                ],
+                duration_seconds=0.1,
+            )
+
+        monkeypatch.setattr("devgodzilla.services.task_cycle.ExecutionService.execute_step", _fake_execute)
+        monkeypatch.setattr("devgodzilla.services.task_cycle.QualityService.run_qa", _fake_run_qa)
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.QualityService.persist_verdict",
+            lambda self, qa_result, step_run_id, report_path=None: None,
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.TaskCycleService._run_pr_ready_precommit",
+            lambda self, workspace_root, changed_files=None: {
+                "status": "passed",
+                "summary": "pre-commit passed",
+                "findings": [],
+                "warnings": [],
+                "command": "./.venv/bin/pre-commit run --files README.md",
+            },
+        )
+        monkeypatch.setattr(
+            "devgodzilla.services.task_cycle.GitService.push_and_open_pr",
+            lambda self, worktree, protocol_name, base_branch, github_token=None, changed_files=None, **kwargs: {
+                "success": True,
+                "status": "created",
+                "url": "https://github.com/example/demo/pull/1",
+                "message": "Pull request created",
+            },
+        )
+
+        try:
+            service = TaskCycleService(cli_get_service_context(), db)
+            request = schemas.BrownfieldRunRequest(
+                feature_request="Add demo behavior to the brownfield project",
+                feature_name="demo-feature",
+                output_mode="task_cycle",
+                owner_agent="dev",
+            )
+            result = service.start_brownfield_run(project.id, request)
+            work_item_id = result.next_work_item_id
+            assert work_item_id is not None
+
+            service.run_brownfield_bootstrap(
+                project.id,
+                request,
+                protocol_run_id=result.protocol.id,
+                step_run_id=work_item_id,
+            )
+
+            work_item = None
+            for _ in range(20):
+                work_item = service.get_work_item(work_item_id)
+                if work_item.pr_ready or work_item.status in {"needs_rework", "blocked"}:
+                    break
+                time.sleep(0.05)
+
+            assert work_item is not None
+            assert work_item.pr_ready is True
+            assert work_item.status == "pr_ready"
+            assert work_item.plan_status == "ready"
+            assert work_item.review_status == "passed"
+            assert work_item.qa_status == "passed"
+            assert Path(work_item.artifact_refs.pr_ready_report_json).exists()
+
+            event_types = [event.event_type for event in db.list_recent_events(project_id=project.id, limit=30)]
+            assert "brownfield_task_cycle_autonomous_started" in event_types
+            assert "brownfield_task_cycle_autonomous_completed" in event_types
+        finally:
             _reset_config_for_tests()
 
 
