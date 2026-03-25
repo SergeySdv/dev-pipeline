@@ -12,6 +12,11 @@ class ProjectStatus(str, Enum):
     ARCHIVED = "archived"
     DELETED = "deleted"
 
+
+class RepoMode(str, Enum):
+    MANAGED_CLONE = "managed_clone"
+    EXTERNAL_REPO = "external_repo"
+
 class ProtocolStatus(str, Enum):
     PENDING = "pending"
     PLANNING = "planning"
@@ -54,6 +59,11 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = None
     git_url: Optional[str] = None
     local_path: Optional[str] = None
+    repo_mode: Optional[RepoMode] = None
+    task_cycle_autonomous: bool = False
+    managed_repo_root_override: Optional[str] = None
+    worktrees_root_override: Optional[str] = None
+    artifacts_root_override: Optional[str] = None
     github_token: Optional[str] = None
     base_branch: str = "main"
     auto_onboard: bool = True
@@ -66,6 +76,11 @@ class ProjectUpdate(BaseModel):
     git_url: Optional[str] = None
     base_branch: Optional[str] = None
     local_path: Optional[str] = None
+    repo_mode: Optional[RepoMode] = None
+    task_cycle_autonomous: Optional[bool] = None
+    managed_repo_root_override: Optional[str] = None
+    worktrees_root_override: Optional[str] = None
+    artifacts_root_override: Optional[str] = None
     github_token: Optional[str] = None
 
 class ProjectOut(APIModel):
@@ -76,6 +91,14 @@ class ProjectOut(APIModel):
     git_url: Optional[str]
     base_branch: str = "main"
     local_path: Optional[str]
+    repo_mode: Optional[RepoMode] = None
+    task_cycle_autonomous: bool = False
+    managed_repo_root_override: Optional[str] = None
+    worktrees_root_override: Optional[str] = None
+    artifacts_root_override: Optional[str] = None
+    effective_repo_path: Optional[str] = None
+    effective_worktrees_root: Optional[str] = None
+    effective_artifacts_root: Optional[str] = None
     github_token_configured: bool = False
     created_at: Any
     updated_at: Any
@@ -87,6 +110,8 @@ class ProjectOut(APIModel):
     policy_repo_local_enabled: Optional[bool] = None
     policy_effective_hash: Optional[str] = None
     policy_enforcement_mode: Optional[str] = None
+    onboarding_queued: Optional[bool] = None
+    onboarding_error: Optional[str] = None
 
 class OnboardingStage(BaseModel):
     name: str

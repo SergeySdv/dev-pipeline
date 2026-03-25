@@ -269,15 +269,41 @@ class GitService(Service):
         """
         return protocol_name
 
-    def get_worktree_path(self, repo_root: Path, protocol_name: str) -> tuple[Path, str]:
+    def get_current_branch(self, repo_root: Path) -> Optional[str]:
+        """Return the currently checked-out branch for a worktree, if available."""
+        try:
+            result = run_process(
+                ["git", "branch", "--show-current"],
+                cwd=repo_root,
+                check=False,
+            )
+        except Exception:
+            return None
+        branch = (result.stdout or "").strip()
+        return branch or None
+
+    def get_worktree_path(
+        self,
+        repo_root: Path,
+        protocol_name: str,
+        *,
+        worktrees_root: Optional[Path] = None,
+    ) -> tuple[Path, str]:
         """Get the worktree path and branch name for a protocol."""
         branch_name = self.get_branch_name(protocol_name)
-        worktrees_root = repo_root / "worktrees"
-        return worktrees_root / branch_name, branch_name
+        base_root = worktrees_root or (repo_root / "worktrees")
+        return base_root / branch_name, branch_name
 
-    def get_spec_worktree_path(self, repo_root: Path, branch_name: str) -> Path:
+    def get_spec_worktree_path(
+        self,
+        repo_root: Path,
+        branch_name: str,
+        *,
+        worktrees_root: Optional[Path] = None,
+    ) -> Path:
         """Get the worktree path for a SpecKit run."""
-        return repo_root / "worktrees" / "specs" / branch_name
+        base_root = worktrees_root or (repo_root / "worktrees")
+        return base_root / "specs" / branch_name
 
     def local_branch_exists(self, repo_root: Path, branch: str) -> bool:
         """Check if a local branch exists."""
@@ -296,6 +322,7 @@ class GitService(Service):
         *,
         spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        worktrees_root: Optional[Path] = None,
     ) -> Path:
         """
         Create a dedicated worktree for a SpecKit run.
@@ -315,7 +342,7 @@ class GitService(Service):
             )
             return repo_root
 
-        worktree = self.get_spec_worktree_path(repo_root, branch_name)
+        worktree = self.get_spec_worktree_path(repo_root, branch_name, worktrees_root=worktrees_root)
         if worktree.exists():
             raise GitCommandError(f"Spec worktree already exists at {worktree}")
 
@@ -541,6 +568,7 @@ class GitService(Service):
         *,
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        worktrees_root: Optional[Path] = None,
     ) -> Path:
         """
         Ensure a worktree exists for the given protocol/branch.
@@ -570,7 +598,11 @@ class GitService(Service):
             )
             return repo_root
 
-        worktree, branch_name = self.get_worktree_path(repo_root, protocol_name)
+        worktree, branch_name = self.get_worktree_path(
+            repo_root,
+            protocol_name,
+            worktrees_root=worktrees_root,
+        )
         
         if worktree.exists():
             return worktree
@@ -628,6 +660,7 @@ class GitService(Service):
         protocol_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
         github_token: Optional[str] = None,
+        changed_files: Optional[List[str]] = None,
     ) -> bool:
         """
         Commit, push, and open a PR/MR for the worktree changes.
@@ -643,10 +676,22 @@ class GitService(Service):
         config = get_config()
         pushed = False
         branch_exists = False
-        branch_name = self.get_branch_name(protocol_name)
+        branch_name = self.get_current_branch(worktree) or self.get_branch_name(protocol_name)
+        token_env = self.build_repo_remote_git_env(worktree, github_token)
+        staged_scope = self._normalized_changed_files(changed_files)
 
         def _git_add_and_commit() -> bool:
-            run_process(["git", "add", "."], cwd=worktree)
+            if staged_scope:
+                run_process(["git", "add", "-A", "--", *staged_scope], cwd=worktree)
+                staged = self._staged_relative_paths(worktree)
+                unexpected = sorted(path for path in staged if path not in set(staged_scope))
+                if unexpected:
+                    raise GitCommandError(
+                        "Unexpected files were staged for PR creation: "
+                        + ", ".join(unexpected[:10])
+                    )
+            else:
+                run_process(["git", "add", "."], cwd=worktree)
             try:
                 run_process(
                     ["git", "commit", "-m", f"chore: sync protocol {protocol_name}"],
@@ -667,12 +712,11 @@ class GitService(Service):
                     return True
                 raise
 
-        def _git_push() -> None:
-            run_process(
-                ["git", "push", "--set-upstream", "origin", branch_name],
-                cwd=worktree,
-                env=self.build_repo_remote_git_env(worktree, github_token),
-            )
+        def _git_push(env_override: Optional[Dict[str, str]]) -> None:
+            kwargs: Dict[str, Any] = {"cwd": worktree}
+            if env_override is not None:
+                kwargs["env"] = env_override
+            run_process(["git", "push", "--set-upstream", "origin", branch_name], **kwargs)
 
         try:
             with_git_lock_retry(
@@ -681,10 +725,26 @@ class GitService(Service):
                 retry_delay=config.git_lock_retry_delay,
                 repo_root=worktree,
             )
-            _git_push()
+            try:
+                _git_push(token_env)
+            except Exception as exc:
+                if github_token and token_env is not None:
+                    self.logger.warning(
+                        "Git push failed with injected GitHub token; retrying with host credentials",
+                        extra=self.log_extra(
+                            protocol_run_id=protocol_run_id,
+                            project_id=project_id,
+                            error=str(exc),
+                        ),
+                    )
+                    _git_push(None)
+                else:
+                    raise
             pushed = True
         except Exception as exc:
             branch_exists = self.remote_branch_exists(worktree, branch_name, github_token=github_token)
+            if not branch_exists and github_token:
+                branch_exists = self.remote_branch_exists(worktree, branch_name, github_token=None)
             self.logger.warning(
                 "Failed to push branch",
                 extra=self.log_extra(
@@ -696,7 +756,7 @@ class GitService(Service):
             )
             if not branch_exists:
                 try:
-                    _git_push()
+                    _git_push(None if github_token and token_env is not None else token_env)
                     return True
                 except Exception:
                     return False
@@ -709,6 +769,33 @@ class GitService(Service):
             github_token=github_token,
         )
         return pushed or branch_exists
+
+    def _normalized_changed_files(self, changed_files: Optional[List[str]]) -> List[str]:
+        normalized: List[str] = []
+        for raw in changed_files or []:
+            value = str(raw or "").strip().replace("\\", "/")
+            if value.startswith("./"):
+                value = value[2:]
+            if not value or Path(value).is_absolute():
+                continue
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
+
+    def _staged_relative_paths(self, worktree: Path) -> List[str]:
+        result = run_process(
+            ["git", "diff", "--cached", "--name-only", "--relative"],
+            cwd=worktree,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        paths: List[str] = []
+        for raw in (result.stdout or "").splitlines():
+            value = raw.strip().replace("\\", "/")
+            if value and value not in paths:
+                paths.append(value)
+        return paths
 
     def remote_branch_exists(
         self,
@@ -901,21 +988,39 @@ class GitService(Service):
                 ]
             )
 
+        env_attempts: List[Optional[Dict[str, str]]] = []
+        token_env = self.build_repo_remote_git_env(worktree, github_token)
+        if token_env is not None:
+            env_attempts.append(token_env)
+        if github_token and token_env is not None:
+            env_attempts.append(None)
+        elif not env_attempts:
+            env_attempts.append(None)
+
         for command in commands:
-            try:
-                result = run_process(
-                    command,
-                    cwd=worktree,
-                    check=False,
-                    env=self.build_repo_remote_git_env(worktree, github_token),
-                )
-            except Exception:
-                continue
-            if result.returncode == 0:
-                return {
-                    "success": True,
-                    "url": _extract_url_from_text((result.stdout or "") + "\n" + (result.stderr or "")) or "",
+            for env_override in env_attempts:
+                kwargs: Dict[str, Any] = {
+                    "cwd": worktree,
+                    "check": False,
                 }
+                if env_override is not None:
+                    kwargs["env"] = env_override
+                try:
+                    result = run_process(command, **kwargs)
+                except Exception:
+                    continue
+                combined_output = (result.stdout or "") + "\n" + (result.stderr or "")
+                existing_pr_url = _extract_url_from_text(combined_output)
+                if result.returncode != 0 and existing_pr_url and "already exists" in combined_output.lower():
+                    return {
+                        "success": True,
+                        "url": existing_pr_url,
+                    }
+                if result.returncode == 0:
+                    return {
+                        "success": True,
+                        "url": existing_pr_url or "",
+                    }
         return None
 
     def _create_pr_if_possible(

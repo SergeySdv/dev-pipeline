@@ -6,7 +6,6 @@ These are used for data transfer between storage and services.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
@@ -77,6 +76,11 @@ class Project:
     description: Optional[str] = None
     status: Optional[str] = None  # active, archived, deleted
     local_path: Optional[str] = None
+    repo_mode: Optional[str] = None
+    task_cycle_autonomous: Optional[bool] = None
+    managed_repo_root_override: Optional[str] = None
+    worktrees_root_override: Optional[str] = None
+    artifacts_root_override: Optional[str] = None
     ci_provider: Optional[str] = None
     secrets: Optional[Dict[str, Any]] = None
     github_token_configured: Optional[bool] = None

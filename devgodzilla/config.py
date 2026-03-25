@@ -98,6 +98,9 @@ class Config(BaseModel):
 
     # Projects
     projects_root: Path = Field(default=Path("projects"))
+    worktrees_root: Path = Field(default=Path("worktrees"))
+    artifacts_root: Path = Field(default=Path("artifacts"))
+    allowed_external_repo_roots: List[Path] = Field(default_factory=list)
     task_cycle_max_iterations: int = Field(default=5)
     
     # Misc
@@ -351,6 +354,12 @@ def load_config() -> Config:
 
         # Projects
         projects_root=_normalize_path(os.environ.get("DEVGODZILLA_PROJECTS_ROOT", "projects")),
+        worktrees_root=_normalize_path(os.environ.get("DEVGODZILLA_WORKTREES_ROOT", "worktrees")),
+        artifacts_root=_normalize_path(os.environ.get("DEVGODZILLA_ARTIFACTS_ROOT", "artifacts")),
+        allowed_external_repo_roots=[
+            _normalize_path(value)
+            for value in _parse_csv(os.environ.get("DEVGODZILLA_ALLOWED_EXTERNAL_REPO_ROOTS"))
+        ],
         task_cycle_max_iterations=int(os.environ.get("DEVGODZILLA_TASK_CYCLE_MAX_ITERATIONS", "5")),
         
         # Misc

@@ -13,6 +13,7 @@ from typing import Optional
 
 from devgodzilla.logging import get_logger, init_cli_logging
 from devgodzilla.services.path_contract import validate_path_contract
+from devgodzilla.services.project_storage import resolve_effective_worktrees_root
 
 logger = get_logger(__name__)
 
@@ -350,8 +351,13 @@ def protocol_worktree(ctx, protocol_id: int) -> None:
             run.base_branch,
             protocol_run_id=run.id,
             project_id=project.id,
+            worktrees_root=resolve_effective_worktrees_root(project, context.config),
         )
-        worktree_path, branch_name = git.get_worktree_path(repo_root, run.protocol_name)
+        worktree_path, branch_name = git.get_worktree_path(
+            repo_root,
+            run.protocol_name,
+            worktrees_root=resolve_effective_worktrees_root(project, context.config),
+        )
 
         db.update_protocol_paths(run.id, worktree_path=str(worktree))
 
@@ -774,6 +780,7 @@ def protocol_generate(
                 run.base_branch,
                 protocol_run_id=run.id,
                 project_id=project.id,
+                worktrees_root=resolve_effective_worktrees_root(project, context.config),
             )
             db.update_protocol_paths(run.id, worktree_path=str(worktree_root))
 

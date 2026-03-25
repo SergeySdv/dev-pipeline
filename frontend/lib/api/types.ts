@@ -32,6 +32,7 @@ export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancell
 export type ClarificationStatus = "open" | "answered";
 
 export type PolicyEnforcementMode = "off" | "warn" | "enforce";
+export type RepoMode = "managed_clone" | "external_repo";
 
 export type SprintStatus = "planning" | "active" | "completed" | "archived";
 export type TaskPriority = "critical" | "high" | "medium" | "low";
@@ -47,6 +48,14 @@ export interface Project {
   name: string;
   git_url: string;
   local_path: string | null;
+  repo_mode?: RepoMode | null;
+  task_cycle_autonomous?: boolean | null;
+  managed_repo_root_override?: string | null;
+  worktrees_root_override?: string | null;
+  artifacts_root_override?: string | null;
+  effective_repo_path?: string | null;
+  effective_worktrees_root?: string | null;
+  effective_artifacts_root?: string | null;
   github_token_configured: boolean;
   base_branch: string;
   project_classification: string | null;
@@ -58,6 +67,8 @@ export interface Project {
   policy_repo_local_enabled: boolean | null;
   policy_effective_hash: string | null;
   policy_enforcement_mode: PolicyEnforcementMode | null;
+  onboarding_queued?: boolean | null;
+  onboarding_error?: string | null;
   status?: string | null;
   constitution_version?: string | null;
 }
@@ -65,7 +76,12 @@ export interface Project {
 export interface ProjectCreate {
   name: string;
   git_url?: string;
-  local_path?: string;
+  local_path?: string | null;
+  repo_mode?: RepoMode;
+  task_cycle_autonomous?: boolean;
+  managed_repo_root_override?: string | null;
+  worktrees_root_override?: string | null;
+  artifacts_root_override?: string | null;
   github_token?: string | null;
   base_branch?: string;
   description?: string;
@@ -842,7 +858,9 @@ export interface BurndownPoint {
 
 export interface ProtocolArtifact {
   id: string;
+  protocol_run_id?: number | null;
   step_run_id: number | null;
+  run_id?: string | null;
   step_name?: string | null;
   name: string;
   type: string;

@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from devgodzilla.api.app import app
 from devgodzilla.api.dependencies import get_db
+from devgodzilla.config import _reset_config_for_tests
 from devgodzilla.db.database import SQLiteDatabase
 
 
@@ -41,6 +42,7 @@ def test_project_create_and_update_mask_github_token(monkeypatch: pytest.MonkeyP
                 assert create_resp.status_code == 200
                 create_payload = create_resp.json()
                 assert create_payload["github_token_configured"] is True
+                assert create_payload["task_cycle_autonomous"] is False
                 assert "github_token" not in create_payload
 
                 project = db.get_project(create_payload["id"])
@@ -48,11 +50,12 @@ def test_project_create_and_update_mask_github_token(monkeypatch: pytest.MonkeyP
 
                 update_resp = client.put(
                     f"/projects/{project.id}",
-                    json={"github_token": "ghp_updated_secret"},
+                    json={"github_token": "ghp_updated_secret", "task_cycle_autonomous": True},
                 )
                 assert update_resp.status_code == 200
                 update_payload = update_resp.json()
                 assert update_payload["github_token_configured"] is True
+                assert update_payload["task_cycle_autonomous"] is True
                 assert "github_token" not in update_payload
 
                 project = db.get_project(project.id)
@@ -71,6 +74,134 @@ def test_project_create_and_update_mask_github_token(monkeypatch: pytest.MonkeyP
                 assert project.secrets is None
         finally:
             app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_project_create_external_repo_exposes_effective_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db = SQLiteDatabase(tmp_path / "test.db")
+    db.init_schema()
+    repo_root = tmp_path / "repos" / "telegram-bot"
+    (repo_root / ".git").mkdir(parents=True)
+    monkeypatch.setenv("DEVGODZILLA_WORKTREES_ROOT", str(tmp_path / "worktrees-root"))
+    monkeypatch.setenv("DEVGODZILLA_ARTIFACTS_ROOT", str(tmp_path / "artifacts-root"))
+    _reset_config_for_tests()
+    app.dependency_overrides[get_db] = lambda: db
+
+    try:
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.post(
+                "/projects",
+                json={
+                    "name": "telegram-bot",
+                    "repo_mode": "external_repo",
+                    "local_path": str(repo_root),
+                    "base_branch": "main",
+                    "auto_onboard": False,
+                    "auto_discovery": False,
+                },
+            )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["repo_mode"] == "external_repo"
+        assert payload["local_path"] == str(repo_root)
+        assert payload["effective_repo_path"] == str(repo_root)
+        assert payload["effective_worktrees_root"] == str(tmp_path / "worktrees-root" / str(payload["id"]) / "telegram-bot")
+        assert payload["effective_artifacts_root"] == str(tmp_path / "artifacts-root" / str(payload["id"]) / "telegram-bot")
+    finally:
+        app.dependency_overrides.clear()
+        _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_project_create_managed_clone_exposes_derived_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db = SQLiteDatabase(tmp_path / "test.db")
+    db.init_schema()
+    monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(tmp_path / "managed-repos"))
+    monkeypatch.setenv("DEVGODZILLA_WORKTREES_ROOT", str(tmp_path / "managed-worktrees"))
+    monkeypatch.setenv("DEVGODZILLA_ARTIFACTS_ROOT", str(tmp_path / "managed-artifacts"))
+    _reset_config_for_tests()
+    app.dependency_overrides[get_db] = lambda: db
+
+    try:
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.post(
+                "/projects",
+                json={
+                    "name": "telegram-bot",
+                    "git_url": "https://github.com/example/telegram-bot.git",
+                    "repo_mode": "managed_clone",
+                    "base_branch": "main",
+                    "auto_onboard": False,
+                    "auto_discovery": False,
+                },
+            )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["repo_mode"] == "managed_clone"
+        assert payload["local_path"] is None
+        assert payload["effective_repo_path"] == str(tmp_path / "managed-repos" / str(payload["id"]) / "telegram-bot")
+        assert payload["effective_worktrees_root"] == str(tmp_path / "managed-worktrees" / str(payload["id"]) / "telegram-bot")
+        assert payload["effective_artifacts_root"] == str(tmp_path / "managed-artifacts" / str(payload["id"]) / "telegram-bot")
+    finally:
+        app.dependency_overrides.clear()
+        _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_project_create_returns_created_project_when_onboarding_enqueue_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db = SQLiteDatabase(tmp_path / "test.db")
+    db.init_schema()
+    monkeypatch.setenv("DEVGODZILLA_WINDMILL_URL", "http://windmill.local")
+    monkeypatch.setenv("DEVGODZILLA_WINDMILL_TOKEN", "test-token")
+    _reset_config_for_tests()
+    app.dependency_overrides[get_db] = lambda: db
+
+    def fail_enqueue(*args, **kwargs):
+        raise RuntimeError("401 Unauthorized")
+
+    monkeypatch.setattr(
+        "devgodzilla.services.onboarding_queue.enqueue_project_onboarding",
+        fail_enqueue,
+    )
+
+    try:
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.post(
+                "/projects",
+                json={
+                    "name": "telegram-bot",
+                    "git_url": "https://github.com/example/telegram-bot.git",
+                    "repo_mode": "managed_clone",
+                    "base_branch": "main",
+                    "auto_onboard": True,
+                    "auto_discovery": True,
+                },
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["name"] == "telegram-bot"
+        assert payload["onboarding_queued"] is False
+        assert payload["onboarding_error"] == "401 Unauthorized"
+
+        created = db.get_project(payload["id"])
+        assert created.name == "telegram-bot"
+
+        onboarding = client.get(f"/projects/{created.id}/onboarding")
+        assert onboarding.status_code == 200
+        summary = onboarding.json()
+        failure_events = [event for event in summary["events"] if event["event_type"] == "onboarding_enqueue_failed"]
+        assert len(failure_events) == 1
+        assert failure_events[0]["metadata"] == {"error": "401 Unauthorized"}
+    finally:
+        app.dependency_overrides.clear()
+        _reset_config_for_tests()
 
 
 @pytest.mark.skipif(TestClient is None, reason="fastapi not installed")

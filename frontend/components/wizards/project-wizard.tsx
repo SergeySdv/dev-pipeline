@@ -29,7 +29,7 @@ import { Separator } from "@/components/ui/separator";
 import { ApiError } from "@/lib/api/client";
 import { usePolicyPacks } from "@/lib/api/hooks/use-policy-packs";
 import { useCreateProject, useUpdateProjectPolicy } from "@/lib/api/hooks/use-projects";
-import type { PolicyEnforcementMode } from "@/lib/api/types";
+import type { PolicyEnforcementMode, RepoMode } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 interface ProjectWizardProps {
@@ -77,9 +77,16 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
 
   const [currentStep, setCurrentStep] = useState<WizardStep>("git");
   const [formData, setFormData] = useState({
+    projectName: "",
+    repoMode: "managed_clone" as RepoMode,
     repoUrl: "",
+    serverRepoPath: "",
+    managedRepoRootOverride: "",
+    worktreesRootOverride: "",
+    artifactsRootOverride: "",
     branch: "main",
     githubToken: "",
+    taskCycleAutonomous: true,
     policyPack: "",
     enforcementMode: "warn",
     autoDiscovery: true,
@@ -91,12 +98,21 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
   const handleNext = () => {
     // Validation
     if (currentStep === "git") {
-      if (!formData.repoUrl) {
-        toast.error("Repository URL is required");
+      if (!formData.projectName.trim()) {
+        toast.error("Project name is required");
         return;
       }
-      if (!looksLikeGitRepositoryUrl(formData.repoUrl)) {
-        toast.error("Use a cloneable Git repository URL. Marketplace and docs pages will not onboard.");
+      if (formData.repoMode === "managed_clone") {
+        if (!formData.repoUrl) {
+          toast.error("Repository URL is required");
+          return;
+        }
+        if (!looksLikeGitRepositoryUrl(formData.repoUrl)) {
+          toast.error("Use a cloneable Git repository URL. Marketplace and docs pages will not onboard.");
+          return;
+        }
+      } else if (!formData.serverRepoPath.trim()) {
+        toast.error("Server repository path is required");
         return;
       }
     }
@@ -132,14 +148,21 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
   const handleFinish = async () => {
     setIsSubmitting(true);
     try {
-      const name = extractProjectName(formData.repoUrl);
+      const name = formData.projectName.trim() || extractProjectName(formData.repoUrl);
 
       let onboardingQueued = true;
+      let onboardingError: string | null = null;
       let project = null;
       try {
         project = await createProject.mutateAsync({
           name,
-          git_url: formData.repoUrl,
+          git_url: formData.repoUrl || undefined,
+          repo_mode: formData.repoMode,
+          local_path: formData.repoMode === "external_repo" ? formData.serverRepoPath || undefined : undefined,
+          task_cycle_autonomous: formData.taskCycleAutonomous,
+          managed_repo_root_override: formData.managedRepoRootOverride || undefined,
+          worktrees_root_override: formData.worktreesRootOverride || undefined,
+          artifacts_root_override: formData.artifactsRootOverride || undefined,
           github_token: formData.githubToken || undefined,
           base_branch: formData.branch || "main",
           auto_onboard: true,
@@ -154,7 +177,13 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
           onboardingQueued = false;
           project = await createProject.mutateAsync({
             name,
-            git_url: formData.repoUrl,
+            git_url: formData.repoUrl || undefined,
+            repo_mode: formData.repoMode,
+            local_path: formData.repoMode === "external_repo" ? formData.serverRepoPath || undefined : undefined,
+            task_cycle_autonomous: formData.taskCycleAutonomous,
+            managed_repo_root_override: formData.managedRepoRootOverride || undefined,
+            worktrees_root_override: formData.worktreesRootOverride || undefined,
+            artifacts_root_override: formData.artifactsRootOverride || undefined,
             github_token: formData.githubToken || undefined,
             base_branch: formData.branch || "main",
             auto_onboard: false,
@@ -167,6 +196,8 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
       if (!project) {
         throw new Error("Project creation failed");
       }
+      onboardingQueued = project.onboarding_queued ?? onboardingQueued;
+      onboardingError = project.onboarding_error ?? null;
 
       // 2. Update Policy if selected
       if (formData.policyPack || formData.enforcementMode) {
@@ -183,6 +214,8 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
 
       if (onboardingQueued) {
         toast.success("Project created and onboarding queued!");
+      } else if (onboardingError) {
+        toast.success(`Project created, but onboarding was not queued: ${onboardingError}`);
       } else {
         toast.success(
           "Project created. Windmill not configured, so onboarding was not queued (start it from the Onboarding page)."
@@ -191,9 +224,16 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
       onOpenChange(false);
       setCurrentStep("git");
       setFormData({
+        projectName: "",
+        repoMode: "managed_clone",
         repoUrl: "",
+        serverRepoPath: "",
+        managedRepoRootOverride: "",
+        worktreesRootOverride: "",
+        artifactsRootOverride: "",
         branch: "main",
         githubToken: "",
+        taskCycleAutonomous: true,
         policyPack: "",
         enforcementMode: "warn",
         autoDiscovery: true,
@@ -275,7 +315,35 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
           {currentStep === "git" && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="repoUrl">Repository URL *</Label>
+                <Label htmlFor="projectName">Project Name *</Label>
+                <Input
+                  id="projectName"
+                  placeholder="telegram-bot"
+                  value={formData.projectName}
+                  onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="repoMode">Repository Source</Label>
+                <Select
+                  value={formData.repoMode}
+                  onValueChange={(value) =>
+                    setFormData({ ...formData, repoMode: value as RepoMode })
+                  }
+                >
+                  <SelectTrigger id="repoMode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="managed_clone">Managed by DevGodzilla</SelectItem>
+                    <SelectItem value="external_repo">Existing repository on build server</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="repoUrl">
+                  Repository URL {formData.repoMode === "managed_clone" ? "*" : ""}
+                </Label>
                 <Input
                   id="repoUrl"
                   placeholder="https://github.com/username/repo.git"
@@ -283,8 +351,54 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   onChange={(e) => setFormData({ ...formData, repoUrl: e.target.value })}
                 />
                 <p className="text-muted-foreground text-xs">
-                  Enter the clone URL for your Git repository. Marketplace or documentation pages will not work here.
+                  {formData.repoMode === "managed_clone"
+                    ? "Enter the clone URL for your Git repository. Marketplace or documentation pages will not work here."
+                    : "Optional for existing server repositories if the remote is already configured locally."}
                 </p>
+              </div>
+              {formData.repoMode === "external_repo" && (
+                <div className="space-y-2">
+                  <Label htmlFor="serverRepoPath">Server Repository Path *</Label>
+                  <Input
+                    id="serverRepoPath"
+                    placeholder="/srv/repos/team/telegram-bot"
+                    value={formData.serverRepoPath}
+                    onChange={(e) => setFormData({ ...formData, serverRepoPath: e.target.value })}
+                  />
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="managedRepoRootOverride">Managed Repo Root Override</Label>
+                <Input
+                  id="managedRepoRootOverride"
+                  placeholder="Optional absolute path"
+                  value={formData.managedRepoRootOverride}
+                  onChange={(e) =>
+                    setFormData({ ...formData, managedRepoRootOverride: e.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="worktreesRootOverride">Worktrees Root Override</Label>
+                <Input
+                  id="worktreesRootOverride"
+                  placeholder="Optional absolute path"
+                  value={formData.worktreesRootOverride}
+                  onChange={(e) =>
+                    setFormData({ ...formData, worktreesRootOverride: e.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="artifactsRootOverride">Artifacts Root Override</Label>
+                <Input
+                  id="artifactsRootOverride"
+                  placeholder="Optional absolute path"
+                  value={formData.artifactsRootOverride}
+                  onChange={(e) =>
+                    setFormData({ ...formData, artifactsRootOverride: e.target.value })
+                  }
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="branch">Default Branch</Label>
@@ -308,6 +422,23 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   Leave blank for public repos. For private GitHub repositories, DevGodzilla uses
                   this token for clone, push, and pull request steps.
                 </p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    checked={formData.taskCycleAutonomous}
+                    onCheckedChange={(checked) =>
+                      setFormData({ ...formData, taskCycleAutonomous: checked === true })
+                    }
+                  />
+                  <div>
+                    <p className="text-sm font-medium">Run brownfield task cycle autonomously</p>
+                    <p className="text-muted-foreground text-xs">
+                      Continue from run creation through implementation, review, QA, and PR
+                      readiness until DevGodzilla hits a real blocker.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -372,12 +503,46 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                 <h3 className="mb-2 font-medium">Project Summary</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
+                    <span className="text-muted-foreground">Project:</span>
+                    <span>{formData.projectName || extractProjectName(formData.repoUrl)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Repository Source:</span>
+                    <span>
+                      {formData.repoMode === "managed_clone"
+                        ? "Managed by DevGodzilla"
+                        : "Existing repository on build server"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
                     <span className="text-muted-foreground">Repository:</span>
-                    <span className="font-mono text-xs">{formData.repoUrl || "Not set"}</span>
+                    <span className="font-mono text-xs">
+                      {formData.repoMode === "managed_clone"
+                        ? formData.repoUrl || "Not set"
+                        : formData.serverRepoPath || "Not set"}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Branch:</span>
                     <span>{formData.branch}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Managed Repo Root Override:</span>
+                    <span className="font-mono text-xs">
+                      {formData.managedRepoRootOverride || "Default"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Worktrees Root Override:</span>
+                    <span className="font-mono text-xs">
+                      {formData.worktreesRootOverride || "Default"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Artifacts Root Override:</span>
+                    <span className="font-mono text-xs">
+                      {formData.artifactsRootOverride || "Default"}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Policy Pack:</span>
@@ -386,6 +551,10 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">GitHub Token:</span>
                     <span>{formData.githubToken ? "Configured" : "Not set"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Brownfield Autonomy:</span>
+                    <span>{formData.taskCycleAutonomous ? "Enabled" : "Manual"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Enforcement:</span>

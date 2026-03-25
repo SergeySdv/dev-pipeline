@@ -10,17 +10,25 @@ def test_load_config_exposes_new_path_fields(monkeypatch) -> None:
     monkeypatch.setenv("DEVGODZILLA_WINDMILL_ONBOARD_SCRIPT_PATH", "u/custom/project_onboard")
     monkeypatch.setenv("DEVGODZILLA_WINDMILL_IMPORT_ROOT", "windmill")
     monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", "projects")
+    monkeypatch.setenv("DEVGODZILLA_WORKTREES_ROOT", "worktrees")
+    monkeypatch.setenv("DEVGODZILLA_ARTIFACTS_ROOT", "artifacts")
+    monkeypatch.setenv("DEVGODZILLA_ALLOWED_EXTERNAL_REPO_ROOTS", "/tmp/repos,/tmp/more-repos")
     cfg = load_config()
 
     assert cfg.windmill_onboard_script_path == "u/custom/project_onboard"
     assert cfg.windmill_import_root.is_absolute()
     assert cfg.projects_root.is_absolute()
+    assert cfg.worktrees_root.is_absolute()
+    assert cfg.artifacts_root.is_absolute()
+    assert len(cfg.allowed_external_repo_roots) == 2
 
 
 def test_validate_path_contract_reports_missing_import_root(tmp_path: Path) -> None:
     missing_root = tmp_path / "missing-windmill-root"
     cfg = Config(
         projects_root=tmp_path / "projects",
+        worktrees_root=tmp_path / "worktrees",
+        artifacts_root=tmp_path / "artifacts",
         windmill_import_root=missing_root,
         windmill_onboard_script_path="u/devgodzilla/project_onboard_api",
     )
@@ -37,6 +45,8 @@ def test_validate_path_contract_reports_invalid_onboard_script_path(tmp_path: Pa
     (valid_root / "apps" / "devgodzilla").mkdir(parents=True)
     cfg = Config(
         projects_root=tmp_path / "projects",
+        worktrees_root=tmp_path / "worktrees",
+        artifacts_root=tmp_path / "artifacts",
         windmill_import_root=valid_root,
         windmill_onboard_script_path="project_onboard_api",
     )
@@ -44,4 +54,3 @@ def test_validate_path_contract_reports_invalid_onboard_script_path(tmp_path: Pa
     report = validate_path_contract(cfg)
     assert report.errors
     assert any("windmill_onboard_script_path" in error for error in report.errors)
-

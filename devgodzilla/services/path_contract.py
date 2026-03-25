@@ -31,6 +31,19 @@ def validate_path_contract(config: Config) -> PathContractReport:
         report.errors.append(
             f"projects_root must be absolute; got {config.projects_root!s}"
         )
+    if not config.worktrees_root.is_absolute():
+        report.errors.append(
+            f"worktrees_root must be absolute; got {config.worktrees_root!s}"
+        )
+    if not config.artifacts_root.is_absolute():
+        report.errors.append(
+            f"artifacts_root must be absolute; got {config.artifacts_root!s}"
+        )
+    for allowed_root in config.allowed_external_repo_roots:
+        if not allowed_root.is_absolute():
+            report.errors.append(
+                f"allowed_external_repo_roots entries must be absolute; got {allowed_root!s}"
+            )
 
     if not _is_valid_windmill_script_path(config.windmill_onboard_script_path):
         report.errors.append(
