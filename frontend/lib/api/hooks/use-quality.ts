@@ -16,9 +16,10 @@ export interface QAOverview {
   average_score: number;
 }
 
-export interface QAFinding {
+export interface QualityDashboardFinding {
   id: number;
   protocol_id: number;
+  spec_run_id?: number | null;
   project_name: string;
   article: string;
   article_name: string;
@@ -36,7 +37,7 @@ export interface ConstitutionalGate {
 
 export interface QualityDashboard {
   overview: QAOverview;
-  recent_findings: QAFinding[];
+  recent_findings: QualityDashboardFinding[];
   constitutional_gates: ConstitutionalGate[];
 }
 

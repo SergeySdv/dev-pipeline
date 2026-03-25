@@ -168,6 +168,10 @@ export interface ImplementResponse {
   success: boolean;
   run_path: string | null;
   metadata_path: string | null;
+  protocol_id?: number | null;
+  protocol_root?: string | null;
+  step_count?: number;
+  warnings?: string[];
   spec_run_id?: number | null;
   worktree_path?: string | null;
   error: string | null;
@@ -210,8 +214,11 @@ export function useInitSpecKit() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: SpecKitInitRequest) =>
-      apiClient.post<SpecKitInitResponse>("/speckit/init", request),
+    mutationFn: ({ project_id, constitution_content }: SpecKitInitRequest) =>
+      apiClient.post<SpecKitInitResponse>(
+        `/projects/${project_id}/speckit/init`,
+        constitution_content ? { content: constitution_content } : undefined
+      ),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({
@@ -228,8 +235,8 @@ export function useGenerateSpec() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: SpecifyRequest) =>
-      apiClient.post<SpecifyResponse>("/speckit/specify", request),
+    mutationFn: ({ project_id, ...request }: SpecifyRequest) =>
+      apiClient.post<SpecifyResponse>(`/projects/${project_id}/speckit/specify`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: queryKeys.specifications.all });
@@ -244,7 +251,8 @@ export function useGeneratePlan() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: PlanRequest) => apiClient.post<PlanResponse>("/speckit/plan", request),
+    mutationFn: ({ project_id, ...request }: PlanRequest) =>
+      apiClient.post<PlanResponse>(`/projects/${project_id}/speckit/plan`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: queryKeys.specifications.all });
@@ -259,7 +267,8 @@ export function useGenerateTasks() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: TasksRequest) => apiClient.post<TasksResponse>("/speckit/tasks", request),
+    mutationFn: ({ project_id, ...request }: TasksRequest) =>
+      apiClient.post<TasksResponse>(`/projects/${project_id}/speckit/tasks`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: queryKeys.specifications.all });
@@ -274,8 +283,8 @@ export function useClarifySpec() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: ClarifyRequest) =>
-      apiClient.post<ClarifyResponse>("/speckit/clarify", request),
+    mutationFn: ({ project_id, ...request }: ClarifyRequest) =>
+      apiClient.post<ClarifyResponse>(`/projects/${project_id}/speckit/clarify`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: ["speckit", "specs", variables.project_id] });
@@ -291,8 +300,8 @@ export function useGenerateChecklist() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: ChecklistRequest) =>
-      apiClient.post<ChecklistResponse>("/speckit/checklist", request),
+    mutationFn: ({ project_id, ...request }: ChecklistRequest) =>
+      apiClient.post<ChecklistResponse>(`/projects/${project_id}/speckit/checklist`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: ["speckit", "specs", variables.project_id] });
@@ -308,8 +317,8 @@ export function useAnalyzeSpec() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: AnalyzeRequest) =>
-      apiClient.post<AnalyzeResponse>("/speckit/analyze", request),
+    mutationFn: ({ project_id, ...request }: AnalyzeRequest) =>
+      apiClient.post<AnalyzeResponse>(`/projects/${project_id}/speckit/analyze`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: ["speckit", "specs", variables.project_id] });
@@ -325,8 +334,8 @@ export function useRunImplement() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (request: ImplementRequest) =>
-      apiClient.post<ImplementResponse>("/speckit/implement", request),
+    mutationFn: ({ project_id, ...request }: ImplementRequest) =>
+      apiClient.post<ImplementResponse>(`/projects/${project_id}/speckit/implement`, request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["speckit", "status", variables.project_id] });
       queryClient.invalidateQueries({ queryKey: ["speckit", "specs", variables.project_id] });

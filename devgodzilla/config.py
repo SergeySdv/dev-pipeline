@@ -98,6 +98,7 @@ class Config(BaseModel):
 
     # Projects
     projects_root: Path = Field(default=Path("projects"))
+    task_cycle_max_iterations: int = Field(default=5)
     
     # Misc
     spec_audit_interval_seconds: Optional[int] = Field(default=None)
@@ -350,6 +351,7 @@ def load_config() -> Config:
 
         # Projects
         projects_root=_normalize_path(os.environ.get("DEVGODZILLA_PROJECTS_ROOT", "projects")),
+        task_cycle_max_iterations=int(os.environ.get("DEVGODZILLA_TASK_CYCLE_MAX_ITERATIONS", "5")),
         
         # Misc
         spec_audit_interval_seconds=int(v) if (v := os.environ.get("DEVGODZILLA_SPEC_AUDIT_INTERVAL_SECONDS")) else None,

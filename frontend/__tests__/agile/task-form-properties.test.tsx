@@ -48,13 +48,18 @@ const validTitleArbitrary = fc
 // Arbitrary generator for empty or whitespace-only strings (invalid titles)
 const emptyTitleArbitrary = fc.constantFrom("", "   ", "\t", "\n", "  \t\n  ");
 
-// Arbitrary generator for valid date strings
+// Arbitrary generator for valid date strings (YYYY-MM-DD format)
 const validDateArbitrary = fc
-  .date({
-    min: new Date("2020-01-01"),
-    max: new Date("2030-12-31"),
-  })
-  .map((d) => d.toISOString().split("T")[0]);
+  .tuple(
+    fc.integer({ min: 2020, max: 2030 }), // year
+    fc.integer({ min: 1, max: 12 }), // month
+    fc.integer({ min: 1, max: 28 }) // day (using 28 to avoid invalid dates)
+  )
+  .map(([year, month, day]) => {
+    const monthStr = String(month).padStart(2, "0");
+    const dayStr = String(day).padStart(2, "0");
+    return `${year}-${monthStr}-${dayStr}`;
+  });
 
 // Arbitrary generator for a valid AgileTaskCreate
 const validTaskFormArbitrary: fc.Arbitrary<AgileTaskCreate> = fc.record({

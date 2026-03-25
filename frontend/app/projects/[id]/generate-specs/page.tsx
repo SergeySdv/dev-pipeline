@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { LoadingState } from "@/components/ui/loading-state";
+import { getProjectSpecWorkflowPath } from "@/lib/project-routes";
 
 export default function GenerateSpecsPage() {
   const params = useParams();
@@ -13,7 +14,7 @@ export default function GenerateSpecsPage() {
 
   useEffect(() => {
     if (projectId) {
-      router.replace(`/projects/${projectId}?wizard=generate-specs`);
+      router.replace(getProjectSpecWorkflowPath(projectId));
     }
   }, [projectId, router]);
 

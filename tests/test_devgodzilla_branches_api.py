@@ -270,3 +270,55 @@ def test_list_branches_returns_502_when_git_query_fails(monkeypatch: pytest.Monk
             response = client.get(f"/projects/{project.id}/branches")
             assert response.status_code == 502
             assert "failed to list local branches" in response.json()["detail"].lower()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_list_branches_returns_local_branches_when_remote_auth_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remote auth failures should not break the branches panel for local/project-token repos."""
+    from devgodzilla.db.database import SQLiteDatabase
+    import devgodzilla.services.git as git_module
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True)
+        (repo / "README.md").write_text("# Test Repo")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo, check=True, capture_output=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url="https://github.com/example/repo.git",
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        original_run_process = git_module.run_process
+
+        def _fake_run_process(args, **kwargs):  # type: ignore[no-untyped-def]
+            if list(args[:3]) == ["git", "ls-remote", "--heads"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: could not read Username for 'https://github.com': No such device or address",
+                )
+            return original_run_process(args, **kwargs)
+
+        monkeypatch.setattr(git_module, "run_process", _fake_run_process)
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.get(f"/projects/{project.id}/branches")
+            assert response.status_code == 200
+            branch_names = [branch["name"] for branch in response.json()]
+            assert "main" in branch_names

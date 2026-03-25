@@ -13,9 +13,13 @@ from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QualityService
 from devgodzilla.qa.gates import LintGate, TypeGate, TestGate
+from devgodzilla.qa.gates.prompt import summarize_prompt_qa_report
+from devgodzilla.services.workspace_paths import WorkspacePathError, resolve_protocol_root, resolve_workspace_root
 
 from devgodzilla.api import schemas
+from devgodzilla.api.run_context import enrich_runs_with_agile_context
 from devgodzilla.api.dependencies import get_db
+from devgodzilla.api.routes.runs import _build_windmill_client, _sync_run_from_windmill
 from devgodzilla.db.database import Database
 
 router = APIRouter()
@@ -30,23 +34,14 @@ class StepAssignAgentRequest(BaseModel):
 
 
 def _workspace_root(run, project) -> Path:
-    if run.worktree_path:
-        return Path(run.worktree_path).expanduser()
-    if project.local_path:
-        return Path(project.local_path).expanduser()
-    return Path.cwd()
+    try:
+        return resolve_workspace_root(run, project)
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _protocol_root(run, workspace_root: Path) -> Path:
-    if run.protocol_root:
-        return Path(run.protocol_root).expanduser()
-    specs = workspace_root / "specs" / run.protocol_name
-    protocols = workspace_root / ".protocols" / run.protocol_name
-    if specs.exists():
-        return specs
-    if protocols.exists():
-        return protocols
-    return specs
+    return resolve_protocol_root(run, workspace_root)
 
 
 def _step_artifacts_dir(db: Database, step_id: int) -> Path:
@@ -100,6 +95,25 @@ def _policy_location(metadata: Optional[dict]) -> Optional[str]:
     return None
 
 
+def _to_gate_finding(step_id: int, gate_id: str, finding: dict, report_text: Optional[str] = None) -> schemas.GateFindingOut:
+    message = str(finding.get("message", "") or "")
+    suggested_fix = finding.get("suggestion")
+
+    if gate_id == "prompt_qa" and report_text and (not message or message == "Prompt QA reported FAIL"):
+        details = summarize_prompt_qa_report(report_text)
+        message = details["message"]
+        if not suggested_fix and details["next_actions"]:
+            suggested_fix = "\n".join(details["next_actions"])
+
+    return schemas.GateFindingOut(
+        code=str(finding.get("rule_id") or gate_id or ""),
+        severity=str(finding.get("severity", "") or "error"),
+        message=message or "QA finding",
+        step_id=str(step_id),
+        suggested_fix=suggested_fix,
+    )
+
+
 @router.get("/steps", response_model=List[schemas.StepOut])
 def list_steps(
     protocol_run_id: int,
@@ -118,6 +132,26 @@ def get_step(
         return db.get_step_run(step_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Step not found")
+
+
+@router.get("/steps/{step_id}/runs", response_model=List[schemas.JobRunOut])
+def list_step_runs_for_step(
+    step_id: int,
+    db: Database = Depends(get_db),
+):
+    """List job runs associated with a step."""
+    try:
+        db.get_step_run(step_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Step not found")
+    runs = db.list_job_runs(step_run_id=step_id, limit=200)
+    windmill = _build_windmill_client()
+    if windmill:
+        try:
+            runs = [_sync_run_from_windmill(db, run, windmill) for run in runs]
+        finally:
+            windmill.close()
+    return enrich_runs_with_agile_context(db, runs)
 
 
 @router.get("/steps/{step_id}/policy/findings", response_model=List[schemas.PolicyFindingOut])
@@ -219,25 +253,38 @@ def get_step_quality(
             return "failed"
         return "skipped"
 
+    def gate_details(gate_payload: dict) -> dict | None:
+        metadata = gate_payload.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        details: dict[str, str] = {}
+        for key in ("command", "stdout", "stderr"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                details[key] = value.strip()
+        return details or None
+
     gates = []
     for g in qa_record.gate_results or []:
-        findings = [
-            schemas.QAFindingOut(
-                severity=f.get("severity", ""),
-                message=f.get("message", ""),
-                file=f.get("file_path"),
-                line=f.get("line_number"),
-                rule_id=f.get("rule_id"),
-                suggestion=f.get("suggestion"),
-            )
-            for f in (g.get("findings") or [])
-        ]
+        gate_id = str(g.get("gate_id", "") or "")
+        raw_findings = list(g.get("findings") or [])
+        if gate_id == "prompt_qa" and not raw_findings and qa_record.report_text:
+            details = summarize_prompt_qa_report(qa_record.report_text)
+            raw_findings = [
+                {
+                    "severity": "error",
+                    "message": details["message"],
+                    "suggestion": "\n".join(details["next_actions"]) if details["next_actions"] else None,
+                }
+            ]
+        findings = [_to_gate_finding(step_id, gate_id, f, qa_record.report_text) for f in raw_findings]
         gates.append(
             schemas.GateResultOut(
-                article=g.get("gate_id", ""),
+                article=gate_id,
                 name=str(g.get("gate_name", g.get("gate_id", ""))).upper(),
                 status=to_status(g.get("verdict")),
                 findings=findings,
+                details=gate_details(g),
             )
         )
 

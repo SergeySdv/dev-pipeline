@@ -10,10 +10,12 @@ try:
     from fastapi.testclient import TestClient  # type: ignore
     from devgodzilla.api.app import app
     from devgodzilla.api.dependencies import get_windmill_client
+    from devgodzilla.api.dependencies import get_db
 except ImportError:  # pragma: no cover
     TestClient = None  # type: ignore
     app = None  # type: ignore
     get_windmill_client = None  # type: ignore
+    get_db = None  # type: ignore
 
 
 @dataclass
@@ -186,6 +188,152 @@ def test_windmill_and_runs_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
             assert payload["flow_definition"]["modules"]
             assert db.get_protocol_run(run.id).windmill_flow_id == payload["windmill_flow_id"]
 
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_runs_expose_real_task_and_sprint_linkage_from_step_linked_tasks(tmp_path: Path) -> None:
+    from devgodzilla.db.database import SQLiteDatabase
+
+    db = SQLiteDatabase(tmp_path / "devgodzilla.sqlite")
+    db.init_schema()
+
+    project = db.create_project(
+        name="linked-runs",
+        git_url="https://github.com/example/linked-runs.git",
+        base_branch="main",
+        local_path=str(tmp_path / "repo"),
+    )
+    protocol = db.create_protocol_run(
+        project_id=project.id,
+        protocol_name="linked-runs-protocol",
+        status="running",
+        base_branch="main",
+    )
+    step = db.create_step_run(
+        protocol_run_id=protocol.id,
+        step_index=0,
+        step_name="implement-story",
+        step_type="execute",
+        status="running",
+    )
+    sprint = db.create_sprint(
+        project_id=project.id,
+        name="Sprint 7",
+        status="active",
+        goal="Ship the linked run workflow",
+    )
+    task = db.create_task(
+        project_id=project.id,
+        sprint_id=sprint.id,
+        protocol_run_id=protocol.id,
+        step_run_id=step.id,
+        title="Implement linked run workflow",
+        board_status="review",
+        priority="high",
+    )
+    db.create_job_run(
+        run_id="run-linked-task",
+        job_type="execute_step",
+        status="running",
+        project_id=project.id,
+        protocol_run_id=protocol.id,
+        step_run_id=step.id,
+        params={"step_run_id": step.id},
+    )
+
+    app.dependency_overrides[get_db] = lambda: db  # type: ignore[index]
+    try:
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            list_response = client.get("/runs")
+            detail_response = client.get("/runs/run-linked-task")
+            protocol_runs_response = client.get(f"/protocols/{protocol.id}/runs")
+            step_runs_response = client.get(f"/steps/{step.id}/runs")
+
+        assert list_response.status_code == 200
+        assert detail_response.status_code == 200
+        assert protocol_runs_response.status_code == 200
+        assert step_runs_response.status_code == 200
+
+        list_payload = next(item for item in list_response.json() if item["run_id"] == "run-linked-task")
+        detail_payload = detail_response.json()
+        protocol_payload = protocol_runs_response.json()[0]
+        step_payload = step_runs_response.json()[0]
+
+        for payload in (list_payload, detail_payload, protocol_payload, step_payload):
+            assert payload["task_id"] == task.id
+            assert payload["task_title"] == "Implement linked run workflow"
+            assert payload["task_board_status"] == "review"
+            assert payload["sprint_id"] == sprint.id
+            assert payload["sprint_name"] == "Sprint 7"
+            assert payload["sprint_status"] == "active"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_runs_fall_back_to_protocol_linked_task_context_when_step_task_is_missing(tmp_path: Path) -> None:
+    from devgodzilla.db.database import SQLiteDatabase
+
+    db = SQLiteDatabase(tmp_path / "devgodzilla.sqlite")
+    db.init_schema()
+
+    project = db.create_project(
+        name="protocol-linked-runs",
+        git_url="https://github.com/example/protocol-linked-runs.git",
+        base_branch="main",
+        local_path=str(tmp_path / "repo"),
+    )
+    protocol = db.create_protocol_run(
+        project_id=project.id,
+        protocol_name="protocol-linked-runs-protocol",
+        status="running",
+        base_branch="main",
+    )
+    step = db.create_step_run(
+        protocol_run_id=protocol.id,
+        step_index=0,
+        step_name="qa-story",
+        step_type="qa",
+        status="running",
+    )
+    sprint = db.create_sprint(
+        project_id=project.id,
+        name="Sprint 8",
+        status="active",
+        goal="Review protocol-level run linkage",
+    )
+    task = db.create_task(
+        project_id=project.id,
+        sprint_id=sprint.id,
+        protocol_run_id=protocol.id,
+        title="Review protocol-level linkage",
+        board_status="testing",
+        priority="medium",
+    )
+    db.create_job_run(
+        run_id="run-linked-protocol-task",
+        job_type="run_quality",
+        status="queued",
+        project_id=project.id,
+        protocol_run_id=protocol.id,
+        step_run_id=step.id,
+        params={"step_run_id": step.id},
+    )
+
+    app.dependency_overrides[get_db] = lambda: db  # type: ignore[index]
+    try:
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            detail_response = client.get("/runs/run-linked-protocol-task")
+
+        assert detail_response.status_code == 200
+        payload = detail_response.json()
+        assert payload["task_id"] == task.id
+        assert payload["task_title"] == "Review protocol-level linkage"
+        assert payload["task_board_status"] == "testing"
+        assert payload["sprint_id"] == sprint.id
+        assert payload["sprint_name"] == "Sprint 8"
+    finally:
         app.dependency_overrides.clear()
 
 

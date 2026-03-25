@@ -115,3 +115,56 @@ def test_planning_auto_generates_protocol_files(monkeypatch: pytest.MonkeyPatch,
     assert opencode_log.exists()
     lines = [json.loads(l) for l in opencode_log.read_text(encoding="utf-8").splitlines() if l.strip()]
     assert any("--model" in entry["argv"] and "zai-coding-plan/glm-5" in entry["argv"] for entry in lines)
+
+
+def test_planning_workspace_fallback_resolves_under_project_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "devgodzilla.sqlite"
+    monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+
+    db = SQLiteDatabase(db_path)
+    db.init_schema()
+
+    project = db.create_project(
+        name="demo",
+        git_url="https://github.com/example/demo.git",
+        base_branch="main",
+        local_path=None,
+    )
+    run = db.create_protocol_run(
+        project_id=project.id,
+        protocol_name="demo-proto",
+        status="pending",
+        base_branch="main",
+        worktree_path=None,
+        protocol_root=None,
+        description="workspace resolution",
+    )
+
+    expected_repo = tmp_path / "projects-root" / str(project.id) / "demo"
+    expected_repo.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, object] = {}
+
+    class StubGitService:
+        def resolve_repo_path(self, git_url, project_name=None, local_path=None, project_id=None, clone_if_missing=True):
+            captured["git_url"] = git_url
+            captured["project_name"] = project_name
+            captured["local_path"] = local_path
+            captured["project_id"] = project_id
+            captured["clone_if_missing"] = clone_if_missing
+            return expected_repo
+
+    cfg = load_config()
+    cfg.projects_root = tmp_path / "projects-root"
+    ctx = ServiceContext(config=cfg)
+    planning = PlanningService(ctx, db, git_service=StubGitService())
+
+    resolved = planning._resolve_workspace(run, project)
+
+    assert resolved == expected_repo
+    assert captured == {
+        "git_url": project.git_url,
+        "project_name": project.name,
+        "local_path": project.local_path,
+        "project_id": project.id,
+        "clone_if_missing": True,
+    }

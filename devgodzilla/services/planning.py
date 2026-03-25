@@ -430,7 +430,12 @@ class PlanningService(Service):
         # Use git service to resolve
         if self.git_service:
             try:
-                return self.git_service.resolve_repo_path(project.git_url)
+                return self.git_service.resolve_repo_path(
+                    project.git_url,
+                    project_name=project.name,
+                    local_path=project.local_path,
+                    project_id=project.id,
+                )
             except Exception:
                 pass
         

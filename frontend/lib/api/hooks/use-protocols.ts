@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { adaptProtocol, adaptProtocols, type RawProtocolRun } from "../adapters/protocol";
 import { apiClient } from "../client";
 import { queryKeys } from "../query-keys";
 import type {
@@ -22,8 +23,22 @@ import type {
   ProtocolSpec,
   RunFilters,
   Sprint,
+  SyncResult,
   StepRun,
 } from "../types";
+
+type RawProtocolFromSpecResponse = Omit<ProtocolFromSpecResponse, "protocol"> & {
+  protocol: RawProtocolRun | null;
+};
+type ProtocolActionResponse = ActionResponse | OpenPRResponse | ProtocolRun;
+
+function adaptOptionalProtocol(protocol: RawProtocolRun | null | undefined): ProtocolRun | null {
+  return protocol ? adaptProtocol(protocol) : null;
+}
+
+function isProtocolActionStateResponse(data: ProtocolActionResponse): data is ProtocolRun {
+  return typeof data === "object" && data !== null && "protocol_name" in data && "project_id" in data;
+}
 
 const useConditionalRefetchInterval = (baseInterval: number) => {
   if (typeof document === "undefined") return false;
@@ -35,7 +50,7 @@ export function useProtocols() {
   const refetchInterval = useConditionalRefetchInterval(10000);
   return useQuery({
     queryKey: queryKeys.protocols.all,
-    queryFn: () => apiClient.get<ProtocolRun[]>("/protocols"),
+    queryFn: async () => adaptProtocols(await apiClient.get<RawProtocolRun[]>("/protocols")),
     refetchInterval,
   });
 }
@@ -44,7 +59,8 @@ export function useProtocols() {
 export function useProjectProtocols(projectId: number | undefined) {
   return useQuery({
     queryKey: queryKeys.projects.protocols(projectId as number),
-    queryFn: () => apiClient.get<ProtocolRun[]>(`/projects/${projectId}/protocols`),
+    queryFn: async () =>
+      adaptProtocols(await apiClient.get<RawProtocolRun[]>(`/projects/${projectId}/protocols`)),
     enabled: !!projectId,
   });
 }
@@ -53,7 +69,7 @@ export function useProjectProtocols(projectId: number | undefined) {
 export function useProtocol(id: number | undefined) {
   return useQuery({
     queryKey: queryKeys.protocols.detail(id as number),
-    queryFn: () => apiClient.get<ProtocolRun>(`/protocols/${id}`),
+    queryFn: async () => adaptProtocol(await apiClient.get<RawProtocolRun>(`/protocols/${id}`)),
     enabled: !!id,
   });
 }
@@ -64,9 +80,12 @@ export const useProtocolDetail = useProtocol;
 export function useCreateProtocol() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ projectId, data }: { projectId: number; data: ProtocolCreate }) =>
-      apiClient.post<ProtocolRun>(`/projects/${projectId}/protocols`, data),
-    onSuccess: (_, { projectId }) => {
+    mutationFn: async ({ projectId, data }: { projectId: number; data: ProtocolCreate }) =>
+      adaptProtocol(
+        await apiClient.post<RawProtocolRun>(`/projects/${projectId}/protocols`, data)
+      ),
+    onSuccess: (protocol, { projectId }) => {
+      queryClient.setQueryData(queryKeys.protocols.detail(protocol.id), protocol);
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.protocols(projectId),
       });
@@ -77,10 +96,22 @@ export function useCreateProtocol() {
 export function useCreateProtocolFromSpec() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (request: ProtocolFromSpecRequest) =>
-      apiClient.post<ProtocolFromSpecResponse>("/protocols/from-spec", request),
+    mutationFn: async (request: ProtocolFromSpecRequest) => {
+      const response = await apiClient.post<RawProtocolFromSpecResponse>(
+        "/protocols/from-spec",
+        request
+      );
+      return {
+        ...response,
+        protocol: adaptOptionalProtocol(response.protocol),
+      } satisfies ProtocolFromSpecResponse;
+    },
     onSuccess: (response, variables) => {
       if (response.protocol?.project_id) {
+        queryClient.setQueryData(
+          queryKeys.protocols.detail(response.protocol.id),
+          response.protocol
+        );
         queryClient.invalidateQueries({
           queryKey: queryKeys.projects.protocols(response.protocol.project_id),
         });
@@ -158,11 +189,12 @@ export function useProtocolPolicySnapshot(protocolId: number | undefined) {
 
 // Protocol Clarifications
 export function useProtocolClarifications(protocolId: number | undefined, status?: string) {
+  const normalizedStatus = status && status !== "all" ? status : undefined;
   return useQuery({
-    queryKey: queryKeys.protocols.clarifications(protocolId as number, status),
+    queryKey: queryKeys.protocols.clarifications(protocolId as number, normalizedStatus),
     queryFn: () =>
       apiClient.get<Clarification[]>(
-        `/protocols/${protocolId}/clarifications${status ? `?status=${status}` : ""}`
+        `/protocols/${protocolId}/clarifications${normalizedStatus ? `?status=${normalizedStatus}` : ""}`
       ),
     enabled: !!protocolId,
   });
@@ -172,7 +204,7 @@ export function useProtocolClarifications(protocolId: number | undefined, status
 export function useProtocolAction() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       protocolId,
       action,
     }: {
@@ -185,8 +217,13 @@ export function useProtocolAction() {
         | "run_next_step"
         | "retry_latest"
         | "open_pr";
-    }) =>
-      apiClient.post<ActionResponse | OpenPRResponse>(`/protocols/${protocolId}/actions/${action}`),
+    }) => {
+      const path = `/protocols/${protocolId}/actions/${action}`;
+      if (["start", "pause", "resume", "cancel"].includes(action)) {
+        return adaptProtocol(await apiClient.post<RawProtocolRun>(path));
+      }
+      return apiClient.post<ActionResponse | OpenPRResponse>(path);
+    },
     onSuccess: (data, { protocolId, action }) => {
       // Show success toast
       const actionMessages: Record<string, string> = {
@@ -199,6 +236,18 @@ export function useProtocolAction() {
         open_pr: "Pull request created",
       };
       toast.success(actionMessages[action] || "Action completed");
+
+      if (isProtocolActionStateResponse(data)) {
+        queryClient.setQueryData(queryKeys.protocols.detail(protocolId), data);
+        queryClient.setQueryData(
+          queryKeys.projects.protocols(data.project_id),
+          (current: ProtocolRun[] | undefined) => {
+            const existing = Array.isArray(current) ? current : [];
+            const next = existing.map((protocol) => (protocol.id === data.id ? data : protocol));
+            return next.some((protocol) => protocol.id === data.id) ? next : [data, ...existing];
+          }
+        );
+      }
       
       // Invalidate queries
       queryClient.invalidateQueries({
@@ -296,11 +345,16 @@ export function useProtocolSprint(protocolId: number | undefined) {
 export function useSyncProtocolToSprint() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (protocolId: number) =>
-      apiClient.post<ActionResponse>(`/protocols/${protocolId}/actions/sync-to-sprint`),
-    onSuccess: (_, protocolId) => {
+    mutationFn: ({ protocolId, sprintId }: { protocolId: number; sprintId: number }) =>
+      apiClient.post<SyncResult>(`/protocols/${protocolId}/actions/sync-to-sprint`, {
+        sprint_id: sprintId,
+      }),
+    onSuccess: (_, { protocolId }) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.protocols.sprint(protocolId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.protocols.detail(protocolId),
       });
     },
   });

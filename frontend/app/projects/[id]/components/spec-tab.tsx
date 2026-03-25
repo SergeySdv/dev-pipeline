@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   AlertCircle,
@@ -38,11 +39,14 @@ import {
   useClarifySpec,
   useGenerateChecklist,
   useGenerateSpec,
+  useInitSpecKit,
   useProject,
   useRunImplement,
   useSpecifications,
   useSpecKitStatus,
 } from "@/lib/api";
+import { getProjectSpecWorkflowPath, getSpecificationReviewPath } from "@/lib/project-routes";
+import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 interface SpecTabProps {
   projectId: number;
@@ -50,7 +54,27 @@ interface SpecTabProps {
 
 const LAST_UPDATED_BASE = Date.now();
 
+function getReviewState(spec: {
+  has_tasks?: boolean;
+  checklist_path?: string | null;
+  analysis_path?: string | null;
+  implement_path?: string | null;
+  protocol_id?: number | null;
+}) {
+  const hasChecklist = Boolean(spec.checklist_path);
+  const hasAnalysis = Boolean(spec.analysis_path);
+  const hasExecution = Boolean(spec.protocol_id || spec.implement_path);
+
+  return {
+    hasChecklist,
+    hasAnalysis,
+    hasExecution,
+    reviewReady: Boolean(spec.has_tasks && hasChecklist && hasAnalysis),
+  };
+}
+
 export function SpecTab({ projectId }: SpecTabProps) {
+  const router = useRouter();
   const { data: project, isLoading: projectLoading } = useProject(projectId);
   const {
     data: status,
@@ -67,6 +91,7 @@ export function SpecTab({ projectId }: SpecTabProps) {
   const analyzeSpec = useAnalyzeSpec();
   const runImplement = useRunImplement();
   const generateSpec = useGenerateSpec();
+  const initSpecKit = useInitSpecKit();
 
   const [clarifyOpen, setClarifyOpen] = useState(false);
   const [clarifySpecPath, setClarifySpecPath] = useState<string | null>(null);
@@ -79,6 +104,20 @@ export function SpecTab({ projectId }: SpecTabProps) {
 
   if (isLoading) return <LoadingState message="Loading specification..." />;
 
+  const handleInitialize = async () => {
+    try {
+      const result = await initSpecKit.mutateAsync({ project_id: projectId });
+      if (result.success) {
+        toast.success("SpecKit initialized successfully!");
+        refetchStatus();
+      } else {
+        toast.error(result.error || "Failed to initialize SpecKit");
+      }
+    } catch {
+      toast.error("Failed to initialize SpecKit");
+    }
+  };
+
   // Handle uninitialized SpecKit
   if (!status?.initialized) {
     return (
@@ -89,10 +128,15 @@ export function SpecTab({ projectId }: SpecTabProps) {
           <p className="text-muted-foreground mb-4 text-sm">
             This project hasn&apos;t been initialized with SpecKit yet.
           </p>
-          <p className="text-muted-foreground text-sm">
-            Use the CLI to initialize:{" "}
-            <code className="bg-muted rounded px-2 py-1">devgodzilla spec init</code>
-          </p>
+          <div className="space-y-3">
+            <Button onClick={handleInitialize} disabled={initSpecKit.isPending}>
+              {initSpecKit.isPending ? "Initializing..." : "Initialize SpecKit"}
+            </Button>
+            <p className="text-muted-foreground text-sm">
+              CLI fallback:{" "}
+              <code className="bg-muted rounded px-2 py-1">devgodzilla spec init</code>
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -192,7 +236,11 @@ export function SpecTab({ projectId }: SpecTabProps) {
         spec_run_id: specRunId ?? undefined,
       });
       if (result.success) {
-        toast.success("Implementation run initialized");
+        const outcome = getImplementSuccessOutcome(result);
+        toast.success(outcome.message);
+        if (outcome.targetPath) {
+          router.push(outcome.targetPath);
+        }
       } else {
         toast.error(result.error || "Implement initialization failed");
       }
@@ -320,9 +368,9 @@ export function SpecTab({ projectId }: SpecTabProps) {
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" asChild>
-            <Link href={`/projects/${projectId}?wizard=generate-specs&tab=spec`}>
+            <Link href={getProjectSpecWorkflowPath(projectId)}>
               <Sparkles className="mr-2 h-4 w-4" />
-              Launch SpecKit Wizard
+              Run Spec Workflow
             </Link>
           </Button>
           <Button variant="outline" size="sm" onClick={handleRefresh}>
@@ -408,13 +456,32 @@ export function SpecTab({ projectId }: SpecTabProps) {
               const isCleaned = spec.status === "cleaned";
               const isFailed = spec.status === "failed";
               const specPath = spec.spec_path || spec.path || "";
+              const reviewState = getReviewState(spec);
+              const reviewPath =
+                spec.id &&
+                (spec.has_tasks ||
+                  reviewState.hasChecklist ||
+                  reviewState.hasAnalysis ||
+                  reviewState.hasExecution)
+                  ? getSpecificationReviewPath(spec.id)
+                  : null;
               return (
                 <div
                   key={spec.id}
                   className={`space-y-2 rounded-lg border p-4 ${isFailed ? "border-red-500/50 bg-red-500/5" : ""}`}
                 >
                   <div className="flex items-center justify-between">
-                    <h4 className="font-medium">{spec.title}</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium">{spec.title}</h4>
+                      {reviewState.reviewReady && (
+                        <Badge
+                          variant="default"
+                          className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+                        >
+                          Review Ready
+                        </Badge>
+                      )}
+                    </div>
                     {getStatusBadge(spec)}
                   </div>
                   <div className="text-muted-foreground space-y-1 text-sm">
@@ -436,18 +503,32 @@ export function SpecTab({ projectId }: SpecTabProps) {
                         </span>
                       )}
                     </div>
+                    <div className="flex flex-wrap gap-4">
+                      <span>
+                        <span className="font-medium">Checklist:</span>{" "}
+                        {reviewState.hasChecklist ? "Ready" : "Missing"}
+                      </span>
+                      <span>
+                        <span className="font-medium">Analysis:</span>{" "}
+                        {reviewState.hasAnalysis ? "Ready" : "Missing"}
+                      </span>
+                      <span>
+                        <span className="font-medium">Execution:</span>{" "}
+                        {reviewState.hasExecution ? "Bootstrapped" : "Not started"}
+                      </span>
+                    </div>
                     {isFailed && spec.error_message && (
                       <div className="mt-2 rounded border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-600">
                         <span className="font-medium">Error:</span> {spec.error_message}
                       </div>
                     )}
-                    {isFailed && spec.protocol_id && (
+                    {spec.protocol_id && (
                       <div className="mt-1">
                         <Link
                           href={`/protocols/${spec.protocol_id}`}
                           className="text-xs text-blue-600 hover:underline"
                         >
-                          View protocol run for details →
+                          View Protocol #{spec.protocol_id}
                         </Link>
                       </div>
                     )}
@@ -462,6 +543,14 @@ export function SpecTab({ projectId }: SpecTabProps) {
                       >
                         <RotateCcw className="mr-2 h-3.5 w-3.5" />
                         {generateSpec.isPending ? "Retrying..." : "Retry"}
+                      </Button>
+                    )}
+                    {reviewPath && (
+                      <Button variant="secondary" size="sm" asChild>
+                        <Link href={reviewPath}>
+                          <FileSearch className="mr-2 h-3.5 w-3.5" />
+                          Review Implementation
+                        </Link>
                       </Button>
                     )}
                     <Button

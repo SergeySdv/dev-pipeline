@@ -5,15 +5,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from devgodzilla.api import schemas
+from devgodzilla.api.run_context import enrich_runs_with_agile_context
 from devgodzilla.api.dependencies import get_db, get_service_context, get_windmill_client
+from devgodzilla.api.routes._clarification_enrichment import enrich_clarifications
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.db.database import Database
+from devgodzilla.models.domain import ProtocolStatus, StepStatus
+from devgodzilla.speckit_metadata import extract_spec_run_id
+from devgodzilla.services.execution import ExecutionService
 from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
 from devgodzilla.services.planning import PlanningService
 from devgodzilla.services.policy import PolicyService
+from devgodzilla.services.priority import sort_by_priority
 from devgodzilla.services.sprint_integration import SprintIntegrationService
 from devgodzilla.services.spec_to_protocol import SpecToProtocolService
-from devgodzilla.windmill.client import WindmillClient
+from devgodzilla.windmill.client import WindmillClient, WindmillConfig
+from devgodzilla.services.workspace_paths import WorkspacePathError, resolve_protocol_root, resolve_workspace_root
 
 router = APIRouter()
 
@@ -45,26 +52,14 @@ def get_policy_service(
 
 
 def _workspace_root(run, project) -> Path:
-    if run.worktree_path:
-        return Path(run.worktree_path).expanduser()
-    if project.local_path:
-        return Path(project.local_path).expanduser()
-    return Path.cwd()
+    try:
+        return resolve_workspace_root(run, project)
+    except WorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _protocol_root(run, workspace_root: Path) -> Path:
-    if run.protocol_root:
-        candidate = Path(run.protocol_root).expanduser()
-        if candidate.is_absolute():
-            return candidate
-        return workspace_root / candidate
-    specs = workspace_root / "specs" / run.protocol_name
-    protocols = workspace_root / ".protocols" / run.protocol_name
-    if specs.exists():
-        return specs
-    if protocols.exists():
-        return protocols
-    return specs
+    return resolve_protocol_root(run, workspace_root)
 
 
 def _artifact_type_from_name(name: str) -> str:
@@ -82,10 +77,31 @@ def _artifact_type_from_name(name: str) -> str:
     return "file"
 
 
-class ProjectProtocolCreate(BaseModel):
-    protocol_name: str = Field(..., min_length=1)
-    description: Optional[str] = None
-    base_branch: str = "main"
+def _next_runnable_step_id(db: Database, protocol_id: int) -> Optional[int]:
+    steps = db.list_step_runs(protocol_id)
+    completed_ids = {step.id for step in steps if step.status == StepStatus.COMPLETED}
+    pending_steps = [step for step in steps if step.status == StepStatus.PENDING]
+    for step in sort_by_priority(pending_steps, priority_attr="priority"):
+        depends_on = step.depends_on or []
+        if all(dep in completed_ids for dep in depends_on):
+            return step.id
+    return None
+def _build_orchestrator(ctx: ServiceContext, db: Database) -> OrchestratorService:
+    windmill_client = None
+    mode = OrchestratorMode.LOCAL
+    if getattr(ctx.config, "windmill_enabled", False):
+        windmill_client = WindmillClient(
+            WindmillConfig(
+                base_url=ctx.config.windmill_url or "http://localhost:8000",
+                token=ctx.config.windmill_token or "",
+                workspace=getattr(ctx.config, "windmill_workspace", "devgodzilla"),
+            )
+        )
+        mode = OrchestratorMode.WINDMILL
+    return OrchestratorService(context=ctx, db=db, windmill_client=windmill_client, mode=mode)
+
+
+class ProjectProtocolCreate(schemas.ProtocolCreateBase):
     auto_start: bool = False
 
 
@@ -144,6 +160,12 @@ def create_project_protocol(
         base_branch=request.base_branch,
         description=request.description,
     )
+    if request.template_source is not None or request.template_config is not None:
+        db.update_protocol_template(
+            run.id,
+            template_source=request.template_source,
+            template_config=request.template_config,
+        )
     if request.auto_start:
         def run_planning() -> None:
             service = PlanningService(ctx, db)
@@ -164,17 +186,23 @@ def create_protocol(
     # Create the run record
     run = db.create_protocol_run(
         project_id=protocol.project_id,
-        protocol_name=protocol.name,
+        protocol_name=protocol.protocol_name,
         status="pending",
-        base_branch=protocol.branch_name or "main",
+        base_branch=protocol.base_branch,
         description=protocol.description,
     )
+    if protocol.template_source is not None or protocol.template_config is not None:
+        db.update_protocol_template(
+            run.id,
+            template_config=protocol.template_config,
+            template_source=protocol.template_source,
+        )
     
     # If using planning service, we should trigger plan_protocol in background
     # But for now, we just return the pending run. The CLI triggers planning explicitly.
     # We could add an option 'plan: bool = False' to trigger it.
     
-    return run
+    return db.get_protocol_run(run.id)
 
 
 @router.post("/protocols/from-spec", response_model=ProtocolFromSpecResponse)
@@ -259,6 +287,7 @@ def list_protocol_steps(
 
 # Response models for new endpoints
 class ProtocolSpecOut(BaseModel):
+    spec_run_id: Optional[int] = None
     spec_hash: Optional[str] = None
     validation_status: Optional[str] = None
     validated_at: Optional[str] = None
@@ -291,6 +320,7 @@ def get_protocol_spec(
     
     meta = run.speckit_metadata or {}
     return ProtocolSpecOut(
+        spec_run_id=extract_spec_run_id(meta),
         spec_hash=meta.get("spec_hash"),
         validation_status=meta.get("validation_status"),
         validated_at=meta.get("validated_at"),
@@ -318,7 +348,7 @@ def list_protocol_runs(
         job_type=job_type,
         limit=limit,
     )
-    return [schemas.JobRunOut.model_validate(r) for r in runs]
+    return [schemas.JobRunOut.model_validate(r) for r in enrich_runs_with_agile_context(db, runs)]
 
 
 @router.post("/protocols/{protocol_id}/actions/open_pr", response_model=OpenPRResponse)
@@ -387,14 +417,57 @@ def open_protocol_pr(
                 message=f"Failed to create PR: {str(exc)}",
                 status="error",
             )
-    
-    # No git provider available - return placeholder response
-    return OpenPRResponse(
-        pr_url=None,
-        pr_number=None,
-        message="PR creation not available - no git provider configured. Use CLI to create PR.",
-        status="unavailable",
-    )
+
+    # Fallback to local git service for standard GitHub/GitLab repositories.
+    try:
+        from devgodzilla.services.git import GitService
+
+        worktree = Path(run.worktree_path or project.local_path or "").expanduser()
+        if not worktree.exists():
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message="PR creation not available - repository worktree is missing.",
+                status="error",
+            )
+
+        github_token = ((project.secrets or {}).get("github_token") or "").strip() or None
+        git_service = GitService(ctx)
+        branch_pushed = git_service.push_and_open_pr(
+            worktree,
+            run.protocol_name,
+            run.base_branch,
+            protocol_run_id=run.id,
+            project_id=project.id,
+            github_token=github_token,
+        )
+        if not branch_pushed:
+            return OpenPRResponse(
+                pr_url=None,
+                pr_number=None,
+                message="Failed to push branch or create pull request.",
+                status="error",
+            )
+
+        pr_url = None
+        if project.git_url and "github.com" in project.git_url:
+            owner_repo = project.git_url.split("github.com/", 1)[-1].replace(".git", "").strip("/")
+            if owner_repo:
+                pr_url = f"https://github.com/{owner_repo}/compare/{run.base_branch}...{run.protocol_name}"
+
+        return OpenPRResponse(
+            pr_url=pr_url,
+            pr_number=None,
+            message="Pull request created or compare view prepared",
+            status="created",
+        )
+    except Exception as exc:
+        return OpenPRResponse(
+            pr_url=None,
+            pr_number=None,
+            message=f"PR creation failed: {exc}",
+            status="error",
+        )
 
 
 @router.get("/protocols/{protocol_id}/events", response_model=List[schemas.EventOut])
@@ -485,33 +558,53 @@ def start_protocol(
 @router.post("/protocols/{protocol_id}/actions/run_next_step", response_model=schemas.NextStepOut)
 def run_next_step(
     protocol_id: int,
+    ctx: ServiceContext = Depends(get_service_context),
     db: Database = Depends(get_db),
 ):
     """
-    Select the next runnable step for a protocol.
+    Execute the next runnable step for a protocol.
 
-    This does not execute the step; it only returns the next step_run_id whose
-    dependencies are satisfied and whose status is pending.
+    Returns the selected `step_run_id` after dispatching it for execution.
     """
     try:
         run = db.get_protocol_run(protocol_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Protocol not found")
 
-    if run.status in ["cancelled", "completed"]:
+    if run.status in [ProtocolStatus.CANCELLED, ProtocolStatus.COMPLETED]:
         return schemas.NextStepOut(step_run_id=None)
 
-    steps = db.list_step_runs(protocol_id)
-    completed_ids = {s.id for s in steps if s.status == "completed"}
+    step_run_id = _next_runnable_step_id(db, protocol_id)
+    if step_run_id is None:
+        return schemas.NextStepOut(step_run_id=None)
 
-    for step in steps:
-        if step.status != "pending":
-            continue
-        depends_on = step.depends_on or []
-        if all(dep in completed_ids for dep in depends_on):
-            return schemas.NextStepOut(step_run_id=step.id)
+    if getattr(ctx.config, "windmill_enabled", False):
+        orchestrator = _build_orchestrator(ctx, db)
+        result = orchestrator.run_step(step_run_id)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error or "Failed to run next step")
+        return schemas.NextStepOut(step_run_id=step_run_id)
 
-    return schemas.NextStepOut(step_run_id=None)
+    execution = ExecutionService(ctx, db)
+    execution.execute_step(step_run_id)
+    return schemas.NextStepOut(step_run_id=step_run_id)
+
+
+@router.get("/protocols/{protocol_id}/next-step", response_model=schemas.NextStepOut)
+def preview_next_step(
+    protocol_id: int,
+    db: Database = Depends(get_db),
+):
+    """Preview the next runnable step without executing it."""
+    try:
+        run = db.get_protocol_run(protocol_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+
+    if run.status in [ProtocolStatus.CANCELLED, ProtocolStatus.COMPLETED]:
+        return schemas.NextStepOut(step_run_id=None)
+
+    return schemas.NextStepOut(step_run_id=_next_runnable_step_id(db, protocol_id))
 
 
 @router.post("/protocols/{protocol_id}/actions/pause", response_model=schemas.ProtocolOut)
@@ -594,34 +687,50 @@ def retry_latest_step(
     # Find the most recent failed or blocked step
     steps = db.list_step_runs(protocol_id)
     target_step = None
+    recovering_stale_pending = False
     for step in reversed(steps):
         if step.status in ["failed", "blocked"]:
             target_step = step
             break
-    
+
+    if not target_step:
+        completed_ids = {step.id for step in steps if step.status == "completed"}
+        if run.status == "blocked":
+            for step in steps:
+                depends_on = step.depends_on or []
+                if step.status == "pending" and all(dep in completed_ids for dep in depends_on):
+                    target_step = step
+                    recovering_stale_pending = True
+                    break
+
     if not target_step:
         raise HTTPException(
             status_code=404,
-            detail="No failed or blocked steps to retry"
+            detail="No failed, blocked, or runnable pending steps to retry"
         )
-    
-    # Update step status to pending and increment retry count
-    new_retries = (target_step.retries or 0) + 1
-    db.update_step_status(
-        target_step.id,
-        "pending",
-        retries=new_retries,
-    )
-    
-    # Update protocol status to running if needed
-    if run.status in ["paused", "failed"]:
+
+    orchestrator = _build_orchestrator(ctx, db)
+    if recovering_stale_pending:
         db.update_protocol_status(protocol_id, "running")
-    
+        result = orchestrator.run_step(target_step.id)
+    else:
+        result = orchestrator.retry_step(target_step.id)
+    if not result.success:
+        raise HTTPException(
+            status_code=409,
+            detail=result.error or f"Failed to retry step '{target_step.step_name}'",
+        )
+
+    updated_step = db.get_step_run(target_step.id)
     return schemas.RetryStepOut(
-        step_run_id=target_step.id,
-        step_name=target_step.step_name,
-        message=f"Retrying step '{target_step.step_name}'",
-        retries=new_retries,
+        step_run_id=updated_step.id,
+        step_name=updated_step.step_name,
+        message=result.message or (
+            f"Resuming pending step '{updated_step.step_name}'"
+            if recovering_stale_pending
+            else f"Retrying step '{updated_step.step_name}'"
+        ),
+        retries=updated_step.retries or 0,
     )
 
 
@@ -841,12 +950,15 @@ def list_protocol_clarifications(
         db.get_protocol_run(protocol_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Protocol not found")
+    if status == "all":
+        status = None
     
-    return db.list_clarifications(
+    clarifications = db.list_clarifications(
         protocol_run_id=protocol_id,
         status=status,
         limit=limit
     )
+    return enrich_clarifications(db, clarifications)
 
 @router.post("/protocols/{protocol_id}/clarifications/{key}", response_model=schemas.ClarificationOut)
 def answer_protocol_clarification(
@@ -1086,28 +1198,38 @@ def get_protocol_sprint(
         except KeyError:
             return None
 
-    # Fallback: find sprint by tasks linked to this protocol
-    tasks = db.list_tasks(protocol_run_id=protocol_id, limit=1)
-    if tasks and tasks[0].sprint_id:
-        return db.get_sprint(tasks[0].sprint_id)
+    # Fallback: find sprint by tasks linked to this protocol. Database.list_tasks
+    # is intentionally narrow across backends, so filter protocol linkage here.
+    tasks = db.list_tasks(project_id=run.project_id, limit=500)
+    for task in tasks:
+        if task.protocol_run_id != protocol_id or not task.sprint_id:
+            continue
+        try:
+            return db.get_sprint(task.sprint_id)
+        except KeyError:
+            continue
     return None
 
 
 @router.post("/protocols/{protocol_id}/actions/sync-to-sprint", response_model=schemas.SyncResult)
 async def sync_protocol_to_sprint(
     protocol_id: int,
-    sprint_id: int = Query(..., description="Target sprint ID"),
+    request: schemas.SyncProtocolToSprintRequest,
     service: SprintIntegrationService = Depends(get_sprint_integration),
 ):
-    """Sync protocol steps to an existing sprint as tasks."""
+    """Persist the protocol->sprint link and sync protocol steps into that sprint."""
     try:
+        await service.link_protocol_to_sprint(
+            protocol_run_id=protocol_id,
+            sprint_id=request.sprint_id,
+        )
         tasks = await service.sync_protocol_to_sprint(
             protocol_run_id=protocol_id,
-            sprint_id=sprint_id,
+            sprint_id=request.sprint_id,
             create_missing_tasks=True,
         )
         return schemas.SyncResult(
-            sprint_id=sprint_id,
+            sprint_id=request.sprint_id,
             protocol_run_id=protocol_id,
             tasks_synced=len(tasks),
             task_ids=[t.id for t in tasks],

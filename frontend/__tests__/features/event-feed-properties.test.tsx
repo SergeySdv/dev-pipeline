@@ -19,7 +19,7 @@ import {
 import type { Event } from "@/lib/api/types";
 
 // Arbitrary generator for event IDs
-const eventIdArbitrary = fc.nat({ min: 1, max: 100000 });
+const eventIdArbitrary = fc.integer({ min: 1, max: 100000 });
 
 // Arbitrary generator for event types
 const eventTypeArbitrary = fc.constantFrom(
@@ -42,13 +42,13 @@ const eventCategoryArbitrary = fc.option(
 );
 
 // Arbitrary generator for protocol_run_id (can be null or a number)
-const protocolRunIdArbitrary = fc.option(fc.nat({ min: 1, max: 10000 }), { nil: null });
+const protocolRunIdArbitrary = fc.option(fc.integer({ min: 1, max: 10000 }), { nil: null });
 
 // Arbitrary generator for project_id (can be null or a number)
-const projectIdArbitrary = fc.option(fc.nat({ min: 1, max: 1000 }), { nil: undefined });
+const projectIdArbitrary = fc.option(fc.integer({ min: 1, max: 1000 }), { nil: undefined });
 
 // Arbitrary generator for step_run_id (can be null or a number)
-const stepRunIdArbitrary = fc.option(fc.nat({ min: 1, max: 50000 }), { nil: null });
+const stepRunIdArbitrary = fc.option(fc.integer({ min: 1, max: 50000 }), { nil: null });
 
 // Arbitrary generator for a valid Event
 const eventArbitrary: fc.Arbitrary<Event> = fc.record({
@@ -66,6 +66,12 @@ const eventArbitrary: fc.Arbitrary<Event> = fc.record({
   project_id: projectIdArbitrary,
   project_name: fc.option(fc.string({ minLength: 1, maxLength: 50 }), { nil: undefined }),
 });
+
+const protocolStartedEventsArrayArbitrary = fc
+  .array(eventArbitrary, { minLength: 1, maxLength: 10 })
+  .map((events) =>
+    events.map((event) => ({ ...event, event_type: "protocol_started" }) as Event)
+  );
 
 // Arbitrary generator for an array of events
 const eventsArrayArbitrary = fc.array(eventArbitrary, { minLength: 0, maxLength: 50 });
@@ -152,15 +158,7 @@ describe("Event Feed Property Tests", () => {
     it("should return empty array when no events match filter", () => {
       fc.assert(
         fc.property(
-          fc
-            .array(
-              fc.record({
-                ...eventArbitrary.generator,
-                event_type: fc.constant("protocol_started"),
-              } as unknown as fc.RecordConstraints<Event>),
-              { minLength: 1, maxLength: 10 }
-            )
-            .map((arr) => arr.map((e) => ({ ...e, event_type: "protocol_started" }) as Event)),
+          protocolStartedEventsArrayArbitrary,
           (events) => {
             // Filter for a type that doesn't exist in the array
             const filtered = filterEventsByType(events, "step_failed");
@@ -196,7 +194,7 @@ describe("Event Feed Property Tests", () => {
   describe("Property 14: Event feed protocol links", () => {
     it("should return true for events with valid protocol_run_id", () => {
       fc.assert(
-        fc.property(fc.nat({ min: 1, max: 10000 }), (protocolId) => {
+        fc.property(fc.integer({ min: 1, max: 10000 }), (protocolId) => {
           const event: Event = {
             id: 1,
             protocol_run_id: protocolId,

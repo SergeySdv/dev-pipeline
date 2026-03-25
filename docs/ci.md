@@ -35,6 +35,19 @@ scripts/ci/build.sh
 
 - CI script behavior may report status via `scripts/ci/report.sh` when present.
 - `scripts/ci/test.sh` is intentionally strict and expects real agent tooling for E2E path.
+- In full-Docker local dev, CLI agents are installed by default for parity with the brownfield/task-cycle flow. If you need a lighter image, you can opt out with:
+
+```bash
+export INSTALL_AGENT_CLIS=0
+docker compose -f docker-compose.local.yml up -d --build devgodzilla-api
+```
+
+- For `opencode` in Docker, authenticate on the host first so the mounted auth state is reusable:
+
+```bash
+opencode auth login
+```
+
 - For architecture docs governance and canonical references, see `docs/DevGodzilla/CURRENT_STATE.md` and `docs/DevGodzilla/ARCHITECTURE.md`.
 
 ## Live Harness (Nightly + Manual)

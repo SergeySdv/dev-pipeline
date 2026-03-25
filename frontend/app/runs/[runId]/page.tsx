@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { ArrowLeft, ExternalLink, FileText, ListTodo, Package, Target } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, ListTodo, Package } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
@@ -20,6 +21,7 @@ import {
   formatDuration,
   formatTokens,
 } from "@/lib/format";
+import { getSpecificationReviewPath } from "@/lib/project-routes";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -28,14 +30,6 @@ export default function RunDetailPage() {
   const { data: run, isLoading: runLoading, error: runError } = useRun(runId);
   const { data: logs, isLoading: logsLoading } = useRunLogs(run ? runId : undefined);
   const { data: artifacts, isLoading: artifactsLoading } = useRunArtifacts(run ? runId : undefined);
-
-  const linkedTask = {
-    id: 42,
-    title: "Implement user authentication",
-    sprint: "Sprint 3",
-    status: "in_progress",
-    storyPoints: 5,
-  };
 
   if (!runId || runLoading) return <LoadingState message="Loading run..." />;
   if (runError) {
@@ -47,6 +41,9 @@ export default function RunDetailPage() {
     );
   }
   if (!run) return <LoadingState message="Run not found" />;
+  const reviewPath =
+    typeof run.spec_run_id === "number" ? getSpecificationReviewPath(run.spec_run_id) : null;
+  const hasAgileContext = Boolean(run.task_id || run.sprint_id);
 
   return (
     <div className="container py-8">
@@ -76,19 +73,29 @@ export default function RunDetailPage() {
                 </>
               )}
             </p>
-            <div className="mt-2 flex items-center gap-2 text-sm">
-              <ListTodo className="h-4 w-4 text-blue-400" />
-              <span className="text-muted-foreground">Linked Task:</span>
-              <Link
-                href={`/sprints?task=${linkedTask.id}`}
-                className="text-blue-400 hover:underline"
-              >
-                {linkedTask.title}
-              </Link>
-              <span className="text-muted-foreground">•</span>
-              <Target className="h-3 w-3 text-purple-400" />
-              <span className="text-muted-foreground">{linkedTask.sprint}</span>
-              <span className="text-muted-foreground">• {linkedTask.storyPoints} pts</span>
+            <div className="text-muted-foreground mt-2 flex items-center gap-2 text-sm">
+              <ListTodo className="h-4 w-4 text-slate-400" />
+              {hasAgileContext ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {typeof run.task_id === "number" && (
+                    <span className="font-medium text-foreground">Task #{run.task_id}</span>
+                  )}
+                  {run.task_title && <span>{run.task_title}</span>}
+                  {run.task_board_status && (
+                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px] capitalize">
+                      {run.task_board_status.replace(/_/g, " ")}
+                    </Badge>
+                  )}
+                  {(run.sprint_name || typeof run.sprint_id === "number") && (
+                    <span>
+                      {run.sprint_name || `Sprint #${run.sprint_id}`}
+                      {run.sprint_status ? ` (${run.sprint_status})` : ""}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <span>No sprint or task linkage recorded for this run.</span>
+              )}
             </div>
           </div>
 
@@ -97,6 +104,14 @@ export default function RunDetailPage() {
               <Link href={`/projects/${run.project_id}`}>
                 <Button variant="outline" size="sm">
                   Project
+                  <ExternalLink className="ml-2 h-3 w-3" />
+                </Button>
+              </Link>
+            )}
+            {reviewPath && (
+              <Link href={reviewPath}>
+                <Button variant="outline" size="sm">
+                  Review Implementation
                   <ExternalLink className="ml-2 h-3 w-3" />
                 </Button>
               </Link>
@@ -193,7 +208,7 @@ export default function RunDetailPage() {
           {run.error && <TabsTrigger value="error">Error</TabsTrigger>}
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="artifacts">Artifacts ({artifacts?.length || 0})</TabsTrigger>
-          <TabsTrigger value="agile">Agile Context</TabsTrigger>
+          <TabsTrigger value="agile">Execution Context</TabsTrigger>
         </TabsList>
 
         <TabsContent value="params">
@@ -313,54 +328,76 @@ export default function RunDetailPage() {
         <TabsContent value="agile">
           <Card>
             <CardHeader>
-              <CardTitle>Agile Context</CardTitle>
-              <CardDescription>Sprint and task information for this run</CardDescription>
+              <CardTitle>Execution Context</CardTitle>
+              <CardDescription>
+                Linked execution records currently available for this run
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="bg-muted/50 rounded-lg border p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <ListTodo className="h-5 w-5 text-blue-400" />
-                  <h3 className="font-semibold">Linked Task</h3>
+                  <h3 className="font-semibold">Recorded Links</h3>
                 </div>
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Title:</span>
-                    <Link
-                      href={`/sprints?task=${linkedTask.id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {linkedTask.title}
-                    </Link>
+                    <span className="text-muted-foreground">Task:</span>
+                    {typeof run.task_id === "number" ? (
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">
+                          Task #{run.task_id}
+                          {run.task_title ? ` · ${run.task_title}` : ""}
+                        </span>
+                        {run.task_board_status && (
+                          <Badge variant="secondary" className="h-5 px-1.5 text-[10px] capitalize">
+                            {run.task_board_status.replace(/_/g, " ")}
+                          </Badge>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Sprint:</span>
-                    <span>{linkedTask.sprint}</span>
+                    {run.sprint_name || typeof run.sprint_id === "number" ? (
+                      <span className="font-medium">
+                        {run.sprint_name || `Sprint #${run.sprint_id}`}
+                        {run.sprint_status ? ` (${run.sprint_status})` : ""}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Status:</span>
-                    <StatusPill status={linkedTask.status} size="sm" />
+                    <span className="text-muted-foreground">Project:</span>
+                    {run.project_id ? (
+                      <Link href={`/projects/${run.project_id}`} className="text-blue-400 hover:underline">
+                        Project #{run.project_id}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Story Points:</span>
-                    <span className="font-medium">{linkedTask.storyPoints}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-lg border p-4">
-                <h3 className="mb-2 font-semibold">Sprint Progress</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Total Tasks:</span>
-                    <span>12</span>
+                    <span className="text-muted-foreground">Protocol:</span>
+                    {run.protocol_run_id ? (
+                      <Link href={`/protocols/${run.protocol_run_id}`} className="text-blue-400 hover:underline">
+                        Protocol #{run.protocol_run_id}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Completed:</span>
-                    <span className="text-green-400">7</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Velocity:</span>
-                    <span>34 points</span>
+                    <span className="text-muted-foreground">Step:</span>
+                    {run.step_run_id ? (
+                      <Link href={`/steps/${run.step_run_id}`} className="text-blue-400 hover:underline">
+                        Step #{run.step_run_id}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">Not linked</span>
+                    )}
                   </div>
                 </div>
               </div>

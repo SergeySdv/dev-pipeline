@@ -367,7 +367,15 @@ class OrchestratorService(Service):
                 success=False,
                 error=f"Cannot run step in status {step.status}",
             )
-        
+
+        has_windmill_backend = self.mode == OrchestratorMode.WINDMILL and self.windmill is not None
+        has_local_backend = self.execution_service is not None
+        if not has_windmill_backend and not has_local_backend:
+            return OrchestratorResult(
+                success=False,
+                error="No execution backend configured",
+            )
+
         # Update status
         self.db.update_step_status(step_run_id, StepStatus.RUNNING)
         
@@ -378,7 +386,7 @@ class OrchestratorService(Service):
             step_name=step.step_name,
         ))
         
-        if self.mode == OrchestratorMode.WINDMILL and self.windmill:
+        if has_windmill_backend:
             job_id = self.windmill.run_script(
                 "u/devgodzilla/step_execute_api",
                 {"step_run_id": step_run_id},
@@ -406,15 +414,18 @@ class OrchestratorService(Service):
                     ),
                 )
             return OrchestratorResult(success=True, job_id=job_id)
-        elif self.execution_service:
+        if has_local_backend:
             # Local mode
             result = self.execution_service.execute_step(step_run_id)
             return OrchestratorResult(
                 success=result.get("success", False),
                 error=result.get("error"),
             )
-        
-        return OrchestratorResult(success=True)
+
+        return OrchestratorResult(
+            success=False,
+            error="No execution backend configured",
+        )
 
     def run_step_qa(self, step_run_id: int) -> OrchestratorResult:
         """
@@ -523,15 +534,36 @@ class OrchestratorService(Service):
                 success=False,
                 error=f"Cannot retry step in status {step.status}",
             )
-        
-        # Increment retry count
+
+        run = self.db.get_protocol_run(step.protocol_run_id)
+        previous_step_status = step.status
+        previous_protocol_status = run.status
+        new_retries = (step.retries or 0) + 1
+
         self.db.update_step_status(
             step_run_id,
             StepStatus.PENDING,
-            retries=(step.retries or 0) + 1,
+            retries=new_retries,
         )
-        
-        return self.run_step(step_run_id)
+
+        if run.status in (ProtocolStatus.BLOCKED, ProtocolStatus.FAILED, ProtocolStatus.PAUSED):
+            self.db.update_protocol_status(step.protocol_run_id, ProtocolStatus.RUNNING)
+
+        result = self.run_step(step_run_id)
+        if result.success:
+            return result
+
+        refreshed = self.db.get_step_run(step_run_id)
+        if refreshed.status == StepStatus.PENDING:
+            self.db.update_step_status(
+                step_run_id,
+                previous_step_status,
+                retries=new_retries,
+                summary=result.error or refreshed.summary or step.summary,
+            )
+        if self.db.get_protocol_run(run.id).status == ProtocolStatus.RUNNING:
+            self.db.update_protocol_status(run.id, previous_protocol_status)
+        return result
 
     # Protocol Control
     def pause_protocol(self, protocol_run_id: int) -> OrchestratorResult:

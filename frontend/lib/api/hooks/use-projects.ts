@@ -2,12 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { adaptProtocol, type RawProtocolRun } from "../adapters/protocol";
 import { apiClient } from "../client";
 import { queryKeys } from "../query-keys";
 import type {
   ActionResponse,
   ArtifactContent,
   Branch,
+  BrownfieldRunRequest,
+  BrownfieldRunResponse,
   Clarification,
   Commit,
   DiscoveryRetryResponse,
@@ -17,9 +20,20 @@ import type {
   PolicyFinding,
   Project,
   ProjectCreate,
+  ProtocolRun,
   PullRequest,
+  WorkItem,
+  WorkItemLifecycleUpdate,
+  WorkItemOwnerUpdate,
+  WorkItemQA,
+  WorkItemReview,
+  WorkItemRuntime,
   Worktree,
 } from "../types";
+
+type RawBrownfieldRunResponse = Omit<BrownfieldRunResponse, "protocol"> & {
+  protocol: RawProtocolRun | null;
+};
 
 // List Projects
 export function useProjects() {
@@ -202,11 +216,12 @@ export function usePolicyFindings(projectId: number | undefined) {
 
 // Clarifications
 export function useProjectClarifications(projectId: number | undefined, status?: string) {
+  const normalizedStatus = status && status !== "all" ? status : undefined;
   return useQuery({
-    queryKey: queryKeys.projects.clarifications(projectId as number, status),
+    queryKey: queryKeys.projects.clarifications(projectId as number, normalizedStatus),
     queryFn: () =>
       apiClient.get<Clarification[]>(
-        `/projects/${projectId}/clarifications${status ? `?status=${status}` : ""}`
+        `/projects/${projectId}/clarifications${normalizedStatus ? `?status=${normalizedStatus}` : ""}`
       ),
     enabled: !!projectId,
   });
@@ -328,5 +343,376 @@ export function useProjectWorktrees(projectId: number | undefined) {
     queryKey: queryKeys.projects.worktrees(projectId as number),
     queryFn: () => apiClient.get<Worktree[]>(`/projects/${projectId}/worktrees`),
     enabled: !!projectId,
+  });
+}
+
+export function useProjectTaskCycle(
+  projectId: number | undefined,
+  protocolRunId?: number,
+  lifecycle: string = "active"
+) {
+  return useQuery({
+    queryKey: queryKeys.projects.taskCycle(projectId as number, protocolRunId, lifecycle),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (protocolRunId) params.set("protocol_run_id", String(protocolRunId));
+      if (lifecycle) params.set("lifecycle", lifecycle);
+      const query = params.toString();
+      return apiClient.get<WorkItem[]>(
+        `/projects/${projectId}/task-cycle${query ? `?${query}` : ""}`
+      );
+    },
+    enabled: !!projectId,
+    refetchInterval: (query) => {
+      const items = query.state.data ?? [];
+      return items.some((item) =>
+        ["running", "pending"].includes(item.active_stage_status ?? "") ||
+        (item.status === "queued" && item.active_stage === "build_context")
+      )
+        ? 3000
+        : false;
+    },
+  });
+}
+
+export function useStartBrownfieldRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      projectId,
+      data,
+    }: {
+      projectId: number;
+      data: BrownfieldRunRequest;
+    }) => {
+      const response = await apiClient.post<RawBrownfieldRunResponse>(
+        `/projects/${projectId}/brownfield/run`,
+        data,
+        {
+          projectId,
+        }
+      );
+      return {
+        ...response,
+        protocol: response.protocol ? adaptProtocol(response.protocol) : null,
+      } satisfies BrownfieldRunResponse;
+    },
+    onSuccess: (response, { projectId }) => {
+      if (response.protocol) {
+        const protocol = response.protocol;
+        queryClient.setQueryData(queryKeys.protocols.detail(protocol.id), protocol);
+        queryClient.setQueryData(
+          queryKeys.projects.protocols(projectId),
+          (current: ProtocolRun[] | undefined) => {
+            const existing = Array.isArray(current) ? current : [];
+            if (existing.some((existingProtocol) => existingProtocol.id === protocol.id)) {
+              return existing;
+            }
+            return [protocol, ...existing];
+          }
+        );
+        queryClient.setQueryData(
+          queryKeys.projects.taskCycle(projectId, protocol.id),
+          response.work_items
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.protocols(projectId) });
+    },
+  });
+}
+
+export function useBuildContextWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      refresh = false,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      refresh?: boolean;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/build-context`, { refresh }, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function usePlanWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      refresh = false,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      refresh?: boolean;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/plan`, { refresh }, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useWorkItemRuntime(workItemId: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.workItems.runtime(workItemId as number),
+    queryFn: () => apiClient.get<WorkItemRuntime>(`/work-items/${workItemId}/runtime`),
+    enabled: !!workItemId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      if (["running", "waiting_for_clarification"].includes(data.active_stage_status)) {
+        return 3000;
+      }
+      return false;
+    },
+  });
+}
+
+export function useImplementWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      data,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      data?: { owner_agent?: string };
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/implement`, data ?? {}, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useRefactorWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      data,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      data?: { owner_agent?: string | null };
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/refactor`, data ?? {}, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useReviewWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+    }) =>
+      apiClient.post<WorkItemReview>(`/work-items/${workItemId}/actions/review`, {}, { projectId }),
+    onSuccess: (_review, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.detail(workItemId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useQaWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      gates,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      gates?: string[];
+    }) =>
+      apiClient.post<WorkItemQA>(`/work-items/${workItemId}/actions/qa`, { gates }, { projectId }),
+    onSuccess: (result, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), result.work_item);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useMarkPrReady() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/mark-pr-ready`, {}, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycleRoot(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId),
+      });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useArchiveWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      data,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      data?: WorkItemLifecycleUpdate;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/archive`, data ?? {}, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId) });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useCancelWorkItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      data,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      data?: WorkItemLifecycleUpdate;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/cancel`, data ?? {}, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId) });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useReassignWorkItemOwner() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      workItemId,
+      protocolRunId: _protocolRunId,
+      data,
+    }: {
+      projectId: number;
+      workItemId: number;
+      protocolRunId?: number;
+      data: WorkItemOwnerUpdate;
+    }) =>
+      apiClient.post<WorkItem>(`/work-items/${workItemId}/actions/reassign-owner`, data, { projectId }),
+    onSuccess: (workItem, { projectId, protocolRunId, workItemId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycleRoot(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.taskCycle(projectId, protocolRunId) });
+      queryClient.setQueryData(queryKeys.workItems.detail(workItemId), workItem);
+      queryClient.invalidateQueries({ queryKey: queryKeys.workItems.runtime(workItemId) });
+    },
+  });
+}
+
+export function useWorkItemArtifactContent(
+  workItemId: number | undefined,
+  artifactKey: string | null,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: queryKeys.workItems.artifactContent(workItemId as number, artifactKey || "none"),
+    queryFn: () =>
+      apiClient.get<ArtifactContent>(
+        `/work-items/${workItemId}/artifacts/${artifactKey}/content`
+      ),
+    enabled: !!workItemId && !!artifactKey && enabled,
   });
 }

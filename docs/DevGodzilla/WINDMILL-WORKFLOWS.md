@@ -23,6 +23,45 @@ Windmill is used as orchestration runtime and operator UI companion. In this rep
 2. Start host services: `scripts/run-local-dev.sh backend start` and `scripts/run-local-dev.sh frontend start` (or `scripts/run-local-dev.sh dev` for both)
 3. Import assets: `scripts/run-local-dev.sh import`
 
+### Local Agent Runtime
+
+There are two supported local patterns:
+
+- Host backend: recommended for day-to-day development. The backend uses agent binaries from your host `PATH`.
+- Full Docker backend: if you run `devgodzilla-api` in Docker, CLI agents are installed by default so the brownfield/task-cycle path can execute end to end.
+
+If you want a lighter image and do not need agent execution inside Docker, you can disable the CLI layer explicitly:
+
+```bash
+export INSTALL_AGENT_CLIS=0
+docker compose -f docker-compose.local.yml up -d --build devgodzilla-api
+```
+
+For `opencode`, authenticate on the host first if needed:
+
+```bash
+opencode auth login
+```
+
+Then verify runtime availability:
+
+```bash
+curl -s http://localhost:8080/agents/health
+```
+
+Expected behavior:
+
+- `/agents` shows configured agent definitions
+- `/agents/health` shows whether the current runtime can actually execute them
+- if Docker CLI install is disabled, the UI will show agents as configured or not installed rather than available
+
+### Private GitHub Repositories
+
+For private GitHub repositories, save a GitHub token in the project create wizard or
+Project Settings. DevGodzilla stores it as a project secret and uses it for clone,
+push, and pull-request steps. The API only exposes a `github_token_configured` flag,
+not the token value itself.
+
 Default token file for import in local setup:
 
 - `windmill/apps/devgodzilla-react-app/.env.development`

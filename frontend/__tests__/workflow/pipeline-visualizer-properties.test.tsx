@@ -100,7 +100,15 @@ const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
   ),
   base_branch: fc.string({ minLength: 1, maxLength: 50 }),
   worktree_path: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
+  windmill_flow_id: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
   protocol_root: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
+  summary: fc.option(fc.string({ minLength: 1, maxLength: 200 }), { nil: null }),
+  speckit_metadata: fc.option(
+    fc.record({
+      spec_hash: fc.option(fc.string({ minLength: 1, maxLength: 64 })),
+    }),
+    { nil: null }
+  ),
   description: fc.option(fc.string({ minLength: 1, maxLength: 200 }), { nil: null }),
   template_config: fc.constant(null),
   template_source: fc.option(fc.string({ minLength: 1, maxLength: 50 }), { nil: null }),
@@ -111,6 +119,7 @@ const protocolRunArbitrary: fc.Arbitrary<ProtocolRun> = fc.record({
   policy_pack_version: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: null }),
   policy_effective_hash: fc.option(fc.string({ minLength: 1, maxLength: 64 }), { nil: null }),
   policy_effective_json: fc.constant(null),
+  linked_sprint_id: fc.option(fc.integer({ min: 1, max: 100 }), { nil: null }),
   created_at: validDateArbitrary,
   updated_at: validDateArbitrary,
 });

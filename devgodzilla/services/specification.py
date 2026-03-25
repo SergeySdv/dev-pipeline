@@ -14,6 +14,7 @@ No external `specify` binary is required for the current code path.
 import hashlib
 import json
 import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -23,11 +24,14 @@ from typing import Any, Dict, List, Optional
 
 from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode, get_registry
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.speckit_adapter import SpecKitAdapter
 from devgodzilla.services.git import GitService
+from devgodzilla.services.spec_to_protocol import SpecToProtocolService
 from devgodzilla.models.domain import SpecRun, SpecRunStatus
+from devgodzilla.speckit_metadata import with_spec_run_id
 from devgodzilla.spec import resolve_spec_path
 
 
@@ -82,6 +86,10 @@ class TasksResult:
     error: Optional[str] = None
 
 
+class SpecOutputValidationError(RuntimeError):
+    """Raised when generated SpecKit outputs fail structural validation."""
+
+
 @dataclass
 class ClarifyResult:
     """Result from spec clarification."""
@@ -116,10 +124,14 @@ class AnalyzeResult:
 
 @dataclass
 class ImplementResult:
-    """Result from implementation run scaffolding."""
+    """Result from implementation bootstrap."""
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    protocol_id: Optional[int] = None
+    protocol_root: Optional[str] = None
+    step_count: int = 0
+    warnings: List[str] = field(default_factory=list)
     spec_run_id: Optional[int] = None
     worktree_path: Optional[str] = None
     error: Optional[str] = None
@@ -553,7 +565,18 @@ class SpecificationService(Service):
                         job_id="speckit_specify",
                         project_id=project_id,
                     )
+                    self._write_speckit_stage_trace(
+                        workspace_root=Path(worktree_root),
+                        spec_dir=spec_dir,
+                        stage="specify",
+                        prompt_name=self.SPECIFY_PROMPT,
+                        prompt_context=prompt_context,
+                        project_id=project_id,
+                        engine_result=agent_result,
+                        error=agent_result.error,
+                    )
                     if not agent_result.success:
+                        self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
                         return SpecifyResult(
                             success=False,
                             error=agent_result.error or "Spec generation failed",
@@ -584,6 +607,7 @@ class SpecificationService(Service):
                         spec_number=spec_number or None,
                         feature_name=resolved_feature_name,
                         spec_path=spec_path,
+                        strict=True,
                     )
                     return SpecifyResult(
                         success=True,
@@ -637,7 +661,18 @@ class SpecificationService(Service):
                 job_id="speckit_specify",
                 project_id=project_id,
             )
+            self._write_speckit_stage_trace(
+                workspace_root=Path(worktree_root),
+                spec_dir=spec_dir,
+                stage="specify",
+                prompt_name=self.SPECIFY_PROMPT,
+                prompt_context=prompt_context,
+                project_id=project_id,
+                engine_result=agent_result,
+                error=agent_result.error,
+            )
             if not agent_result.success:
+                self._record_spec_run(spec_run_id=spec_run_id, status=SpecRunStatus.FAILED)
                 return SpecifyResult(
                     success=False,
                     error=agent_result.error or "Spec generation failed",
@@ -669,6 +704,7 @@ class SpecificationService(Service):
                 spec_number=spec_number,
                 feature_name=resolved_feature_name,
                 spec_path=spec_path,
+                strict=True,
             )
 
             return SpecifyResult(
@@ -698,6 +734,7 @@ class SpecificationService(Service):
         spec_path: str,
         spec_run_id: Optional[int] = None,
         project_id: Optional[int] = None,
+        context: Optional[str] = None,
     ) -> PlanResult:
         """
         Generate an implementation plan from a spec.
@@ -705,6 +742,7 @@ class SpecificationService(Service):
         Args:
             project_path: Path to the project root
             spec_path: Path to the spec.md file
+            context: Optional additional planning context from the caller
             project_id: Optional project ID for logging
 
         Returns:
@@ -790,6 +828,12 @@ class SpecificationService(Service):
                 ],
                 policy_guidelines,
             )
+            if context and context.strip():
+                prompt_context = (
+                    f"{prompt_context.rstrip()}\n\n"
+                    "Additional planning context:\n"
+                    f"{context.strip()}\n"
+                )
             agent_result = self._run_speckit_agent(
                 str(workspace_root),
                 prompt_name=self.PLAN_PROMPT,
@@ -797,11 +841,48 @@ class SpecificationService(Service):
                 job_id="speckit_plan",
                 project_id=project_id,
             )
+            self._write_speckit_stage_trace(
+                workspace_root=Path(workspace_root),
+                spec_dir=spec_dir,
+                stage="plan",
+                prompt_name=self.PLAN_PROMPT,
+                prompt_context=prompt_context,
+                project_id=project_id,
+                engine_result=agent_result,
+                error=agent_result.error,
+            )
             if not agent_result.success:
+                self._record_spec_run(spec_run_id=spec_run.id if spec_run else spec_run_id, status=SpecRunStatus.FAILED)
                 return PlanResult(
                     success=False,
                     error=agent_result.error or "Plan generation failed",
                 )
+            if not self._skip_speckit_output_validation(agent_result):
+                try:
+                    self._validate_plan_outputs(
+                        plan_path=plan_path,
+                        data_model_path=data_model_path,
+                        research_path=research_path,
+                        quickstart_path=quickstart_path,
+                    )
+                except SpecOutputValidationError as exc:
+                    error_text = f"Plan generation produced incomplete outputs: {exc}"
+                    self._write_speckit_stage_trace(
+                        workspace_root=Path(workspace_root),
+                        spec_dir=spec_dir,
+                        stage="plan",
+                        prompt_name=self.PLAN_PROMPT,
+                        prompt_context=prompt_context,
+                        project_id=project_id,
+                        engine_result=agent_result,
+                        error=error_text,
+                    )
+                    self._record_spec_run(spec_run_id=spec_run.id if spec_run else spec_run_id, status=SpecRunStatus.FAILED)
+                    return PlanResult(
+                        success=False,
+                        error=error_text,
+                        spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    )
             self._append_policy_guidelines(plan_path, policy_guidelines)
             self._persist_policy_clarifications(str(workspace_root), project_id, applies_to="planning")
             self._record_speckit_spec(
@@ -815,6 +896,7 @@ class SpecificationService(Service):
                 spec_run_id=spec_run.id if spec_run else spec_run_id,
                 status=SpecRunStatus.PLANNED,
                 plan_path=plan_path,
+                strict=True,
             )
 
             self.logger.info("plan_generated", extra={**log_extra, "plan_path": str(plan_path)})
@@ -902,11 +984,43 @@ class SpecificationService(Service):
                 job_id="speckit_tasks",
                 project_id=project_id,
             )
+            self._write_speckit_stage_trace(
+                workspace_root=Path(workspace_root),
+                spec_dir=plan_dir,
+                stage="tasks",
+                prompt_name=self.TASKS_PROMPT,
+                prompt_context=prompt_context,
+                project_id=project_id,
+                engine_result=agent_result,
+                error=agent_result.error,
+            )
             if not agent_result.success:
+                self._record_spec_run(spec_run_id=spec_run.id if spec_run else spec_run_id, status=SpecRunStatus.FAILED)
                 return TasksResult(
                     success=False,
                     error=agent_result.error or "Task generation failed",
                 )
+            if not self._skip_speckit_output_validation(agent_result):
+                try:
+                    self._validate_tasks_output(tasks_path)
+                except SpecOutputValidationError as exc:
+                    error_text = f"Task generation produced incomplete outputs: {exc}"
+                    self._write_speckit_stage_trace(
+                        workspace_root=Path(workspace_root),
+                        spec_dir=plan_dir,
+                        stage="tasks",
+                        prompt_name=self.TASKS_PROMPT,
+                        prompt_context=prompt_context,
+                        project_id=project_id,
+                        engine_result=agent_result,
+                        error=error_text,
+                    )
+                    self._record_spec_run(spec_run_id=spec_run.id if spec_run else spec_run_id, status=SpecRunStatus.FAILED)
+                    return TasksResult(
+                        success=False,
+                        error=error_text,
+                        spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    )
 
             tasks_content = tasks_path.read_text()
             task_count = tasks_content.count("- [ ]")
@@ -927,6 +1041,7 @@ class SpecificationService(Service):
                 tasks_path=tasks_path,
                 plan_path=plan_file,
                 spec_path=spec_path if spec_path.exists() else None,
+                strict=True,
             )
 
             self.logger.info("tasks_generated", extra={
@@ -1206,7 +1321,7 @@ class SpecificationService(Service):
         project_id: Optional[int] = None,
     ) -> ImplementResult:
         """
-        Scaffold a SpecKit implementation run directory.
+        Bootstrap execution for a SpecKit spec.
         """
         log_extra = self.log_extra(project_id=project_id, path=project_path)
 
@@ -1219,39 +1334,163 @@ class SpecificationService(Service):
             )
             spec_file = self._resolve_path_safely(spec_path, workspace_root)
             spec_dir = spec_file.parent
-            runtime_dir = spec_dir / "_runtime" / "runs"
-            runtime_dir.mkdir(parents=True, exist_ok=True)
-            run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
-            run_path = runtime_dir / run_id
-            run_path.mkdir(parents=True, exist_ok=True)
+            plan_path = spec_dir / "plan.md"
+            tasks_path = spec_dir / "tasks.md"
 
-            metadata_path = run_path / "metadata.json"
+            # Keep legacy scaffolding behavior for non-DB callers such as the
+            # direct service tests/CLI path that do not have enough context to
+            # create a protocol run.
+            if not self.db or not project_id:
+                runtime_dir = spec_dir / "_runtime" / "runs"
+                runtime_dir.mkdir(parents=True, exist_ok=True)
+                run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+                run_path = runtime_dir / run_id
+                run_path.mkdir(parents=True, exist_ok=True)
+
+                metadata_path = run_path / "metadata.json"
+                metadata = {
+                    "run_id": run_id,
+                    "status": "initialized",
+                    "spec_path": str(spec_file),
+                    "created_at": datetime.utcnow().isoformat(),
+                }
+                metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+                self._record_speckit_spec(
+                    str(workspace_root),
+                    project_id,
+                    spec_dir,
+                    spec_path=spec_file,
+                    implement_path=run_path,
+                )
+                self.logger.info(
+                    "implement_run_initialized",
+                    extra={**log_extra, "run_path": str(run_path)},
+                )
+                self._record_spec_run(
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    status=SpecRunStatus.IMPLEMENTED,
+                    implement_path=run_path,
+                    spec_path=spec_file,
+                )
+                return ImplementResult(
+                    success=True,
+                    run_path=str(run_path),
+                    metadata_path=str(metadata_path),
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    worktree_path=str(workspace_root),
+                )
+
+            if not tasks_path.exists():
+                return ImplementResult(
+                    success=False,
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                    worktree_path=str(workspace_root),
+                    error=f"Implement requires tasks.md before execution bootstrap: {tasks_path}",
+                )
+
+            protocol_id: Optional[int] = None
+            protocol_root: Optional[Path] = None
+            step_count = 0
+            warnings: List[str] = []
+
+            if spec_run and spec_run.protocol_run_id:
+                try:
+                    protocol = self.db.get_protocol_run(spec_run.protocol_run_id)
+                    protocol_id = protocol.id
+                    step_count = len(self.db.list_step_runs(protocol.id))
+                    if protocol.protocol_root:
+                        candidate = Path(protocol.protocol_root).expanduser()
+                        protocol_root = (
+                            candidate
+                            if candidate.is_absolute()
+                            else (workspace_root / candidate)
+                        )
+                    else:
+                        protocol_root = spec_dir / "_runtime"
+                    warnings.append("Existing protocol already linked; reusing execution bootstrap")
+                except Exception:
+                    protocol_id = None
+                    protocol_root = None
+                    step_count = 0
+                    warnings = []
+
+            if protocol_id is None or protocol_root is None:
+                protocol_result = SpecToProtocolService(self.context, self.db).create_protocol_from_spec(
+                    project_id=project_id,
+                    spec_path=str(spec_file),
+                    tasks_path=str(tasks_path),
+                    spec_run_id=spec_run.id if spec_run else spec_run_id,
+                )
+                if not protocol_result.success:
+                    return ImplementResult(
+                        success=False,
+                        spec_run_id=spec_run.id if spec_run else spec_run_id,
+                        worktree_path=str(workspace_root),
+                        error=protocol_result.error or "Execution bootstrap failed",
+                        warnings=protocol_result.warnings,
+                    )
+                protocol_id = protocol_result.protocol_run_id
+                protocol_root = Path(protocol_result.protocol_root) if protocol_result.protocol_root else spec_dir / "_runtime"
+                step_count = protocol_result.step_count
+                warnings = protocol_result.warnings
+            elif protocol_id is not None:
+                protocol = self.db.get_protocol_run(protocol_id)
+                protocol_metadata = with_spec_run_id(
+                    protocol.speckit_metadata,
+                    spec_run.id if spec_run else spec_run_id,
+                )
+                self.db.update_protocol_windmill(protocol_id, speckit_metadata=protocol_metadata)
+
+            metadata_path = protocol_root / "implement-bootstrap.json"
             metadata = {
-                "run_id": run_id,
-                "status": "initialized",
+                "status": "bootstrapped",
                 "spec_path": str(spec_file),
+                "plan_path": str(plan_path) if plan_path.exists() else None,
+                "tasks_path": str(tasks_path),
+                "protocol_id": protocol_id,
+                "protocol_root": str(protocol_root),
+                "step_count": step_count,
+                "warnings": warnings,
                 "created_at": datetime.utcnow().isoformat(),
             }
-            metadata_path.write_text(json.dumps(metadata, indent=2))
+            metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
             self._record_speckit_spec(
                 str(workspace_root),
                 project_id,
                 spec_dir,
                 spec_path=spec_file,
-                implement_path=run_path,
+                plan_path=plan_path if plan_path.exists() else None,
+                tasks_path=tasks_path,
+                implement_path=protocol_root,
             )
-            self.logger.info("implement_run_initialized", extra={**log_extra, "run_path": str(run_path)})
+            self.logger.info(
+                "implement_bootstrap_initialized",
+                extra={
+                    **log_extra,
+                    "protocol_run_id": protocol_id,
+                    "protocol_root": str(protocol_root),
+                    "step_count": step_count,
+                },
+            )
             self._record_spec_run(
                 spec_run_id=spec_run.id if spec_run else spec_run_id,
                 status=SpecRunStatus.IMPLEMENTED,
-                implement_path=run_path,
+                implement_path=protocol_root,
+                protocol_run_id=protocol_id,
                 spec_path=spec_file,
+                plan_path=plan_path if plan_path.exists() else None,
+                tasks_path=tasks_path,
             )
             return ImplementResult(
                 success=True,
-                run_path=str(run_path),
+                run_path=str(protocol_root),
                 metadata_path=str(metadata_path),
+                protocol_id=protocol_id,
+                protocol_root=str(protocol_root),
+                step_count=step_count,
+                warnings=warnings,
                 spec_run_id=spec_run.id if spec_run else spec_run_id,
                 worktree_path=str(workspace_root),
             )
@@ -1798,6 +2037,13 @@ Legend:
             model,
             project_id=project_id,
         )
+        try:
+            runtime_options = AgentConfigService(self.context, db=self.db).get_runtime_options(
+                resolved_engine_id,
+                project_id=project_id,
+            )
+        except Exception:
+            runtime_options = {}
         request = EngineRequest(
             project_id=project_id or 0,
             protocol_run_id=0,
@@ -1808,7 +2054,11 @@ Legend:
             working_dir=str(Path(project_path).expanduser()),
             sandbox=SandboxMode.FULL_ACCESS,
             timeout=timeout_seconds,
-            extra={"job_id": job_id, "engine_id": resolved_engine_id},
+            extra={
+                "job_id": job_id,
+                "engine_id": resolved_engine_id,
+                **runtime_options,
+            },
         )
         return engine.plan(request)
 
@@ -2021,6 +2271,7 @@ Legend:
         analysis_path: Optional[Path] = None,
         implement_path: Optional[Path] = None,
         protocol_run_id: Optional[int] = None,
+        strict: bool = False,
     ) -> None:
         if not self.db or not spec_run_id:
             return
@@ -2053,6 +2304,8 @@ Legend:
                 "spec_run_update_failed",
                 extra=self.log_extra(spec_run_id=spec_run_id, error=str(exc)),
             )
+            if strict:
+                raise RuntimeError(f"Failed to update spec run {spec_run_id}: {exc}") from exc
 
     def _persist_policy_clarifications(
         self,
@@ -2088,6 +2341,126 @@ Legend:
         (runtime_dir / "context.md").write_text(f"# Execution Context: {feature_name}\n\n")
         (runtime_dir / "log.md").write_text(f"# Execution Log: {feature_name}\n\n")
         (runtime_dir / "runs").mkdir(exist_ok=True)
+
+    def _write_speckit_stage_trace(
+        self,
+        *,
+        workspace_root: Path,
+        spec_dir: Path,
+        stage: str,
+        prompt_name: str,
+        prompt_context: str,
+        project_id: Optional[int],
+        engine_result: Optional[Any] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        runtime_dir = spec_dir / "_runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            prompt_path = self._prompt_path(prompt_name, project_path=str(workspace_root), project_id=project_id)
+        except Exception:
+            prompt_path = None
+        prompt_template = ""
+        try:
+            if prompt_path and prompt_path.is_file():
+                prompt_template = prompt_path.read_text(encoding="utf-8")
+        except Exception:
+            prompt_template = ""
+
+        metadata = getattr(engine_result, "metadata", {}) if engine_result is not None else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        stdout = getattr(engine_result, "stdout", "") if engine_result is not None else ""
+        stderr = getattr(engine_result, "stderr", "") if engine_result is not None else ""
+        stdout = stdout if isinstance(stdout, str) else ""
+        stderr = stderr if isinstance(stderr, str) else ""
+        error_text = error or getattr(engine_result, "error", None)
+        if error_text is not None and not isinstance(error_text, str):
+            error_text = str(error_text)
+
+        prompt_dump = (
+            f"# {stage.replace('_', ' ').title()} Prompt Context\n\n"
+            f"{prompt_context.rstrip()}\n"
+        )
+        if prompt_template.strip():
+            prompt_dump += f"\n\n## Prompt Template\n\n{prompt_template.rstrip()}\n"
+        (runtime_dir / f"{stage}.prompt.md").write_text(prompt_dump, encoding="utf-8")
+
+        result_payload: Dict[str, Any] = {
+            "stage": stage,
+            "prompt_name": prompt_name,
+            "success": bool(getattr(engine_result, "success", False)) if engine_result is not None else False,
+            "error": error_text,
+            "metadata": metadata,
+        }
+        if engine_result is not None:
+            if stdout:
+                (runtime_dir / f"{stage}.stdout.log").write_text(stdout, encoding="utf-8")
+            if stderr:
+                (runtime_dir / f"{stage}.stderr.log").write_text(stderr, encoding="utf-8")
+            result_payload.update(
+                {
+                    "duration_seconds": getattr(engine_result, "duration_seconds", None),
+                    "exit_code": getattr(engine_result, "exit_code", None),
+                    "stdout_log": str((runtime_dir / f"{stage}.stdout.log").resolve()) if stdout else None,
+                    "stderr_log": str((runtime_dir / f"{stage}.stderr.log").resolve()) if stderr else None,
+                }
+            )
+        (runtime_dir / f"{stage}.result.json").write_text(
+            json.dumps(result_payload, indent=2, default=str),
+            encoding="utf-8",
+        )
+        if error_text:
+            (runtime_dir / f"{stage}.error.txt").write_text(error_text.rstrip() + "\n", encoding="utf-8")
+
+    def _skip_speckit_output_validation(self, engine_result: Any) -> bool:
+        metadata = getattr(engine_result, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            return True
+        engine_id = str(metadata.get("engine_id") or "").strip().lower()
+        return not engine_id or engine_id == "dummy"
+
+    def _validate_plan_outputs(
+        self,
+        *,
+        plan_path: Path,
+        data_model_path: Path,
+        research_path: Path,
+        quickstart_path: Path,
+    ) -> None:
+        errors: List[str] = []
+
+        plan_content = plan_path.read_text(encoding="utf-8")
+        checkbox_lines = [line.strip() for line in plan_content.splitlines() if line.strip().startswith("- [ ]")]
+        generic_tasks = [line for line in checkbox_lines if re.fullmatch(r"- \[ \] Task \d+", line)]
+        if checkbox_lines and len(generic_tasks) == len(checkbox_lines):
+            errors.append("plan.md still contains only template task entries")
+
+        for path in (data_model_path, research_path, quickstart_path):
+            content = path.read_text(encoding="utf-8")
+            if "(To be defined)" in content:
+                errors.append(f"{path.name} still contains placeholder text")
+
+        if errors:
+            raise SpecOutputValidationError("; ".join(errors))
+
+    def _validate_tasks_output(self, tasks_path: Path) -> None:
+        tasks_content = tasks_path.read_text(encoding="utf-8")
+        phase_count = tasks_content.count("## Phase ")
+        checkbox_lines = [line.strip() for line in tasks_content.splitlines() if line.strip().startswith("- [ ]")]
+        generic_tasks = [line for line in checkbox_lines if re.fullmatch(r"- \[ \] Task \d+", line)]
+
+        errors: List[str] = []
+        if phase_count == 0:
+            errors.append("tasks.md is missing phase headings")
+        if not checkbox_lines:
+            errors.append("tasks.md does not contain actionable checkbox tasks")
+        elif len(generic_tasks) == len(checkbox_lines):
+            errors.append("tasks.md still contains only template task entries")
+
+        if errors:
+            raise SpecOutputValidationError("; ".join(errors))
 
     def _infer_feature_name(self, branch_name: Optional[str]) -> str:
         if not branch_name:

@@ -45,6 +45,30 @@ const steps: { id: WizardStep; label: string; icon: LucideIcon }[] = [
   { id: "onboarding", label: "Review & Start", icon: CheckCircle2 },
 ];
 
+function looksLikeGitRepositoryUrl(value: string): boolean {
+  const url = value.trim();
+  if (!url) {
+    return false;
+  }
+  if (/^git@[^:]+:.+/.test(url)) {
+    return true;
+  }
+  if (!/^https?:\/\/|^ssh:\/\//.test(url)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (url.endsWith(".git")) {
+      return true;
+    }
+    const hostedGitProviders = new Set(["github.com", "gitlab.com", "bitbucket.org", "dev.azure.com"]);
+    return hostedGitProviders.has(parsed.hostname) && segments.length >= 2;
+  } catch {
+    return false;
+  }
+}
+
 export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
   const router = useRouter();
   const createProject = useCreateProject();
@@ -55,6 +79,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
   const [formData, setFormData] = useState({
     repoUrl: "",
     branch: "main",
+    githubToken: "",
     policyPack: "",
     enforcementMode: "warn",
     autoDiscovery: true,
@@ -68,6 +93,10 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
     if (currentStep === "git") {
       if (!formData.repoUrl) {
         toast.error("Repository URL is required");
+        return;
+      }
+      if (!looksLikeGitRepositoryUrl(formData.repoUrl)) {
+        toast.error("Use a cloneable Git repository URL. Marketplace and docs pages will not onboard.");
         return;
       }
     }
@@ -111,6 +140,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
         project = await createProject.mutateAsync({
           name,
           git_url: formData.repoUrl,
+          github_token: formData.githubToken || undefined,
           base_branch: formData.branch || "main",
           auto_onboard: true,
           auto_discovery: formData.autoDiscovery,
@@ -125,6 +155,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
           project = await createProject.mutateAsync({
             name,
             git_url: formData.repoUrl,
+            github_token: formData.githubToken || undefined,
             base_branch: formData.branch || "main",
             auto_onboard: false,
             auto_discovery: false,
@@ -162,6 +193,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
       setFormData({
         repoUrl: "",
         branch: "main",
+        githubToken: "",
         policyPack: "",
         enforcementMode: "warn",
         autoDiscovery: true,
@@ -171,7 +203,11 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
       router.push(`/projects/${project.id}/onboarding`);
     } catch (error) {
       console.error(error);
-      toast.error("Failed to create project");
+      if (error instanceof ApiError) {
+        toast.error(error.message || "Failed to create project");
+      } else {
+        toast.error("Failed to create project");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -247,7 +283,7 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   onChange={(e) => setFormData({ ...formData, repoUrl: e.target.value })}
                 />
                 <p className="text-muted-foreground text-xs">
-                  Enter the Git repository URL for your project
+                  Enter the clone URL for your Git repository. Marketplace or documentation pages will not work here.
                 </p>
               </div>
               <div className="space-y-2">
@@ -258,6 +294,20 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   value={formData.branch}
                   onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="githubToken">GitHub Token</Label>
+                <Input
+                  id="githubToken"
+                  type="password"
+                  placeholder="Optional: needed for private GitHub repositories"
+                  value={formData.githubToken}
+                  onChange={(e) => setFormData({ ...formData, githubToken: e.target.value })}
+                />
+                <p className="text-muted-foreground text-xs">
+                  Leave blank for public repos. For private GitHub repositories, DevGodzilla uses
+                  this token for clone, push, and pull request steps.
+                </p>
               </div>
             </div>
           )}
@@ -332,6 +382,10 @@ export function ProjectWizard({ open, onOpenChange }: ProjectWizardProps) {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Policy Pack:</span>
                     <span>{formData.policyPack || "None"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">GitHub Token:</span>
+                    <span>{formData.githubToken ? "Configured" : "Not set"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Enforcement:</span>

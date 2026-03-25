@@ -45,7 +45,7 @@ export function ClarificationsTab({ protocolId }: ClarificationsTabProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const { data: clarifications, isLoading } = useProtocolClarifications(
     protocolId,
-    statusFilter || undefined
+    statusFilter === "all" ? undefined : statusFilter
   );
 
   if (isLoading) return <LoadingState message="Loading clarifications..." />;
@@ -152,7 +152,7 @@ function ClarificationCard({
         <p className="text-sm">{clarification.question}</p>
 
         {clarification.recommended && (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground whitespace-pre-wrap text-sm">
             Recommended:{" "}
             <span className="font-medium">
               {resolveClarificationText(clarification.recommended)}

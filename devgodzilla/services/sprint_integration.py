@@ -65,6 +65,7 @@ class SprintIntegrationService:
             start_date=start_date.isoformat() if start_date else None,
             end_date=end_date.isoformat() if end_date else None,
         )
+        self.db.update_protocol_linked_sprint(protocol_run_id, sprint.id)
 
         logger.info(
             f"Created sprint {sprint.id} from protocol run {protocol_run_id}",
@@ -294,7 +295,7 @@ class SprintIntegrationService:
             },
         )
 
-        return protocol_run
+        return self.db.update_protocol_linked_sprint(protocol_run_id, sprint_id)
 
     async def complete_sprint(self, sprint_id: int) -> Sprint:
         """

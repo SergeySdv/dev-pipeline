@@ -6,12 +6,14 @@ import {
   Activity,
   Bot,
   Circle,
+  CheckCircle2,
   Info,
   Layers,
   Plus,
   RefreshCw,
   Settings,
   TrendingUp,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -51,16 +53,28 @@ import {
   useUpdateAgentAssignments,
   useUpdateAgentConfig,
   useUpdateAgentPrompt,
+  useTestAgentSetup,
 } from "@/lib/api";
-import type { Agent, AgentAssignments, AgentPromptTemplate, AgentUpdate } from "@/lib/api/types";
+import type {
+  Agent,
+  AgentAssignments,
+  AgentPromptTemplate,
+  AgentTestResult,
+  AgentUpdate,
+} from "@/lib/api/types";
 
 type AgentCard = Agent & {
   enabled: boolean;
-  healthStatus: "available" | "unavailable" | "unknown" | "disabled";
+  healthStatus: "available" | "unavailable" | "unknown" | "disabled" | "configured" | "not_installed";
   healthDetail?: string;
   activeSteps: number;
   completedSteps: number;
 };
+
+function isAgentNotInstalled(error?: string | null): boolean {
+  if (!error) return false;
+  return /command not found|not installed|binary.*not.*found/i.test(error);
+}
 
 type AgentDraft = {
   id: string;
@@ -68,6 +82,8 @@ type AgentDraft = {
   kind: string;
   enabled: boolean;
   default_model: string;
+  available_models: AgentModelOption[];
+  reasoning_effort: string;
   command: string;
   command_dir: string;
   endpoint: string;
@@ -96,6 +112,25 @@ type PromptDraft = {
   enabled: boolean;
   description: string;
 };
+
+type AgentReasoningOption = {
+  value: string;
+  description?: string | null;
+};
+
+type AgentModelOption = {
+  value: string;
+  label?: string | null;
+  description?: string | null;
+  default_reasoning_effort?: string | null;
+  reasoning_efforts?: AgentReasoningOption[];
+};
+
+const AUTO_REASONING_VALUE = "__auto_reasoning__";
+
+function getModelOption(agent: Pick<AgentDraft, "available_models" | "default_model">) {
+  return agent.available_models.find((model) => model.value === agent.default_model);
+}
 
 const processAssignments = [
   {
@@ -143,11 +178,13 @@ export default function AgentsPage() {
   const updateAgent = useUpdateAgentConfig();
   const updateAssignments = useUpdateAgentAssignments();
   const updatePrompt = useUpdateAgentPrompt();
+  const testAgentSetup = useTestAgentSetup();
 
   const [selectedAgent, setSelectedAgent] = useState<AgentDraft | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState<PromptDraft | null>(null);
   const [isPromptOpen, setIsPromptOpen] = useState(false);
+  const [agentTestResult, setAgentTestResult] = useState<AgentTestResult | null>(null);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AssignmentsDraft>({});
   const [inheritGlobalOverride, setInheritGlobalOverride] = useState<boolean | null>(null);
 
@@ -161,15 +198,23 @@ export default function AgentsPage() {
 
   const agents: AgentCard[] = useMemo(() => {
     return (agentsData || []).map((agent) => {
-      const enabled = agent.enabled ?? agent.status !== "unavailable";
+      const enabled = agent.enabled ?? agent.status !== "disabled";
       const health = healthById.get(agent.id);
       let healthStatus: AgentCard["healthStatus"] = "unknown";
       let healthDetail: string | undefined;
       if (!enabled) {
         healthStatus = "disabled";
       } else if (health) {
-        healthStatus = health.available ? "available" : "unavailable";
+        if (health.available) {
+          healthStatus = "available";
+        } else if (isAgentNotInstalled(health.error)) {
+          healthStatus = "not_installed";
+        } else {
+          healthStatus = "unavailable";
+        }
         healthDetail = health.error || health.version || undefined;
+      } else if (agent.status === "configured") {
+        healthStatus = "configured";
       } else if (agent.status === "available") {
         healthStatus = "available";
       }
@@ -214,6 +259,8 @@ export default function AgentsPage() {
   const statusColors = {
     available: { bg: "bg-green-500", text: "Available" },
     unavailable: { bg: "bg-red-500", text: "Unavailable" },
+    not_installed: { bg: "bg-orange-500", text: "Not Installed" },
+    configured: { bg: "bg-blue-500", text: "Configured" },
     disabled: { bg: "bg-slate-400", text: "Disabled" },
     unknown: { bg: "bg-amber-500", text: "Unknown" },
   };
@@ -231,6 +278,9 @@ export default function AgentsPage() {
 
   const promptOptions = promptsData || [];
   const assignmentsReady = Boolean(assignmentsData);
+  const selectedModelOption = selectedAgent ? getModelOption(selectedAgent) : undefined;
+  const reasoningOptions = selectedModelOption?.reasoning_efforts || [];
+  const reasoningValue = selectedAgent?.reasoning_effort || AUTO_REASONING_VALUE;
 
   const handleScopeChange = (value: string) => {
     setScopeProjectId(value);
@@ -292,12 +342,15 @@ export default function AgentsPage() {
   }
 
   const openAgentConfig = (agent: AgentCard) => {
+    setAgentTestResult(null);
     setSelectedAgent({
       id: agent.id,
       name: agent.name,
       kind: agent.kind,
       enabled: agent.enabled,
       default_model: agent.default_model || "",
+      available_models: agent.available_models || [],
+      reasoning_effort: agent.reasoning_effort || "",
       command: agent.command || "",
       command_dir: agent.command_dir || "",
       endpoint: agent.endpoint || "",
@@ -335,6 +388,7 @@ export default function AgentsPage() {
       kind: toNullable(selectedAgent.kind),
       enabled: selectedAgent.enabled,
       default_model: toNullable(selectedAgent.default_model),
+      reasoning_effort: toNullable(selectedAgent.reasoning_effort),
       command: toNullable(selectedAgent.command),
       command_dir: toNullable(selectedAgent.command_dir),
       endpoint: toNullable(selectedAgent.endpoint),
@@ -358,6 +412,43 @@ export default function AgentsPage() {
       setIsConfigOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update agent");
+    }
+  };
+
+  const handleTestAgentSetup = async () => {
+    if (!selectedAgent) return;
+    const toNullable = (value: string) => (value.trim().length > 0 ? value.trim() : null);
+    const toNumber = (value: string) => (value.trim().length > 0 ? Number(value) : null);
+
+    const overrides: AgentUpdate = {
+      name: toNullable(selectedAgent.name),
+      kind: toNullable(selectedAgent.kind),
+      enabled: selectedAgent.enabled,
+      default_model: toNullable(selectedAgent.default_model),
+      reasoning_effort: toNullable(selectedAgent.reasoning_effort),
+      command: toNullable(selectedAgent.command),
+      command_dir: toNullable(selectedAgent.command_dir),
+      endpoint: toNullable(selectedAgent.endpoint),
+      sandbox: toNullable(selectedAgent.sandbox),
+      format: toNullable(selectedAgent.format),
+      capabilities: selectedAgent.capabilities
+        .split(",")
+        .map((cap) => cap.trim())
+        .filter(Boolean),
+      timeout_seconds: toNumber(selectedAgent.timeout_seconds),
+      max_retries: toNumber(selectedAgent.max_retries),
+    };
+
+    try {
+      const res = await testAgentSetup.mutateAsync({
+        agentId: selectedAgent.id,
+        projectId,
+        overrides,
+      });
+      setAgentTestResult(res);
+      toast.success(res.ok ? "Agent setup looks good" : "Agent setup check failed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to test agent setup");
     }
   };
 
@@ -784,15 +875,53 @@ export default function AgentsPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="agent-default-model">Default Model</Label>
-                  <Input
-                    id="agent-default-model"
-                    value={selectedAgent.default_model}
-                    onChange={(event) =>
-                      setSelectedAgent((prev) =>
-                        prev ? { ...prev, default_model: event.target.value } : prev
-                      )
-                    }
-                  />
+                  {selectedAgent.available_models.length > 0 ? (
+                    <Select
+                      value={selectedAgent.default_model || undefined}
+                      onValueChange={(value) =>
+                        setSelectedAgent((prev) => {
+                          if (!prev) return prev;
+                          const nextModel = prev.available_models.find((model) => model.value === value);
+                          const nextOptions = nextModel?.reasoning_efforts || [];
+                          const currentReasoning = prev.reasoning_effort;
+                          const nextReasoning = nextOptions.some(
+                            (option) => option.value === currentReasoning
+                          )
+                            ? currentReasoning
+                            : (nextModel?.default_reasoning_effort ?? "");
+                          return {
+                            ...prev,
+                            default_model: value,
+                            reasoning_effort: nextReasoning,
+                          };
+                        })
+                      }
+                    >
+                      <SelectTrigger id="agent-default-model" className="w-full">
+                        <SelectValue placeholder="Choose a model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedAgent.available_models.map((model) => (
+                          <SelectItem key={model.value} value={model.value}>
+                            {model.label || model.value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id="agent-default-model"
+                      value={selectedAgent.default_model}
+                      onChange={(event) =>
+                        setSelectedAgent((prev) =>
+                          prev ? { ...prev, default_model: event.target.value } : prev
+                        )
+                      }
+                    />
+                  )}
+                  {selectedModelOption?.description && (
+                    <p className="text-muted-foreground text-xs">{selectedModelOption.description}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="agent-command-dir">Command Dir</Label>
@@ -807,6 +936,53 @@ export default function AgentsPage() {
                   />
                 </div>
               </div>
+
+              {reasoningOptions.length > 0 && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="agent-reasoning-effort">Reasoning Effort</Label>
+                    <Select
+                      value={reasoningValue}
+                      onValueChange={(value) =>
+                        setSelectedAgent((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                reasoning_effort: value === AUTO_REASONING_VALUE ? "" : value,
+                              }
+                            : prev
+                        )
+                      }
+                    >
+                      <SelectTrigger id="agent-reasoning-effort" className="w-full">
+                        <SelectValue placeholder="Use model default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={AUTO_REASONING_VALUE}>Use model default</SelectItem>
+                        {reasoningOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {reasoningValue === AUTO_REASONING_VALUE ? (
+                      <p className="text-muted-foreground text-xs">
+                        Uses the model default
+                        {selectedModelOption?.default_reasoning_effort
+                          ? ` (${selectedModelOption.default_reasoning_effort})`
+                          : ""}
+                        .
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground text-xs">
+                        {reasoningOptions.find((option) => option.value === selectedAgent.reasoning_effort)
+                          ?.description || "Controls how much reasoning Codex spends on a task."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
@@ -891,16 +1067,73 @@ export default function AgentsPage() {
                   }
                 />
               </div>
+
+              {agentTestResult && (
+                <div className="rounded-lg border p-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    {agentTestResult.ok ? (
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-500" />
+                    ) : (
+                      <XCircle className="text-destructive mt-0.5 h-5 w-5" />
+                    )}
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium">
+                          {agentTestResult.ok ? "Setup looks good" : "Setup needs attention"}
+                        </p>
+                        {typeof agentTestResult.duration_ms === "number" && (
+                          <span className="text-muted-foreground text-xs">
+                            {Math.round(agentTestResult.duration_ms)}ms
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {agentTestResult.checks.map((check) => (
+                          <div key={check.name} className="space-y-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground text-xs">{check.name}</span>
+                              <Badge variant={check.ok ? "secondary" : "destructive"}>
+                                {check.ok ? "OK" : "Failed"}
+                              </Badge>
+                            </div>
+                            {check.error && (
+                              <p className="text-destructive text-xs">{check.error}</p>
+                            )}
+                            {check.details && (
+                              <p className="text-muted-foreground truncate text-xs">
+                                {Object.entries(check.details)
+                                  .filter(([, v]) => v !== null && v !== undefined && v !== "")
+                                  .slice(0, 3)
+                                  .map(([k, v]) => `${k}=${String(v)}`)
+                                  .join(" • ")}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
-              Cancel
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <Button
+              variant="outline"
+              onClick={handleTestAgentSetup}
+              disabled={!selectedAgent || testAgentSetup.isPending}
+            >
+              {testAgentSetup.isPending ? "Testing..." : "Test Setup"}
             </Button>
-            <Button onClick={handleSaveAgent} disabled={updateAgent.isPending}>
-              Save Changes
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setIsConfigOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveAgent} disabled={updateAgent.isPending}>
+                Save Changes
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

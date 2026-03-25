@@ -30,6 +30,7 @@ from devgodzilla.models.domain import (
     Sprint,
     StepRun,
 )
+from devgodzilla.speckit_metadata import extract_spec_run_id
 
 logger = get_logger(__name__)
 
@@ -89,6 +90,7 @@ class DatabaseProtocol(Protocol):
     def list_protocol_runs(self, project_id: int) -> List[ProtocolRun]: ...
     def list_all_protocol_runs(self, *, limit: int = 200) -> List[ProtocolRun]: ...
     def update_protocol_status(self, run_id: int, status: str) -> ProtocolRun: ...
+    def update_protocol_linked_sprint(self, run_id: int, linked_sprint_id: Optional[int]) -> ProtocolRun: ...
 
     # SpecKit specs
     def upsert_speckit_spec(
@@ -348,6 +350,8 @@ class DatabaseProtocol(Protocol):
         self,
         project_id: Optional[int] = None,
         sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
         board_status: Optional[str] = None,
         assignee: Optional[str] = None,
         limit: int = 100,
@@ -451,6 +455,7 @@ class SQLiteDatabase:
             local_path=row["local_path"] if "local_path" in keys else None,
             ci_provider=row["ci_provider"],
             secrets=self._parse_json(row["secrets"]),
+            github_token_configured=bool((self._parse_json(row["secrets"]) or {}).get("github_token")),
             default_models=self._parse_json(row["default_models"]),
             project_classification=row["project_classification"] if "project_classification" in keys else None,
             policy_pack_key=row["policy_pack_key"] if "policy_pack_key" in keys else None,
@@ -484,6 +489,7 @@ class SQLiteDatabase:
             policy_effective_json=self._parse_json(row["policy_effective_json"] if "policy_effective_json" in keys else None),
             windmill_flow_id=row["windmill_flow_id"] if "windmill_flow_id" in keys else None,
             speckit_metadata=self._parse_json(row["speckit_metadata"] if "speckit_metadata" in keys else None),
+            linked_sprint_id=row["linked_sprint_id"] if "linked_sprint_id" in keys else None,
             created_at=self._coerce_ts(row["created_at"]),
             updated_at=self._coerce_ts(row["updated_at"]),
         )
@@ -585,10 +591,12 @@ class SQLiteDatabase:
     def _row_to_event(self, row: sqlite3.Row) -> Event:
         keys = set(row.keys())
         event_type = normalize_event_type(row["event_type"])
+        protocol_metadata = self._parse_json(row["speckit_metadata"] if "speckit_metadata" in keys else None)
         return Event(
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
             step_run_id=row["step_run_id"],
+            spec_run_id=extract_spec_run_id(protocol_metadata),
             event_type=event_type,
             message=row["message"],
             metadata=self._parse_json(row["metadata"] if "metadata" in keys else None),
@@ -601,6 +609,7 @@ class SQLiteDatabase:
 
     def _row_to_job_run(self, row: sqlite3.Row) -> JobRun:
         keys = set(row.keys())
+        protocol_metadata = self._parse_json(row["speckit_metadata"] if "speckit_metadata" in keys else None)
         return JobRun(
             run_id=row["run_id"],
             job_type=row["job_type"],
@@ -609,6 +618,7 @@ class SQLiteDatabase:
             project_id=row["project_id"] if "project_id" in keys else None,
             protocol_run_id=row["protocol_run_id"] if "protocol_run_id" in keys else None,
             step_run_id=row["step_run_id"] if "step_run_id" in keys else None,
+            spec_run_id=extract_spec_run_id(protocol_metadata),
             queue=row["queue"] if "queue" in keys else None,
             attempt=row["attempt"] if "attempt" in keys else None,
             worker_id=row["worker_id"] if "worker_id" in keys else None,
@@ -750,6 +760,7 @@ class SQLiteDatabase:
         status: Optional[str] = None,
         git_url: Optional[str] = None,
         base_branch: Optional[str] = None,
+        secrets: Optional[dict] = _UNSET,
         local_path: Optional[str] = None,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
@@ -772,6 +783,9 @@ class SQLiteDatabase:
         if base_branch is not None:
             updates.append("base_branch = ?")
             params.append(base_branch)
+        if secrets is not _UNSET:
+            updates.append("secrets = ?")
+            params.append(json.dumps(secrets) if secrets else None)
         if local_path is not None:
             updates.append("local_path = ?")
             params.append(local_path)
@@ -895,6 +909,18 @@ class SQLiteDatabase:
             conn.execute(
                 "UPDATE protocol_runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (status, run_id),
+            )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_linked_sprint(
+        self,
+        run_id: int,
+        linked_sprint_id: Optional[int],
+    ) -> ProtocolRun:
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE protocol_runs SET linked_sprint_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (linked_sprint_id, run_id),
             )
         return self.get_protocol_run(run_id)
 
@@ -1520,6 +1546,7 @@ class SQLiteDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -1569,6 +1596,7 @@ class SQLiteDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -1620,6 +1648,7 @@ class SQLiteDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -1880,7 +1909,17 @@ class SQLiteDatabase:
         return self.get_job_run(run_id)
 
     def get_job_run(self, run_id: str) -> JobRun:
-        row = self._fetchone("SELECT * FROM job_runs WHERE run_id = ?", (run_id,))
+        row = self._fetchone(
+            """
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            WHERE jr.run_id = ?
+            """,
+            (run_id,),
+        )
         if row is None:
             raise KeyError(f"JobRun {run_id} not found")
         return self._row_to_job_run(row)
@@ -1900,27 +1939,35 @@ class SQLiteDatabase:
         where = []
         params: list[Any] = []
         if project_id is not None:
-            where.append("project_id = ?")
+            where.append("jr.project_id = ?")
             params.append(project_id)
         if protocol_run_id is not None:
-            where.append("protocol_run_id = ?")
+            where.append("jr.protocol_run_id = ?")
             params.append(protocol_run_id)
         if step_run_id is not None:
-            where.append("step_run_id = ?")
+            where.append("jr.step_run_id = ?")
             params.append(step_run_id)
         if status is not None:
-            where.append("status = ?")
+            where.append("jr.status = ?")
             params.append(status)
         if job_type is not None:
-            where.append("job_type = ?")
+            where.append("jr.job_type = ?")
             params.append(job_type)
         if windmill_job_id is not None:
-            where.append("windmill_job_id = ?")
+            where.append("jr.windmill_job_id = ?")
             params.append(windmill_job_id)
 
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         rows = self._fetchall(
-            f"SELECT * FROM job_runs {clause} ORDER BY created_at DESC LIMIT ?",
+            f"""
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            {clause}
+            ORDER BY jr.created_at DESC LIMIT ?
+            """,
             (*params, limit),
         )
         return [self._row_to_job_run(row) for row in rows]
@@ -2403,7 +2450,7 @@ class SQLiteDatabase:
         protocol_run_id: int,
         *,
         template_config: Optional[dict] = None,
-        template_source: Optional[dict] = None,
+        template_source: Optional[Any] = None,
     ) -> ProtocolRun:
         """Update template config and source on a protocol run."""
         updates = ["updated_at = CURRENT_TIMESTAMP"]
@@ -2620,6 +2667,8 @@ class SQLiteDatabase:
         self,
         project_id: Optional[int] = None,
         sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
         board_status: Optional[str] = None,
         assignee: Optional[str] = None,
         limit: int = 100,
@@ -2633,6 +2682,12 @@ class SQLiteDatabase:
         if sprint_id is not None:
             where.append("sprint_id = ?")
             params.append(sprint_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = ?")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = ?")
+            params.append(step_run_id)
         if board_status is not None:
             where.append("board_status = ?")
             params.append(board_status)
@@ -2805,6 +2860,7 @@ class PostgresDatabase:
             local_path=row.get("local_path"),
             ci_provider=row.get("ci_provider"),
             secrets=row.get("secrets"),
+            github_token_configured=bool((row.get("secrets") or {}).get("github_token")),
             default_models=row.get("default_models"),
             project_classification=row.get("project_classification"),
             policy_pack_key=row.get("policy_pack_key"),
@@ -2837,6 +2893,7 @@ class PostgresDatabase:
             policy_effective_json=row.get("policy_effective_json"),
             windmill_flow_id=row.get("windmill_flow_id"),
             speckit_metadata=row.get("speckit_metadata"),
+            linked_sprint_id=row.get("linked_sprint_id"),
             created_at=self._coerce_ts(row["created_at"]),
             updated_at=self._coerce_ts(row["updated_at"]),
         )
@@ -2916,6 +2973,7 @@ class PostgresDatabase:
             id=row["id"],
             protocol_run_id=row["protocol_run_id"],
             step_run_id=row.get("step_run_id"),
+            spec_run_id=extract_spec_run_id(row.get("speckit_metadata")),
             event_type=event_type,
             message=row["message"],
             metadata=row.get("metadata"),
@@ -2956,6 +3014,7 @@ class PostgresDatabase:
             project_id=row.get("project_id"),
             protocol_run_id=row.get("protocol_run_id"),
             step_run_id=row.get("step_run_id"),
+            spec_run_id=extract_spec_run_id(row.get("speckit_metadata")),
             queue=row.get("queue"),
             attempt=row.get("attempt"),
             worker_id=row.get("worker_id"),
@@ -3203,6 +3262,8 @@ class PostgresDatabase:
         self,
         project_id: Optional[int] = None,
         sprint_id: Optional[int] = None,
+        protocol_run_id: Optional[int] = None,
+        step_run_id: Optional[int] = None,
         board_status: Optional[str] = None,
         assignee: Optional[str] = None,
         limit: int = 100,
@@ -3216,6 +3277,12 @@ class PostgresDatabase:
         if sprint_id is not None:
             where.append("sprint_id = %s")
             params.append(sprint_id)
+        if protocol_run_id is not None:
+            where.append("protocol_run_id = %s")
+            params.append(protocol_run_id)
+        if step_run_id is not None:
+            where.append("step_run_id = %s")
+            params.append(step_run_id)
         if board_status is not None:
             where.append("board_status = %s")
             params.append(board_status)
@@ -3604,6 +3671,7 @@ class PostgresDatabase:
         status: Optional[str] = None,
         git_url: Optional[str] = None,
         base_branch: Optional[str] = None,
+        secrets: Optional[dict] = _UNSET,
         local_path: Optional[str] = None,
         constitution_version: Optional[str] = None,
         constitution_hash: Optional[str] = None,
@@ -3626,6 +3694,9 @@ class PostgresDatabase:
         if base_branch is not None:
             updates.append("base_branch = %s")
             params.append(base_branch)
+        if secrets is not _UNSET:
+            updates.append("secrets = %s")
+            params.append(json.dumps(secrets) if secrets else None)
         if local_path is not None:
             updates.append("local_path = %s")
             params.append(local_path)
@@ -3806,6 +3877,131 @@ class PostgresDatabase:
                     (status, run_id),
                 )
         return self.get_protocol_run(run_id)
+
+    def update_protocol_linked_sprint(
+        self,
+        run_id: int,
+        linked_sprint_id: Optional[int],
+    ) -> ProtocolRun:
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE protocol_runs SET linked_sprint_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (linked_sprint_id, run_id),
+                )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_windmill(
+        self,
+        run_id: int,
+        windmill_flow_id: Optional[str] = None,
+        speckit_metadata: Optional[dict] = None,
+    ) -> ProtocolRun:
+        """Update Windmill-specific fields on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if windmill_flow_id is not None:
+            updates.append("windmill_flow_id = %s")
+            params.append(windmill_flow_id)
+        if speckit_metadata is not None:
+            updates.append("speckit_metadata = %s")
+            params.append(json.dumps(speckit_metadata))
+        if len(params) == 0:
+            return self.get_protocol_run(run_id)
+        params.append(run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_paths(
+        self,
+        run_id: int,
+        *,
+        worktree_path: Optional[str] = None,
+        protocol_root: Optional[str] = None,
+    ) -> ProtocolRun:
+        """Update worktree/protocol root paths on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if worktree_path is not None:
+            updates.append("worktree_path = %s")
+            params.append(worktree_path)
+        if protocol_root is not None:
+            updates.append("protocol_root = %s")
+            params.append(protocol_root)
+        if len(params) == 0:
+            return self.get_protocol_run(run_id)
+        params.append(run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_protocol_run(run_id)
+
+    def update_protocol_template(
+        self,
+        protocol_run_id: int,
+        *,
+        template_config: Optional[dict] = None,
+        template_source: Optional[Any] = None,
+    ) -> ProtocolRun:
+        """Update template config and source on a protocol run."""
+        updates = ["updated_at = CURRENT_TIMESTAMP"]
+        params: List[Any] = []
+        if template_config is not None:
+            updates.append("template_config = %s")
+            params.append(json.dumps(template_config))
+        if template_source is not None:
+            updates.append("template_source = %s")
+            params.append(json.dumps(template_source))
+        if len(params) == 0:
+            return self.get_protocol_run(protocol_run_id)
+        params.append(protocol_run_id)
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE protocol_runs SET {', '.join(updates)} WHERE id = %s",
+                    tuple(params),
+                )
+        return self.get_protocol_run(protocol_run_id)
+
+    def update_protocol_policy_audit(
+        self,
+        protocol_run_id: int,
+        *,
+        policy_pack_key: str,
+        policy_pack_version: str,
+        policy_effective_hash: str,
+        policy_effective_json: Optional[dict] = None,
+    ) -> ProtocolRun:
+        """Record the effective policy used for a protocol run (audit trail)."""
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE protocol_runs
+                    SET policy_pack_key = %s,
+                        policy_pack_version = %s,
+                        policy_effective_hash = %s,
+                        policy_effective_json = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (
+                        policy_pack_key,
+                        policy_pack_version,
+                        policy_effective_hash,
+                        json.dumps(policy_effective_json) if policy_effective_json else None,
+                        protocol_run_id,
+                    ),
+                )
+        return self.get_protocol_run(protocol_run_id)
 
     # SpecKit spec operations
     def upsert_speckit_spec(
@@ -4387,6 +4583,7 @@ class PostgresDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -4436,6 +4633,7 @@ class PostgresDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -4487,6 +4685,7 @@ class PostgresDatabase:
             SELECT
                 e.*,
                 pr.protocol_name,
+                pr.speckit_metadata,
                 COALESCE(e.project_id, pr.project_id) AS project_id,
                 p.name AS project_name
             FROM events e
@@ -4657,7 +4856,17 @@ class PostgresDatabase:
         return self.get_job_run(run_id)
 
     def get_job_run(self, run_id: str) -> JobRun:
-        row = self._fetchone("SELECT * FROM job_runs WHERE run_id = %s", (run_id,))
+        row = self._fetchone(
+            """
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            WHERE jr.run_id = %s
+            """,
+            (run_id,),
+        )
         if row is None:
             raise KeyError(f"JobRun {run_id} not found")
         return self._row_to_job_run(row)
@@ -4677,27 +4886,35 @@ class PostgresDatabase:
         where = []
         params: list[Any] = []
         if project_id is not None:
-            where.append("project_id = %s")
+            where.append("jr.project_id = %s")
             params.append(project_id)
         if protocol_run_id is not None:
-            where.append("protocol_run_id = %s")
+            where.append("jr.protocol_run_id = %s")
             params.append(protocol_run_id)
         if step_run_id is not None:
-            where.append("step_run_id = %s")
+            where.append("jr.step_run_id = %s")
             params.append(step_run_id)
         if status is not None:
-            where.append("status = %s")
+            where.append("jr.status = %s")
             params.append(status)
         if job_type is not None:
-            where.append("job_type = %s")
+            where.append("jr.job_type = %s")
             params.append(job_type)
         if windmill_job_id is not None:
-            where.append("windmill_job_id = %s")
+            where.append("jr.windmill_job_id = %s")
             params.append(windmill_job_id)
 
         clause = f"WHERE {' AND '.join(where)}" if where else ""
         rows = self._fetchall(
-            f"SELECT * FROM job_runs {clause} ORDER BY created_at DESC LIMIT %s",
+            f"""
+            SELECT
+                jr.*,
+                pr.speckit_metadata
+            FROM job_runs jr
+            LEFT JOIN protocol_runs pr ON pr.id = jr.protocol_run_id
+            {clause}
+            ORDER BY jr.created_at DESC LIMIT %s
+            """,
             (*params, limit),
         )
         return [self._row_to_job_run(row) for row in rows]

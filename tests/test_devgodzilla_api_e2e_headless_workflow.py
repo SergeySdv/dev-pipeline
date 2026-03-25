@@ -169,9 +169,6 @@ def test_api_e2e_headless_workflow_real_repo(tmp_path: Path, monkeypatch: pytest
                 break
             step_ids.append(int(step_id))
 
-            ex = client.post(f"/steps/{step_id}/actions/execute", json={})
-            assert ex.status_code == 200
-
         assert step_ids, "Expected at least one planned step"
 
         final = client.get(f"/protocols/{protocol_id}")

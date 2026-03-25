@@ -20,6 +20,7 @@ import {
   MessageCircle,
   MessageSquare,
   PlayCircle,
+  Plus,
   Shield,
   Wand2,
   Workflow,
@@ -67,6 +68,18 @@ import {
   useSpecKitStatus,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
+import { parseTemplateConfigInput } from "@/lib/protocol-create";
+import {
+  describeProtocolTemplateConfig,
+  formatProtocolTemplateSource,
+} from "@/lib/protocol-template-display";
+import {
+  getProjectManualPlanWizardPath,
+  getProjectManualTasksWizardPath,
+  getProjectSpecWorkflowPath,
+  getProjectSpecWorkspacePath,
+  getSpecificationReviewPath,
+} from "@/lib/project-routes";
 
 interface OverviewTabProps {
   projectId: number;
@@ -96,23 +109,60 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
       (specKitStatus?.specs ?? []).filter((s) => s.status !== "cleaned" && (s.spec_path || s.path)),
     [specKitStatus]
   );
-  const activeSpecPath =
-    selectedSpecPath || specOptions[0]?.spec_path || specOptions[0]?.path || "";
+  const activeSpecPath = selectedSpecPath || specOptions[0]?.spec_path || specOptions[0]?.path || "";
+  const activeSpecMeta = useMemo(() => {
+    if (!activeSpecPath) return null;
+    return (
+      specOptions.find((spec) => spec.spec_path === activeSpecPath || spec.path === activeSpecPath) ??
+      null
+    );
+  }, [activeSpecPath, specOptions]);
+  const activeSpecReviewPath = useMemo(() => {
+    if (!activeSpecMeta?.id) {
+      return null;
+    }
+
+    const hasReviewSurface = Boolean(
+      activeSpecMeta.has_tasks ||
+        activeSpecMeta.checklist_path ||
+        activeSpecMeta.analysis_path ||
+        activeSpecMeta.implement_path
+    );
+
+    return hasReviewSurface ? getSpecificationReviewPath(activeSpecMeta.id) : null;
+  }, [activeSpecMeta]);
+
   const workflowStatus = useMemo(() => {
-    const hasSpec = (specKitStatus?.spec_count || 0) > 0;
-    const hasPlan = specOptions.some((spec) => spec.has_plan);
-    const hasTasks = specOptions.some((spec) => spec.has_tasks);
+    const hasSpec = Boolean(activeSpecMeta?.has_spec ?? activeSpecMeta?.spec_path ?? activeSpecMeta?.path);
+    const hasPlan = Boolean(activeSpecMeta?.has_plan ?? activeSpecMeta?.plan_path);
+    const hasTasks = Boolean(activeSpecMeta?.has_tasks ?? activeSpecMeta?.tasks_path);
+    const hasChecklist = Boolean(activeSpecMeta?.checklist_path);
+    const hasAnalysis = Boolean(activeSpecMeta?.analysis_path);
+    const hasImplement = Boolean(activeSpecMeta?.implement_path);
     return {
       spec: hasSpec ? "completed" : "pending",
-      clarify: hasSpec ? "in-progress" : "pending",
+      clarify: "pending",
       plan: hasPlan ? "completed" : "pending",
-      checklist: hasPlan ? "in-progress" : "pending",
+      checklist: hasChecklist ? "completed" : "pending",
       tasks: hasTasks ? "completed" : "pending",
-      analyze: hasTasks ? "in-progress" : "pending",
-      implement: hasTasks ? "in-progress" : "pending",
+      analyze: hasAnalysis ? "completed" : "pending",
+      implement: hasImplement ? "completed" : "pending",
       sprint: "pending",
     } as const;
-  }, [specKitStatus, specOptions]);
+  }, [activeSpecMeta]);
+
+  const currentWorkflowStep = useMemo(() => {
+    const hasSpec = workflowStatus.spec === "completed";
+    const hasPlan = workflowStatus.plan === "completed";
+    const hasTasks = workflowStatus.tasks === "completed";
+    const hasImplement = workflowStatus.implement === "completed";
+
+    if (!hasSpec) return "spec" as const;
+    if (!hasPlan) return "plan" as const;
+    if (!hasTasks) return "tasks" as const;
+    if (!hasImplement) return "implement" as const;
+    return "sprint" as const;
+  }, [workflowStatus]);
 
   if (projectLoading || onboardingLoading) return <LoadingState message="Loading overview..." />;
 
@@ -296,7 +346,12 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
         </div>
       </div>
 
-      <SpecWorkflow projectId={projectId} stepStatus={workflowStatus} showActions />
+      <SpecWorkflow
+        projectId={projectId}
+        currentStep={currentWorkflowStep}
+        stepStatus={workflowStatus}
+        showActions
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -408,26 +463,50 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
         <Card>
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common tasks for this project</CardDescription>
+            <CardDescription>
+              Start the canonical workflow first; use manual tools only when you need step-by-step control
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
+            {activeSpecReviewPath && (
+              <Button variant="secondary" className="w-full justify-start" asChild>
+                <Link href={activeSpecReviewPath}>
+                  <FileSearch className="mr-2 h-4 w-4" />
+                  Review Active Implementation
+                </Link>
+              </Button>
+            )}
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=implement-feature`}>
-                <Wand2 className="mr-2 h-4 w-4" />
-                Implement a Feature
+              <Link href={getProjectSpecWorkflowPath(projectId)}>
+                <Workflow className="mr-2 h-4 w-4" />
+                Run Spec Workflow
               </Link>
             </Button>
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=generate-specs`}>
+              <Link href={getProjectSpecWorkspacePath(projectId)}>
                 <FileCode2 className="mr-2 h-4 w-4" />
-                Generate Specs Wizard
+                Open Spec Workspace
               </Link>
             </Button>
             <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
-              <Link href={`/projects/${projectId}?wizard=design-solution`}>
+              <Link href={getProjectManualPlanWizardPath(projectId)}>
                 <Lightbulb className="mr-2 h-4 w-4" />
-                Design A Solution
+                Manual Plan Wizard
               </Link>
+            </Button>
+            <Button variant="outline" className="w-full justify-start bg-transparent" asChild>
+              <Link href={getProjectManualTasksWizardPath(projectId)}>
+                <Wand2 className="mr-2 h-4 w-4" />
+                Manual Tasks Wizard
+              </Link>
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start bg-transparent"
+              onClick={() => setIsCreateProtocolOpen(true)}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Create Protocol
             </Button>
           </CardContent>
         </Card>
@@ -514,6 +593,21 @@ export function OverviewTab({ projectId }: OverviewTabProps) {
                         <p className="text-sm font-medium">{protocol.protocol_name}</p>
                         <p className="text-muted-foreground text-xs">
                           {formatRelativeTime(protocol.created_at)}
+                        </p>
+                        <p
+                          className="text-muted-foreground max-w-56 truncate text-xs"
+                          title={formatProtocolTemplateSource(protocol.template_source)}
+                        >
+                          {formatProtocolTemplateSource(protocol.template_source)}
+                        </p>
+                        <p
+                          className="text-muted-foreground truncate text-xs"
+                          title={
+                            describeProtocolTemplateConfig(protocol.template_config).detail ??
+                            undefined
+                          }
+                        >
+                          Config: {describeProtocolTemplateConfig(protocol.template_config).summary}
                         </p>
                       </div>
                     </div>
@@ -617,19 +711,23 @@ function CreateProtocolDialog({
 }) {
   const createProtocol = useCreateProtocol();
   const [formData, setFormData] = useState({
-    name: "",
+    protocol_name: "",
     description: "",
-    spec: "{}",
+    template_source: "",
+    template_config: "",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const templateConfig = parseTemplateConfigInput(formData.template_config);
       await createProtocol.mutateAsync({
         projectId: projectId,
         data: {
-          protocol_name: formData.name,
+          protocol_name: formData.protocol_name,
           description: formData.description || undefined,
+          template_source: formData.template_source || undefined,
+          template_config: templateConfig,
         },
       });
       toast.success("Protocol created successfully");
@@ -649,12 +747,14 @@ function CreateProtocolDialog({
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Protocol Name</Label>
+              <Label htmlFor="protocol_name">Protocol Name</Label>
               <Input
-                id="name"
+                id="protocol_name"
                 placeholder="0001-feature-auth"
-                value={formData.name}
-                onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+                value={formData.protocol_name}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, protocol_name: e.target.value }))
+                }
                 required
               />
             </div>
@@ -668,14 +768,26 @@ function CreateProtocolDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="spec">Spec (JSON)</Label>
+              <Label htmlFor="template_source">Template Source (optional)</Label>
+              <Input
+                id="template_source"
+                placeholder="./templates/feature.yaml"
+                value={formData.template_source}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, template_source: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="template_config">Template Config (JSON object, optional)</Label>
               <Textarea
-                id="spec"
+                id="template_config"
                 className="min-h-48 font-mono text-sm"
-                placeholder='{ "steps": [] }'
-                value={formData.spec}
-                onChange={(e) => setFormData((p) => ({ ...p, spec: e.target.value }))}
-                required
+                placeholder='{ "mode": "guided" }'
+                value={formData.template_config}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, template_config: e.target.value }))
+                }
               />
             </div>
           </div>

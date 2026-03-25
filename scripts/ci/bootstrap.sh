@@ -24,7 +24,7 @@ if [ ! -x "${VENV_PATH}/bin/python" ]; then
 fi
 
 "${VENV_PATH}/bin/python" -m pip install --upgrade pip
-"${VENV_PATH}/bin/pip" install -r "${REQ_FILE}" ruff
+"${VENV_PATH}/bin/pip" install -r "${REQ_FILE}" ruff pre-commit
 
 ci_info "bootstrap ready" "venv=${VENV_PATH} req=${REQ_FILE}"
 

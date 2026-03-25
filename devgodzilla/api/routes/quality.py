@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends
 
 from devgodzilla.api.dependencies import get_db, get_service_context, Database
+from devgodzilla.speckit_metadata import extract_spec_run_id
 from devgodzilla.services.base import ServiceContext
 
 router = APIRouter(tags=["quality"])
@@ -24,6 +25,7 @@ class QAOverview(BaseModel):
 class QAFinding(BaseModel):
     id: int
     protocol_id: int
+    spec_run_id: Optional[int] = None
     project_name: str
     article: str
     article_name: str
@@ -88,7 +90,21 @@ def get_quality_dashboard(
 
     recent_findings: List[QAFinding] = []
     projects_cache: Dict[int, str] = {}
+    protocol_review_cache: Dict[int, Optional[int]] = {}
     finding_id = 0
+
+    def _spec_run_id_for_protocol(protocol_id: int) -> Optional[int]:
+        if protocol_id <= 0:
+            return None
+        if protocol_id not in protocol_review_cache:
+            try:
+                protocol_review_cache[protocol_id] = extract_spec_run_id(
+                    db.get_protocol_run(protocol_id).speckit_metadata
+                )
+            except Exception:
+                protocol_review_cache[protocol_id] = None
+        return protocol_review_cache[protocol_id]
+
     for result in qa_results:
         for finding in result.findings or []:
             severity = finding.get("severity", "warning")
@@ -105,6 +121,7 @@ def get_quality_dashboard(
                 QAFinding(
                     id=finding_id,
                     protocol_id=result.protocol_run_id,
+                    spec_run_id=_spec_run_id_for_protocol(result.protocol_run_id),
                     project_name=projects_cache[project_id],
                     article=str(finding.get("metadata", {}).get("article") or finding.get("gate_id") or "QA"),
                     article_name=str(finding.get("metadata", {}).get("article_title") or finding.get("gate_id") or "QA"),

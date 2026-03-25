@@ -11,6 +11,7 @@ export type ProtocolStatus =
   | "running"
   | "paused"
   | "blocked"
+  | "needs_qa"
   | "failed"
   | "cancelled"
   | "completed";
@@ -23,7 +24,8 @@ export type StepStatus =
   | "failed"
   | "cancelled"
   | "blocked"
-  | "skipped";
+  | "skipped"
+  | "timeout";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
@@ -45,6 +47,7 @@ export interface Project {
   name: string;
   git_url: string;
   local_path: string | null;
+  github_token_configured: boolean;
   base_branch: string;
   project_classification: string | null;
   created_at: string;
@@ -61,7 +64,9 @@ export interface Project {
 
 export interface ProjectCreate {
   name: string;
-  git_url: string;
+  git_url?: string;
+  local_path?: string;
+  github_token?: string | null;
   base_branch?: string;
   description?: string;
   policy_pack_key?: string;
@@ -120,13 +125,25 @@ export interface ProtocolRun {
   description: string | null;
   template_config: Record<string, unknown> | null;
   template_source: string | null;
+  summary: string | null;
+  /** SpecKit metadata containing spec_hash, spec_validation_status, spec_validated_at */
+  speckit_metadata: {
+    spec_run_id?: number | null;
+    spec_hash?: string | null;
+    spec_validation_status?: string | null;
+    spec_validated_at?: string | null;
+  } | null;
+  /** @deprecated Use speckit_metadata.spec_hash instead */
   spec_hash: string | null;
+  /** @deprecated Use speckit_metadata.spec_validation_status instead */
   spec_validation_status: string | null;
+  /** @deprecated Use speckit_metadata.spec_validated_at instead */
   spec_validated_at: string | null;
   policy_pack_key: string | null;
   policy_pack_version: string | null;
   policy_effective_hash: string | null;
   policy_effective_json: Record<string, unknown> | null;
+  linked_sprint_id: number | null;
   created_at: string;
   updated_at: string;
   // Joined fields
@@ -138,9 +155,11 @@ export interface ProtocolCreate {
   description?: string;
   base_branch?: string;
   template_source?: string;
+  template_config?: Record<string, unknown>;
 }
 
 export interface ProtocolSpec {
+  spec_run_id?: number | null;
   spec_hash: string;
   validation_status: string;
   validated_at: string | null;
@@ -190,8 +209,9 @@ export interface StepRun {
 }
 
 export interface StepRuntimeState {
-  loop_counts: Record<string, number>;
-  inline_trigger_depth: number;
+  [key: string]: unknown;
+  loop_counts?: Record<string, number>;
+  inline_trigger_depth?: number;
 }
 
 // =============================================================================
@@ -206,6 +226,13 @@ export interface CodexRun {
   project_id: number | null;
   protocol_run_id: number | null;
   step_run_id: number | null;
+  spec_run_id?: number | null;
+  task_id?: number | null;
+  task_title?: string | null;
+  task_board_status?: string | null;
+  sprint_id?: number | null;
+  sprint_name?: string | null;
+  sprint_status?: string | null;
   attempt: number;
   worker_id: string | null;
   queue: string | null;
@@ -249,6 +276,178 @@ export interface ArtifactContent {
   truncated: boolean;
 }
 
+export interface WorkItemArtifactRefs {
+  task_dir: string;
+  context_pack_json: string;
+  context_pack_md: string;
+  plan_pack_json: string;
+  plan_pack_md: string;
+  review_report_json: string;
+  review_report_md: string;
+  test_report_json: string;
+  test_report_md: string;
+  pr_ready_report_json: string;
+  pr_ready_report_md: string;
+  rework_pack_json: string;
+  step_artifacts_dir: string;
+}
+
+export interface WorkItem {
+  id: number;
+  project_id: number;
+  protocol_run_id: number;
+  title: string;
+  status: string;
+  lifecycle_state: string;
+  lifecycle_reason: string | null;
+  context_status: string;
+  plan_status: string;
+  review_status: string;
+  qa_status: string;
+  refactor_status: string;
+  owner_agent: string | null;
+  helper_agents: string[];
+  task_dir: string | null;
+  artifact_refs: WorkItemArtifactRefs;
+  depends_on: number[];
+  pr_ready: boolean;
+  blocking_clarifications: number;
+  blocking_policy_findings: number;
+  iteration_count: number;
+  max_iterations: number;
+  summary: string | null;
+  active_stage?: string | null;
+  active_stage_label?: string | null;
+  active_stage_status?: string | null;
+  latest_completed_stage?: string | null;
+  latest_artifact_summary?: string | null;
+  blocking_reason?: string | null;
+  progress_summary?: string | null;
+}
+
+export interface WorkItemReview {
+  verdict: string;
+  summary: string;
+  blocking_findings: string[];
+  maintainability_findings: string[];
+  warnings: string[];
+  scope_analysis: Record<string, unknown>;
+}
+
+export interface WorkItemQA {
+  work_item: WorkItem;
+  qa: QAResult;
+}
+
+export interface WorkItemRuntimeAgent {
+  agent_id: string;
+  role: string;
+  status: string;
+  model_override?: string | null;
+  reasoning_effort?: string | null;
+}
+
+export interface WorkItemRuntimeArtifact {
+  id: string;
+  key: string;
+  stage_id: string;
+  name: string;
+  type: string;
+  path: string;
+  source: "work_item" | "step";
+  exists: boolean;
+  size: number;
+  created_at: string | null;
+  content_source?: "work_item" | "step" | null;
+  content_id?: string | null;
+}
+
+export interface WorkItemRuntimeActivity {
+  id: string;
+  kind: string;
+  stage_id?: string | null;
+  status?: string | null;
+  message: string;
+  created_at?: string | null;
+  agent_id?: string | null;
+  run_id?: string | null;
+  windmill_job_id?: string | null;
+  artifact_key?: string | null;
+}
+
+export interface WorkItemStageRun {
+  stage_id: string;
+  stage_name: string;
+  order: number;
+  status: string;
+  mode?: string | null;
+  summary?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  agent_assignments: WorkItemRuntimeAgent[];
+  artifacts: WorkItemRuntimeArtifact[];
+  blocking_reasons: string[];
+  windmill_job_id?: string | null;
+  windmill_module_id?: string | null;
+  run_ids: string[];
+}
+
+export interface WorkItemRuntimeWindmill {
+  flow_id?: string | null;
+  job_id?: string | null;
+  module_id?: string | null;
+  run_id?: string | null;
+}
+
+export interface WorkItemRuntime {
+  work_item: WorkItem;
+  active_stage: string;
+  active_stage_label: string;
+  active_stage_status: string;
+  latest_completed_stage?: string | null;
+  progress_summary?: string | null;
+  blocking_reasons: string[];
+  active_agents: WorkItemRuntimeAgent[];
+  stage_runs: WorkItemStageRun[];
+  latest_artifacts: WorkItemRuntimeArtifact[];
+  activity: WorkItemRuntimeActivity[];
+  windmill?: WorkItemRuntimeWindmill | null;
+}
+
+export interface WorkItemLifecycleUpdate {
+  reason?: string;
+}
+
+export interface WorkItemOwnerUpdate {
+  owner_agent: string;
+}
+
+export interface BrownfieldRunRequest {
+  feature_request: string;
+  feature_name?: string;
+  output_mode?: string;
+  branch?: string;
+  protocol_name?: string;
+  overwrite_protocol?: boolean;
+  owner_agent?: string;
+  helper_agents?: string[];
+  allow_helper_agents?: boolean;
+}
+
+export interface BrownfieldRunResponse {
+  success: boolean;
+  project_id: number;
+  output_mode: string;
+  spec_run_id: number | null;
+  spec_path: string | null;
+  plan_path: string | null;
+  tasks_path: string | null;
+  protocol: ProtocolRun | null;
+  work_items: WorkItem[];
+  next_work_item_id: number | null;
+  warnings: string[];
+}
+
 export interface DiffHunk {
   old_start: number;
   old_lines: number;
@@ -282,6 +481,7 @@ export interface Event {
   id: number;
   protocol_run_id: number | null;
   step_run_id: number | null;
+  spec_run_id?: number | null;
   event_type: string;
   message: string;
   metadata: Record<string, unknown> | null;
@@ -364,6 +564,28 @@ export interface PolicyFinding {
 export interface EffectivePolicy {
   hash: string;
   policy: Record<string, unknown>;
+}
+
+export interface QAResult {
+  verdict: string;
+  summary: string | null;
+  gates: QAGate[];
+}
+
+export interface QAGate {
+  id: string;
+  name: string;
+  status: string;
+  findings: QAFinding[];
+}
+
+export interface QAFinding {
+  severity: string;
+  message: string;
+  file?: string | null;
+  line?: number | null;
+  rule_id?: string | null;
+  suggestion?: string | null;
 }
 
 // =============================================================================
@@ -620,17 +842,15 @@ export interface BurndownPoint {
 
 export interface ProtocolArtifact {
   id: string;
-  protocol_run_id: number;
   step_run_id: number | null;
-  run_id: string | null;
+  step_name?: string | null;
   name: string;
   type: string;
-  kind: string; // Alias for type, kept for backwards compatibility
+  kind?: string | null; // Legacy alias for type
   path?: string | null;
-  sha256?: string | null;
   size: number;
-  bytes?: number | null; // Alias for size, kept for backwards compatibility
-  created_at: string;
+  bytes?: number | null; // Legacy alias for size
+  created_at: string | null;
 }
 
 export interface Feedback {
@@ -645,7 +865,10 @@ export interface Feedback {
 }
 
 export interface FeedbackCreate {
-  feedback_type: "approve" | "reject" | "clarify" | "retry";
+  /** @deprecated Use `action` instead - aligned with backend FeedbackRequest */
+  feedback_type?: "approve" | "reject" | "clarify" | "retry";
+  /** Action to take - matches backend FeedbackRequest.action */
+  action: "approve" | "reject" | "clarify" | "retry";
   message: string;
   step_run_id?: number;
   metadata?: Record<string, unknown>;
@@ -658,15 +881,14 @@ export interface ProtocolFlowInfo {
 }
 
 export interface StepArtifact {
-  id: number;
-  step_run_id: number;
-  run_id: string | null;
+  id: string;
   name: string;
-  kind: string;
-  path: string;
-  sha256: string | null;
-  bytes: number | null;
-  created_at: string;
+  type: string;
+  kind?: string | null; // Legacy alias for type
+  path?: string | null;
+  size: number;
+  bytes?: number | null; // Legacy alias for size
+  created_at: string | null;
 }
 
 export interface StepQuality {
@@ -679,7 +901,18 @@ export interface StepQuality {
     name: string;
     article: string;
     status: string;
-    findings: unknown[];
+    details?: {
+      command?: string | null;
+      stdout?: string | null;
+      stderr?: string | null;
+    } | null;
+    findings: Array<{
+      code: string;
+      severity: string;
+      message: string;
+      step_id?: string | null;
+      suggested_fix?: string | null;
+    }>;
   }>;
 }
 
@@ -692,8 +925,19 @@ export interface Agent {
   name: string;
   kind: string;
   capabilities: string[];
-  status: "available" | "busy" | "unavailable";
+  status: "configured" | "available" | "busy" | "unavailable" | "disabled";
   default_model: string | null;
+  available_models?: Array<{
+    value: string;
+    label?: string | null;
+    description?: string | null;
+    default_reasoning_effort?: string | null;
+    reasoning_efforts?: Array<{
+      value: string;
+      description?: string | null;
+    }>;
+  }>;
+  reasoning_effort?: string | null;
   command_dir: string | null;
   enabled?: boolean | null;
   command?: string | null;
@@ -709,6 +953,7 @@ export interface AgentUpdate {
   kind?: string | null;
   enabled?: boolean | null;
   default_model?: string | null;
+  reasoning_effort?: string | null;
   capabilities?: string[] | null;
   command_dir?: string | null;
   command?: string | null;
@@ -783,6 +1028,20 @@ export interface AgentHealth {
   version?: string | null;
   error?: string | null;
   response_time_ms?: number | null;
+}
+
+export interface AgentTestCheck {
+  name: string;
+  ok: boolean;
+  error?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface AgentTestResult {
+  agent_id: string;
+  ok: boolean;
+  checks: AgentTestCheck[];
+  duration_ms?: number | null;
 }
 
 export interface AgentMetrics {

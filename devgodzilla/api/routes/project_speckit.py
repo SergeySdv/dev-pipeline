@@ -5,6 +5,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from devgodzilla.api.routes._speckit_common import get_local_project_or_400
 from devgodzilla.api.dependencies import get_db, get_service_context
 from devgodzilla.db.database import Database
 from devgodzilla.services.base import ServiceContext
@@ -49,6 +50,7 @@ class SpecifyResponse(BaseModel):
 class PlanRequest(BaseModel):
     spec_path: str
     spec_run_id: Optional[int] = None
+    context: Optional[str] = None
 
 
 class PlanResponse(BaseModel):
@@ -135,6 +137,10 @@ class ImplementResponse(BaseModel):
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    protocol_id: Optional[int] = None
+    protocol_root: Optional[str] = None
+    step_count: int = 0
+    warnings: List[str] = Field(default_factory=list)
     spec_run_id: Optional[int] = None
     worktree_path: Optional[str] = None
     error: Optional[str] = None
@@ -155,9 +161,7 @@ def init_project_speckit(
     service: SpecificationService = Depends(_service),
     ctx: ServiceContext = Depends(get_service_context),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     constitution_content = request.content if request else None
     if constitution_content is None:
         policy_service = PolicyService(ctx, db)
@@ -187,9 +191,7 @@ def get_project_constitution(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     content = service.get_constitution(project.local_path)
     if content is None:
         raise HTTPException(status_code=404, detail="Constitution not found")
@@ -204,9 +206,7 @@ def put_project_constitution(
     service: SpecificationService = Depends(_service),
     ctx: ServiceContext = Depends(get_service_context),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.save_constitution(project.local_path, request.content, project_id=project_id)
     policy_service = PolicyService(ctx, db)
     override, meta = policy_service.policy_override_from_constitution(request.content)
@@ -224,6 +224,7 @@ def put_project_constitution(
         path=result.spec_path,
         constitution_hash=result.constitution_hash,
         error=result.error,
+        warnings=result.warnings,
     )
 
 
@@ -234,9 +235,7 @@ def sync_project_constitution(
     service: SpecificationService = Depends(_service),
     ctx: ServiceContext = Depends(get_service_context),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     policy_service = PolicyService(ctx, db)
     effective = policy_service.resolve_effective_policy(
         project_id,
@@ -261,9 +260,7 @@ def project_speckit_specify(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     
     # Emit start event
     try:
@@ -339,14 +336,13 @@ def project_speckit_plan(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.run_plan(
         project.local_path,
         request.spec_path,
         spec_run_id=request.spec_run_id,
         project_id=project_id,
+        context=request.context,
     )
     return PlanResponse(
         success=result.success,
@@ -366,9 +362,7 @@ def project_speckit_tasks(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.run_tasks(
         project.local_path,
         request.plan_path,
@@ -393,9 +387,7 @@ def project_speckit_clarify(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.run_clarify(
         project.local_path,
         request.spec_path,
@@ -421,9 +413,7 @@ def project_speckit_checklist(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.run_checklist(
         project.local_path,
         request.spec_path,
@@ -447,9 +437,7 @@ def project_speckit_analyze(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.run_analyze(
         project.local_path,
         request.spec_path,
@@ -474,9 +462,7 @@ def project_speckit_implement(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(_service),
 ):
-    project = db.get_project(project_id)
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
+    project = get_local_project_or_400(db, project_id)
     result = service.run_implement(
         project.local_path,
         request.spec_path,
@@ -487,6 +473,10 @@ def project_speckit_implement(
         success=result.success,
         run_path=result.run_path,
         metadata_path=result.metadata_path,
+        protocol_id=result.protocol_id,
+        protocol_root=result.protocol_root,
+        step_count=result.step_count,
+        warnings=result.warnings,
         spec_run_id=result.spec_run_id,
         worktree_path=result.worktree_path,
         error=result.error,

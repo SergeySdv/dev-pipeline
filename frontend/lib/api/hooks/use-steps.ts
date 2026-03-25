@@ -66,7 +66,7 @@ export function useStepArtifacts(stepId: number | undefined) {
   });
 }
 
-export function useStepArtifactContent(stepId: number | undefined, artifactId: number | undefined) {
+export function useStepArtifactContent(stepId: number | undefined, artifactId: string | undefined) {
   return useQuery({
     queryKey: [...queryKeys.steps.artifacts(stepId as number), "content", artifactId],
     queryFn: () =>
@@ -75,7 +75,7 @@ export function useStepArtifactContent(stepId: number | undefined, artifactId: n
   });
 }
 
-export function useStepArtifactDownloadUrl(stepId: number, artifactId: number) {
+export function useStepArtifactDownloadUrl(stepId: number, artifactId: string) {
   const config = apiClient.getConfig();
   return `${config.baseUrl}/steps/${stepId}/artifacts/${artifactId}/download`;
 }

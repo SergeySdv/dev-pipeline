@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 # =============================================================================
 # Enums
@@ -54,6 +54,7 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = None
     git_url: Optional[str] = None
     local_path: Optional[str] = None
+    github_token: Optional[str] = None
     base_branch: str = "main"
     auto_onboard: bool = True
     auto_discovery: bool = True
@@ -65,6 +66,7 @@ class ProjectUpdate(BaseModel):
     git_url: Optional[str] = None
     base_branch: Optional[str] = None
     local_path: Optional[str] = None
+    github_token: Optional[str] = None
 
 class ProjectOut(APIModel):
     id: int
@@ -74,6 +76,7 @@ class ProjectOut(APIModel):
     git_url: Optional[str]
     base_branch: str = "main"
     local_path: Optional[str]
+    github_token_configured: bool = False
     created_at: Any
     updated_at: Any
     constitution_version: Optional[str] = None
@@ -129,13 +132,33 @@ class DiscoveryRetryResponse(BaseModel):
 # Protocol Models
 # =============================================================================
 
-class ProtocolCreate(BaseModel):
-    project_id: int
-    name: str = Field(..., description="Name of the protocol run")
+class ProtocolCreateBase(BaseModel):
+    protocol_name: str = Field(..., min_length=1, description="Name of the protocol run")
     description: Optional[str] = None
-    branch_name: Optional[str] = None
-    template: Optional[str] = None
-    inputs: Optional[Dict[str, Any]] = None
+    base_branch: str = "main"
+    template_source: Optional[Any] = None
+    template_config: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_aliases(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        if "protocol_name" not in normalized and "name" in normalized:
+            normalized["protocol_name"] = normalized.pop("name")
+        if "base_branch" not in normalized and "branch_name" in normalized:
+            normalized["base_branch"] = normalized.pop("branch_name")
+        if "template_source" not in normalized and "template" in normalized:
+            normalized["template_source"] = normalized.pop("template")
+        if "template_config" not in normalized and "inputs" in normalized:
+            normalized["template_config"] = normalized.pop("inputs")
+        return normalized
+
+
+class ProtocolCreate(ProtocolCreateBase):
+    project_id: int
 
 class ProtocolAction(str, Enum):
     START = "start"
@@ -154,9 +177,18 @@ class ProtocolOut(APIModel):
     status: str
     base_branch: str
     worktree_path: Optional[str]
+    protocol_root: Optional[str] = None
+    description: Optional[str] = None
+    template_config: Optional[Dict[str, Any]] = None
+    template_source: Optional[Any] = None
     summary: Optional[str] = None
+    policy_pack_key: Optional[str] = None
+    policy_pack_version: Optional[str] = None
+    policy_effective_hash: Optional[str] = None
+    policy_effective_json: Optional[Dict[str, Any]] = None
     windmill_flow_id: Optional[str]
     speckit_metadata: Optional[Dict[str, Any]]
+    linked_sprint_id: Optional[int] = None
     created_at: Any
     updated_at: Any
 
@@ -206,8 +238,10 @@ class AgentInfo(BaseModel):
     name: str
     kind: str
     capabilities: List[str]
-    status: str = "available"
+    status: str = "configured"
     default_model: Optional[str] = None
+    available_models: List[Dict[str, Any]] = Field(default_factory=list)
+    reasoning_effort: Optional[str] = None
     command_dir: Optional[str] = None
     enabled: Optional[bool] = None
     command: Optional[str] = None
@@ -222,6 +256,7 @@ class AgentConfigUpdate(BaseModel):
     kind: Optional[str] = None
     enabled: Optional[bool] = None
     default_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     capabilities: Optional[List[str]] = None
     command_dir: Optional[str] = None
     command: Optional[str] = None
@@ -291,6 +326,25 @@ class AgentHealthOut(BaseModel):
     error: Optional[str] = None
     response_time_ms: Optional[float] = None
 
+
+class AgentTestCheckOut(BaseModel):
+    name: str
+    ok: bool
+    error: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTestRequest(BaseModel):
+    # Optional overrides from the UI modal; these are not persisted.
+    overrides: Optional[AgentConfigUpdate] = None
+
+
+class AgentTestOut(BaseModel):
+    agent_id: str
+    ok: bool
+    checks: List[AgentTestCheckOut] = Field(default_factory=list)
+    duration_ms: Optional[float] = None
+
 class AgentMetricsOut(BaseModel):
     agent_id: str
     active_steps: int = 0
@@ -357,6 +411,7 @@ class EventOut(APIModel):
     id: int
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
+    spec_run_id: Optional[int] = None
     event_type: str
     message: str
     metadata: Optional[Dict[str, Any]] = None
@@ -405,6 +460,190 @@ class ProtocolArtifactOut(ArtifactOut):
     step_name: Optional[str] = None
 
 
+class WorkItemArtifactRefsOut(BaseModel):
+    task_dir: str
+    context_pack_json: str
+    context_pack_md: str
+    plan_pack_json: str
+    plan_pack_md: str
+    review_report_json: str
+    review_report_md: str
+    test_report_json: str
+    test_report_md: str
+    pr_ready_report_json: str
+    pr_ready_report_md: str
+    rework_pack_json: str
+    step_artifacts_dir: str
+
+
+class WorkItemOut(BaseModel):
+    id: int
+    project_id: int
+    protocol_run_id: int
+    title: str
+    status: str
+    lifecycle_state: str = "active"
+    lifecycle_reason: Optional[str] = None
+    context_status: str
+    plan_status: str
+    review_status: str
+    qa_status: str
+    refactor_status: str = "not_needed"
+    owner_agent: Optional[str] = None
+    helper_agents: List[str] = Field(default_factory=list)
+    task_dir: Optional[str] = None
+    artifact_refs: WorkItemArtifactRefsOut
+    depends_on: List[int] = Field(default_factory=list)
+    pr_ready: bool = False
+    blocking_clarifications: int = 0
+    blocking_policy_findings: int = 0
+    iteration_count: int = 0
+    max_iterations: int = 0
+    summary: Optional[str] = None
+    active_stage: Optional[str] = None
+    active_stage_label: Optional[str] = None
+    active_stage_status: Optional[str] = None
+    latest_completed_stage: Optional[str] = None
+    latest_artifact_summary: Optional[str] = None
+    blocking_reason: Optional[str] = None
+    progress_summary: Optional[str] = None
+
+
+class WorkItemRuntimeAgentOut(BaseModel):
+    agent_id: str
+    role: str
+    status: str
+    model_override: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+
+
+class WorkItemRuntimeArtifactOut(BaseModel):
+    id: str
+    key: str
+    stage_id: str
+    name: str
+    type: str
+    path: str
+    source: str
+    exists: bool
+    size: int = 0
+    created_at: Optional[str] = None
+    content_source: Optional[str] = None
+    content_id: Optional[str] = None
+
+
+class WorkItemRuntimeActivityOut(BaseModel):
+    id: str
+    kind: str
+    stage_id: Optional[str] = None
+    status: Optional[str] = None
+    message: str
+    created_at: Optional[str] = None
+    agent_id: Optional[str] = None
+    run_id: Optional[str] = None
+    windmill_job_id: Optional[str] = None
+    artifact_key: Optional[str] = None
+
+
+class WorkItemStageRunOut(BaseModel):
+    stage_id: str
+    stage_name: str
+    order: int
+    status: str
+    mode: Optional[str] = None
+    summary: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    agent_assignments: List[WorkItemRuntimeAgentOut] = Field(default_factory=list)
+    artifacts: List[WorkItemRuntimeArtifactOut] = Field(default_factory=list)
+    blocking_reasons: List[str] = Field(default_factory=list)
+    windmill_job_id: Optional[str] = None
+    windmill_module_id: Optional[str] = None
+    run_ids: List[str] = Field(default_factory=list)
+
+
+class WorkItemRuntimeWindmillOut(BaseModel):
+    flow_id: Optional[str] = None
+    job_id: Optional[str] = None
+    module_id: Optional[str] = None
+    run_id: Optional[str] = None
+
+
+class WorkItemRuntimeOut(BaseModel):
+    work_item: WorkItemOut
+    active_stage: str
+    active_stage_label: str
+    active_stage_status: str
+    latest_completed_stage: Optional[str] = None
+    progress_summary: Optional[str] = None
+    blocking_reasons: List[str] = Field(default_factory=list)
+    active_agents: List[WorkItemRuntimeAgentOut] = Field(default_factory=list)
+    stage_runs: List[WorkItemStageRunOut] = Field(default_factory=list)
+    latest_artifacts: List[WorkItemRuntimeArtifactOut] = Field(default_factory=list)
+    activity: List[WorkItemRuntimeActivityOut] = Field(default_factory=list)
+    windmill: Optional[WorkItemRuntimeWindmillOut] = None
+
+
+class BuildContextRequest(BaseModel):
+    refresh: bool = False
+
+
+class BuildPlanRequest(BaseModel):
+    refresh: bool = False
+
+
+class WorkItemImplementRequest(BaseModel):
+    owner_agent: Optional[str] = None
+
+
+class WorkItemLifecycleRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class WorkItemReassignRequest(BaseModel):
+    owner_agent: str
+
+
+class WorkItemReviewOut(BaseModel):
+    verdict: str
+    summary: str
+    blocking_findings: List[str] = Field(default_factory=list)
+    maintainability_findings: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    scope_analysis: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkItemQAOut(BaseModel):
+    work_item: WorkItemOut
+    qa: QAResultOut
+
+
+class BrownfieldRunRequest(BaseModel):
+    feature_request: str
+    feature_name: Optional[str] = None
+    output_mode: str = "task_cycle"
+    branch: Optional[str] = None
+    protocol_name: Optional[str] = None
+    overwrite_protocol: bool = False
+    owner_agent: Optional[str] = None
+    helper_agents: List[str] = Field(default_factory=list)
+    allow_helper_agents: bool = False
+
+
+class BrownfieldRunOut(BaseModel):
+    success: bool
+    project_id: int
+    output_mode: str
+    spec_run_id: Optional[int] = None
+    spec_path: Optional[str] = None
+    plan_path: Optional[str] = None
+    tasks_path: Optional[str] = None
+    protocol: Optional[ProtocolOut] = None
+    work_items: List[WorkItemOut] = Field(default_factory=list)
+    next_work_item_id: Optional[int] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
 # =============================================================================
 # Job Runs / Run Registry Models
 # =============================================================================
@@ -418,6 +657,13 @@ class JobRunOut(APIModel):
     project_id: Optional[int] = None
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
+    spec_run_id: Optional[int] = None
+    task_id: Optional[int] = None
+    task_title: Optional[str] = None
+    task_board_status: Optional[str] = None
+    sprint_id: Optional[int] = None
+    sprint_name: Optional[str] = None
+    sprint_status: Optional[str] = None
     queue: Optional[str] = None
     attempt: Optional[int] = None
     worker_id: Optional[str] = None
@@ -552,6 +798,7 @@ class GateResultOut(BaseModel):
     name: str
     status: str  # passed|warning|failed|skipped
     findings: List[GateFindingOut] = Field(default_factory=list)
+    details: Optional[Dict[str, Any]] = None
 
 
 class ChecklistItemOut(BaseModel):
@@ -742,6 +989,9 @@ class CreateSprintFromProtocolRequest(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     auto_sync: bool = True
+
+class SyncProtocolToSprintRequest(BaseModel):
+    sprint_id: int
 
 class SprintVelocityOut(BaseModel):
     sprint_id: int

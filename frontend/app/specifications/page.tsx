@@ -64,6 +64,8 @@ import {
   useRunImplement,
   useSpecificationsWithMeta,
 } from "@/lib/api";
+import { getSpecificationDetailPath, getSpecificationReviewPath } from "@/lib/project-routes";
+import { getImplementSuccessOutcome } from "@/lib/workflow/implement-result";
 
 export default function SpecificationsPage() {
   // Filter state
@@ -259,7 +261,11 @@ export default function SpecificationsPage() {
         spec_run_id: spec.spec_run_id ?? undefined,
       });
       if (result.success) {
-        toast.success("Implementation run initialized");
+        const outcome = getImplementSuccessOutcome(result);
+        toast.success(outcome.message);
+        if (outcome.targetPath) {
+          router.push(outcome.targetPath);
+        }
       } else {
         toast.error(result.error || "Implement init failed");
       }
@@ -300,6 +306,20 @@ export default function SpecificationsPage() {
     setCleanupTarget(spec);
     setCleanupDeleteRemote(false);
     setCleanupOpen(true);
+  };
+
+  const getSpecificationEntry = (spec: Specification) => {
+    const hasReviewSurface = Boolean(
+      spec.has_tasks ||
+        spec.checklist_path ||
+        spec.analysis_path ||
+        spec.implement_path ||
+        spec.protocol_id
+    );
+
+    return hasReviewSurface
+      ? { href: getSpecificationReviewPath(spec.id), label: "Review" }
+      : { href: getSpecificationDetailPath(spec.id), label: "View" };
   };
 
   const handleCleanup = async () => {
@@ -546,6 +566,7 @@ export default function SpecificationsPage() {
       <div className="grid gap-4">
         {specifications.map((spec) => {
           const isCleaned = spec.status === "cleaned";
+          const entryAction = getSpecificationEntry(spec);
           return (
             <Card key={spec.id} className="hover:bg-muted/50 transition-colors">
               <CardHeader className="pb-3">
@@ -639,7 +660,7 @@ export default function SpecificationsPage() {
                   </div>
                   <div className="flex gap-2">
                     <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/specifications/${spec.id}`}>View</Link>
+                      <Link href={entryAction.href}>{entryAction.label}</Link>
                     </Button>
                     <Button variant="ghost" size="sm" asChild>
                       <Link href={`/projects/${spec.project_id}?tab=spec`}>Project</Link>

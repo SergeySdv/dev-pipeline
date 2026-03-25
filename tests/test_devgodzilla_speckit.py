@@ -281,6 +281,116 @@ class TestSpecificationServicePlan:
         assert result.success
         assert Path(result.contracts_path).is_dir()
 
+    def test_plan_includes_additional_context_in_agent_prompt(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test that optional planning context is included in the agent prompt."""
+        spec_dir = initialized_workspace / "specs" / "001-test-feature"
+        spec_dir.mkdir(parents=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Test Feature\n\nPlan this change.")
+
+        captured: dict[str, str] = {}
+
+        def fake_run_speckit_agent(
+            project_path: str,
+            *,
+            prompt_name: str,
+            prompt_context: str,
+            job_id: str,
+            project_id: int | None = None,
+        ):
+            captured["project_path"] = project_path
+            captured["prompt_name"] = prompt_name
+            captured["prompt_context"] = prompt_context
+            captured["job_id"] = job_id
+            return MagicMock(success=True, error=None)
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_plan(
+            str(initialized_workspace),
+            str(spec_path),
+            context="Prefer the existing auth tables and avoid schema changes.",
+        )
+
+        assert result.success
+        assert "Additional planning context:" in captured["prompt_context"]
+        assert "Prefer the existing auth tables and avoid schema changes." in captured["prompt_context"]
+
+    def test_plan_fails_when_non_dummy_agent_leaves_placeholder_outputs(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_result = service.run_specify(str(initialized_workspace), "Store user metadata in sqlite")
+        assert spec_result.success
+
+        def fake_run_speckit_agent(*args, **kwargs):
+            return MagicMock(
+                success=True,
+                error=None,
+                stdout="plan complete",
+                stderr="",
+                metadata={"engine_id": "opencode"},
+            )
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_plan(str(initialized_workspace), spec_result.spec_path)
+
+        assert not result.success
+        assert "incomplete outputs" in (result.error or "").lower()
+        spec_dir = Path(spec_result.spec_path).parent
+        assert (spec_dir / "_runtime" / "plan.error.txt").exists()
+
+    def test_plan_accepts_populated_outputs_and_writes_runtime_trace(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_result = service.run_specify(str(initialized_workspace), "Store user metadata in sqlite")
+        assert spec_result.success
+        spec_dir = Path(spec_result.spec_path).parent
+
+        def fake_run_speckit_agent(*args, **kwargs):
+            (spec_dir / "plan.md").write_text(
+                "\n".join(
+                    [
+                        "# Implementation Plan: user-metadata",
+                        "",
+                        "## Proposed Changes",
+                        "- [ ] Update `src/user_metadata.py`",
+                        "- [ ] Add `tests/test_user_metadata.py`",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (spec_dir / "data-model.md").write_text(
+                "# Data Model\n\n## Entities\n\n- `user_metadata` table with `user_id`, `key`, `value`\n",
+                encoding="utf-8",
+            )
+            (spec_dir / "research.md").write_text(
+                "# Research\n\n- SQLite is acceptable for local single-process storage.\n",
+                encoding="utf-8",
+            )
+            (spec_dir / "quickstart.md").write_text(
+                "# Quickstart\n\n1. Run `pytest -q`.\n2. Verify metadata persists across restart.\n",
+                encoding="utf-8",
+            )
+            return MagicMock(
+                success=True,
+                error=None,
+                stdout="plan complete",
+                stderr="",
+                metadata={"engine_id": "opencode"},
+            )
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_plan(str(initialized_workspace), spec_result.spec_path)
+
+        assert result.success
+        assert (spec_dir / "_runtime" / "plan.prompt.md").exists()
+        assert (spec_dir / "_runtime" / "plan.result.json").exists()
+
 
 class TestSpecificationServiceTasks:
     """Tests for SpecificationService.run_tasks()"""
@@ -307,6 +417,143 @@ class TestSpecificationServiceTasks:
         assert result.success
         assert result.task_count >= 0
         assert result.parallelizable_count >= 0
+
+    def test_tasks_fail_when_non_dummy_agent_leaves_template_output(
+        self, service, initialized_workspace, monkeypatch: pytest.MonkeyPatch
+    ):
+        spec_result = service.run_specify(str(initialized_workspace), "Store user metadata in sqlite")
+        assert spec_result.success
+        plan_path = Path(spec_result.spec_path).parent / "plan.md"
+        plan_path.write_text(
+            "# Implementation Plan\n\n## Proposed Changes\n- [ ] Update `src/user_metadata.py`\n",
+            encoding="utf-8",
+        )
+
+        def fake_run_speckit_agent(*args, **kwargs):
+            return MagicMock(
+                success=True,
+                error=None,
+                stdout="tasks complete",
+                stderr="",
+                metadata={"engine_id": "opencode"},
+            )
+
+        monkeypatch.setattr(service, "_run_speckit_agent", fake_run_speckit_agent)
+
+        result = service.run_tasks(str(initialized_workspace), str(plan_path))
+
+        assert not result.success
+        assert "incomplete outputs" in (result.error or "").lower()
+        assert (plan_path.parent / "_runtime" / "tasks.error.txt").exists()
+
+
+class TestSpecificationServiceImplement:
+    """Tests for SpecificationService.run_implement()."""
+
+    def test_implement_bootstraps_protocol_from_tasks(
+        self, service_context, initialized_workspace, tmp_path
+    ):
+        from devgodzilla.db.database import SQLiteDatabase
+
+        db_path = tmp_path / "devgodzilla.sqlite"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(
+            name="SpecKit Implement Project",
+            git_url="https://github.com/example/test.git",
+            base_branch="main",
+            local_path=str(initialized_workspace),
+        )
+
+        spec_dir = initialized_workspace / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Feature 001\n", encoding="utf-8")
+        (spec_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text(
+            "\n".join(
+                [
+                    "# Task List: Feature 001",
+                    "",
+                    "## Phase 1: Setup",
+                    "- [ ] Initialize scaffolding",
+                    "",
+                    "## Phase 2: Implementation",
+                    "- [ ] Implement feature core",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        spec_run = db.create_spec_run(
+            project_id=project.id,
+            spec_name="001-feature",
+            status="tasks",
+            base_branch="main",
+            spec_path=str(spec_path.relative_to(initialized_workspace)),
+            plan_path=str((spec_dir / "plan.md").relative_to(initialized_workspace)),
+            tasks_path=str(tasks_path.relative_to(initialized_workspace)),
+        )
+
+        service = SpecificationService(service_context, db)
+
+        result = service.run_implement(
+            str(initialized_workspace),
+            str(spec_path.relative_to(initialized_workspace)),
+            spec_run_id=spec_run.id,
+            project_id=project.id,
+        )
+
+        assert result.success
+        assert result.protocol_id is not None
+        assert result.protocol_root is not None
+        assert result.step_count == 2
+        assert Path(result.run_path).exists()
+        assert Path(result.metadata_path).exists()
+
+        linked_spec_run = db.get_spec_run(spec_run.id)
+        assert linked_spec_run.protocol_run_id == result.protocol_id
+        assert linked_spec_run.implement_path == result.protocol_root
+
+        protocol = db.get_protocol_run(result.protocol_id)
+        assert protocol.protocol_root is not None
+        assert db.list_step_runs(result.protocol_id)
+
+    def test_implement_requires_tasks_for_protocol_bootstrap(
+        self, service_context, initialized_workspace, tmp_path
+    ):
+        from devgodzilla.db.database import SQLiteDatabase
+
+        db_path = tmp_path / "devgodzilla.sqlite"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+
+        project = db.create_project(
+            name="SpecKit Implement Project",
+            git_url="https://github.com/example/test.git",
+            base_branch="main",
+            local_path=str(initialized_workspace),
+        )
+
+        spec_dir = initialized_workspace / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Feature 001\n", encoding="utf-8")
+
+        service = SpecificationService(service_context, db)
+
+        result = service.run_implement(
+            str(initialized_workspace),
+            str(spec_path.relative_to(initialized_workspace)),
+            project_id=project.id,
+        )
+
+        assert not result.success
+        assert "tasks" in (result.error or "").lower()
+        assert result.protocol_id is None
 
 
 class TestSpecificationServiceList:

@@ -59,6 +59,7 @@ import type {
   Sprint,
   TaskBoardStatus,
 } from "@/lib/api/types";
+import { getProjectExecutionPath } from "@/lib/project-routes";
 import { cn } from "@/lib/utils";
 
 export default function ExecutionPage() {
@@ -323,7 +324,7 @@ export default function ExecutionPage() {
               </Button>
 
               {selectedProjectId && (
-                <Link href={`/projects/${selectedProjectId}/execution`}>
+                <Link href={getProjectExecutionPath(selectedProjectId)}>
                   <Button size="sm" variant="outline" className="gap-2">
                     <ArrowUpRight className="h-4 w-4" />
                     Open Project Execution

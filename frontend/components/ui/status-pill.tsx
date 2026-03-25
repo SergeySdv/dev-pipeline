@@ -33,7 +33,10 @@ type StatusType =
   | "archived"
   | "planning"
   | "open"
-  | "answered";
+  | "answered"
+  | "warning"
+  | "ready"
+  | "waiting_for_clarification";
 
 const statusConfig: Record<StatusType, { color: string; icon: React.ElementType; label?: string }> =
   {
@@ -67,6 +70,13 @@ const statusConfig: Record<StatusType, { color: string; icon: React.ElementType;
     // Run statuses
     queued: { color: "bg-slate-100 text-slate-600 border border-slate-200", icon: Clock },
     succeeded: { color: "bg-green-100 text-green-700 border border-green-200", icon: CheckCircle2 },
+    warning: { color: "bg-amber-100 text-amber-700 border border-amber-200", icon: AlertCircle },
+    ready: { color: "bg-sky-100 text-sky-700 border border-sky-200", icon: CheckCircle2 },
+    waiting_for_clarification: {
+      color: "bg-amber-100 text-amber-700 border border-amber-200",
+      icon: Clock,
+      label: "Waiting for Clarification",
+    },
     // Sprint statuses
     active: { color: "bg-emerald-100 text-emerald-700 border border-emerald-200", icon: Play },
     archived: { color: "bg-neutral-50 text-neutral-400 border border-neutral-200", icon: Slash },

@@ -20,12 +20,17 @@ export interface AgentCardData {
   id: string;
   name: string;
   kind: string;
-  status: "available" | "unavailable" | "disabled";
+  status: "available" | "unavailable" | "disabled" | "configured" | "not_installed";
   activeSteps: number;
   completedSteps: number;
   failedSteps: number;
   responseTimeMs: number | null;
   error: string | null;
+}
+
+function isAgentNotInstalled(error?: string | null): boolean {
+  if (!error) return false;
+  return /command not found|not installed|binary.*not.*found/i.test(error);
 }
 
 /**
@@ -43,13 +48,17 @@ export function computeAgentCardData(
   metrics?: AgentMetrics
 ): AgentCardData {
   const available = health?.available ?? agent.status === "available";
-  const enabled = agent.enabled ?? agent.status !== "unavailable";
+  const enabled = agent.enabled ?? agent.status !== "disabled";
 
-  let status: "available" | "unavailable" | "disabled";
+  let status: "available" | "unavailable" | "disabled" | "configured" | "not_installed";
   if (!enabled) {
     status = "disabled";
   } else if (available) {
     status = "available";
+  } else if (health && isAgentNotInstalled(health.error)) {
+    status = "not_installed";
+  } else if (agent.status === "configured" || !health) {
+    status = "configured";
   } else {
     status = "unavailable";
   }
@@ -83,7 +92,7 @@ export function validateAgentCardCompleteness(cardData: AgentCardData): {
   isComplete: boolean;
 } {
   const hasName = typeof cardData.name === "string" && cardData.name.length > 0;
-  const hasStatus = ["available", "unavailable", "disabled"].includes(cardData.status);
+  const hasStatus = ["available", "unavailable", "disabled", "configured", "not_installed"].includes(cardData.status);
   const hasActiveSteps = typeof cardData.activeSteps === "number";
   const hasCompletedSteps = typeof cardData.completedSteps === "number";
   const hasFailedSteps = typeof cardData.failedSteps === "number";
@@ -151,7 +160,17 @@ export function AgentHealthDashboard({ projectId }: { projectId?: number }) {
             const m = metricsById.get(agent.id);
             const available = h?.available ?? agent.status === "available";
             const responseTime = h?.response_time_ms ?? null;
-            const enabled = agent.enabled ?? agent.status !== "unavailable";
+            const enabled = agent.enabled ?? agent.status !== "disabled";
+            const notInstalled = !!h && isAgentNotInstalled(h.error);
+            const statusLabel = !enabled
+              ? "disabled"
+              : available
+                ? "available"
+                : notInstalled
+                  ? "not installed"
+                  : agent.status === "configured" || !h
+                    ? "configured"
+                    : "unavailable";
 
             return (
               <div key={agent.id} className="bg-card rounded-lg border p-4">
@@ -168,10 +187,12 @@ export function AgentHealthDashboard({ projectId }: { projectId?: number }) {
                           "text-[10px]",
                           !enabled && "text-muted-foreground",
                           enabled && available && "border-green-500 text-green-700",
-                          enabled && !available && "border-red-500 text-red-700"
+                          enabled && notInstalled && "border-orange-500 text-orange-700",
+                          enabled && !available && !notInstalled && statusLabel === "configured" && "border-blue-500 text-blue-700",
+                          enabled && !available && !notInstalled && statusLabel === "unavailable" && "border-red-500 text-red-700"
                         )}
                       >
-                        {!enabled ? "disabled" : available ? "available" : "unavailable"}
+                        {statusLabel}
                       </Badge>
                       {responseTime != null && (
                         <Badge variant="outline" className="text-[10px]">

@@ -81,7 +81,11 @@ class TestGate(Gate):
                     gate_name=self.gate_name,
                     verdict=GateVerdict.PASS,
                     duration_seconds=duration,
-                    metadata={"stdout": proc.stdout[:1000]},
+                    metadata={
+                        "command": " ".join(cmd),
+                        "stdout": proc.stdout[:1000],
+                        "stderr": proc.stderr[:1000],
+                    },
                 )
             else:
                 findings = self._parse_test_output(proc.stdout + proc.stderr)
@@ -91,7 +95,11 @@ class TestGate(Gate):
                     verdict=GateVerdict.FAIL,
                     findings=findings,
                     duration_seconds=duration,
-                    metadata={"stdout": proc.stdout[:1000], "stderr": proc.stderr[:1000]},
+                    metadata={
+                        "command": " ".join(cmd),
+                        "stdout": proc.stdout[:1000],
+                        "stderr": proc.stderr[:1000],
+                    },
                 )
                 
         except subprocess.TimeoutExpired:

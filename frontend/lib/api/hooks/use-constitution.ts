@@ -66,7 +66,7 @@ export const constitutionKeys = {
 export function useConstitution(projectId: number | undefined) {
   return useQuery({
     queryKey: constitutionKeys.detail(projectId as number),
-    queryFn: () => apiClient.get<ConstitutionResponse>(`/speckit/constitution/${projectId}`),
+    queryFn: () => apiClient.get<ConstitutionResponse>(`/projects/${projectId}/speckit/constitution`),
     enabled: !!projectId,
   });
 }
@@ -80,7 +80,7 @@ export function useConstitutionMetadata(projectId: number | undefined) {
     queryKey: constitutionKeys.metadata(projectId as number),
     queryFn: async () => {
       const response = await apiClient.get<ConstitutionResponse>(
-        `/speckit/constitution/${projectId}`
+        `/projects/${projectId}/speckit/constitution`
       );
       return {
         hash: response.hash ?? null,
@@ -102,7 +102,9 @@ export function useSaveConstitution() {
 
   return useMutation({
     mutationFn: ({ projectId, content }: { projectId: number; content: string }) =>
-      apiClient.put<ConstitutionResponse>(`/speckit/constitution/${projectId}`, { content }),
+      apiClient.put<ConstitutionResponse>(`/projects/${projectId}/speckit/constitution`, {
+        content,
+      }),
     onSuccess: (_, variables) => {
       // Invalidate all constitution-related queries
       queryClient.invalidateQueries({ queryKey: constitutionKeys.detail(variables.projectId) });
@@ -124,7 +126,9 @@ export function useResetConstitution() {
 
   return useMutation({
     mutationFn: (projectId: number) =>
-      apiClient.put<ConstitutionResponse>(`/speckit/constitution/${projectId}`, { content: "" }),
+      apiClient.put<ConstitutionResponse>(`/projects/${projectId}/speckit/constitution`, {
+        content: "",
+      }),
     onSuccess: (_, projectId) => {
       queryClient.invalidateQueries({ queryKey: constitutionKeys.detail(projectId) });
       queryClient.invalidateQueries({ queryKey: constitutionKeys.metadata(projectId) });

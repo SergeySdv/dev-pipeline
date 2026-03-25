@@ -66,6 +66,54 @@ prompts:
     assert "EXEC TEMPLATE" in resolution.prompt_text
 
 
+def test_execution_task_cycle_override_used(tmp_path):
+    repo_root = tmp_path / "repo"
+    protocol_root = repo_root / ".protocols" / "demo"
+    step_path = protocol_root / "step-01.md"
+
+    step_path.parent.mkdir(parents=True, exist_ok=True)
+    step_path.write_text("Step content", encoding="utf-8")
+
+    config = SimpleNamespace(
+        agent_config_path=tmp_path / "agents.yaml",
+        engine_defaults={"exec": "opencode"},
+        qa_model=None,
+    )
+    context = ServiceContext(config=config)
+    service = ExecutionService(context=context, db=Mock())
+
+    step = Mock()
+    step.step_name = "step-01"
+    step.summary = None
+    step.model = None
+    step.assigned_agent = "opencode"
+    step.runtime_state = {
+        "task_cycle": {
+            "active_stage_override": {
+                "stage": "implement",
+                "agent_id": "codex",
+                "model_override": "gpt-5.3-codex",
+                "reasoning_effort": "high",
+            }
+        }
+    }
+
+    run = Mock()
+    run.protocol_name = "demo"
+    run.worktree_path = None
+    run.protocol_root = None
+    run.template_config = None
+
+    project = Mock()
+    project.id = 1
+    project.local_path = str(repo_root)
+
+    resolution = service._resolve_step(step, run, project, engine_id=None, model=None)
+
+    assert resolution.engine_id == "codex"
+    assert resolution.model == "gpt-5.3-codex"
+
+
 def test_qa_prompt_assignment_used(tmp_path, monkeypatch):
     repo_root = tmp_path / "repo"
     protocol_root = repo_root / ".protocols" / "demo"

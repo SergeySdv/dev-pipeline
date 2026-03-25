@@ -60,6 +60,7 @@ import {
   useProjectWorktrees,
 } from "@/lib/api";
 import type { Branch, Commit, PullRequest, Worktree } from "@/lib/api/types";
+import { getSpecificationReviewPath } from "@/lib/project-routes";
 import { cn } from "@/lib/utils";
 
 interface BranchesTabProps {
@@ -391,19 +392,19 @@ export function BranchesTab({ projectId }: BranchesTabProps) {
 
                   {/* Actions */}
                   <div className="mt-3 flex items-center gap-2 border-t pt-3">
+                    {wt.spec_run_id && (
+                      <Link href={getSpecificationReviewPath(wt.spec_run_id)}>
+                        <Button variant="secondary" size="sm">
+                          <FileCode2 className="mr-1.5 h-4 w-4" />
+                          Review Implementation
+                        </Button>
+                      </Link>
+                    )}
                     {wt.protocol_run_id && (
                       <Link href={`/protocols/${wt.protocol_run_id}`}>
                         <Button variant="outline" size="sm">
                           <Workflow className="mr-1.5 h-4 w-4" />
-                          View Protocol
-                        </Button>
-                      </Link>
-                    )}
-                    {wt.spec_run_id && (
-                      <Link href={`/specifications/${wt.spec_run_id}`}>
-                        <Button variant="ghost" size="sm">
-                          <FileCode2 className="mr-1.5 h-4 w-4" />
-                          View Spec
+                          Open Protocol
                         </Button>
                       </Link>
                     )}

@@ -41,6 +41,7 @@ from devgodzilla.services.events import get_event_bus, StepStarted, StepComplete
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.quality import QualityService
+from devgodzilla.services.workspace_paths import resolve_protocol_root, resolve_workspace_root
 
 logger = get_logger(__name__)
 
@@ -55,6 +56,24 @@ def _normalize_policy_enforcement_mode(mode: Optional[str]) -> str:
         "blocking": "block",
     }
     return mapping.get(value, value)
+
+
+def _build_orchestrator(context: ServiceContext, db) -> Any:
+    from devgodzilla.services.orchestrator import OrchestratorMode, OrchestratorService
+    from devgodzilla.windmill.client import WindmillClient, WindmillConfig
+
+    windmill_client = None
+    mode = OrchestratorMode.LOCAL
+    if getattr(context.config, "windmill_enabled", False):
+        windmill_client = WindmillClient(
+            WindmillConfig(
+                base_url=context.config.windmill_url or "http://localhost:8000",
+                token=context.config.windmill_token or "",
+                workspace=getattr(context.config, "windmill_workspace", "devgodzilla"),
+            )
+        )
+        mode = OrchestratorMode.WINDMILL
+    return OrchestratorService(context=context, db=db, windmill_client=windmill_client, mode=mode)
 
 
 @dataclass
@@ -235,11 +254,15 @@ class ExecutionService(Service):
                 )
 
             policy_service = PolicyService(self.context, self.db)
-            workspace_root = (
-                Path(run.worktree_path).expanduser()
-                if run.worktree_path
-                else (Path(project.local_path).expanduser() if project.local_path else Path.cwd())
-            )
+            try:
+                workspace_root = resolve_workspace_root(run, project)
+            except Exception as exc:
+                return self._fail_step_pre_execution(
+                    step,
+                    run,
+                    error=str(exc),
+                    engine_id=engine_id or step.engine_id or "unknown",
+                )
             effective = policy_service.resolve_effective_policy(
                 project.id,
                 repo_root=workspace_root,
@@ -342,6 +365,20 @@ class ExecutionService(Service):
                 resolution.model = env_model or resolved_agent_model or engine.metadata.default_model
             
             # Build request
+            runtime_options = {}
+            try:
+                from devgodzilla.services.agent_config import AgentConfigService
+
+                cfg = AgentConfigService(self.context, db=self.db)
+                runtime_options = cfg.get_runtime_options(resolution.engine_id, project_id=project.id)
+            except Exception:
+                runtime_options = {}
+
+            task_cycle_override = self._task_cycle_active_override(step, stage="implement")
+            reasoning_effort = task_cycle_override.get("reasoning_effort")
+            if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+                runtime_options["reasoning_effort"] = reasoning_effort.strip()
+
             request = EngineRequest(
                 project_id=project.id,
                 protocol_run_id=run.id,
@@ -352,7 +389,7 @@ class ExecutionService(Service):
                 working_dir=str(resolution.workdir),
                 sandbox=resolution.sandbox,
                 timeout=resolution.timeout or self.default_timeout,
-                extra={"job_id": job_id},
+                extra={"job_id": job_id, **runtime_options},
             )
             
             # Execute
@@ -402,24 +439,9 @@ class ExecutionService(Service):
     ) -> StepResolution:
         """Resolve step execution context."""
         # Determine workspace and protocol roots
-        if run.worktree_path:
-            workspace_root = Path(run.worktree_path).expanduser()
-        else:
-            workspace_root = Path(project.local_path).expanduser() if project.local_path else Path.cwd()
-        
-        if run.protocol_root:
-            protocol_root = Path(run.protocol_root)
-            if not protocol_root.is_absolute():
-                protocol_root = workspace_root / protocol_root
-        else:
-            specs = workspace_root / "specs" / run.protocol_name
-            protocols = workspace_root / ".protocols" / run.protocol_name
-            if specs.exists():
-                protocol_root = specs
-            elif protocols.exists():
-                protocol_root = protocols
-            else:
-                protocol_root = specs
+        workspace_root = resolve_workspace_root(run, project)
+        protocol_root = resolve_protocol_root(run, workspace_root)
+        task_cycle_override = self._task_cycle_active_override(step, stage="implement")
         
         # Get step spec from template config
         step_spec = get_step_spec_from_template(run.template_config, step.step_name)
@@ -438,14 +460,18 @@ class ExecutionService(Service):
 
         resolved_engine = (
             engine_id
+            or task_cycle_override.get("agent_id")
             or step.assigned_agent
             or (step_spec.get("engine_id") if step_spec else None)
             or default_engine
             or "codex"
         )
+        if isinstance(resolved_engine, str) and resolved_engine.strip().lower() in {"dev", "developer", "default", "exec"}:
+            resolved_engine = default_engine or self.context.config.engine_defaults.get("exec") or "opencode"
         
         resolved_model = (
             model
+            or task_cycle_override.get("model_override")
             or (step_spec.get("model") if step_spec else None)
             or step.model
             or None
@@ -509,6 +535,26 @@ class ExecutionService(Service):
             timeout=timeout,
             step_name=step.step_name,
         )
+
+    @staticmethod
+    def _task_cycle_active_override(step: StepRun, *, stage: str) -> Dict[str, str]:
+        runtime_state = step.runtime_state if isinstance(step.runtime_state, dict) else {}
+        task_cycle = runtime_state.get("task_cycle") if isinstance(runtime_state, dict) else None
+        if not isinstance(task_cycle, dict):
+            return {}
+
+        override = task_cycle.get("active_stage_override")
+        if not isinstance(override, dict):
+            return {}
+        if str(override.get("stage") or "").strip() != stage:
+            return {}
+
+        resolved: Dict[str, str] = {}
+        for key in ("agent_id", "model_override", "reasoning_effort"):
+            value = override.get(key)
+            if isinstance(value, str) and value.strip():
+                resolved[key] = value.strip()
+        return resolved
 
     def _get_step_spec(
         self,
@@ -704,10 +750,16 @@ class ExecutionService(Service):
                     qa_report_path = None
                 qa_service.persist_verdict(qa_result, step.id, report_path=qa_report_path)
                 try:
-                    from devgodzilla.services.orchestrator import OrchestratorService
-
-                    orchestrator = OrchestratorService(context=self.context, db=self.db)
-                    orchestrator.check_and_complete_protocol(step.protocol_run_id)
+                    orchestrator = _build_orchestrator(self.context, self.db)
+                    completed = orchestrator.check_and_complete_protocol(step.protocol_run_id)
+                    current_run = self.db.get_protocol_run(step.protocol_run_id)
+                    current_step = self.db.get_step_run(step.id)
+                    if (
+                        not completed
+                        and current_run.status == ProtocolStatus.RUNNING
+                        and current_step.status == StepStatus.COMPLETED
+                    ):
+                        orchestrator.enqueue_next_step(step.protocol_run_id)
                 except Exception:
                     pass
             except Exception as exc:

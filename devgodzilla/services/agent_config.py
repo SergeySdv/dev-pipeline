@@ -9,6 +9,10 @@ import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import json
+import os
+import re
+import time
 
 try:
     import yaml
@@ -28,6 +32,7 @@ class AgentConfig:
     command_dir: Optional[str] = None
     endpoint: Optional[str] = None
     default_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     sandbox: str = "none"  # none, workspace-write, cloud
     capabilities: List[str] = field(default_factory=list)
     enabled: bool = True
@@ -58,6 +63,22 @@ class HealthCheckResult:
     response_time_ms: Optional[float] = None
 
 
+@dataclass
+class AgentTestCheckResult:
+    name: str
+    ok: bool
+    error: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentTestResult:
+    agent_id: str
+    ok: bool
+    checks: List[AgentTestCheckResult] = field(default_factory=list)
+    duration_ms: Optional[float] = None
+
+
 class AgentConfigService(Service):
     """
     Manages agent configurations and health checks.
@@ -85,6 +106,7 @@ class AgentConfigService(Service):
         self._health_config: Dict[str, Any] = {}
         self._prompts: Dict[str, Dict[str, Any]] = {}
         self._projects: Dict[str, Dict[str, Any]] = {}
+        self._codex_models_cache: Optional[List[Dict[str, Any]]] = None
         self._loaded = False
 
     def _get_db(self):
@@ -189,6 +211,7 @@ class AgentConfigService(Service):
                 "command_dir": base.command_dir,
                 "endpoint": base.endpoint,
                 "default_model": base.default_model,
+                "reasoning_effort": base.reasoning_effort,
                 "sandbox": base.sandbox,
                 "capabilities": list(base.capabilities),
                 "enabled": base.enabled,
@@ -205,6 +228,7 @@ class AgentConfigService(Service):
                 "command_dir": None,
                 "endpoint": None,
                 "default_model": None,
+                "reasoning_effort": None,
                 "sandbox": "none",
                 "capabilities": [],
                 "enabled": True,
@@ -225,6 +249,8 @@ class AgentConfigService(Service):
             values["endpoint"] = agent_data.get("endpoint")
         if "default_model" in agent_data:
             values["default_model"] = agent_data.get("default_model")
+        if "reasoning_effort" in agent_data:
+            values["reasoning_effort"] = agent_data.get("reasoning_effort")
         if "sandbox" in agent_data:
             values["sandbox"] = agent_data.get("sandbox") or values["sandbox"]
         if "capabilities" in agent_data:
@@ -436,6 +462,124 @@ class AgentConfigService(Service):
         # Look in devgodzilla package directory
         package_dir = Path(__file__).parent.parent
         return package_dir / self.DEFAULT_CONFIG_PATH
+
+    def _resolve_codex_home(self) -> Path:
+        codex_home = os.environ.get("CODEX_HOME")
+        if isinstance(codex_home, str) and codex_home.strip():
+            return Path(codex_home).expanduser()
+        return Path.home() / ".codex"
+
+    def _load_codex_models_cache(self) -> List[Dict[str, Any]]:
+        if self._codex_models_cache is not None:
+            return self._codex_models_cache
+
+        cache_path = self._resolve_codex_home() / "models_cache.json"
+        try:
+            raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            self._codex_models_cache = []
+            return self._codex_models_cache
+
+        models = raw.get("models") if isinstance(raw, dict) else None
+        if not isinstance(models, list):
+            self._codex_models_cache = []
+            return self._codex_models_cache
+
+        visible_models = [model for model in models if isinstance(model, dict) and model.get("visibility") == "list"]
+        visible_models.sort(key=lambda model: int(model.get("priority", 9999)))
+        self._codex_models_cache = visible_models
+        return self._codex_models_cache
+
+    def get_runtime_options(
+        self,
+        agent_id: str,
+        *,
+        project_id: Optional[int | str] = None,
+    ) -> Dict[str, Any]:
+        agent = self.get_agent(agent_id, project_id=project_id)
+        if not agent:
+            return {}
+
+        cmd_base = Path((agent.command or agent.id)).name.lower()
+        options: Dict[str, Any] = {}
+        if cmd_base == "codex":
+            reasoning_effort = (agent.reasoning_effort or "").strip()
+            if reasoning_effort:
+                options["reasoning_effort"] = reasoning_effort
+        return options
+
+    def get_agent_ui_metadata(
+        self,
+        agent_id: str,
+        *,
+        project_id: Optional[int | str] = None,
+    ) -> Dict[str, Any]:
+        agent = self.get_agent(agent_id, project_id=project_id)
+        if not agent:
+            return {"available_models": [], "reasoning_effort": None}
+
+        metadata: Dict[str, Any] = {
+            "available_models": [],
+            "reasoning_effort": (agent.reasoning_effort or "").strip() or None,
+        }
+
+        cmd_base = Path((agent.command or agent.id)).name.lower()
+        if cmd_base != "codex":
+            return metadata
+
+        selected_model = (agent.default_model or "").strip()
+        available_models: List[Dict[str, Any]] = []
+        for model in self._load_codex_models_cache():
+            slug = str(model.get("slug") or "").strip()
+            if not slug:
+                continue
+            reasoning_options = []
+            for option in model.get("supported_reasoning_levels") or []:
+                if not isinstance(option, dict):
+                    continue
+                effort = str(option.get("effort") or "").strip()
+                if not effort:
+                    continue
+                reasoning_options.append(
+                    {
+                        "value": effort,
+                        "description": option.get("description"),
+                    }
+                )
+            available_models.append(
+                {
+                    "value": slug,
+                    "label": str(model.get("display_name") or slug),
+                    "description": model.get("description"),
+                    "default_reasoning_effort": model.get("default_reasoning_level"),
+                    "reasoning_efforts": reasoning_options,
+                }
+            )
+
+        if selected_model and not any(model.get("value") == selected_model for model in available_models):
+            available_models.insert(
+                0,
+                {
+                    "value": selected_model,
+                    "label": selected_model,
+                    "description": "Configured model",
+                    "default_reasoning_effort": None,
+                    "reasoning_efforts": [],
+                },
+            )
+
+        if not metadata["reasoning_effort"] and selected_model:
+            selected_entry = next(
+                (model for model in available_models if model.get("value") == selected_model),
+                None,
+            )
+            if isinstance(selected_entry, dict):
+                default_effort = selected_entry.get("default_reasoning_effort")
+                if isinstance(default_effort, str) and default_effort.strip():
+                    metadata["reasoning_effort"] = default_effort.strip()
+
+        metadata["available_models"] = available_models
+        return metadata
     
     def _create_default_config(self, path: Path) -> None:
         """Create a default configuration file."""
@@ -718,6 +862,224 @@ class AgentConfigService(Service):
             available=False,
             error="API health checks not yet implemented",
         )
+
+    def test_setup(
+        self,
+        agent_id: str,
+        *,
+        project_id: Optional[int | str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> AgentTestResult:
+        """
+        Run a lightweight "setup" test for an agent.
+
+        This is intended for the Console "Test setup" button and should be:
+        - safe (no repo edits)
+        - fast (seconds)
+        - informative (credential / provider checks where possible)
+
+        `overrides` are applied in-memory and are NOT persisted.
+        """
+        started = time.perf_counter()
+        agent = self.get_agent(agent_id, project_id=project_id)
+        if not agent:
+            return AgentTestResult(
+                agent_id=agent_id,
+                ok=False,
+                checks=[AgentTestCheckResult(name="agent", ok=False, error="Agent not found")],
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
+        effective = agent
+        if overrides:
+            allowed = set(getattr(AgentConfig, "__dataclass_fields__", {}).keys())  # type: ignore[attr-defined]
+            patch = {k: v for k, v in overrides.items() if k in allowed}
+            if patch:
+                effective = replace(effective, **patch)
+
+        checks: List[AgentTestCheckResult] = []
+
+        if not effective.enabled:
+            checks.append(
+                AgentTestCheckResult(
+                    name="enabled",
+                    ok=False,
+                    error="Agent is disabled",
+                )
+            )
+
+        if not effective.is_cli:
+            checks.append(
+                AgentTestCheckResult(
+                    name="kind",
+                    ok=False,
+                    error=f"Setup test not supported for kind: {effective.kind}",
+                )
+            )
+            return AgentTestResult(
+                agent_id=effective.id,
+                ok=False,
+                checks=checks,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
+        cmd = (effective.command or "").strip()
+        if not cmd:
+            checks.append(AgentTestCheckResult(name="command", ok=False, error="No command configured"))
+            return AgentTestResult(
+                agent_id=effective.id,
+                ok=False,
+                checks=checks,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
+        ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+        def _strip_ansi(text: str) -> str:
+            return ansi_re.sub("", text or "")
+
+        def _run(args: List[str], *, timeout: int) -> Dict[str, Any]:
+            try:
+                res = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                stdout = _strip_ansi(res.stdout or "").strip()
+                stderr = _strip_ansi(res.stderr or "").strip()
+                return {"ok": res.returncode == 0, "exit_code": res.returncode, "stdout": stdout, "stderr": stderr}
+            except FileNotFoundError:
+                return {"ok": False, "exit_code": None, "stdout": "", "stderr": f"Command not found: {args[0]}"}
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "exit_code": None, "stdout": "", "stderr": "Command timed out"}
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "exit_code": None, "stdout": "", "stderr": str(exc)}
+
+        timeout = int(effective.timeout_seconds or self._health_config.get("timeout_seconds", 30) or 30)
+        timeout = max(3, min(timeout, 30))
+
+        # Always run a version check first.
+        version_res = _run([cmd, "--version"], timeout=timeout)
+        version_text = (version_res.get("stdout") or "") or (version_res.get("stderr") or "")
+        version_line = version_text.splitlines()[0].strip() if version_text else None
+        checks.append(
+            AgentTestCheckResult(
+                name="version",
+                ok=bool(version_res.get("ok")),
+                error=None if version_res.get("ok") else (version_res.get("stderr") or "Version check failed"),
+                details={"command": cmd, "version": version_line},
+            )
+        )
+
+        # Command-specific setup checks (no-cost).
+        cmd_base = Path(cmd).name
+
+        if cmd_base == "opencode":
+            auth_res = _run([cmd, "auth", "list"], timeout=timeout)
+            auth_out = (auth_res.get("stdout") or "") + "\n" + (auth_res.get("stderr") or "")
+            auth_clean = _strip_ansi(auth_out)
+            m = re.search(r"(\d+)\s+credentials", auth_clean, re.IGNORECASE)
+            credential_count = int(m.group(1)) if m else None
+            checks.append(
+                AgentTestCheckResult(
+                    name="credentials",
+                    ok=bool(auth_res.get("ok")) and (credential_count is None or credential_count > 0),
+                    error=(
+                        None
+                        if (auth_res.get("ok") and (credential_count is None or credential_count > 0))
+                        else "No OpenCode credentials found (run `opencode auth login` or mount auth.json into Docker)"
+                    ),
+                    details={"credential_count": credential_count},
+                )
+            )
+
+            provider = None
+            model = (effective.default_model or "").strip()
+            if "/" in model:
+                provider = model.split("/", 1)[0].strip()
+
+            if provider:
+                models_res = _run([cmd, "models", provider], timeout=timeout)
+                checks.append(
+                    AgentTestCheckResult(
+                        name="model_provider",
+                        ok=bool(models_res.get("ok")),
+                        error=None if models_res.get("ok") else (models_res.get("stderr") or "Provider check failed"),
+                        details={"provider": provider},
+                    )
+                )
+
+        elif cmd_base == "codex":
+            # Best-effort: validate that auth is present via env var or login status.
+            assume = os.environ.get("DEVGODZILLA_ASSUME_AGENT_AUTH", "").lower() in ("1", "true", "yes", "on")
+            has_key = bool(os.environ.get("OPENAI_API_KEY"))
+            status_res = _run([cmd, "login", "status"], timeout=timeout)
+            status_text = ((status_res.get("stdout") or "") + "\n" + (status_res.get("stderr") or "")).strip()
+            logged_in = bool(status_res.get("ok")) and "not logged in" not in status_text.lower()
+            checks.append(
+                AgentTestCheckResult(
+                    name="openai_api_key",
+                    ok=assume or has_key or logged_in,
+                    error=(
+                        None
+                        if (assume or has_key or logged_in)
+                        else "OPENAI_API_KEY not set and Codex is not logged in (or set DEVGODZILLA_ASSUME_AGENT_AUTH=true)"
+                    ),
+                    details={"present": has_key, "assume_auth": assume, "logged_in": logged_in},
+                )
+            )
+            checks.append(
+                AgentTestCheckResult(
+                    name="login_status",
+                    ok=logged_in or has_key or assume,
+                    error=None if (logged_in or has_key or assume) else "Codex not logged in (and OPENAI_API_KEY not set)",
+                    details={"logged_in": logged_in},
+                )
+            )
+
+        elif cmd_base == "claude":
+            has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+            status_res = _run([cmd, "auth", "status"], timeout=timeout)
+            logged_in = False
+            if status_res.get("ok") and status_res.get("stdout"):
+                try:
+                    data = json.loads(status_res["stdout"])
+                    logged_in = bool(data.get("loggedIn"))
+                except Exception:
+                    logged_in = False
+            checks.append(
+                AgentTestCheckResult(
+                    name="auth_status",
+                    ok=logged_in or has_key,
+                    error=None if (logged_in or has_key) else "Claude not logged in (and ANTHROPIC_API_KEY not set)",
+                    details={"logged_in": logged_in, "anthropic_api_key_present": has_key},
+                )
+            )
+
+        elif cmd_base == "gemini":
+            has_key = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+            checks.append(
+                AgentTestCheckResult(
+                    name="api_key",
+                    ok=has_key,
+                    error=None if has_key else "GEMINI_API_KEY or GOOGLE_API_KEY not set",
+                    details={
+                        "gemini_api_key_present": bool(os.environ.get("GEMINI_API_KEY")),
+                        "google_api_key_present": bool(os.environ.get("GOOGLE_API_KEY")),
+                    },
+                )
+            )
+
+        # Overall OK if all checks passed (ignore the informational 'enabled' check if present).
+        relevant = [c for c in checks if c.name != "enabled"]
+        ok = all(c.ok for c in relevant) if relevant else False
+        return AgentTestResult(
+            agent_id=effective.id,
+            ok=ok,
+            checks=checks,
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
     
     def check_all_health(self) -> List[HealthCheckResult]:
         """Check health of all enabled agents."""
@@ -733,6 +1095,7 @@ class AgentConfigService(Service):
         *,
         enabled: Optional[bool] = None,
         default_model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         command_dir: Optional[str] = None,
         name: Optional[str] = None,
@@ -756,6 +1119,8 @@ class AgentConfigService(Service):
             update_data["enabled"] = enabled
         if default_model is not None:
             update_data["default_model"] = default_model
+        if reasoning_effort is not None:
+            update_data["reasoning_effort"] = reasoning_effort
         if capabilities is not None:
             update_data["capabilities"] = capabilities
         if command_dir is not None:

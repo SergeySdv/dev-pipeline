@@ -10,12 +10,15 @@ coverage/
 .next/
 frontend/.next/
 frontend/out/
+frontend/playwright-report/
+frontend/test-results/
 archive/tasksgodzilla/api/frontend_dist/
 .vscode/
 .idea/
 .venv/
 __pycache__/
 *.pyc
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -40,6 +43,7 @@ docs/services-verification-report.md
 harness-output/
 reliability-output/
 validation-output/
+test-output/
 GEMINI.md
 .devgodzilla.sqlite
 .protocols/
@@ -49,5 +53,5 @@ windmill/apps/devgodzilla-react-app/.env.development
 specs/*/_runtime/runs/
 AGENTS.md
 CLAUDE.md
-projects/
+/projects/
 .coverage

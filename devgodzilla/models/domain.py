@@ -79,6 +79,7 @@ class Project:
     local_path: Optional[str] = None
     ci_provider: Optional[str] = None
     secrets: Optional[Dict[str, Any]] = None
+    github_token_configured: Optional[bool] = None
     default_models: Optional[Dict[str, str]] = None
     # Policy configuration
     project_classification: Optional[str] = None
@@ -111,7 +112,7 @@ class ProtocolRun:
     protocol_root: Optional[str] = None
     description: Optional[str] = None
     template_config: Optional[Dict[str, Any]] = None
-    template_source: Optional[Dict[str, Any]] = None
+    template_source: Optional[Any] = None
     # Policy audit
     policy_pack_key: Optional[str] = None
     policy_pack_version: Optional[str] = None
@@ -120,6 +121,7 @@ class ProtocolRun:
     # Windmill integration (new for DevGodzilla)
     windmill_flow_id: Optional[str] = None
     speckit_metadata: Optional[Dict[str, Any]] = None
+    linked_sprint_id: Optional[int] = None
 
 
 @dataclass
@@ -238,6 +240,7 @@ class Event:
     protocol_name: Optional[str] = None
     project_id: Optional[int] = None
     project_name: Optional[str] = None
+    spec_run_id: Optional[int] = None
 
 
 @dataclass
@@ -256,6 +259,13 @@ class JobRun:
     project_id: Optional[int] = None
     protocol_run_id: Optional[int] = None
     step_run_id: Optional[int] = None
+    spec_run_id: Optional[int] = None
+    task_id: Optional[int] = None
+    task_title: Optional[str] = None
+    task_board_status: Optional[str] = None
+    sprint_id: Optional[int] = None
+    sprint_name: Optional[str] = None
+    sprint_status: Optional[str] = None
     queue: Optional[str] = None
     attempt: Optional[int] = None
     worker_id: Optional[str] = None

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useProtocolEvents } from "@/lib/api";
+import { getDisplayEventCategory, getDisplayEventMessage, getDisplayEventType } from "@/lib/event-display";
 import { formatRelativeTime,formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,9 @@ const eventTypeColors: Record<string, string> = {
   qa_started: "text-yellow-500",
   qa_passed: "text-green-500",
   qa_failed: "text-destructive",
+  execution_qa_started: "text-blue-500",
+  execution_qa_passed: "text-green-500",
+  execution_qa_failed: "text-destructive",
   planning_started: "text-blue-500",
   planning_completed: "text-green-500",
   protocol_started: "text-blue-500",
@@ -75,7 +79,11 @@ export function EventsTab({ protocolId }: EventsTabProps) {
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {events.map((event) => (
+          {events.map((event) => {
+            const displayType = getDisplayEventType(event);
+            const displayCategory = getDisplayEventCategory(event) || "other";
+            const displayMessage = getDisplayEventMessage(event);
+            return (
             <div key={event.id} className="flex items-start gap-4">
               <div className="text-muted-foreground min-w-20 font-mono text-sm">
                 {formatTime(event.created_at)}
@@ -89,20 +97,20 @@ export function EventsTab({ protocolId }: EventsTabProps) {
                   <p
                     className={cn(
                       "font-mono text-sm",
-                      eventTypeColors[event.event_type] ||
-                        categoryColors[event.event_category || ""] ||
+                      eventTypeColors[displayType] ||
+                        categoryColors[displayCategory] ||
                         "text-muted-foreground"
                     )}
                   >
-                    {event.event_type}
+                    {displayType}
                   </p>
                   <span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 text-xs">
-                    {categoryLabels[event.event_category || "other"] ||
-                      event.event_category ||
+                    {categoryLabels[displayCategory] ||
+                      displayCategory ||
                       "Other"}
                   </span>
                 </div>
-                <p className="mt-1 text-sm">{event.message}</p>
+                <p className="mt-1 text-sm">{displayMessage}</p>
                 <p className="text-muted-foreground mt-1 text-xs">
                   {formatRelativeTime(event.created_at)}
                 </p>
@@ -113,7 +121,7 @@ export function EventsTab({ protocolId }: EventsTabProps) {
                 )}
               </div>
             </div>
-          ))}
+          )})}
         </div>
       </CardContent>
     </Card>

@@ -5,17 +5,18 @@ REST endpoints for SpecKit integration: initialization, spec generation,
 planning, and task management.
 """
 
-from typing import Any, List, Optional
 from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from devgodzilla.api.routes import project_speckit as project_speckit_routes
+from devgodzilla.api.routes._speckit_common import get_local_project_or_400, get_project_or_404
 from devgodzilla.api.dependencies import get_db, get_service_context
 from devgodzilla.db.database import Database
 from devgodzilla.services.base import ServiceContext
 from devgodzilla.services.specification import SpecificationService
-from devgodzilla.services.policy import PolicyService
 
 router = APIRouter(prefix="/speckit", tags=["SpecKit"])
 
@@ -57,6 +58,7 @@ class PlanRequest(BaseModel):
     project_id: int
     spec_path: str = Field(..., description="Path to spec.md file")
     spec_run_id: Optional[int] = Field(None, description="Optional SpecRun id")
+    context: Optional[str] = Field(None, description="Optional planning context from the client")
 
 
 class PlanResponse(BaseModel):
@@ -148,6 +150,10 @@ class ImplementResponse(BaseModel):
     success: bool
     run_path: Optional[str] = None
     metadata_path: Optional[str] = None
+    protocol_id: Optional[int] = None
+    protocol_root: Optional[str] = None
+    step_count: int = 0
+    warnings: List[str] = Field(default_factory=list)
     spec_run_id: Optional[int] = None
     worktree_path: Optional[str] = None
     error: Optional[str] = None
@@ -205,37 +211,19 @@ def init_speckit(
     service: SpecificationService = Depends(get_specification_service),
     ctx: ServiceContext = Depends(get_service_context),
 ):
-    """Initialize SpecKit for a project."""
-    project = db.get_project(request.project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if not project.local_path:
-        raise HTTPException(status_code=400, detail="Project has no local path")
-
-    constitution_content = request.constitution_content
-    if constitution_content is None:
-        policy_service = PolicyService(ctx, db)
-        effective = policy_service.resolve_effective_policy(
-            request.project_id,
-            repo_root=Path(project.local_path).expanduser(),
-            include_repo_local=True,
-        )
-        constitution_content = policy_service.render_constitution(effective)
-
-    result = service.init_project(
-        project.local_path,
-        constitution_content=constitution_content,
+    """Compatibility wrapper around the project-scoped init route."""
+    response = project_speckit_routes.init_project_speckit(
         project_id=request.project_id,
+        request=(
+            project_speckit_routes.ConstitutionRequest(content=request.constitution_content)
+            if request.constitution_content is not None
+            else None
+        ),
+        db=db,
+        service=service,
+        ctx=ctx,
     )
-
-    return SpecKitResponse(
-        success=result.success,
-        path=result.spec_path,
-        constitution_hash=result.constitution_hash,
-        error=result.error,
-        warnings=result.warnings,
-    )
+    return SpecKitResponse(**response.model_dump())
 
 
 @router.get("/constitution/{project_id}")
@@ -244,16 +232,12 @@ def get_constitution(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Get project constitution."""
-    project = db.get_project(project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    content = service.get_constitution(project.local_path)
-    if content is None:
-        raise HTTPException(status_code=404, detail="Constitution not found. Run init first.")
-
-    return {"content": content}
+    """Compatibility wrapper around the project-scoped constitution route."""
+    return project_speckit_routes.get_project_constitution(
+        project_id=project_id,
+        db=db,
+        service=service,
+    )
 
 
 @router.put("/constitution/{project_id}", response_model=SpecKitResponse)
@@ -264,35 +248,15 @@ def save_constitution(
     service: SpecificationService = Depends(get_specification_service),
     ctx: ServiceContext = Depends(get_service_context),
 ):
-    """Save project constitution."""
-    project = db.get_project(project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.save_constitution(
-        project.local_path,
-        request.content,
+    """Compatibility wrapper around the project-scoped constitution route."""
+    response = project_speckit_routes.put_project_constitution(
         project_id=project_id,
+        request=project_speckit_routes.ConstitutionRequest(content=request.content),
+        db=db,
+        service=service,
+        ctx=ctx,
     )
-    policy_service = PolicyService(ctx, db)
-    override, meta = policy_service.policy_override_from_constitution(request.content)
-    updates: dict[str, Any] = {}
-    if isinstance(meta.get("key"), str):
-        updates["policy_pack_key"] = meta["key"]
-    if isinstance(meta.get("version"), str):
-        updates["policy_pack_version"] = meta["version"]
-    if override is not None:
-        updates["policy_overrides"] = override
-    if updates:
-        db.update_project_policy(project_id, **updates)
-
-    return SpecKitResponse(
-        success=result.success,
-        path=result.spec_path,
-        constitution_hash=result.constitution_hash,
-        error=result.error,
-        warnings=result.warnings,
-    )
+    return SpecKitResponse(**response.model_dump())
 
 
 @router.post("/specify", response_model=SpecifyResponse)
@@ -301,31 +265,18 @@ def run_specify(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Generate a feature specification."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_specify(
-        project.local_path,
-        request.description,
-        feature_name=request.feature_name,
-        base_branch=request.base_branch,
+    """Compatibility wrapper around the project-scoped specify route."""
+    response = project_speckit_routes.project_speckit_specify(
         project_id=request.project_id,
+        request=project_speckit_routes.SpecifyRequest(
+            description=request.description,
+            feature_name=request.feature_name,
+            base_branch=request.base_branch,
+        ),
+        db=db,
+        service=service,
     )
-
-    return SpecifyResponse(
-        success=result.success,
-        spec_path=result.spec_path,
-        spec_number=result.spec_number,
-        feature_name=result.feature_name,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        branch_name=result.branch_name,
-        base_branch=result.base_branch,
-        spec_root=result.spec_root,
-        error=result.error,
-    )
+    return SpecifyResponse(**response.model_dump())
 
 
 @router.post("/plan", response_model=PlanResponse)
@@ -334,27 +285,18 @@ def run_plan(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Generate an implementation plan from a spec."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_plan(
-        project.local_path,
-        request.spec_path,
-        spec_run_id=request.spec_run_id,
+    """Compatibility wrapper around the project-scoped plan route."""
+    response = project_speckit_routes.project_speckit_plan(
         project_id=request.project_id,
+        request=project_speckit_routes.PlanRequest(
+            spec_path=request.spec_path,
+            spec_run_id=request.spec_run_id,
+            context=request.context,
+        ),
+        db=db,
+        service=service,
     )
-
-    return PlanResponse(
-        success=result.success,
-        plan_path=result.plan_path,
-        data_model_path=result.data_model_path,
-        contracts_path=result.contracts_path,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        error=result.error,
-    )
+    return PlanResponse(**response.model_dump())
 
 
 @router.post("/tasks", response_model=TasksResponse)
@@ -363,27 +305,17 @@ def run_tasks(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Generate a task list from a plan."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_tasks(
-        project.local_path,
-        request.plan_path,
-        spec_run_id=request.spec_run_id,
+    """Compatibility wrapper around the project-scoped tasks route."""
+    response = project_speckit_routes.project_speckit_tasks(
         project_id=request.project_id,
+        request=project_speckit_routes.TasksRequest(
+            plan_path=request.plan_path,
+            spec_run_id=request.spec_run_id,
+        ),
+        db=db,
+        service=service,
     )
-
-    return TasksResponse(
-        success=result.success,
-        tasks_path=result.tasks_path,
-        task_count=result.task_count,
-        parallelizable_count=result.parallelizable_count,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        error=result.error,
-    )
+    return TasksResponse(**response.model_dump())
 
 
 @router.post("/clarify", response_model=ClarifyResponse)
@@ -392,28 +324,22 @@ def run_clarify(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Append clarifications to an existing specification."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_clarify(
-        project.local_path,
-        request.spec_path,
-        entries=[entry.dict() for entry in request.entries],
-        notes=request.notes,
-        spec_run_id=request.spec_run_id,
+    """Compatibility wrapper around the project-scoped clarify route."""
+    response = project_speckit_routes.project_speckit_clarify(
         project_id=request.project_id,
+        request=project_speckit_routes.ClarifyRequest(
+            spec_path=request.spec_path,
+            entries=[
+                project_speckit_routes.ClarificationEntry(**entry.model_dump())
+                for entry in request.entries
+            ],
+            notes=request.notes,
+            spec_run_id=request.spec_run_id,
+        ),
+        db=db,
+        service=service,
     )
-
-    return ClarifyResponse(
-        success=result.success,
-        spec_path=result.spec_path,
-        clarifications_added=result.clarifications_added,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        error=result.error,
-    )
+    return ClarifyResponse(**response.model_dump())
 
 
 @router.post("/checklist", response_model=ChecklistResponse)
@@ -422,26 +348,17 @@ def run_checklist(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Generate a checklist for a spec."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_checklist(
-        project.local_path,
-        request.spec_path,
-        spec_run_id=request.spec_run_id,
+    """Compatibility wrapper around the project-scoped checklist route."""
+    response = project_speckit_routes.project_speckit_checklist(
         project_id=request.project_id,
+        request=project_speckit_routes.ChecklistRequest(
+            spec_path=request.spec_path,
+            spec_run_id=request.spec_run_id,
+        ),
+        db=db,
+        service=service,
     )
-
-    return ChecklistResponse(
-        success=result.success,
-        checklist_path=result.checklist_path,
-        item_count=result.item_count,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        error=result.error,
-    )
+    return ChecklistResponse(**response.model_dump())
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -450,27 +367,19 @@ def run_analyze(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Generate a placeholder analysis report for a spec."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_analyze(
-        project.local_path,
-        request.spec_path,
-        plan_path=request.plan_path,
-        tasks_path=request.tasks_path,
-        spec_run_id=request.spec_run_id,
+    """Compatibility wrapper around the project-scoped analyze route."""
+    response = project_speckit_routes.project_speckit_analyze(
         project_id=request.project_id,
+        request=project_speckit_routes.AnalyzeRequest(
+            spec_path=request.spec_path,
+            plan_path=request.plan_path,
+            tasks_path=request.tasks_path,
+            spec_run_id=request.spec_run_id,
+        ),
+        db=db,
+        service=service,
     )
-
-    return AnalyzeResponse(
-        success=result.success,
-        report_path=result.report_path,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        error=result.error,
-    )
+    return AnalyzeResponse(**response.model_dump())
 
 
 @router.post("/implement", response_model=ImplementResponse)
@@ -479,26 +388,17 @@ def run_implement(
     db: Database = Depends(get_db),
     service: SpecificationService = Depends(get_specification_service),
 ):
-    """Initialize an implementation run directory."""
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    result = service.run_implement(
-        project.local_path,
-        request.spec_path,
-        spec_run_id=request.spec_run_id,
+    """Compatibility wrapper around the project-scoped implement route."""
+    response = project_speckit_routes.project_speckit_implement(
         project_id=request.project_id,
+        request=project_speckit_routes.ImplementRequest(
+            spec_path=request.spec_path,
+            spec_run_id=request.spec_run_id,
+        ),
+        db=db,
+        service=service,
     )
-
-    return ImplementResponse(
-        success=result.success,
-        run_path=result.run_path,
-        metadata_path=result.metadata_path,
-        spec_run_id=result.spec_run_id,
-        worktree_path=result.worktree_path,
-        error=result.error,
-    )
+    return ImplementResponse(**response.model_dump())
 
 
 @router.get("/specs/{project_id}", response_model=List[SpecListItem])
@@ -508,9 +408,7 @@ def list_specs(
     service: SpecificationService = Depends(get_specification_service),
 ):
     """List all specs in a project."""
-    project = db.get_project(project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = get_local_project_or_400(db, project_id)
 
     specs = service.list_specs(project.local_path, project_id=project_id)
     return [SpecListItem(**spec) for spec in specs]
@@ -523,9 +421,7 @@ def get_speckit_status(
     service: SpecificationService = Depends(get_specification_service),
 ):
     """Get SpecKit status for a project."""
-    project = db.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = get_project_or_404(db, project_id)
 
     if not project.local_path:
         return {
@@ -639,9 +535,7 @@ def run_workflow(
     - "plan": Generate spec and plan
     - None: Run the full pipeline (default)
     """
-    project = db.get_project(request.project_id)
-    if not project or not project.local_path:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = get_local_project_or_400(db, request.project_id)
 
     steps: List[WorkflowStepResult] = []
     spec_path = None

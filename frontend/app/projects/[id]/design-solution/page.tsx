@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { LoadingState } from "@/components/ui/loading-state";
+import { getProjectManualPlanWizardPath } from "@/lib/project-routes";
 
 export default function DesignSolutionPage() {
   const params = useParams();
@@ -13,7 +14,7 @@ export default function DesignSolutionPage() {
 
   useEffect(() => {
     if (projectId) {
-      router.replace(`/projects/${projectId}?wizard=design-solution`);
+      router.replace(getProjectManualPlanWizardPath(projectId));
     }
   }, [projectId, router]);
 
