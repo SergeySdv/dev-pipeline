@@ -2,7 +2,7 @@
 
 ## Prerequisites
 - Docker & Docker Compose
-- 8GB+ RAM recommended (for compiling Windmill)
+- 8GB+ RAM recommended for the full local stack
 
 ## Architecture
 The default local development setup is **hybrid**:
@@ -19,17 +19,9 @@ Nginx inside Docker proxies to the host via `nginx.local.conf` (`host.docker.int
     chmod +x scripts/init-db.sh
     ```
 
-2.  **Build and Run**:
+2.  **Start the stack**:
     Start everything (infra + backend + frontend) via the local dev manager:
     ```bash
-    scripts/run-local-dev.sh dev
-    ```
-
-    > **Note**: The first build takes a while as it compiles Windmill from source (Rust + `deno_core`/V8 for JavaScript `input_transforms`).
-
-    If you want a faster `python`-only Windmill build (no JS `input_transforms`), set:
-    ```bash
-    export WINDMILL_FEATURES="static_frontend python"
     scripts/run-local-dev.sh dev
     ```
 
@@ -72,3 +64,4 @@ On success, generated files appear under `projects/<project_id>/<repo>/specs/<sp
 - `DEVGODZILLA_WINDMILL_URL`: Windmill base URL for DevGodzilla-to-Windmill API calls (Compose sets to `http://windmill:8000`)
 - `DEVGODZILLA_WINDMILL_WORKSPACE`: Windmill workspace (Compose defaults to `demo1`)
 - `DEVGODZILLA_WINDMILL_ENV_FILE`: Optional path to an env file containing `DEVGODZILLA_WINDMILL_TOKEN`/`WINDMILL_TOKEN`/`VITE_TOKEN`
+- `WM_IMAGE`: Optional Windmill image override (defaults to `ghcr.io/windmill-labs/windmill:main`)

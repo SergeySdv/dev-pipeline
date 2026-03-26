@@ -1,1 +1,0 @@
-ALTER TABLE workspace_settings DROP COLUMN automatic_billing;

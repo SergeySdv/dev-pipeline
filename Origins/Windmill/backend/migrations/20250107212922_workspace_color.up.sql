@@ -1,1 +1,0 @@
-ALTER TABLE workspace_settings ADD COLUMN color VARCHAR(7) DEFAULT NULL;

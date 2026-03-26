@@ -24,7 +24,8 @@ services:
       retries: 10
 
   windmill:
-    image: ghcr.io/windmill-labs/windmill:main
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "8001:8000"
@@ -56,7 +57,8 @@ services:
       - "host.docker.internal:host-gateway"
 
   windmill_worker:
-    image: ghcr.io/windmill-labs/windmill:main
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     restart: unless-stopped
     deploy:
       resources:
@@ -85,7 +87,8 @@ services:
 
   # Native worker for lightweight in-process jobs
   windmill_worker_native:
-    image: ghcr.io/windmill-labs/windmill:main
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     restart: unless-stopped
     deploy:
       resources:
@@ -114,11 +117,8 @@ services:
 
   # Full-text job and log search (EE feature, set replicas to 1 to enable)
   windmill_indexer:
-    build:
-      context: ./Origins/Windmill
-      dockerfile: Dockerfile
-      args:
-        features: static_frontend
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     deploy:
       replicas: 0
     restart: unless-stopped

@@ -1,1 +1,0 @@
-ALTER TABLE websocket_trigger ADD COLUMN can_return_message BOOLEAN NOT NULL DEFAULT FALSE;

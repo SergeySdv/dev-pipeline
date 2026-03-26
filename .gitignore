@@ -51,6 +51,7 @@ windmill/apps/devgodzilla-react-app/.env.development
 
 # DevGodzilla SpecKit runtime artifacts (ephemeral)
 specs/*/_runtime/runs/
+specs/*/_runtime/.devgodzilla/
 AGENTS.md
 CLAUDE.md
 /projects/

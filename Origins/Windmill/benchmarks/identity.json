@@ -1,7 +1,0 @@
-{
-  "type": "PREVIEW_SCRIPT",
-  "workspace": "demo",
-  "language": "deno",
-  "args": {},
-  "content": "export async function main() { return \"Hello World\"; }"
-}

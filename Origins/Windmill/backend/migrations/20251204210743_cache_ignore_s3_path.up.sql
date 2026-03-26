@@ -1,5 +1,0 @@
-ALTER TABLE script
-ADD COLUMN cache_ignore_s3_path BOOLEAN DEFAULT NULL;
-
-ALTER TABLE v2_job_queue
-ADD COLUMN cache_ignore_s3_path BOOLEAN DEFAULT NULL;

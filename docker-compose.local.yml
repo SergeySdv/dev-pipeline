@@ -58,7 +58,8 @@ services:
 
   # Windmill server
   windmill:
-    image: ghcr.io/windmill-labs/windmill:main
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "8001:8000"  # Windmill API on 8001
@@ -90,7 +91,8 @@ services:
 
   # Windmill worker
   windmill_worker:
-    image: ghcr.io/windmill-labs/windmill:main
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     restart: unless-stopped
     deploy:
       resources:
@@ -118,7 +120,8 @@ services:
 
   # Native worker for lightweight in-process jobs
   windmill_worker_native:
-    image: ghcr.io/windmill-labs/windmill:main
+    image: ${WM_IMAGE:-ghcr.io/windmill-labs/windmill:main}
+    pull_policy: always
     restart: unless-stopped
     deploy:
       resources:

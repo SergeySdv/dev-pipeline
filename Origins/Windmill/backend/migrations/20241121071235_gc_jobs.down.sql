@@ -1,2 +1,0 @@
--- Add down migration script here
--- Nothing to do here

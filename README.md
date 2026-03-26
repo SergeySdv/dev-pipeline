@@ -238,7 +238,7 @@ Scripts communicate with DevGodzilla API via `DEVGODZILLA_API_URL` environment v
 | `DEVGODZILLA_WINDMILL_WORKSPACE` | `demo1` | Windmill workspace |
 | `DEVGODZILLA_NGINX_PORT` | `8080` | External port |
 | `WINDMILL_JOB_TIMEOUT_SECONDS` | `3600` | Job timeout |
-| `WINDMILL_FEATURES` | `static_frontend python deno_core` | Windmill features |
+| `WM_IMAGE` | `ghcr.io/windmill-labs/windmill:main` | Windmill image tag for compose |
 
 ### Agent Configuration (`devgodzilla/config/agents.yaml`)
 
