@@ -19,6 +19,7 @@ pub struct App {
     pub state: AppState,
     pub client: ApiClient,
     pub refresh_interval: Duration,
+    pending_refresh: bool,
     modal: Option<Modal>,
     screen: Screen,
     pub auto_login: bool,
@@ -131,6 +132,7 @@ impl App {
             },
             client,
             refresh_interval,
+            pending_refresh: false,
             modal: None,
             screen: Screen::Welcome,
             auto_login,
@@ -166,6 +168,11 @@ impl App {
                     self.welcome_index,
                 )
             })?;
+            if self.pending_refresh {
+                self.pending_refresh = false;
+                self.refresh_all().await?;
+                continue;
+            }
             tokio::select! {
                 maybe_event = reader.next() => {
                     if let Some(Ok(evt)) = maybe_event {
@@ -216,6 +223,21 @@ impl App {
         Ok(false)
     }
 
+    fn schedule_refresh(&mut self, status: impl Into<String>) {
+        self.pending_refresh = true;
+        self.state.refreshing = true;
+        self.state.last_error = None;
+        self.state.status = status.into();
+    }
+
+    fn open_dashboard(&mut self, page: Option<Page>, status: impl Into<String>) {
+        self.screen = Screen::Dashboard;
+        if let Some(page) = page {
+            self.state.page = page;
+        }
+        self.schedule_refresh(status);
+    }
+
     async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Ok(true);
@@ -223,7 +245,7 @@ impl App {
         match key.code {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Char('r') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.refresh_all().await?;
+                self.schedule_refresh("Refreshing...");
             }
             KeyCode::Char('m') => {
                 self.screen = Screen::Menu;
@@ -338,8 +360,7 @@ impl App {
             KeyCode::Enter => match self.welcome_index {
                 0 => {
                     if self.auto_login {
-                        self.screen = Screen::Dashboard;
-                        self.refresh_all().await?;
+                        self.open_dashboard(None, "Connecting to API...");
                     } else {
                         self.screen = Screen::Login;
                     }
@@ -450,8 +471,7 @@ impl App {
             }
             KeyCode::Char('1') => {
                 self.menu_index = 0;
-                self.screen = Screen::Dashboard;
-                self.refresh_all().await?;
+                self.open_dashboard(None, "Loading dashboard...");
             }
             KeyCode::Char('2') => {
                 self.menu_index = 1;
@@ -460,8 +480,7 @@ impl App {
             KeyCode::Char('3') => return Ok(true),
             KeyCode::Enter => match self.menu_index {
                 0 => {
-                    self.screen = Screen::Dashboard;
-                    self.refresh_all().await?;
+                    self.open_dashboard(None, "Loading dashboard...");
                 }
                 1 => {
                     self.open_token_modal();
@@ -485,9 +504,7 @@ impl App {
                     self.open_token_modal();
                 }
                 KeyCode::Enter => {
-                    self.screen = Screen::Dashboard;
-                    self.state.page = Page::Settings;
-                    self.refresh_all().await?;
+                    self.open_dashboard(Some(Page::Settings), "Loading settings...");
                 }
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('w') => {
                     self.screen = Screen::Welcome;
@@ -500,8 +517,7 @@ impl App {
             },
             Screen::Help => match key.code {
                 KeyCode::Enter => {
-                    self.screen = Screen::Dashboard;
-                    self.refresh_all().await?;
+                    self.open_dashboard(None, "Loading dashboard...");
                 }
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('w') => {
                     self.screen = Screen::Welcome;
@@ -1064,7 +1080,7 @@ impl App {
                     {
                         Ok(proj) => {
                             self.state.status = format!("Created project {}", proj.id);
-                            self.refresh_all().await?;
+                            self.schedule_refresh("Refreshing projects...");
                         }
                         Err(err) => self.set_error(err),
                     }
@@ -1097,7 +1113,7 @@ impl App {
                             Ok(run) => {
                                 self.state.protocol_index = None;
                                 self.state.status = format!("Created protocol {}", run.id);
-                                self.refresh_all().await?;
+                                self.schedule_refresh("Refreshing protocols...");
                             }
                             Err(err) => self.set_error(err),
                         }
@@ -1160,7 +1176,7 @@ impl App {
                         {
                             Ok(_) => {
                                 self.state.status = "Import enqueued".into();
-                                self.refresh_all().await?;
+                                self.schedule_refresh("Refreshing import status...");
                             }
                             Err(err) => self.set_error(err),
                         }
@@ -1254,7 +1270,7 @@ impl App {
             match self.client.step_run_next(protocol_id).await {
                 Ok(_) => {
                     self.state.status = "Run next enqueued".into();
-                    self.refresh_all().await?;
+                    self.schedule_refresh("Refreshing run state...");
                 }
                 Err(err) => self.set_error(err),
             }
@@ -1267,7 +1283,7 @@ impl App {
             match self.client.step_retry_latest(protocol_id).await {
                 Ok(_) => {
                     self.state.status = "Retry enqueued".into();
-                    self.refresh_all().await?;
+                    self.schedule_refresh("Refreshing retry status...");
                 }
                 Err(err) => self.set_error(err),
             }
@@ -1280,7 +1296,7 @@ impl App {
             match self.client.step_run_qa(step.id).await {
                 Ok(_) => {
                     self.state.status = "QA enqueued".into();
-                    self.refresh_all().await?;
+                    self.schedule_refresh("Refreshing QA status...");
                 }
                 Err(err) => self.set_error(err),
             }
@@ -1293,7 +1309,7 @@ impl App {
             match self.client.step_approve(step.id).await {
                 Ok(_) => {
                     self.state.status = "Approved".into();
-                    self.refresh_all().await?;
+                    self.schedule_refresh("Refreshing approval status...");
                 }
                 Err(err) => self.set_error(err),
             }
@@ -1306,7 +1322,7 @@ impl App {
             match self.client.protocol_open_pr(protocol_id).await {
                 Ok(_) => {
                     self.state.status = "Open PR enqueued".into();
-                    self.refresh_all().await?;
+                    self.schedule_refresh("Refreshing PR status...");
                 }
                 Err(err) => self.set_error(err),
             }
@@ -1319,7 +1335,7 @@ impl App {
             match self.client.protocol_action(protocol_id, action).await {
                 Ok(_) => {
                     self.state.status = success.into();
-                    self.refresh_all().await?;
+                    self.schedule_refresh("Refreshing protocol state...");
                 }
                 Err(err) => self.set_error(err),
             }

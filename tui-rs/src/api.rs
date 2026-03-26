@@ -3,6 +3,7 @@ use anyhow::Result;
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -29,7 +30,10 @@ impl ApiClient {
         token: Option<String>,
         project_token: Option<String>,
     ) -> Result<Self> {
-        let client = reqwest::Client::builder().build()?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(10))
+            .build()?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             token,

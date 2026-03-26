@@ -1,1 +1,0 @@
-ALTER TABLE cloud_workspace_settings DROP COLUMN last_warning_sent;

@@ -1,1 +1,0 @@
-DROP TABLE nats_trigger;
