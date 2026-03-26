@@ -20,6 +20,7 @@ pub struct App {
     pub client: ApiClient,
     pub refresh_interval: Duration,
     pending_refresh: bool,
+    pending_selection_refresh: bool,
     modal: Option<Modal>,
     screen: Screen,
     pub auto_login: bool,
@@ -133,6 +134,7 @@ impl App {
             client,
             refresh_interval,
             pending_refresh: false,
+            pending_selection_refresh: false,
             modal: None,
             screen: Screen::Welcome,
             auto_login,
@@ -171,6 +173,11 @@ impl App {
             if self.pending_refresh {
                 self.pending_refresh = false;
                 self.refresh_all().await?;
+                continue;
+            }
+            if self.pending_selection_refresh {
+                self.pending_selection_refresh = false;
+                self.refresh_selection().await?;
                 continue;
             }
             tokio::select! {
@@ -225,6 +232,13 @@ impl App {
 
     fn schedule_refresh(&mut self, status: impl Into<String>) {
         self.pending_refresh = true;
+        self.state.refreshing = true;
+        self.state.last_error = None;
+        self.state.status = status.into();
+    }
+
+    fn schedule_selection_refresh(&mut self, status: impl Into<String>) {
+        self.pending_selection_refresh = true;
         self.state.refreshing = true;
         self.state.last_error = None;
         self.state.status = status.into();
@@ -291,20 +305,24 @@ impl App {
             KeyCode::Char('6') => self.state.page = Page::Queues,
             KeyCode::Char('7') => self.state.page = Page::Settings,
             KeyCode::Down => {
-                self.handle_down();
-                self.refresh_selection().await?;
+                if self.handle_down() {
+                    self.schedule_selection_refresh("Updating selection...");
+                }
             }
             KeyCode::Up => {
-                self.handle_up();
-                self.refresh_selection().await?;
+                if self.handle_up() {
+                    self.schedule_selection_refresh("Updating selection...");
+                }
             }
             KeyCode::Char('j') => {
-                self.handle_down();
-                self.refresh_selection().await?;
+                if self.handle_down() {
+                    self.schedule_selection_refresh("Updating selection...");
+                }
             }
             KeyCode::Char('k') => {
-                self.handle_up();
-                self.refresh_selection().await?;
+                if self.handle_up() {
+                    self.schedule_selection_refresh("Updating selection...");
+                }
             }
             KeyCode::Char('[') => {
                 self.state.select_branch(-1);
@@ -543,7 +561,14 @@ impl App {
         Ok(false)
     }
 
-    fn handle_down(&mut self) {
+    fn handle_down(&mut self) -> bool {
+        let before = (
+            self.state.project_index,
+            self.state.protocol_index,
+            self.state.step_index,
+            self.state.event_index,
+            self.state.branch_index,
+        );
         match self.state.page {
             Page::Dashboard | Page::Projects => self.state.select_project(1),
             Page::Protocols => self.state.select_protocol(1),
@@ -557,9 +582,24 @@ impl App {
             }
             _ => {}
         }
+        before
+            != (
+                self.state.project_index,
+                self.state.protocol_index,
+                self.state.step_index,
+                self.state.event_index,
+                self.state.branch_index,
+            )
     }
 
-    fn handle_up(&mut self) {
+    fn handle_up(&mut self) -> bool {
+        let before = (
+            self.state.project_index,
+            self.state.protocol_index,
+            self.state.step_index,
+            self.state.event_index,
+            self.state.branch_index,
+        );
         match self.state.page {
             Page::Dashboard | Page::Projects => self.state.select_project(-1),
             Page::Protocols => self.state.select_protocol(-1),
@@ -572,9 +612,21 @@ impl App {
             }
             _ => {}
         }
+        before
+            != (
+                self.state.project_index,
+                self.state.protocol_index,
+                self.state.step_index,
+                self.state.event_index,
+                self.state.branch_index,
+            )
     }
 
     async fn refresh_selection(&mut self) -> Result<()> {
+        if self.screen != Screen::Dashboard {
+            return Ok(());
+        }
+        let start = Instant::now();
         match self.state.page {
             Page::Dashboard | Page::Projects => {
                 self.load_protocols().await?;
@@ -591,6 +643,8 @@ impl App {
             }
             _ => {}
         }
+        self.state.refreshing = false;
+        self.state.status = format!("Selection updated in {}ms", start.elapsed().as_millis());
         Ok(())
     }
 
@@ -615,7 +669,52 @@ impl App {
     }
 
     pub async fn refresh_scoped(&mut self) -> Result<()> {
-        self.refresh_all().await
+        if self.screen != Screen::Dashboard {
+            return Ok(());
+        }
+        self.state.refreshing = true;
+        self.state.last_error = None;
+        let start = Instant::now();
+        match self.state.page {
+            Page::Dashboard => {
+                self.refresh_all().await?;
+                return Ok(());
+            }
+            Page::Projects => {
+                self.state.status = "Refreshing projects...".to_string();
+                self.load_projects().await?;
+                self.load_protocols().await?;
+                self.load_steps().await?;
+                self.load_events().await?;
+                self.load_branches().await?;
+            }
+            Page::Protocols => {
+                self.state.status = "Refreshing protocols...".to_string();
+                self.load_protocols().await?;
+                self.load_steps().await?;
+                self.load_events().await?;
+            }
+            Page::Steps => {
+                self.state.status = "Refreshing steps...".to_string();
+                self.load_steps().await?;
+                self.load_events().await?;
+            }
+            Page::Events => {
+                self.state.status = "Refreshing events...".to_string();
+                self.load_events().await?;
+                self.load_recent_events().await?;
+            }
+            Page::Queues => {
+                self.state.status = "Refreshing queues...".to_string();
+                self.load_queue().await?;
+            }
+            Page::Settings => {
+                self.state.status = "Settings ready".to_string();
+            }
+        }
+        self.state.refreshing = false;
+        self.state.status = format!("Refreshed current page in {}ms", start.elapsed().as_millis());
+        Ok(())
     }
 
     async fn load_projects(&mut self) -> Result<()> {
@@ -785,6 +884,8 @@ impl App {
 
     fn set_error(&mut self, err: ApiError) {
         self.state.last_error = Some(err.to_string());
+        self.state.refreshing = false;
+        self.state.status = "Request failed".into();
     }
 
     fn open_project_modal(&mut self) {
