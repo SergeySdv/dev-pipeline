@@ -284,6 +284,12 @@ export function useDeleteBranch() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.branches(projectId),
       });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.worktrees(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.pulls(projectId),
+      });
     },
   });
 }

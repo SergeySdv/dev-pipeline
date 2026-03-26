@@ -322,3 +322,103 @@ def test_list_branches_returns_local_branches_when_remote_auth_fails(monkeypatch
             assert response.status_code == 200
             branch_names = [branch["name"] for branch in response.json()]
             assert "main" in branch_names
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_delete_branch_removes_attached_worktree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deleting a worktree-backed branch should remove the worktree before deleting the branch."""
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        worktree = tmp / "worktrees" / "feature-delete"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True)
+        (repo / "README.md").write_text("# Test Repo")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "branch", "feature-delete"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "worktree", "add", str(worktree), "feature-delete"], cwd=repo, check=True, capture_output=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.post(f"/projects/{project.id}/branches/feature-delete/delete")
+            assert response.status_code == 200
+            assert "removed worktree" in response.json()["message"].lower()
+
+        assert not worktree.exists()
+        branch_check = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", "refs/heads/feature-delete"],
+            cwd=repo,
+            capture_output=True,
+            check=False,
+        )
+        assert branch_check.returncode != 0
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_delete_branch_returns_clear_error_when_worktree_cleanup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deleting a branch should surface a clear conflict when the attached worktree cannot be removed."""
+    from devgodzilla.db.database import SQLiteDatabase
+    import devgodzilla.services.git as git_module
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        worktree = tmp / "worktrees" / "feature-conflict"
+        repo.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True)
+        (repo / "README.md").write_text("# Test Repo")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "branch", "feature-conflict"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "worktree", "add", str(worktree), "feature-conflict"], cwd=repo, check=True, capture_output=True)
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+
+        original_remove_worktree = git_module.GitService.remove_worktree
+
+        def _raise_remove_worktree(self, repo_root, worktree_path, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("worktree is busy")
+
+        monkeypatch.setattr(git_module.GitService, "remove_worktree", _raise_remove_worktree)
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        with TestClient(app) as client:  # type: ignore[arg-type]
+            response = client.post(f"/projects/{project.id}/branches/feature-conflict/delete")
+            assert response.status_code == 409
+            detail = response.json()["detail"]
+            assert "still used by worktree" in detail.lower()
+            assert str(worktree) in detail
+
+        monkeypatch.setattr(git_module.GitService, "remove_worktree", original_remove_worktree)
