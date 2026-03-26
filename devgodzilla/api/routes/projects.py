@@ -15,6 +15,7 @@ from devgodzilla.api.dependencies import get_db, get_service_context
 from devgodzilla.api.routes._clarification_enrichment import enrich_clarifications
 from devgodzilla.api.routes._project_git import (
     create_project_branch_in_repo,
+    list_git_worktree_paths,
     list_project_branches_for_repo,
     list_project_pulls_for_repo,
     list_project_worktrees_for_repo,
@@ -91,6 +92,33 @@ def _append_project_event(
         )
     except Exception:
         pass
+
+
+def _remove_branch_worktree_if_needed(
+    *,
+    repo_path: Path,
+    branch_name: str,
+    project_id: int,
+    ctx: ServiceContext,
+) -> Optional[str]:
+    from devgodzilla.services.git import GitService
+
+    attached_worktree = list_git_worktree_paths(repo_path).get(branch_name)
+    if not attached_worktree:
+        return None
+
+    attached_worktree_path = Path(attached_worktree).expanduser()
+    if attached_worktree_path.resolve() == repo_path.resolve():
+        raise HTTPException(status_code=400, detail="Cannot delete the currently checked out branch")
+
+    try:
+        GitService(ctx).remove_worktree(repo_path, attached_worktree_path, project_id=project_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Branch {branch_name} is still used by worktree {attached_worktree_path}: {exc}",
+        ) from exc
+    return str(attached_worktree_path)
 
 
 def _project_out(
@@ -367,7 +395,7 @@ def _resolve_onboarding_repo_path(
 
 
 def _checkout_onboarding_branch(project: Any, repo_path: Path, branch: str, ctx: ServiceContext) -> None:
-    from devgodzilla.services.git import GitService, run_process
+    from devgodzilla.services.git import run_process
 
     if not branch:
         return
@@ -1299,6 +1327,7 @@ def delete_project_branch(
     project_id: int,
     branch: str,
     delete_remote: bool = False,
+    ctx: ServiceContext = Depends(get_service_context),
     db: Database = Depends(get_db),
 ):
     """Delete a local (and optionally remote) git branch for the project repository."""
@@ -1330,6 +1359,13 @@ def delete_project_branch(
     if exists_res.returncode != 0:
         raise HTTPException(status_code=404, detail=f"Local branch not found: {branch_name}")
 
+    removed_worktree_path = _remove_branch_worktree_if_needed(
+        repo_path=repo_path,
+        branch_name=branch_name,
+        project_id=project_id,
+        ctx=ctx,
+    )
+
     run_process(["git", "branch", "-D", branch_name], cwd=repo_path, check=True)
 
     deleted_remote_branch = False
@@ -1342,9 +1378,16 @@ def delete_project_branch(
         project_id=project_id,
         event_type="git_branch_deleted",
         message=f"Deleted branch {branch_name}",
-        metadata={"branch": branch_name, "deleted_remote": deleted_remote_branch},
+        metadata={
+            "branch": branch_name,
+            "deleted_remote": deleted_remote_branch,
+            "removed_worktree_path": removed_worktree_path,
+        },
     )
-    return {"message": f"Branch deleted: {branch_name}"}
+    message = f"Branch deleted: {branch_name}"
+    if removed_worktree_path:
+        message = f"{message} (removed worktree {removed_worktree_path})"
+    return {"message": message}
 
 @router.get("/projects/{project_id}/clarifications", response_model=List[schemas.ClarificationOut])
 def list_project_clarifications(
