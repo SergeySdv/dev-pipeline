@@ -307,7 +307,7 @@ pub(super) fn draw_menu(f: &mut Frame<'_>, area: Rect, menu_index: usize, app: &
     f.render_widget(status, layout[3]);
 }
 
-pub(super) fn draw_modal(f: &mut Frame<'_>, size: Rect, modal: &Modal) {
+pub(super) fn draw_modal(f: &mut Frame<'_>, size: Rect, modal: &Modal, app: &App) {
     let area = centered_rect(60, 60, size);
     f.render_widget(Clear, area);
     match modal {
@@ -346,7 +346,99 @@ pub(super) fn draw_modal(f: &mut Frame<'_>, size: Rect, modal: &Modal) {
                 lines.push(Line::from(format!("{label}{value}")));
             }
             lines.push(Line::from(""));
-            lines.push(Line::from("Enter submit • Tab next • Esc cancel"));
+            if title.starts_with("Configure agent") {
+                lines.push(Line::from(
+                    "Enter submit • Tab next • Up/Down or Ctrl+j/k cycle options • Ctrl+U clear • Esc cancel",
+                ));
+                if *focus == 3 {
+                    let available_models = app
+                        .state
+                        .agent_detail
+                        .as_ref()
+                        .or_else(|| {
+                            app.state
+                                .agent_index
+                                .and_then(|idx| app.state.agents.get(idx))
+                        })
+                        .map(|agent| {
+                            agent
+                                .available_models
+                                .iter()
+                                .filter_map(|model| match model {
+                                    serde_json::Value::String(value) => Some(value.clone()),
+                                    serde_json::Value::Object(map) => map
+                                        .get("value")
+                                        .and_then(serde_json::Value::as_str)
+                                        .or_else(|| {
+                                            map.get("name").and_then(serde_json::Value::as_str)
+                                        })
+                                        .map(str::to_string),
+                                    _ => None,
+                                })
+                                .take(6)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    if !available_models.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from("Available models:"));
+                        for model in available_models {
+                            lines.push(Line::from(format!("  - {model}")));
+                        }
+                    }
+                } else if *focus == 4 {
+                    let current_model = fields
+                        .get(3)
+                        .map(|field| field.value.trim())
+                        .unwrap_or_default();
+                    let available_reasoning = app
+                        .state
+                        .agent_detail
+                        .as_ref()
+                        .or_else(|| {
+                            app.state
+                                .agent_index
+                                .and_then(|idx| app.state.agents.get(idx))
+                        })
+                        .and_then(|agent| {
+                            agent.available_models.iter().find_map(|model| {
+                                let model_obj = model.as_object()?;
+                                let value = model_obj.get("value")?.as_str()?;
+                                if value != current_model {
+                                    return None;
+                                }
+                                Some(
+                                    model_obj
+                                        .get("reasoning_efforts")
+                                        .and_then(serde_json::Value::as_array)
+                                        .map(|items| {
+                                            items
+                                                .iter()
+                                                .filter_map(|item| {
+                                                    item.as_object()
+                                                        .and_then(|map| map.get("value"))
+                                                        .and_then(serde_json::Value::as_str)
+                                                        .map(str::to_string)
+                                                })
+                                                .take(6)
+                                                .collect::<Vec<_>>()
+                                        })
+                                        .unwrap_or_default(),
+                                )
+                            })
+                        })
+                        .unwrap_or_default();
+                    if !available_reasoning.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from("Available reasoning levels:"));
+                        for reasoning in available_reasoning {
+                            lines.push(Line::from(format!("  - {reasoning}")));
+                        }
+                    }
+                }
+            } else {
+                lines.push(Line::from("Enter submit • Tab next • Esc cancel"));
+            }
             let para = Paragraph::new(lines)
                 .block(Block::default().borders(Borders::ALL).title(title.clone()))
                 .wrap(Wrap { trim: true });

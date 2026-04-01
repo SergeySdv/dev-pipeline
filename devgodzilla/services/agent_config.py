@@ -91,6 +91,18 @@ class AgentConfigService(Service):
     """
     
     DEFAULT_CONFIG_PATH = "config/agents.yaml"
+    PROJECT_OVERRIDE_ALLOWED_KEYS = frozenset(
+        {
+            "enabled",
+            "default_model",
+            "reasoning_effort",
+            "capabilities",
+            "sandbox",
+            "format",
+            "timeout_seconds",
+            "max_retries",
+        }
+    )
     
     def __init__(
         self,
@@ -296,7 +308,7 @@ class AgentConfigService(Service):
             return resolved
         for agent_id, data in project_agents.items():
             if isinstance(data, dict):
-                resolved[str(agent_id)] = data
+                resolved[str(agent_id)] = self._sanitize_project_agent_override(data)
         return resolved
 
     def _get_db_agent_overrides(self, project_id: Optional[int | str]) -> Dict[str, Dict[str, Any]]:
@@ -305,7 +317,13 @@ class AgentConfigService(Service):
         try:
             db = self._get_db()
             overrides = db.list_agent_overrides(int(project_id))
-            return overrides if isinstance(overrides, dict) else {}
+            if not isinstance(overrides, dict):
+                return {}
+            return {
+                str(agent_id): self._sanitize_project_agent_override(data)
+                for agent_id, data in overrides.items()
+                if isinstance(data, dict)
+            }
         except Exception:
             return {}
 
@@ -442,8 +460,21 @@ class AgentConfigService(Service):
         for agent_id, data in overrides.items():
             if not isinstance(data, dict):
                 continue
-            db.upsert_agent_override(project_value, agent_id, data)
+            db.upsert_agent_override(
+                project_value,
+                agent_id,
+                self._sanitize_project_agent_override(data),
+            )
         return self.get_agent_overrides(project_id)
+
+    def _sanitize_project_agent_override(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        return {
+            key: data.get(key)
+            for key in self.PROJECT_OVERRIDE_ALLOWED_KEYS
+            if key in data
+        }
     
     def _resolve_config_path(self) -> Path:
         """Resolve the configuration file path."""
@@ -490,6 +521,23 @@ class AgentConfigService(Service):
         self._codex_models_cache = visible_models
         return self._codex_models_cache
 
+    def _has_codex_model_catalog(
+        self,
+        *,
+        agent_id: str,
+        command_base: str,
+        selected_model: str,
+    ) -> bool:
+        if agent_id == "codex" or command_base == "codex":
+            return True
+        if not selected_model:
+            return False
+        return any(
+            str(model.get("slug") or "").strip() == selected_model
+            for model in self._load_codex_models_cache()
+            if isinstance(model, dict)
+        )
+
     def get_runtime_options(
         self,
         agent_id: str,
@@ -523,11 +571,15 @@ class AgentConfigService(Service):
             "reasoning_effort": (agent.reasoning_effort or "").strip() or None,
         }
 
+        selected_model = (agent.default_model or "").strip()
         cmd_base = Path((agent.command or agent.id)).name.lower()
-        if cmd_base != "codex":
+        if not self._has_codex_model_catalog(
+            agent_id=agent.id,
+            command_base=cmd_base,
+            selected_model=selected_model,
+        ):
             return metadata
 
-        selected_model = (agent.default_model or "").strip()
         available_models: List[Dict[str, Any]] = []
         for model in self._load_codex_models_cache():
             slug = str(model.get("slug") or "").strip()
@@ -1151,7 +1203,11 @@ class AgentConfigService(Service):
         try:
             if project_id is not None:
                 db = self._get_db()
-                db.upsert_agent_override(int(project_id), agent_id, update_data)
+                db.upsert_agent_override(
+                    int(project_id),
+                    agent_id,
+                    self._sanitize_project_agent_override(update_data),
+                )
             else:
                 data = self._load_raw_config()
                 agents_section = data.setdefault("agents", {})
@@ -1277,7 +1333,11 @@ class AgentConfigService(Service):
             for agent_id, data in agents.items():
                 if not isinstance(data, dict):
                     continue
-                self._get_db().upsert_agent_override(project_value, agent_id, data)
+                self._get_db().upsert_agent_override(
+                    project_value,
+                    agent_id,
+                    self._sanitize_project_agent_override(data),
+                )
 
         assignments = overrides.get("assignments")
         if isinstance(assignments, dict):

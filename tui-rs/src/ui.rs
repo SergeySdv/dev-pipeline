@@ -70,7 +70,7 @@ pub fn draw(
             draw_body(f, chunks[2], app);
             draw_status(f, chunks[3], app);
             if let Some(modal) = modal {
-                overlays::draw_modal(f, size, modal);
+                overlays::draw_modal(f, size, modal, app);
             }
         }
     }

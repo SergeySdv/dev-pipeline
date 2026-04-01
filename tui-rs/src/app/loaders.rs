@@ -100,15 +100,14 @@ impl App {
                 self.load_agents_page().await?;
             }
             Page::Events => {
-                self.load_projects().await?;
-                self.load_events().await?;
-                self.load_recent_events().await?;
-                self.load_metrics_summary().await?;
+                if self.dispatch_background_refresh().await? {
+                    return Ok(());
+                }
             }
             Page::Queues => {
-                self.load_projects().await?;
-                self.load_queue().await?;
-                self.load_metrics_summary().await?;
+                if self.dispatch_background_refresh().await? {
+                    return Ok(());
+                }
             }
             Page::Settings => {
                 self.load_projects().await?;
@@ -224,15 +223,26 @@ impl App {
                 self.load_agents_page().await?;
             }
             Page::Events => {
-                self.state.status = "Refreshing events...".to_string();
-                self.load_events().await?;
-                self.load_recent_events().await?;
-                self.load_metrics_summary().await?;
+                if self.background_handle.is_none() {
+                    self.start_background_request(
+                        super::background::BackgroundRequest::EventsPage {
+                            protocol_id: self.state.selected_protocol_id(),
+                        },
+                        "Refreshing events...",
+                    );
+                }
+                return Ok(());
             }
             Page::Queues => {
-                self.state.status = "Refreshing queues...".to_string();
-                self.load_queue().await?;
-                self.load_metrics_summary().await?;
+                if self.background_handle.is_none() {
+                    self.start_background_request(
+                        super::background::BackgroundRequest::QueuesPage {
+                            status_filter: self.state.job_status_filter.clone(),
+                        },
+                        "Refreshing queues...",
+                    );
+                }
+                return Ok(());
             }
             Page::Settings => {
                 self.state.status = "Refreshing settings...".to_string();
@@ -564,31 +574,6 @@ impl App {
         Ok(())
     }
 
-    pub(crate) async fn load_events(&mut self) -> Result<()> {
-        let Some(protocol_id) = self.state.selected_protocol_id() else {
-            self.state.events.clear();
-            self.state.event_index = None;
-            return Ok(());
-        };
-        match self.client.events(protocol_id).await {
-            Ok(data) => {
-                self.state.events = data;
-                if self.state.events.is_empty() {
-                    self.state.event_index = None;
-                } else if self
-                    .state
-                    .event_index
-                    .map(|idx| idx >= self.state.events.len())
-                    .unwrap_or(true)
-                {
-                    self.state.event_index = Some(self.state.events.len() - 1);
-                }
-            }
-            Err(err) => self.set_error(err),
-        }
-        Ok(())
-    }
-
     pub(crate) async fn load_recent_events(&mut self) -> Result<()> {
         match self.client.recent_events(50).await {
             Ok(data) => {
@@ -893,14 +878,6 @@ impl App {
             Err(err) => self.set_error(err),
         }
         match metrics_res {
-            Ok(summary) => self.state.metrics_summary = Some(summary),
-            Err(err) => self.set_error(err),
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn load_metrics_summary(&mut self) -> Result<()> {
-        match self.client.metrics_summary().await {
             Ok(summary) => self.state.metrics_summary = Some(summary),
             Err(err) => self.set_error(err),
         }

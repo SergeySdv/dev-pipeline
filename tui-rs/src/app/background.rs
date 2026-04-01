@@ -3,15 +3,16 @@ use crate::{
     api::{ApiClient, ApiError},
     models::{
         AgentAssignments, AgentHealth, AgentInfo, AgentMetrics, AgentPromptTemplate,
-        EffectivePolicy, FeedbackEvent, JobRun, MetricsSummary, PolicyFinding, PolicyPack, Project,
-        ProjectBranch, ProjectClarification, ProjectCommit, ProjectOnboardingSummary,
+        EffectivePolicy, Event, FeedbackEvent, JobRun, MetricsSummary, PolicyFinding, PolicyPack,
+        Project, ProjectBranch, ProjectClarification, ProjectCommit, ProjectOnboardingSummary,
         ProjectPolicy, ProjectPullRequest, ProjectSpec, ProjectWorktree, ProtocolArtifact,
-        ProtocolRun, ProtocolSpec, QualityDashboard, QualitySummary, SpecificationContent, StepRun,
-        UserProfile,
+        ProtocolRun, ProtocolSpec, QualityDashboard, QualitySummary, QueueJob,
+        SpecificationContent, StepRun, UserProfile,
     },
     state::Page,
 };
 use anyhow::Result;
+use serde_json::Value;
 #[derive(Debug)]
 pub(crate) enum BackgroundRequest {
     ProjectWorkspace {
@@ -45,6 +46,12 @@ pub(crate) enum BackgroundRequest {
         project_id: Option<i64>,
         agent_id: String,
     },
+    EventsPage {
+        protocol_id: Option<i64>,
+    },
+    QueuesPage {
+        status_filter: Option<String>,
+    },
     Settings,
 }
 
@@ -65,6 +72,8 @@ enum BackgroundUpdate {
     PolicyPackDetail(PolicyPackDetailData),
     AgentsPage(AgentsPageData),
     AgentDetail(AgentDetailData),
+    EventsPage(EventsPageData),
+    QueuesPage(QueuesPageData),
     Settings(SettingsData),
 }
 
@@ -156,6 +165,22 @@ struct AgentsPageData {
 #[derive(Debug, Default)]
 struct AgentDetailData {
     agent_detail: Option<AgentInfo>,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct EventsPageData {
+    events: Option<Vec<Event>>,
+    recent_events: Option<Vec<Event>>,
+    metrics_summary: Option<MetricsSummary>,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct QueuesPageData {
+    queue_stats: Option<Value>,
+    queue_jobs: Option<Vec<QueueJob>>,
+    metrics_summary: Option<MetricsSummary>,
     errors: Vec<String>,
 }
 
@@ -265,6 +290,24 @@ impl App {
                 );
                 return Ok(true);
             }
+            Page::Events => {
+                self.start_background_request(
+                    BackgroundRequest::EventsPage {
+                        protocol_id: self.state.selected_protocol_id(),
+                    },
+                    "Loading events...",
+                );
+                return Ok(true);
+            }
+            Page::Queues => {
+                self.start_background_request(
+                    BackgroundRequest::QueuesPage {
+                        status_filter: self.state.job_status_filter.clone(),
+                    },
+                    "Loading queues...",
+                );
+                return Ok(true);
+            }
             Page::Settings => {
                 self.start_background_request(BackgroundRequest::Settings, "Loading settings...");
                 return Ok(true);
@@ -350,7 +393,7 @@ impl App {
         Ok(false)
     }
 
-    fn start_background_request(&mut self, request: BackgroundRequest, status: &str) {
+    pub(crate) fn start_background_request(&mut self, request: BackgroundRequest, status: &str) {
         self.background_request_id = self.background_request_id.wrapping_add(1);
         if let Some(handle) = self.background_handle.take() {
             handle.abort();
@@ -615,6 +658,62 @@ impl App {
                 }
                 self.state.status = "Agent detail loaded".into();
             }
+            BackgroundUpdate::EventsPage(data) => {
+                self.apply_errors(&data.errors);
+                if let Some(events) = data.events {
+                    self.state.events = events;
+                    if self.state.events.is_empty() {
+                        self.state.event_index = None;
+                    } else if self
+                        .state
+                        .event_index
+                        .map(|idx| idx >= self.state.events.len())
+                        .unwrap_or(true)
+                    {
+                        self.state.event_index = Some(self.state.events.len() - 1);
+                    }
+                }
+                if let Some(recent_events) = data.recent_events {
+                    self.state.recent_events = recent_events;
+                    if self.state.recent_events.is_empty() {
+                        self.state.recent_event_index = None;
+                    } else if self
+                        .state
+                        .recent_event_index
+                        .map(|idx| idx >= self.state.recent_events.len())
+                        .unwrap_or(true)
+                    {
+                        self.state.recent_event_index = Some(0);
+                    }
+                }
+                if let Some(summary) = data.metrics_summary {
+                    self.state.metrics_summary = Some(summary);
+                }
+                self.state.status = "Events loaded".into();
+            }
+            BackgroundUpdate::QueuesPage(data) => {
+                self.apply_errors(&data.errors);
+                if let Some(queue_stats) = data.queue_stats {
+                    self.state.queue_stats = queue_stats;
+                }
+                if let Some(queue_jobs) = data.queue_jobs {
+                    self.state.queue_jobs = queue_jobs;
+                    if self.state.queue_jobs.is_empty() {
+                        self.state.queue_job_index = None;
+                    } else if self
+                        .state
+                        .queue_job_index
+                        .map(|idx| idx >= self.state.queue_jobs.len())
+                        .unwrap_or(true)
+                    {
+                        self.state.queue_job_index = Some(0);
+                    }
+                }
+                if let Some(summary) = data.metrics_summary {
+                    self.state.metrics_summary = Some(summary);
+                }
+                self.state.status = "Queues loaded".into();
+            }
             BackgroundUpdate::Settings(data) => {
                 self.apply_errors(&data.errors);
                 if let Some(profile) = data.profile {
@@ -683,6 +782,12 @@ async fn fetch_background_update(
             project_id,
             agent_id,
         } => BackgroundUpdate::AgentDetail(fetch_agent_detail(client, project_id, &agent_id).await),
+        BackgroundRequest::EventsPage { protocol_id } => {
+            BackgroundUpdate::EventsPage(fetch_events_page(client, protocol_id).await)
+        }
+        BackgroundRequest::QueuesPage { status_filter } => {
+            BackgroundUpdate::QueuesPage(fetch_queues_page(client, status_filter.as_deref()).await)
+        }
         BackgroundRequest::Settings => BackgroundUpdate::Settings(fetch_settings(client).await),
     }
 }
@@ -1045,6 +1150,59 @@ async fn fetch_settings(client: ApiClient) -> SettingsData {
     let mut data = SettingsData::default();
     match client.profile().await {
         Ok(profile) => data.profile = Some(profile),
+        Err(err) => data.errors.push(err.to_string()),
+    }
+    data
+}
+
+async fn fetch_events_page(client: ApiClient, protocol_id: Option<i64>) -> EventsPageData {
+    let mut data = EventsPageData::default();
+    let (events_res, recent_events_res, metrics_res) = tokio::join!(
+        async {
+            if let Some(protocol_id) = protocol_id {
+                Some(client.events(protocol_id).await)
+            } else {
+                None
+            }
+        },
+        client.recent_events(50),
+        client.metrics_summary(),
+    );
+
+    match events_res {
+        Some(Ok(events)) => data.events = Some(events),
+        Some(Err(err)) => data.errors.push(err.to_string()),
+        None => data.events = Some(Vec::new()),
+    }
+    match recent_events_res {
+        Ok(events) => data.recent_events = Some(events),
+        Err(err) => data.errors.push(err.to_string()),
+    }
+    match metrics_res {
+        Ok(summary) => data.metrics_summary = Some(summary),
+        Err(err) => data.errors.push(err.to_string()),
+    }
+    data
+}
+
+async fn fetch_queues_page(client: ApiClient, status_filter: Option<&str>) -> QueuesPageData {
+    let mut data = QueuesPageData::default();
+    let (stats_res, jobs_res, metrics_res) = tokio::join!(
+        client.queue_stats(),
+        client.queue_jobs(status_filter),
+        client.metrics_summary(),
+    );
+
+    match stats_res {
+        Ok(stats) => data.queue_stats = Some(stats),
+        Err(err) => data.errors.push(err.to_string()),
+    }
+    match jobs_res {
+        Ok(jobs) => data.queue_jobs = Some(jobs),
+        Err(err) => data.errors.push(err.to_string()),
+    }
+    match metrics_res {
+        Ok(summary) => data.metrics_summary = Some(summary),
         Err(err) => data.errors.push(err.to_string()),
     }
     data

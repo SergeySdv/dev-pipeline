@@ -343,3 +343,95 @@ defaults:
                 assert checks["login_status"]["ok"] is True
         finally:
             app.dependency_overrides.clear()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_agents_api_keeps_codex_identity_for_project_override(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config_path = tmp_path / "agents.yaml"
+        config_path.write_text(
+            """
+agents:
+  codex:
+    name: OpenAI Codex
+    kind: cli
+    command: codex
+    capabilities: [code_gen, code_review, reasoning]
+    enabled: true
+    default_model: gpt-5.4
+defaults:
+  exec: codex
+""".strip(),
+            encoding="utf-8",
+        )
+
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        (codex_home / "models_cache.json").write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-5.4",
+                            "display_name": "gpt-5.4",
+                            "description": "Latest frontier agentic coding model.",
+                            "priority": 1,
+                            "visibility": "list",
+                            "default_reasoning_level": "medium",
+                            "supported_reasoning_levels": [
+                                {"effort": "low", "description": "Fast"},
+                                {"effort": "medium", "description": "Balanced"},
+                                {"effort": "high", "description": "Deep"},
+                                {"effort": "xhigh", "description": "Deepest"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("DEVGODZILLA_AGENT_CONFIG_PATH", str(config_path))
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+        monkeypatch.delenv("DEVGODZILLA_DB_URL", raising=False)
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+
+        db_path = tmp_path / "test.db"
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="Agent Override Test",
+            git_url="https://example.com/repo.git",
+            base_branch="main",
+        )
+        db.upsert_agent_override(
+            project.id,
+            "codex",
+            {
+                "name": "Claude Code",
+                "command": "claude",
+                "command_dir": ".claude/commands/",
+                "default_model": "gpt-5.4",
+                "reasoning_effort": "high",
+            },
+        )
+
+        from devgodzilla.api.dependencies import get_db
+
+        app.dependency_overrides[get_db] = lambda: db
+
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.get(f"/agents/codex?project_id={project.id}")
+                assert resp.status_code == 200
+                payload = resp.json()
+                assert payload["name"] == "OpenAI Codex"
+                assert payload["command"] == "codex"
+                assert payload["command_dir"] is None
+                assert payload["default_model"] == "gpt-5.4"
+                assert payload["reasoning_effort"] == "high"
+                assert payload["available_models"][0]["value"] == "gpt-5.4"
+                assert payload["available_models"][0]["reasoning_efforts"][-1]["value"] == "xhigh"
+        finally:
+            app.dependency_overrides.clear()

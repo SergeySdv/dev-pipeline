@@ -205,6 +205,8 @@ impl App {
             | Page::Quality
             | Page::Policy
             | Page::Agents
+            | Page::Events
+            | Page::Queues
             | Page::Settings => Duration::from_millis(100),
             _ => Duration::ZERO,
         }

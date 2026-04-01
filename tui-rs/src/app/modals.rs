@@ -1,9 +1,148 @@
 use super::{App, InputField, Modal, ModalAction, QuickAction};
 use crate::state::{Page, ProjectWorkspaceTab};
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde_json::Value;
 
 impl App {
+    fn agent_available_model_values(&self) -> Vec<String> {
+        let models = self
+            .state
+            .agent_detail
+            .as_ref()
+            .or_else(|| {
+                self.state
+                    .agent_index
+                    .and_then(|idx| self.state.agents.get(idx))
+            })
+            .map(|agent| &agent.available_models);
+
+        let mut values = Vec::new();
+        if let Some(models) = models {
+            for model in models {
+                let value = match model {
+                    Value::String(value) => Some(value.clone()),
+                    Value::Object(map) => map
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .or_else(|| map.get("id").and_then(Value::as_str))
+                        .or_else(|| map.get("name").and_then(Value::as_str))
+                        .map(str::to_string),
+                    _ => None,
+                };
+                if let Some(value) = value.filter(|value| !value.is_empty()) {
+                    if !values.iter().any(|existing| existing == &value) {
+                        values.push(value);
+                    }
+                }
+            }
+        }
+        values
+    }
+
+    fn cycle_agent_model_field(fields: &mut [InputField], delta: i32, available_models: &[String]) {
+        if available_models.is_empty() {
+            return;
+        }
+        let Some(field) = fields.get_mut(3) else {
+            return;
+        };
+        let current = field.value.trim();
+        let next_index = if current.is_empty() {
+            if delta >= 0 {
+                0
+            } else {
+                available_models.len() - 1
+            }
+        } else if let Some(idx) = available_models.iter().position(|model| model == current) {
+            let len = available_models.len() as i32;
+            (idx as i32 + delta).rem_euclid(len) as usize
+        } else if delta >= 0 {
+            0
+        } else {
+            available_models.len() - 1
+        };
+        field.value = available_models[next_index].clone();
+    }
+
+    fn agent_available_reasoning_values_for_model(&self, model_value: &str) -> Vec<String> {
+        let models = self
+            .state
+            .agent_detail
+            .as_ref()
+            .or_else(|| {
+                self.state
+                    .agent_index
+                    .and_then(|idx| self.state.agents.get(idx))
+            })
+            .map(|agent| &agent.available_models);
+
+        let Some(models) = models else {
+            return Vec::new();
+        };
+
+        let selected = models.iter().find(|model| {
+            model
+                .as_object()
+                .and_then(|map| map.get("value"))
+                .and_then(Value::as_str)
+                == Some(model_value)
+        });
+
+        let Some(selected) = selected.and_then(Value::as_object) else {
+            return Vec::new();
+        };
+
+        let mut values = Vec::new();
+        if let Some(efforts) = selected.get("reasoning_efforts").and_then(Value::as_array) {
+            for effort in efforts {
+                let value = effort
+                    .as_object()
+                    .and_then(|map| map.get("value"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if let Some(value) = value.filter(|value| !value.is_empty()) {
+                    if !values.iter().any(|existing| existing == &value) {
+                        values.push(value);
+                    }
+                }
+            }
+        }
+        values
+    }
+
+    fn cycle_agent_reasoning_field(
+        fields: &mut [InputField],
+        delta: i32,
+        available_efforts: &[String],
+    ) {
+        if available_efforts.is_empty() {
+            return;
+        }
+        let Some(field) = fields.get_mut(4) else {
+            return;
+        };
+        let current = field.value.trim();
+        let next_index = if current.is_empty() {
+            if delta >= 0 {
+                0
+            } else {
+                available_efforts.len() - 1
+            }
+        } else if let Some(idx) = available_efforts
+            .iter()
+            .position(|effort| effort == current)
+        {
+            let len = available_efforts.len() as i32;
+            (idx as i32 + delta).rem_euclid(len) as usize
+        } else if delta >= 0 {
+            0
+        } else {
+            available_efforts.len() - 1
+        };
+        field.value = available_efforts[next_index].clone();
+    }
+
     pub(crate) fn open_project_modal(&mut self) {
         self.modal = Some(Modal::Form {
             title: "Create project".into(),
@@ -725,6 +864,19 @@ impl App {
         if self.modal.is_none() {
             return Ok(false);
         }
+        let available_models = self.agent_available_model_values();
+        let current_model = self
+            .modal
+            .as_ref()
+            .and_then(|modal| match modal {
+                Modal::Form { fields, .. } => {
+                    fields.get(3).map(|field| field.value.trim().to_string())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let available_reasoning =
+            self.agent_available_reasoning_values_for_model(current_model.as_str());
         match self.modal.as_mut().unwrap() {
             Modal::Confirm { action, .. } => {
                 if key.code == KeyCode::Enter {
@@ -768,6 +920,7 @@ impl App {
                 action,
                 ..
             } => {
+                let is_agent_config = matches!(action, ModalAction::AgentConfig);
                 match key.code {
                     KeyCode::Tab => {
                         *focus = (*focus + 1) % fields.len();
@@ -787,6 +940,67 @@ impl App {
                     }
                     KeyCode::Esc => {
                         self.modal = None;
+                    }
+                    KeyCode::Up
+                        if is_agent_config
+                            && *focus == 3
+                            && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        Self::cycle_agent_model_field(fields, -1, &available_models);
+                    }
+                    KeyCode::Down
+                        if is_agent_config
+                            && *focus == 3
+                            && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        Self::cycle_agent_model_field(fields, 1, &available_models);
+                    }
+                    KeyCode::Char('k')
+                        if is_agent_config
+                            && *focus == 3
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        Self::cycle_agent_model_field(fields, -1, &available_models);
+                    }
+                    KeyCode::Char('j')
+                        if is_agent_config
+                            && *focus == 3
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        Self::cycle_agent_model_field(fields, 1, &available_models);
+                    }
+                    KeyCode::Up
+                        if is_agent_config
+                            && *focus == 4
+                            && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        Self::cycle_agent_reasoning_field(fields, -1, &available_reasoning);
+                    }
+                    KeyCode::Down
+                        if is_agent_config
+                            && *focus == 4
+                            && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        Self::cycle_agent_reasoning_field(fields, 1, &available_reasoning);
+                    }
+                    KeyCode::Char('k')
+                        if is_agent_config
+                            && *focus == 4
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        Self::cycle_agent_reasoning_field(fields, -1, &available_reasoning);
+                    }
+                    KeyCode::Char('j')
+                        if is_agent_config
+                            && *focus == 4
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        Self::cycle_agent_reasoning_field(fields, 1, &available_reasoning);
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(field) = fields.get_mut(*focus) {
+                            field.value.clear();
+                        }
                     }
                     KeyCode::Backspace => {
                         if let Some(field) = fields.get_mut(*focus) {
