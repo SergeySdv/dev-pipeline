@@ -89,12 +89,17 @@ pub struct ChatFlowState {
     pub kind: String,
     pub label: String,
     pub status: String,
+    pub stage: Option<String>,
     pub protocol_id: Option<i64>,
     pub step_id: Option<i64>,
     pub run_id: Option<String>,
     pub summary: Option<String>,
     pub last_tool: Option<String>,
     pub artifact_hint: Option<String>,
+    pub waiting_on: Option<String>,
+    pub operator_hint: Option<String>,
+    pub last_event: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]

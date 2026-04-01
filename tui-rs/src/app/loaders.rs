@@ -304,6 +304,8 @@ impl App {
         }
         if chat_has_live_context {
             self.sync_chat_events();
+        } else {
+            self.refresh_active_flow_status_from_state();
         }
         Ok(())
     }

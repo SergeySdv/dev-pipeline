@@ -2,6 +2,7 @@ use super::App;
 use crate::state::{ChatFlowState, ChatMessageKind, Page};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde_json::Value;
 
 impl App {
     pub(crate) fn ensure_chat_seeded(&mut self) {
@@ -456,6 +457,7 @@ impl App {
                         kind: "brownfield".into(),
                         label: protocol.protocol_name.clone(),
                         status: protocol.status.clone().unwrap_or_else(|| "queued".into()),
+                        stage: Some("queued".into()),
                         protocol_id: Some(protocol.id),
                         step_id: result.next_work_item_id,
                         run_id: None,
@@ -467,6 +469,13 @@ impl App {
                         ),
                         last_tool: Some("POST /projects/{id}/brownfield/run".into()),
                         artifact_hint: result.spec_path.clone().or(result.plan_path.clone()),
+                        waiting_on: Some("queue".into()),
+                        operator_hint: Some(
+                            "Flow is queued. Wait for bootstrap events or use /protocol show <id>."
+                                .into(),
+                        ),
+                        last_event: Some("brownfield bootstrap queued".into()),
+                        updated_at: protocol.updated_at.clone(),
                     });
                     self.state.push_chat_message(
                         ChatMessageKind::Flow,
@@ -517,12 +526,19 @@ impl App {
                     .map(|protocol| protocol.protocol_name.clone())
                     .unwrap_or_else(|| format!("protocol-{protocol_id}")),
                 status: "starting".into(),
+                stage: Some("starting".into()),
                 protocol_id: Some(protocol_id),
                 step_id: self.state.selected_step_id(),
                 run_id: None,
                 summary: Some("Protocol start requested".into()),
                 last_tool: Some("POST /protocols/{id}/actions/start".into()),
                 artifact_hint: None,
+                waiting_on: Some("queue".into()),
+                operator_hint: Some(
+                    "Protocol start requested. Waiting for backend progress.".into(),
+                ),
+                last_event: Some("protocol start requested".into()),
+                updated_at: None,
             });
             self.state.push_chat_message(
                 ChatMessageKind::Flow,
@@ -656,6 +672,117 @@ impl App {
         Ok(())
     }
 
+    fn metadata_str<'a>(metadata: &'a Value, key: &str) -> Option<&'a str> {
+        metadata.get(key).and_then(Value::as_str)
+    }
+
+    pub(crate) fn refresh_active_flow_status_from_state(&mut self) {
+        let Some(flow) = self.state.active_flow.as_mut() else {
+            return;
+        };
+
+        let protocol = flow.protocol_id.and_then(|protocol_id| {
+            self.state
+                .protocol_detail
+                .as_ref()
+                .filter(|protocol| protocol.id == protocol_id)
+                .or_else(|| {
+                    self.state
+                        .protocols
+                        .iter()
+                        .find(|protocol| protocol.id == protocol_id)
+                })
+        });
+
+        if let Some(protocol) = protocol {
+            flow.label = protocol.protocol_name.clone();
+            flow.status = protocol.status.clone().unwrap_or_else(|| "unknown".into());
+            flow.updated_at = protocol.updated_at.clone();
+
+            if let Some(metadata) = protocol.speckit_metadata.as_ref() {
+                let bootstrap_stage =
+                    Self::metadata_str(metadata, "brownfield_bootstrap_stage").map(str::to_string);
+                let bootstrap_status =
+                    Self::metadata_str(metadata, "brownfield_bootstrap_status").map(str::to_string);
+                let bootstrap_error =
+                    Self::metadata_str(metadata, "brownfield_bootstrap_error").map(str::to_string);
+                if bootstrap_stage.is_some() {
+                    flow.stage = bootstrap_stage.clone();
+                }
+                if flow.kind == "brownfield" {
+                    if let Some(error) = bootstrap_error {
+                        flow.status = "failed".into();
+                        flow.waiting_on = Some("error".into());
+                        flow.summary = Some(error);
+                        flow.operator_hint =
+                            Some("Flow failed. Inspect recent events and artifacts.".into());
+                    } else if let Some(stage) = bootstrap_stage {
+                        match bootstrap_status.as_deref() {
+                            Some("running") => {
+                                flow.status = format!("{stage} running");
+                                flow.waiting_on = Some("agent".into());
+                                flow.summary = Some(format!(
+                                    "Agent is executing brownfield bootstrap stage `{stage}`."
+                                ));
+                                flow.operator_hint = Some(
+                                    "Work is in progress. Wait for the next event or inspect logs."
+                                        .into(),
+                                );
+                            }
+                            Some("queued") => {
+                                flow.status = format!("{stage} queued");
+                                flow.waiting_on = Some("queue".into());
+                                flow.summary = Some(format!(
+                                    "Brownfield bootstrap stage `{stage}` is queued."
+                                ));
+                                flow.operator_hint = Some(
+                                    "Waiting for backend worker to pick up the next stage.".into(),
+                                );
+                            }
+                            Some("completed") => {
+                                flow.status = "completed".into();
+                                flow.waiting_on = None;
+                                flow.summary = Some("Brownfield bootstrap completed.".into());
+                                flow.operator_hint = Some(
+                                    "Bootstrap finished. Continue with protocol execution.".into(),
+                                );
+                            }
+                            Some("failed") => {
+                                flow.status = "failed".into();
+                                flow.waiting_on = Some("error".into());
+                                flow.operator_hint = Some(
+                                    "Bootstrap failed. Inspect events for the failing stage."
+                                        .into(),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if !self.state.protocol_clarifications.is_empty() {
+            flow.waiting_on = Some("you".into());
+            flow.operator_hint = Some(
+                "Protocol has open clarifications. Answer them before work can continue.".into(),
+            );
+            if flow.summary.is_none() {
+                flow.summary = Some("Waiting for operator clarification.".into());
+            }
+        }
+
+        if let Some(event) = self
+            .state
+            .recent_events
+            .iter()
+            .filter(|event| event.protocol_run_id == flow.protocol_id)
+            .max_by(|a, b| a.created_at.cmp(&b.created_at))
+        {
+            flow.last_event = Some(format!("{}: {}", event.event_type, event.message));
+        }
+    }
+
     pub(crate) fn sync_chat_events(&mut self) {
         self.ensure_chat_seeded();
         let active_protocol_id = self
@@ -701,11 +828,34 @@ impl App {
             self.state
                 .push_chat_message(kind, format!("[{event_type}] {message}"));
             self.state.seen_chat_event_keys.push(key);
+            if let Some(flow) = self.state.active_flow.as_mut() {
+                flow.last_event = Some(format!("{event_type}: {message}"));
+                if event_type.contains("failed") {
+                    flow.status = "failed".into();
+                    flow.waiting_on = Some("error".into());
+                    flow.operator_hint =
+                        Some("Flow failed. Inspect the latest event and artifacts.".into());
+                    flow.summary = Some(message.clone());
+                } else if event_type.contains("clarif") {
+                    flow.waiting_on = Some("you".into());
+                    flow.operator_hint =
+                        Some("Flow is waiting for your clarification before continuing.".into());
+                    flow.summary = Some(message.clone());
+                } else if event_type.contains("started") {
+                    flow.waiting_on = Some("agent".into());
+                    flow.operator_hint =
+                        Some("Agent is actively working on the current stage.".into());
+                    flow.summary = Some(message.clone());
+                } else if event_type.contains("completed") {
+                    flow.summary = Some(message.clone());
+                }
+            }
         }
         if self.state.seen_chat_event_keys.len() > 300 {
             let overflow = self.state.seen_chat_event_keys.len().saturating_sub(300);
             self.state.seen_chat_event_keys.drain(0..overflow);
         }
+        self.refresh_active_flow_status_from_state();
     }
 
     fn select_project_from_token(&mut self, token: &str) -> bool {

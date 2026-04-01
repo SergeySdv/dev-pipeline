@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::state::ChatMessageKind;
+use crate::state::{ChatFlowState, ChatMessageKind};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -9,6 +9,17 @@ use ratatui::{
 };
 
 use super::{make_state, render_list_block, render_paragraph_block, short_hash};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlowDisplayState {
+    Failed,
+    WaitingOnUser,
+    WaitingOnAgent,
+    Queued,
+    Completed,
+    Running,
+    Unknown,
+}
 
 pub(super) fn draw_chat(f: &mut Frame<'_>, area: Rect, app: &App) {
     let rows = Layout::default()
@@ -158,6 +169,71 @@ fn message_lines(message: &crate::state::ChatMessage) -> Vec<Line<'static>> {
     lines
 }
 
+fn push_line(lines: &mut Vec<Line<'static>>, label: &str, value: impl std::fmt::Display) {
+    lines.push(Line::from(format!("{label}: {value}")));
+}
+
+fn push_optional_line(lines: &mut Vec<Line<'static>>, label: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        push_line(lines, label, value);
+    }
+}
+
+fn flow_display_state(flow: &ChatFlowState) -> FlowDisplayState {
+    let status = flow.status.to_ascii_lowercase();
+    match (status.as_str(), flow.waiting_on.as_deref()) {
+        (_, Some("error")) => FlowDisplayState::Failed,
+        (_, Some("you")) => FlowDisplayState::WaitingOnUser,
+        (_, Some("agent")) => FlowDisplayState::WaitingOnAgent,
+        (_, Some("queue")) => FlowDisplayState::Queued,
+        ("failed", _) => FlowDisplayState::Failed,
+        ("completed", _) => FlowDisplayState::Completed,
+        ("queued", _) => FlowDisplayState::Queued,
+        ("planning", _) | ("running", _) => FlowDisplayState::Running,
+        _ if status.contains("failed") => FlowDisplayState::Failed,
+        _ if status.contains("completed") => FlowDisplayState::Completed,
+        _ if status.contains("queued") => FlowDisplayState::Queued,
+        _ if status.contains("running") => FlowDisplayState::Running,
+        _ => FlowDisplayState::Unknown,
+    }
+}
+
+fn push_flow_summary(lines: &mut Vec<Line<'static>>, flow: &ChatFlowState) {
+    let summary = match flow_display_state(flow) {
+        FlowDisplayState::Failed => "state: failed",
+        FlowDisplayState::WaitingOnUser => "state: waiting for you",
+        FlowDisplayState::WaitingOnAgent => "state: agent working",
+        FlowDisplayState::Queued => "state: queued",
+        FlowDisplayState::Completed => "state: completed",
+        FlowDisplayState::Running => "state: running",
+        FlowDisplayState::Unknown => "state: unknown",
+    };
+    lines.push(Line::from(summary));
+}
+
+fn push_flow_details(lines: &mut Vec<Line<'static>>, flow: &ChatFlowState, include_tool: bool) {
+    push_line(lines, "kind", &flow.kind);
+    push_line(lines, "label", &flow.label);
+    push_line(lines, "status", &flow.status);
+    push_optional_line(lines, "stage", flow.stage.as_deref());
+    if let Some(protocol_id) = flow.protocol_id {
+        push_line(lines, "protocol", protocol_id);
+    }
+    if let Some(step_id) = flow.step_id {
+        push_line(lines, "step", step_id);
+    }
+    push_optional_line(lines, "run", flow.run_id.as_deref());
+    push_optional_line(lines, "summary", flow.summary.as_deref());
+    push_optional_line(lines, "waiting_on", flow.waiting_on.as_deref());
+    push_optional_line(lines, "last_event", flow.last_event.as_deref());
+    push_optional_line(lines, "updated_at", flow.updated_at.as_deref());
+    push_optional_line(lines, "hint", flow.operator_hint.as_deref());
+    if include_tool {
+        push_optional_line(lines, "tool", flow.last_tool.as_deref());
+    }
+    push_optional_line(lines, "artifact", flow.artifact_hint.as_deref());
+}
+
 fn draw_chat_inspector(f: &mut Frame<'_>, area: Rect, app: &App) {
     let mut lines = Vec::new();
     if let Some(flow) = &app.state.active_flow {
@@ -167,24 +243,8 @@ fn draw_chat_inspector(f: &mut Frame<'_>, area: Rect, app: &App) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(format!("kind: {}", flow.kind)));
-        lines.push(Line::from(format!("label: {}", flow.label)));
-        lines.push(Line::from(format!("status: {}", flow.status)));
-        if let Some(protocol_id) = flow.protocol_id {
-            lines.push(Line::from(format!("protocol: {protocol_id}")));
-        }
-        if let Some(step_id) = flow.step_id {
-            lines.push(Line::from(format!("step: {step_id}")));
-        }
-        if let Some(run_id) = &flow.run_id {
-            lines.push(Line::from(format!("run: {run_id}")));
-        }
-        if let Some(summary) = &flow.summary {
-            lines.push(Line::from(format!("summary: {summary}")));
-        }
-        if let Some(artifact_hint) = &flow.artifact_hint {
-            lines.push(Line::from(format!("artifact: {artifact_hint}")));
-        }
+        push_flow_summary(&mut lines, flow);
+        push_flow_details(&mut lines, flow, false);
         lines.push(Line::from(""));
     }
 
@@ -230,10 +290,8 @@ fn draw_chat_inspector(f: &mut Frame<'_>, area: Rect, app: &App) {
             .and_then(|idx| app.state.agents.get(idx))
     }) {
         lines.push(Line::from(format!("agent: {} ({})", agent.name, agent.id)));
-        lines.push(Line::from(format!("kind: {}", agent.kind)));
-        if let Some(model) = &agent.default_model {
-            lines.push(Line::from(format!("model: {model}")));
-        }
+        push_line(&mut lines, "kind", &agent.kind);
+        push_optional_line(&mut lines, "model", agent.default_model.as_deref());
     }
     if lines.is_empty() {
         lines.push(Line::from("Select a project and agent to start."));
@@ -261,12 +319,8 @@ fn draw_chat_results(f: &mut Frame<'_>, area: Rect, app: &App) {
             .collect()
     } else if let Some(flow) = &app.state.active_flow {
         let mut lines = Vec::new();
-        if let Some(tool) = &flow.last_tool {
-            lines.push(Line::from(tool.clone()));
-        }
-        if let Some(artifact_hint) = &flow.artifact_hint {
-            lines.push(Line::from(format!("artifact: {artifact_hint}")));
-        }
+        push_flow_summary(&mut lines, flow);
+        push_flow_details(&mut lines, flow, true);
         if lines.is_empty() {
             vec![Line::from("No results yet.")]
         } else {
