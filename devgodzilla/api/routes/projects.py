@@ -25,6 +25,7 @@ from devgodzilla.db.database import Database, _UNSET
 from devgodzilla.events_catalog import normalize_event_type
 from devgodzilla.logging import get_logger, log_extra
 from devgodzilla.services.base import ServiceContext
+from devgodzilla.services.git import GitService
 from devgodzilla.services.project_storage import (
     normalize_storage_path,
     project_storage_payload,

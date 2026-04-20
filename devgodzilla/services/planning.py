@@ -205,6 +205,8 @@ class PlanningService(Service):
 
         # Resolve protocol root early (used to decide whether to create a worktree)
         protocol_root = self._resolve_protocol_root(run, workspace)
+        if run.protocol_root != str(protocol_root):
+            run = self.db.update_protocol_paths(protocol_run_id, protocol_root=str(protocol_root))
         has_runtime_steps = protocol_root.exists() and any(protocol_root.glob("step-*.md"))
 
         # Ensure worktree for reproducible, isolated execution unless runtime steps already exist.
@@ -229,7 +231,11 @@ class PlanningService(Service):
                         project_id=project.id,
                         worktrees_root=resolve_effective_worktrees_root(project, self.context.config),
                     )
-                    run = self.db.update_protocol_paths(protocol_run_id, worktree_path=str(worktree))
+                    run = self.db.update_protocol_paths(
+                        protocol_run_id,
+                        worktree_path=str(worktree),
+                        protocol_root=str(self._resolve_protocol_root(run, worktree)),
+                    )
                     workspace = worktree
                     protocol_root = self._resolve_protocol_root(run, workspace)
                 except Exception as e:
@@ -433,20 +439,22 @@ class PlanningService(Service):
                 return path
 
         effective_repo_path = resolve_effective_repo_path(project, self.context.config)
-        if effective_repo_path and effective_repo_path.exists():
-            return effective_repo_path
 
-        # Use git service to resolve
+        # Use git service to resolve when available so storage/workspace policy
+        # stays centralized even if we already inferred the effective path.
         if self.git_service:
             try:
                 return self.git_service.resolve_repo_path(
                     project.git_url,
                     project_name=project.name,
-                    local_path=str(effective_repo_path) if effective_repo_path else project.local_path,
+                    local_path=project.local_path,
                     project_id=project.id,
                 )
             except Exception:
                 pass
+
+        if effective_repo_path and effective_repo_path.exists():
+            return effective_repo_path
         
         return None
 
