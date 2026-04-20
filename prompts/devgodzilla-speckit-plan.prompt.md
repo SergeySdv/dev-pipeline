@@ -13,5 +13,7 @@ Follow these rules:
 - `research.md` must capture implementation decisions, tradeoffs, constraints, and risks.
 - `quickstart.md` must contain exact run/test/manual verification steps and commands where possible.
 - Keep Markdown structure and preserve the "Policy Guidelines" section in `plan.md`.
+- Replace every placeholder section with concrete repository-specific details.
+- Do not leave `NEEDS CLARIFICATION`, `[REMOVE IF UNUSED]`, `[e.g., ...]`, `ACTION REQUIRED`, or other template guidance in the final plan.
 - Do not edit files outside `plan.md`, `data-model.md`, `research.md`, and `quickstart.md`.
 - Do not leave placeholder text such as `(To be defined)`, `Task 1`, or `Task 2`.

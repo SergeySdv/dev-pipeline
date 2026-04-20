@@ -12,6 +12,13 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _require_live_integration_tests() -> str:
+    """Return the live base URL or skip when live integration tests are disabled."""
+    if not _flag("DEVGODZILLA_RUN_LIVE_INTEGRATION_TESTS"):
+        pytest.skip("set DEVGODZILLA_RUN_LIVE_INTEGRATION_TESTS=1 to enable live frontend integration tests")
+    return os.environ.get("DEVGODZILLA_LIVE_BASE_URL", "http://localhost:8080").rstrip("/")
+
+
 def test_frontend_container_startup() -> None:
     """
     Integration test for frontend container startup.
@@ -195,8 +202,7 @@ def test_frontend_environment_configuration() -> None:
     
     Requirements: 5.1 - Frontend SHALL use NEXT_PUBLIC_API_BASE_URL for API requests
     """
-
-    nginx_base_url = os.environ.get("DEVGODZILLA_LIVE_BASE_URL", "http://localhost:8080").rstrip("/")
+    nginx_base_url = _require_live_integration_tests()
     
     # Get the console page
     console_response = httpx.get(f"{nginx_base_url}/console", timeout=10)
@@ -225,8 +231,7 @@ def test_frontend_api_connectivity() -> None:
     
     Requirements: 6.1 - Backend API SHALL include appropriate CORS headers
     """
-
-    nginx_base_url = os.environ.get("DEVGODZILLA_LIVE_BASE_URL", "http://localhost:8080").rstrip("/")
+    nginx_base_url = _require_live_integration_tests()
     
     # Test that API endpoints are accessible from the same origin as frontend
     # This simulates what the frontend JavaScript would do

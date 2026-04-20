@@ -283,6 +283,163 @@ def _cancel_cli_execution(
     return parsed
 
 
+def _api_request_json(
+    *,
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    timeout_seconds: float,
+    log_file: Path | None = None,
+) -> dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    data = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(
+                f"{datetime.now(UTC).isoformat()} meta http method={method} url={url} payload={json.dumps(payload or {}, sort_keys=True)}\n"
+            )
+
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            raw = resp.read().decode("utf-8")
+            status = getattr(resp, "status", None)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        if log_file is not None:
+            with log_file.open("a", encoding="utf-8") as handle:
+                handle.write(f"{datetime.now(UTC).isoformat()} meta http_error status={exc.code} body={raw}\n")
+        raise RuntimeError(f"HTTP {exc.code} for {method} {url}: {raw}") from exc
+
+    if log_file is not None:
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now(UTC).isoformat()} meta http_response status={status} body={raw}\n")
+
+    parsed = json.loads(raw) if raw else {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Unexpected API payload type for {method} {url}: {type(parsed).__name__}")
+    return parsed
+
+
+def _post_project_speckit(
+    ctx: HarnessRunContext,
+    *,
+    scenario: ScenarioConfig,
+    stage: str,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    timeout_seconds: int | float | None = None,
+) -> dict[str, Any]:
+    _require_metadata(ctx, "project_id", "env")
+    env = ctx.metadata["env"]
+    project_id = int(ctx.metadata["project_id"])
+    api_base_url = _harness_api_base_url(env)
+    response = _api_request_json(
+        method="POST",
+        url=f"{api_base_url}/projects/{project_id}/speckit/{action}",
+        payload=payload,
+        timeout_seconds=float(timeout_seconds or scenario.timeouts.planning_seconds),
+        log_file=_stage_log_file(ctx, stage, f"speckit-{action}"),
+    )
+    if response.get("success") is False:
+        raise RuntimeError(f"SpecKit {action} failed payload: {response}")
+    return response
+
+
+def _default_speckit_description(scenario: ScenarioConfig) -> str:
+    override = os.environ.get("HARNESS_SPECKIT_DESCRIPTION")
+    if override and override.strip():
+        return override.strip()
+    return (
+        f"Add a small, well-scoped improvement for {scenario.repo.name} with clear requirements, "
+        "implementation tasks, and verification steps."
+    )
+
+
+def _default_speckit_clarify_entries() -> list[dict[str, str]]:
+    question = (os.environ.get("HARNESS_SPECKIT_CLARIFY_QUESTION") or "Primary implementation constraint?").strip()
+    answer = (
+        os.environ.get("HARNESS_SPECKIT_CLARIFY_ANSWER")
+        or "Keep the scope minimal, preserve existing workflows, and include automated verification."
+    ).strip()
+    return [{"question": question, "answer": answer}]
+
+
+def _existing_path(raw: Any, *, label: str) -> Path:
+    text = str(raw or "").strip()
+    if not text:
+        raise RuntimeError(f"Missing {label} in stage payload")
+    path = Path(text).expanduser()
+    if not path.exists():
+        raise RuntimeError(f"{label} does not exist: {path}")
+    return path.resolve(strict=False)
+
+
+def _assert_under_root(path: Path, root: Path, *, label: str) -> None:
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(f"{label} is outside expected root {root}: {path}") from exc
+
+
+def _assert_non_placeholder_report(path: Path) -> None:
+    content = path.read_text(encoding="utf-8")
+    if "(To be generated)" in content:
+        raise RuntimeError(f"Analysis report still contains placeholder content: {path}")
+
+
+def _assert_no_template_markers(path: Path, *, label: str, markers: list[str]) -> None:
+    content = path.read_text(encoding="utf-8")
+    detected = [marker for marker in markers if marker in content]
+    if detected:
+        joined = ", ".join(detected[:4])
+        raise RuntimeError(f"{label} still contains template content ({joined}): {path}")
+
+
+def _assert_non_placeholder_spec(path: Path) -> None:
+    _assert_no_template_markers(
+        path,
+        label="spec.md",
+        markers=[
+            "[Brief Title]",
+            "[Describe this user journey in plain language]",
+            "ACTION REQUIRED: The content in this section represents placeholders.",
+            "System MUST [specific capability",
+        ],
+    )
+
+
+def _assert_non_placeholder_plan(path: Path) -> None:
+    _assert_no_template_markers(
+        path,
+        label="plan.md",
+        markers=[
+            "[Extract from feature spec:",
+            "ACTION REQUIRED: Replace the content in this section",
+            "[REMOVE IF UNUSED]",
+            "NEEDS CLARIFICATION",
+        ],
+    )
+
+
+def _assert_non_placeholder_tasks(path: Path) -> None:
+    _assert_no_template_markers(
+        path,
+        label="tasks.md",
+        markers=[
+            "IMPORTANT: The tasks below are SAMPLE TASKS",
+            "Initialize [language] project with [framework] dependencies",
+            "Contract test for [endpoint]",
+            "TXXX",
+        ],
+    )
+
+
 def _cancel_windmill_job_on_interrupt(
     ctx: HarnessRunContext,
     *,
@@ -904,6 +1061,294 @@ def _stage_project_onboard(ctx: HarnessRunContext, scenario: ScenarioConfig, sta
     return _stage_project_onboard_windmill(ctx, scenario, stage)
 
 
+def _stage_speckit_init(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "repo_root")
+    repo_root = Path(str(ctx.metadata["repo_root"])).expanduser().resolve(strict=False)
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="init",
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    assert_paths_exist(
+        repo_root,
+        [
+            ".specify/memory/constitution.md",
+            ".specify/templates/spec-template.md",
+            ".specify/templates/plan-template.md",
+            ".specify/templates/tasks-template.md",
+            ".specify/templates/checklist-template.md",
+            "specs",
+        ],
+    )
+    ctx.metadata["speckit_root"] = str(repo_root / ".specify")
+    return {
+        "path": response.get("path"),
+        "constitution_hash": response.get("constitution_hash"),
+    }
+
+
+def _stage_speckit_specify(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "base_branch")
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="specify",
+        payload={
+            "description": _default_speckit_description(scenario),
+            "base_branch": str(ctx.metadata["base_branch"]),
+        },
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    spec_run_id = int(response.get("spec_run_id") or 0)
+    if spec_run_id <= 0:
+        raise RuntimeError(f"SpecKit specify did not return a valid spec_run_id: {response}")
+    worktree_path = _existing_path(response.get("worktree_path"), label="worktree_path")
+    spec_path = _existing_path(response.get("spec_path"), label="spec_path")
+    _assert_under_root(spec_path, worktree_path, label="spec_path")
+    _assert_non_placeholder_spec(spec_path)
+
+    ctx.metadata.update(
+        {
+            "spec_run_id": spec_run_id,
+            "worktree_path": str(worktree_path),
+            "spec_path": str(spec_path),
+            "spec_root": str(response.get("spec_root") or spec_path.parent),
+            "spec_branch_name": str(response.get("branch_name") or ""),
+        }
+    )
+    return {
+        "spec_run_id": spec_run_id,
+        "worktree_path": str(worktree_path),
+        "spec_path": str(spec_path),
+        "branch_name": response.get("branch_name"),
+        "spec_root": response.get("spec_root"),
+    }
+
+
+def _stage_speckit_clarify(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "spec_run_id", "spec_path", "worktree_path")
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="clarify",
+        payload={
+            "spec_path": str(ctx.metadata["spec_path"]),
+            "spec_run_id": int(ctx.metadata["spec_run_id"]),
+            "entries": _default_speckit_clarify_entries(),
+        },
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    spec_path = _existing_path(response.get("spec_path") or ctx.metadata["spec_path"], label="spec_path")
+    expected_answer = _default_speckit_clarify_entries()[0]["answer"]
+    if expected_answer not in spec_path.read_text(encoding="utf-8"):
+        raise RuntimeError(f"Clarification answer was not written to spec file: {spec_path}")
+
+    ctx.metadata["spec_path"] = str(spec_path)
+    return {
+        "spec_run_id": int(response.get("spec_run_id") or ctx.metadata["spec_run_id"]),
+        "worktree_path": str(response.get("worktree_path") or ctx.metadata["worktree_path"]),
+        "spec_path": str(spec_path),
+        "clarifications_added": int(response.get("clarifications_added") or 0),
+    }
+
+
+def _stage_speckit_plan(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "spec_run_id", "spec_path", "worktree_path")
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="plan",
+        payload={
+            "spec_path": str(ctx.metadata["spec_path"]),
+            "spec_run_id": int(ctx.metadata["spec_run_id"]),
+        },
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    worktree_path = _existing_path(ctx.metadata["worktree_path"], label="worktree_path")
+    plan_path = _existing_path(response.get("plan_path"), label="plan_path")
+    _assert_under_root(plan_path, worktree_path, label="plan_path")
+    _assert_non_placeholder_plan(plan_path)
+    data_model_path = response.get("data_model_path")
+    contracts_path = response.get("contracts_path")
+    if data_model_path:
+        _existing_path(data_model_path, label="data_model_path")
+    if contracts_path:
+        _existing_path(contracts_path, label="contracts_path")
+    ctx.metadata.update(
+        {
+            "plan_path": str(plan_path),
+            "data_model_path": str(data_model_path or ""),
+            "contracts_path": str(contracts_path or ""),
+        }
+    )
+    return {
+        "spec_run_id": int(response.get("spec_run_id") or ctx.metadata["spec_run_id"]),
+        "worktree_path": str(response.get("worktree_path") or ctx.metadata["worktree_path"]),
+        "plan_path": str(plan_path),
+        "data_model_path": data_model_path,
+        "contracts_path": contracts_path,
+    }
+
+
+def _stage_speckit_tasks(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "spec_run_id", "plan_path", "worktree_path")
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="tasks",
+        payload={
+            "plan_path": str(ctx.metadata["plan_path"]),
+            "spec_run_id": int(ctx.metadata["spec_run_id"]),
+        },
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    worktree_path = _existing_path(ctx.metadata["worktree_path"], label="worktree_path")
+    tasks_path = _existing_path(response.get("tasks_path"), label="tasks_path")
+    _assert_under_root(tasks_path, worktree_path, label="tasks_path")
+    _assert_non_placeholder_tasks(tasks_path)
+    task_count = int(response.get("task_count") or 0)
+    if task_count <= 0:
+        raise RuntimeError(f"SpecKit tasks stage returned no tasks: {response}")
+    ctx.metadata["tasks_path"] = str(tasks_path)
+    return {
+        "spec_run_id": int(response.get("spec_run_id") or ctx.metadata["spec_run_id"]),
+        "worktree_path": str(response.get("worktree_path") or ctx.metadata["worktree_path"]),
+        "tasks_path": str(tasks_path),
+        "task_count": task_count,
+        "parallelizable_count": int(response.get("parallelizable_count") or 0),
+    }
+
+
+def _stage_speckit_checklist(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "spec_run_id", "spec_path", "worktree_path")
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="checklist",
+        payload={
+            "spec_path": str(ctx.metadata["spec_path"]),
+            "spec_run_id": int(ctx.metadata["spec_run_id"]),
+        },
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    worktree_path = _existing_path(ctx.metadata["worktree_path"], label="worktree_path")
+    checklist_path = _existing_path(response.get("checklist_path"), label="checklist_path")
+    _assert_under_root(checklist_path, worktree_path, label="checklist_path")
+    item_count = int(response.get("item_count") or 0)
+    if item_count <= 0:
+        raise RuntimeError(f"SpecKit checklist stage returned no checklist items: {response}")
+    ctx.metadata["checklist_path"] = str(checklist_path)
+    return {
+        "spec_run_id": int(response.get("spec_run_id") or ctx.metadata["spec_run_id"]),
+        "worktree_path": str(response.get("worktree_path") or ctx.metadata["worktree_path"]),
+        "checklist_path": str(checklist_path),
+        "item_count": item_count,
+    }
+
+
+def _stage_speckit_analyze(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "spec_run_id", "spec_path", "worktree_path")
+    payload: dict[str, Any] = {
+        "spec_path": str(ctx.metadata["spec_path"]),
+        "spec_run_id": int(ctx.metadata["spec_run_id"]),
+    }
+    if ctx.metadata.get("plan_path"):
+        payload["plan_path"] = str(ctx.metadata["plan_path"])
+    if ctx.metadata.get("tasks_path"):
+        payload["tasks_path"] = str(ctx.metadata["tasks_path"])
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="analyze",
+        payload=payload,
+        timeout_seconds=scenario.timeouts.planning_seconds,
+    )
+    worktree_path = _existing_path(ctx.metadata["worktree_path"], label="worktree_path")
+    report_path = _existing_path(response.get("report_path"), label="report_path")
+    _assert_under_root(report_path, worktree_path, label="report_path")
+    _assert_non_placeholder_report(report_path)
+    ctx.metadata["report_path"] = str(report_path)
+    return {
+        "spec_run_id": int(response.get("spec_run_id") or ctx.metadata["spec_run_id"]),
+        "worktree_path": str(response.get("worktree_path") or ctx.metadata["worktree_path"]),
+        "report_path": str(report_path),
+    }
+
+
+def _stage_speckit_implement(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
+    _require_metadata(ctx, "spec_run_id", "spec_path", "worktree_path", "env")
+    response = _post_project_speckit(
+        ctx,
+        scenario=scenario,
+        stage=stage,
+        action="implement",
+        payload={
+            "spec_path": str(ctx.metadata["spec_path"]),
+            "spec_run_id": int(ctx.metadata["spec_run_id"]),
+        },
+        timeout_seconds=scenario.timeouts.execution_seconds,
+    )
+    worktree_path = _existing_path(ctx.metadata["worktree_path"], label="worktree_path")
+    metadata_path = _existing_path(response.get("metadata_path"), label="metadata_path")
+    protocol_root = _existing_path(response.get("protocol_root"), label="protocol_root")
+    protocol_id = int(response.get("protocol_id") or 0)
+    step_count = int(response.get("step_count") or 0)
+    if protocol_id <= 0:
+        raise RuntimeError(f"SpecKit implement did not return a valid protocol_id: {response}")
+    if step_count < scenario.min_protocol_steps:
+        raise RuntimeError(
+            f"Expected at least {scenario.min_protocol_steps} protocol steps from implement, got {step_count}"
+        )
+    _assert_under_root(metadata_path, worktree_path, label="metadata_path")
+    env = ctx.metadata["env"]
+    db_url = env.get("DEVGODZILLA_DB_URL")
+    db_path_raw = env.get("DEVGODZILLA_DB_PATH")
+    db_path = Path(db_path_raw).expanduser() if db_path_raw else None
+    db = get_database(db_url=db_url, db_path=db_path)
+    db.init_schema()
+    protocol = db.get_protocol_run(protocol_id)
+    if not protocol:
+        raise RuntimeError(f"Linked protocol run not found: {protocol_id}")
+    if str(protocol.worktree_path or "") != str(worktree_path):
+        raise RuntimeError(
+            f"Protocol worktree mismatch for protocol_id={protocol_id}: "
+            f"expected={worktree_path} got={protocol.worktree_path}"
+        )
+    step_runs = db.list_step_runs(protocol_id)
+    if len(step_runs) < 1:
+        raise RuntimeError(f"No step runs linked to protocol_id={protocol_id}")
+    spec_run = db.get_spec_run(int(ctx.metadata["spec_run_id"]))
+    if spec_run and int(spec_run.protocol_run_id or 0) != protocol_id:
+        raise RuntimeError(
+            f"SpecRun linkage mismatch for spec_run_id={ctx.metadata['spec_run_id']}: "
+            f"expected protocol_id={protocol_id} got={spec_run.protocol_run_id}"
+        )
+    ctx.metadata.update(
+        {
+            "protocol_id": protocol_id,
+            "protocol_root": str(protocol_root),
+            "implement_metadata_path": str(metadata_path),
+        }
+    )
+    return {
+        "spec_run_id": int(response.get("spec_run_id") or ctx.metadata["spec_run_id"]),
+        "worktree_path": str(response.get("worktree_path") or ctx.metadata["worktree_path"]),
+        "protocol_id": protocol_id,
+        "protocol_root": str(protocol_root),
+        "metadata_path": str(metadata_path),
+        "step_count": step_count,
+        "warnings": response.get("warnings") or [],
+    }
+
+
 def _stage_protocol_create(ctx: HarnessRunContext, scenario: ScenarioConfig, stage: str) -> dict[str, Any]:
     _require_metadata(ctx, "project_id", "env", "base_branch")
 
@@ -1210,6 +1655,14 @@ def build_live_cli_stage_handlers() -> dict[str, StageHandler]:
         "project_onboard": _stage_project_onboard,
         "project_onboard_agent": _stage_project_onboard_agent,
         "project_onboard_windmill": _stage_project_onboard_windmill,
+        "speckit_init": _stage_speckit_init,
+        "speckit_specify": _stage_speckit_specify,
+        "speckit_clarify": _stage_speckit_clarify,
+        "speckit_plan": _stage_speckit_plan,
+        "speckit_tasks": _stage_speckit_tasks,
+        "speckit_checklist": _stage_speckit_checklist,
+        "speckit_analyze": _stage_speckit_analyze,
+        "speckit_implement": _stage_speckit_implement,
         "protocol_feature_cycles": _stage_protocol_feature_cycles,
         "protocol_create": _stage_protocol_create,
         "protocol_worktree": _stage_protocol_worktree,

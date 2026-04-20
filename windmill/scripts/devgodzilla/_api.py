@@ -14,9 +14,6 @@ from typing import Any, Dict, Optional
 
 
 def get_devgodzilla_api_base_url() -> str:
-    url = os.environ.get("DEVGODZILLA_API_URL")
-    if url:
-        return url.rstrip("/")
     try:
         import wmill
         url = wmill.get_variable("g/all/devgodzilla_api_url")
@@ -24,6 +21,9 @@ def get_devgodzilla_api_base_url() -> str:
             return url.rstrip("/")
     except Exception:
         pass
+    url = os.environ.get("DEVGODZILLA_API_URL")
+    if url:
+        return url.rstrip("/")
     return "http://devgodzilla-api:8000"
 
 
@@ -54,4 +54,3 @@ def api_json(
         return {"error": payload.get("detail") or payload.get("message") or str(e), "status_code": e.code}
     except Exception as e:
         return {"error": str(e)}
-

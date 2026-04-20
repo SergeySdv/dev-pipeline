@@ -1,24 +1,29 @@
 
-import requests
-from typing import Optional
+"""
+Create Sprint From Protocol (DevGodzilla API)
 
-def main(protocol_id: int, sprint_name: Optional[str] = None, auto_sync: bool = True):
+Creates a sprint from an existing protocol run.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from ._api import api_json
+
+
+def main(
+    protocol_id: int,
+    sprint_name: Optional[str] = None,
+    auto_sync: bool = True,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Dict[str, Any]:
     """Create a sprint from a protocol run."""
-    # Internal API address in docker-compose
-    api_base = "http://devgodzilla-api:8000"
-    
     payload = {
         "sprint_name": sprint_name,
-        "auto_sync": auto_sync
+        "auto_sync": auto_sync,
+        "start_date": start_date,
+        "end_date": end_date,
     }
-    
-    # Send POST request to create sprint
-    response = requests.post(
-        f"{api_base}/protocols/{protocol_id}/actions/create-sprint",
-        json=payload
-    )
-    
-    # Raise exception for bad status codes
-    response.raise_for_status()
-    
-    return response.json()
+    return api_json("POST", f"/protocols/{protocol_id}/actions/create-sprint", body=payload)

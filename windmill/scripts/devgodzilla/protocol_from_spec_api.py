@@ -13,7 +13,6 @@ from ._api import api_json
 
 def main(
     project_id: int,
-    *,
     spec_path: Optional[str] = None,
     tasks_path: Optional[str] = None,
     protocol_name: Optional[str] = None,

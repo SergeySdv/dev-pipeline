@@ -6,10 +6,12 @@ from devgodzilla.engines.registry import get_registry
 
 console = Console()
 
-@click.group()
-def agent():
+@click.group(invoke_without_command=True)
+@click.pass_context
+def agent(ctx: click.Context):
     """Agent management commands."""
-    pass
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
 
 @agent.command("list")
 def list_agents():

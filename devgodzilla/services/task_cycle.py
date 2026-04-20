@@ -5,6 +5,9 @@ import json
 import re
 import shutil
 import subprocess
+import shlex
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -774,7 +777,8 @@ class TaskCycleService(Service):
         acceptance_criteria = self._extract_acceptance_criteria(step_text)
         review_focus = acceptance_criteria[:3] if acceptance_criteria else [f"Validate implementation for {step.step_name}"]
         goal = self._extract_goal(step_text, step)
-        test_commands = self._detect_test_commands(workspace_root)
+        test_command_specs = self._detect_test_command_specs(workspace_root, required_files)
+        test_commands = [str(item["display"]) for item in test_command_specs]
         open_questions = self._context_open_questions(entry_points, required_files, test_commands)
         clarifications = self._ensure_context_clarifications(
             project_id=project.id,
@@ -810,6 +814,7 @@ class TaskCycleService(Service):
             "manifest_files": manifests,
             "style_guides": style_guides,
             "test_commands": test_commands,
+            "test_command_specs": test_command_specs,
             "review_focus": review_focus,
             "architecture_notes": self._architecture_notes(required_files, code_refs),
             "risks": self._derive_risks(step, required_files),
@@ -2783,13 +2788,118 @@ class TaskCycleService(Service):
             risks.append(f"Review interactions across {len(required_files)} curated files")
         return risks
 
-    def _detect_test_commands(self, workspace_root: Path) -> List[str]:
-        commands: List[str] = []
-        if (workspace_root / "scripts" / "ci" / "test.sh").exists():
-            commands.append("scripts/ci/test.sh")
-        if (workspace_root / "pytest.ini").exists() or (workspace_root / "tests").exists():
-            commands.append("pytest -q")
-        package_json = workspace_root / "package.json"
+    def _detect_test_commands(self, workspace_root: Path, required_files: Optional[List[Dict[str, str]]] = None) -> List[str]:
+        return [str(item["display"]) for item in self._detect_test_command_specs(workspace_root, required_files or [])]
+
+    def _detect_test_command_specs(
+        self,
+        workspace_root: Path,
+        required_files: List[Dict[str, str]],
+    ) -> List[Dict[str, Any]]:
+        specs: List[Dict[str, Any]] = []
+        seen: set[Tuple[str, Tuple[str, ...]]] = set()
+        candidate_roots = self._candidate_test_roots(workspace_root, required_files)
+
+        for root in candidate_roots:
+            for command in self._test_commands_for_root(workspace_root, root):
+                key = (str(command["cwd"]), tuple(str(part) for part in command["command"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                specs.append(command)
+
+        if specs:
+            return specs
+
+        for root in self._scan_fallback_test_roots(workspace_root):
+            for command in self._test_commands_for_root(workspace_root, root):
+                key = (str(command["cwd"]), tuple(str(part) for part in command["command"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                specs.append(command)
+        return specs
+
+    def _candidate_test_roots(self, workspace_root: Path, required_files: List[Dict[str, str]]) -> List[Path]:
+        roots: List[Path] = []
+        seen: set[Path] = set()
+
+        def add(root: Optional[Path]) -> None:
+            if root is None:
+                return
+            if root in seen:
+                return
+            seen.add(root)
+            roots.append(root)
+
+        for item in required_files:
+            path = self._resolve_workspace_path(workspace_root, item.get("path"))
+            if path is None:
+                continue
+            if path.is_file() and path.suffix.lower() in {".md", ".txt"}:
+                continue
+            candidate = path if path.is_dir() else path.parent
+            while True:
+                if candidate == workspace_root or workspace_root in candidate.parents:
+                    add(candidate)
+                if candidate == workspace_root:
+                    break
+                if workspace_root not in candidate.parents:
+                    break
+                candidate = candidate.parent
+
+        add(workspace_root)
+        roots.sort(key=lambda path: (len(path.relative_to(workspace_root).parts), str(path)), reverse=True)
+        return roots
+
+    def _scan_fallback_test_roots(self, workspace_root: Path) -> List[Path]:
+        roots: List[Path] = []
+        seen: set[Path] = set()
+        ignored_dirs = {
+            ".git",
+            ".idea",
+            ".next",
+            ".venv",
+            "node_modules",
+            "__pycache__",
+            ".mypy_cache",
+            ".pytest_cache",
+            "_runtime",
+        }
+
+        for path in workspace_root.rglob("*"):
+            if any(part in ignored_dirs for part in path.parts):
+                continue
+            if path.is_dir() and path.name == "tests":
+                candidate = path.parent
+            elif path.is_file() and path.name in {"package.json", "pyproject.toml", "pytest.ini"}:
+                candidate = path.parent
+            else:
+                continue
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            roots.append(candidate)
+        return roots
+
+    def _test_commands_for_root(self, workspace_root: Path, root: Path) -> List[Dict[str, Any]]:
+        commands: List[Dict[str, Any]] = []
+        rel_cwd = "." if root == workspace_root else str(root.relative_to(workspace_root))
+
+        def add(command: List[str]) -> None:
+            commands.append(
+                {
+                    "cwd": rel_cwd,
+                    "command": command,
+                    "display": self._format_test_command_display(rel_cwd, command),
+                }
+            )
+
+        if (root / "scripts" / "ci" / "test.sh").exists():
+            add(["scripts/ci/test.sh"])
+        if (root / "pytest.ini").exists() or (root / "tests").exists():
+            add(["pytest", "-q"])
+        package_json = root / "package.json"
         if package_json.exists():
             try:
                 payload = json.loads(package_json.read_text(encoding="utf-8"))
@@ -2797,8 +2907,28 @@ class TaskCycleService(Service):
                 payload = {}
             scripts = payload.get("scripts") if isinstance(payload, dict) else {}
             if isinstance(scripts, dict) and "test" in scripts:
-                commands.append("npm test")
-        return list(dict.fromkeys(commands))
+                add(self._node_test_command(root, payload))
+        return commands
+
+    def _node_test_command(self, package_root: Path, package_payload: Dict[str, Any]) -> List[str]:
+        package_manager = package_payload.get("packageManager")
+        if isinstance(package_manager, str):
+            normalized = package_manager.strip().lower()
+            if normalized.startswith("pnpm@"):
+                return ["pnpm", "test"]
+            if normalized.startswith("yarn@"):
+                return ["yarn", "test"]
+        if (package_root / "pnpm-lock.yaml").exists():
+            return ["pnpm", "test"]
+        if (package_root / "yarn.lock").exists():
+            return ["yarn", "test"]
+        return ["npm", "test"]
+
+    def _format_test_command_display(self, rel_cwd: str, command: List[str]) -> str:
+        rendered = " ".join(shlex.quote(part) for part in command)
+        if rel_cwd in {"", "."}:
+            return rendered
+        return f"cd {shlex.quote(rel_cwd)} && {rendered}"
 
     def _render_context_markdown(self, payload: Dict[str, Any]) -> str:
         lines = [

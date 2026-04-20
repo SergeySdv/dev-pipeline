@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from devgodzilla.api.routes import project_speckit as project_speckit_routes
 from devgodzilla.api.routes._speckit_common import get_local_project_or_400, get_project_or_404
@@ -478,6 +478,8 @@ def cleanup_spec_run(
 
 class WorkflowRequest(BaseModel):
     """Request for full spec→plan→tasks workflow."""
+    model_config = ConfigDict(extra="forbid")
+
     project_id: int
     description: str = Field(..., min_length=10, description="Feature description")
     feature_name: Optional[str] = Field(None, description="Optional feature name")
@@ -485,10 +487,6 @@ class WorkflowRequest(BaseModel):
     stop_after: Optional[str] = Field(
         None,
         description="Stop workflow after step: 'spec', 'plan', or run full pipeline (None)"
-    )
-    skip_existing: bool = Field(
-        False,
-        description="Skip steps if artifacts already exist"
     )
 
 

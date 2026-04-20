@@ -62,6 +62,10 @@ def _wait_for_probe(
     return False, last_body
 
 
+def _probe_once(probe: HttpProbe, *, url: str, timeout_seconds: float) -> tuple[bool, str]:
+    return probe(url, timeout_seconds)
+
+
 @dataclass
 class PreflightReport:
     errors: list[str] = field(default_factory=list)
@@ -108,6 +112,9 @@ def ensure_local_services(
     runner: CommandRunner,
     auto_start: bool,
     require_windmill: bool,
+    backend_health_url: str,
+    windmill_version_url: str,
+    probe: HttpProbe,
 ) -> None:
     if not auto_start:
         report.warnings.append("Harness preflight auto_start disabled; assuming services already running.")
@@ -118,23 +125,40 @@ def ensure_local_services(
         _add_error(report, f"Local dev script not found: {script}")
         return
 
-    _run_and_capture(
-        report,
-        ["bash", str(script), "up"],
-        name="infra_up",
-        cwd=project_root,
-        timeout=240,
-        runner=runner,
-    )
-    if require_windmill and os.environ.get("HARNESS_WINDMILL_AUTO_IMPORT", "1") == "1":
+    backend_running, backend_body = _probe_once(probe, url=backend_health_url, timeout_seconds=4.0)
+    report.details["backend_preexisting_probe"] = backend_body
+
+    windmill_running = True
+    windmill_body = ""
+    if require_windmill:
+        windmill_running, windmill_body = _probe_once(probe, url=windmill_version_url, timeout_seconds=4.0)
+        report.details["windmill_preexisting_probe"] = windmill_body
+
+    if require_windmill and not windmill_running:
         _run_and_capture(
             report,
-            ["bash", str(script), "import"],
-            name="windmill_import",
+            ["bash", str(script), "up"],
+            name="infra_up",
             cwd=project_root,
-            timeout=900,
+            timeout=240,
             runner=runner,
         )
+        if os.environ.get("HARNESS_WINDMILL_AUTO_IMPORT", "1") == "1":
+            _run_and_capture(
+                report,
+                ["bash", str(script), "import"],
+                name="windmill_import",
+                cwd=project_root,
+                timeout=900,
+                runner=runner,
+            )
+    else:
+        report.warnings.append("Harness preflight detected ready infra; skipping local-dev up.")
+
+    if backend_running:
+        report.warnings.append("Harness preflight detected a ready backend; skipping backend start.")
+        return
+
     background_backend_cmd = (
         f"nohup bash {shlex.quote(str(script))} backend start "
         "> /tmp/devgodzilla-harness-backend.log 2>&1 &"
@@ -192,6 +216,9 @@ def run_preflight(
         runner=runner,
         auto_start=auto_start,
         require_windmill=require_windmill,
+        backend_health_url=os.environ.get("HARNESS_BACKEND_HEALTH_URL", "http://localhost:8000/health"),
+        windmill_version_url=os.environ.get("HARNESS_WINDMILL_VERSION_URL", "http://localhost:8001/api/version"),
+        probe=probe,
     )
 
     backend_health = os.environ.get("HARNESS_BACKEND_HEALTH_URL", "http://localhost:8000/health")

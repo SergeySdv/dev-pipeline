@@ -21,6 +21,7 @@ def test_load_seeded_scenarios(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "live_onboarding_test_glm5_demo" in ids
     assert "live_onboarding_simple_admin_reporter" in ids
     assert "live_onboarding_demo_spring" in ids
+    assert "live_speckit_test_glm5_demo" in ids
 
 
 def test_load_scenario_applies_repo_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
