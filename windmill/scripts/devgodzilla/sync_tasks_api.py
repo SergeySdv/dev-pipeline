@@ -1,19 +1,24 @@
+"""
+Sync Tasks to Sprint (DevGodzilla API)
 
-import requests
+Imports SpecKit tasks.md into an existing sprint.
+"""
 
-def main(sprint_id: int, spec_path: str):
+from __future__ import annotations
+
+from typing import Any, Dict
+
+from ._api import api_json
+
+
+def main(
+    sprint_id: int,
+    spec_path: str,
+    overwrite_existing: bool = False,
+) -> Dict[str, Any]:
     """Import tasks from SpecKit markdown into sprint."""
-    api_base = "http://devgodzilla-api:8000"
-    
     payload = {
         "spec_path": spec_path,
-        "overwrite_existing": False 
+        "overwrite_existing": overwrite_existing,
     }
-    
-    response = requests.post(
-        f"{api_base}/sprints/{sprint_id}/actions/import-tasks",
-        json=payload
-    )
-    response.raise_for_status()
-    
-    return response.json()
+    return api_json("POST", f"/sprints/{sprint_id}/actions/import-tasks", body=payload)

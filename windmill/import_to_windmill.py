@@ -205,7 +205,7 @@ def create_script(base_url: str, token: str, workspace: str, path: str, content:
 
 
 def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: dict) -> bool:
-    """Create or update a flow in Windmill."""
+    """Create or replace a flow in Windmill."""
     
     # Check if flow exists
     check = api_request(base_url, f"/w/{workspace}/flows/get/{path}", token)
@@ -219,14 +219,49 @@ def create_flow(base_url: str, token: str, workspace: str, path: str, flow_def: 
     }
     
     if not (isinstance(check, dict) and check.get("code") == 404 and "error" in check):
-        # Flow exists, update it
-        print("  Flow exists, updating...")
-        result = api_request(base_url, f"/w/{workspace}/flows/update/{path}", token, "POST", payload)
+        # Flow updates can retain stale modules after structural changes, so
+        # replace the flow definition to keep the imported workspace exact.
+        print("  Flow exists, recreating...")
+        deleted = api_request(base_url, f"/w/{workspace}/flows/delete/{path}", token, "DELETE")
+        if isinstance(deleted, dict) and "error" in deleted:
+            result = api_request(base_url, f"/w/{workspace}/flows/update/{path}", token, "POST", payload)
+        else:
+            result = api_request(base_url, f"/w/{workspace}/flows/create", token, "POST", payload)
     else:
         # Create new flow
         result = api_request(base_url, f"/w/{workspace}/flows/create", token, "POST", payload)
     
     return not (isinstance(result, dict) and "error" in result)
+
+
+def _normalize_flow_module_input_transforms(flow_def: dict) -> None:
+    """
+    Windmill executes module transforms from `module.value.input_transforms`.
+
+    Our exported flow JSON stores them at the module wrapper level
+    (`module.input_transforms`). Normalize that structure before import so
+    live flow runs receive the intended arguments.
+    """
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            value = node.get("value")
+            transforms = node.get("input_transforms")
+            if isinstance(value, dict) and isinstance(transforms, dict):
+                if transforms:
+                    value["input_transforms"] = transforms
+                else:
+                    value.setdefault("input_transforms", {})
+                node.pop("input_transforms", None)
+
+            for child in node.values():
+                if isinstance(child, (dict, list)):
+                    visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(flow_def.get("value", {}))
 
 
 def _inject_script_hashes_into_flow(base_url: str, token: str, workspace: str, flow_def: dict) -> None:
@@ -395,6 +430,7 @@ def main():
             flow_name = _strip_suffix(flow_file.name, flow_strip_suffix)
             path = f"{flow_prefix}/{flow_name}"
             flow_def = json.loads(flow_file.read_text())
+            _normalize_flow_module_input_transforms(flow_def)
             _inject_script_hashes_into_flow(args.url, token, args.workspace, flow_def)
             print(f"Importing {path}...", end=" ")
 

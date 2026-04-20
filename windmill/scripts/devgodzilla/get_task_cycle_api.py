@@ -13,7 +13,6 @@ from ._api import api_json
 
 def main(
     project_id: int,
-    *,
     protocol_run_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     path = f"/projects/{project_id}/task-cycle"

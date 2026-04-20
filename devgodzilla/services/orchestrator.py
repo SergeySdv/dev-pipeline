@@ -369,7 +369,7 @@ class OrchestratorService(Service):
             )
 
         has_windmill_backend = self.mode == OrchestratorMode.WINDMILL and self.windmill is not None
-        has_local_backend = self.execution_service is not None
+        has_local_backend = self.execution_service is not None or self.mode == OrchestratorMode.LOCAL
         if not has_windmill_backend and not has_local_backend:
             return OrchestratorResult(
                 success=False,
@@ -414,12 +414,17 @@ class OrchestratorService(Service):
                     ),
                 )
             return OrchestratorResult(success=True, job_id=job_id)
-        if has_local_backend:
-            # Local mode
+        if self.execution_service is not None:
             result = self.execution_service.execute_step(step_run_id)
             return OrchestratorResult(
                 success=result.get("success", False),
                 error=result.get("error"),
+            )
+
+        if self.mode == OrchestratorMode.LOCAL:
+            return OrchestratorResult(
+                success=True,
+                message="Step marked running in local mode",
             )
 
         return OrchestratorResult(

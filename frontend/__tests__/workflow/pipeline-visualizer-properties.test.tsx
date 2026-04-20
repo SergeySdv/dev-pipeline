@@ -210,7 +210,7 @@ describe("Pipeline Visualizer Property Tests", () => {
         ),
         { numRuns: 100 }
       );
-    });
+    }, 30000); // Property test render cost can exceed Vitest's default 5s timeout in full-suite runs
 
     it("should preserve step selection when switching from DAG to linear view", () => {
       fc.assert(

@@ -69,7 +69,7 @@ services:
       - BASE_URL=http://localhost:8001
       - SUPERADMIN_SECRET=${WINDMILL_SUPERADMIN_SECRET:-devgodzilla-local-superadmin}
       - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
-      - DEVGODZILLA_API_URL=http://devgodzilla-api:8000
+      - DEVGODZILLA_API_URL=http://host.docker.internal:8000
     depends_on:
       db:
         condition: service_healthy
@@ -88,6 +88,8 @@ services:
       - windmill_data:/tmp/windmill
       - windmill_logs:/tmp/windmill/logs
     logging: *default-logging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Windmill worker
   windmill_worker:
@@ -105,7 +107,7 @@ services:
       - WORKER_GROUP=default
       - TIMEOUT=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
       - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
-      - DEVGODZILLA_API_URL=http://devgodzilla-api:8000
+      - DEVGODZILLA_API_URL=http://host.docker.internal:8000
       - WHITELIST_ENVS=DEVGODZILLA_API_URL  # Pass through to scripts
     depends_on:
       db:
@@ -117,6 +119,8 @@ services:
       - windmill_cache:/tmp/windmill/cache
       - windmill_logs:/tmp/windmill/logs
     logging: *default-logging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Native worker for lightweight in-process jobs
   windmill_worker_native:
@@ -136,7 +140,7 @@ services:
       - JOB_DEFAULT_TIMEOUT_SECS=${WINDMILL_JOB_TIMEOUT_SECONDS:-3600}
       - NUM_WORKERS=8
       - SLEEP_QUEUE=200
-      - DEVGODZILLA_API_URL=http://devgodzilla-api:8000
+      - DEVGODZILLA_API_URL=http://host.docker.internal:8000
     depends_on:
       db:
         condition: service_healthy
@@ -145,6 +149,8 @@ services:
     volumes:
       - windmill_logs:/tmp/windmill/logs
     logging: *default-logging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # DevGodzilla API
   devgodzilla-api:

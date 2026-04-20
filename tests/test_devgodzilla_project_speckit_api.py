@@ -571,6 +571,19 @@ class TestProjectSpecKitAPI:
             assert data["step_count"] == 3
             assert data["warnings"] == ["Existing runtime steps found; leaving files unchanged"]
 
+    def test_workflow_rejects_removed_skip_existing_flag(self, client, sample_project):
+        """Workflow route should reject the removed skip_existing contract field."""
+        resp = client.post(
+            "/speckit/workflow",
+            json={
+                "project_id": sample_project.id,
+                "description": "Add user authentication with OAuth2 support",
+                "skip_existing": True,
+            },
+        )
+
+        assert resp.status_code == 422
+
     def test_implement_error(self, client, sample_project):
         """Test implementation with error."""
         with patch("devgodzilla.api.routes.project_speckit.SpecificationService") as MockService:
