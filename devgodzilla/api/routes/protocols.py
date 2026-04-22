@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -753,7 +754,7 @@ def list_protocol_artifacts(
                     type=_artifact_type_from_name(p.name),
                     name=p.name,
                     size=stat.st_size,
-                    created_at=None,
+                    created_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
                     step_run_id=step.id,
                     step_name=step.step_name,
                 )
@@ -991,15 +992,17 @@ def get_protocol_policy_findings(
     except KeyError:
         raise HTTPException(status_code=404, detail="Protocol not found")
     
-    # Determine repo root for policy evaluation
     project = db.get_project(run.project_id)
     repo_root = None
-    if project.local_path:
-        try:
-            repo_root = Path(project.local_path).expanduser()
-        except Exception:
-            pass
-    
+    try:
+        repo_root = resolve_workspace_root(run, project)
+    except Exception:
+        if project.local_path:
+            try:
+                repo_root = Path(project.local_path).expanduser()
+            except Exception:
+                repo_root = None
+
     findings = policy_service.evaluate_protocol(protocol_id, repo_root=repo_root)
     
     return [

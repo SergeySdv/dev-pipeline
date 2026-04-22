@@ -253,7 +253,11 @@ class QualityService(Service):
             model = None
             cfg = None
         if not engine_id:
-            engine_id = "opencode"
+            engine_id = (
+                self.context.config.engine_defaults.get("qa")  # type: ignore[union-attr]
+                or self.context.config.default_engine_id  # type: ignore[union-attr]
+                or "opencode"
+            )
         try:
             engine = registry.get(engine_id)
         except EngineNotFoundError:
@@ -919,13 +923,24 @@ class QualityService(Service):
             @property
             def passed(self) -> bool:
                 return self._qa_result.passed
+
+            @property
+            def has_skipped_gates(self) -> bool:
+                return any(
+                    getattr(g.verdict, "value", str(g.verdict)) == "skip"
+                    for g in self._qa_result.gate_results
+                )
             
             @property
             def score(self) -> float:
                 # Calculate score from gate results
                 if not self._qa_result.gate_results:
                     return 1.0
-                passed = sum(1 for g in self._qa_result.gate_results if g.passed)
+                passed = sum(
+                    1
+                    for g in self._qa_result.gate_results
+                    if getattr(g.verdict, "value", str(g.verdict)) == "pass"
+                )
                 return passed / len(self._qa_result.gate_results)
         
         # Create a simple step_run wrapper

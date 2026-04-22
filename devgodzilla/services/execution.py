@@ -355,6 +355,15 @@ class ExecutionService(Service):
                 timeout=resolution.timeout or self.default_timeout,
                 extra={"job_id": job_id},
             )
+            try:
+                from devgodzilla.services.agent_config import AgentConfigService
+
+                cfg = AgentConfigService(self.context, db=self.db)
+                agent_cfg = cfg.get_agent(resolution.engine_id, project_id=project.id)
+                if agent_cfg and isinstance(agent_cfg.reasoning_effort, str) and agent_cfg.reasoning_effort.strip():
+                    request.extra["reasoning_effort"] = agent_cfg.reasoning_effort.strip()
+            except Exception:
+                pass
             
             # Execute
             engine_result = engine.execute(request)
@@ -638,6 +647,37 @@ class ExecutionService(Service):
                 extra=self.log_extra(step_run_id=step.id, protocol_run_id=run.id, error=str(e)),
             )
 
+        fatal_error = self._detect_fatal_engine_error(engine.metadata.id, engine_result)
+        if fatal_error:
+            self.db.update_step_status(
+                step.id,
+                StepStatus.FAILED,
+                summary=fatal_error,
+            )
+            self.db.update_protocol_status(run.id, ProtocolStatus.BLOCKED)
+            get_event_bus().publish(
+                StepFailed(
+                    step_run_id=step.id,
+                    protocol_run_id=run.id,
+                    step_name=step.step_name,
+                    error=fatal_error,
+                )
+            )
+            return ExecutionResult(
+                success=False,
+                step_run_id=step.id,
+                engine_id=resolution.engine_id,
+                model=resolution.model,
+                tokens_used=engine_result.tokens_used,
+                cost_cents=engine_result.cost_cents,
+                duration_seconds=engine_result.duration_seconds,
+                stdout=engine_result.stdout,
+                stderr=engine_result.stderr,
+                outputs_written=outputs_written,
+                metadata=engine_result.metadata,
+                error=fatal_error,
+            )
+
         if engine_result.success:
             # Check for execution blocks in the output
             combined_output = f"{engine_result.stdout}\n{engine_result.stderr}"
@@ -790,6 +830,32 @@ class ExecutionService(Service):
             metadata=engine_result.metadata,
             error=engine_result.error,
         )
+
+    def _detect_fatal_engine_error(self, engine_id: str, engine_result: EngineResult) -> Optional[str]:
+        """Promote known fatal CLI stderr patterns to execution failures."""
+        if not engine_result.success:
+            return None
+
+        combined = "\n".join(
+            part for part in (engine_result.stdout, engine_result.stderr, engine_result.error) if part
+        )
+        if not combined.strip():
+            return None
+
+        fatal_patterns = []
+        if engine_id == "opencode":
+            fatal_patterns = [
+                "ProviderModelNotFoundError",
+                "Model not found:",
+                "AuthenticationError",
+                "Invalid API key",
+            ]
+
+        for marker in fatal_patterns:
+            if marker.lower() in combined.lower():
+                return f"{engine_id} execution failed: {marker}"
+
+        return None
 
     def check_availability(self, engine_id: Optional[str] = None) -> bool:
         """Check if an engine is available."""

@@ -245,6 +245,7 @@ class AgentInfo(BaseModel):
     capabilities: List[str]
     status: str = "configured"
     default_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     command_dir: Optional[str] = None
     enabled: Optional[bool] = None
     command: Optional[str] = None
@@ -259,6 +260,7 @@ class AgentConfigUpdate(BaseModel):
     kind: Optional[str] = None
     enabled: Optional[bool] = None
     default_model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     temperature: Optional[float] = None
     capabilities: Optional[List[str]] = None
     command_dir: Optional[str] = None
@@ -348,6 +350,14 @@ class AgentTestOut(BaseModel):
     ok: bool
     checks: List[AgentTestCheckOut] = Field(default_factory=list)
     duration_ms: Optional[float] = None
+
+
+class AgentModelListOut(BaseModel):
+    agent_id: str
+    models: List[str] = Field(default_factory=list)
+    source: str = "static"
+    warning: Optional[str] = None
+    model_details: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 class AgentMetricsOut(BaseModel):
     agent_id: str

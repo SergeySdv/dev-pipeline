@@ -16,6 +16,7 @@ from devgodzilla.services.quality import (
     QAResult,
     QAVerdict,
 )
+from devgodzilla.qa.report_generator import ReportGenerator
 from devgodzilla.qa.gates.interface import (
     Gate,
     GateContext,
@@ -214,6 +215,31 @@ class TestQualityServiceInstantiation:
             default_gates=custom_gates,
         )
         assert service is not None
+
+
+def test_quality_report_marks_skipped_gates_as_partial_validation(service_context, mock_db):
+    service = QualityService(context=service_context, db=mock_db)
+    qa_result = QAResult(
+        step_run_id=89,
+        verdict=QAVerdict.PASS,
+        gate_results=[
+            GateResult(gate_id="prompt_qa", gate_name="Prompt QA", verdict=GateVerdict.SKIP),
+            GateResult(gate_id="lint", gate_name="Lint Gate", verdict=GateVerdict.SKIP),
+            GateResult(gate_id="test", gate_name="Test Gate", verdict=GateVerdict.PASS),
+        ],
+    )
+
+    report_path = service.generate_quality_report(
+        qa_result,
+        Path("/tmp/devgodzilla-quality-report-test"),
+        step_name="step-01-phase-1-setup",
+    )
+    content = report_path.read_text(encoding="utf-8")
+
+    assert "**Quality Score**: 33%" in content
+    assert "some gates were skipped" in content
+    assert "partial validation" in content
+    assert "Excellent! The code passes all quality checks" not in content
 
 
 # =============================================================================

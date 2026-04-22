@@ -2045,7 +2045,11 @@ Legend:
         except Exception:
             engine_id = None
         if not isinstance(engine_id, str) or not engine_id.strip():
-            engine_id = "opencode"
+            engine_id = (
+                self.context.config.engine_defaults.get("planning")  # type: ignore[union-attr]
+                or self.context.config.default_engine_id  # type: ignore[union-attr]
+                or "opencode"
+            )
         return engine_id.strip()
 
     def _default_speckit_model(self) -> Optional[str]:
@@ -2162,6 +2166,13 @@ Legend:
         extra: Dict[str, Any] = {"job_id": job_id, "engine_id": resolved_engine_id}
         if execution:
             extra["cli_execution_id"] = execution.execution_id
+        try:
+            cfg = AgentConfigService(self.context)
+            agent_cfg = cfg.get_agent(resolved_engine_id, project_id=project_id)
+            if agent_cfg and isinstance(agent_cfg.reasoning_effort, str) and agent_cfg.reasoning_effort.strip():
+                extra["reasoning_effort"] = agent_cfg.reasoning_effort.strip()
+        except Exception:
+            pass
 
         request = EngineRequest(
             project_id=project_id or 0,

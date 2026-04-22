@@ -885,6 +885,7 @@ export interface Agent {
   capabilities: string[];
   status: "configured" | "available" | "busy" | "unavailable" | "disabled";
   default_model: string | null;
+  reasoning_effort?: string | null;
   command_dir: string | null;
   enabled?: boolean | null;
   command?: string | null;
@@ -900,6 +901,7 @@ export interface AgentUpdate {
   kind?: string | null;
   enabled?: boolean | null;
   default_model?: string | null;
+  reasoning_effort?: string | null;
   capabilities?: string[] | null;
   command_dir?: string | null;
   command?: string | null;
@@ -988,6 +990,25 @@ export interface AgentTestResult {
   ok: boolean;
   checks: AgentTestCheck[];
   duration_ms?: number | null;
+}
+
+export interface AgentReasoningOption {
+  effort: string;
+  description: string;
+}
+
+export interface AgentModelList {
+  agent_id: string;
+  models: string[];
+  source: "cli" | "cache" | "static" | "fallback" | "bundle" | "provider_api";
+  warning?: string | null;
+  model_details?: Record<
+    string,
+    {
+      default_reasoning_effort?: string | null;
+      supported_reasoning_efforts?: AgentReasoningOption[];
+    }
+  >;
 }
 
 export interface AgentMetrics {
