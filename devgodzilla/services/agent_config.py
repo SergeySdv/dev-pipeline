@@ -493,6 +493,7 @@ class AgentConfigService(Service):
             "exec": "execution",
             "execution": "execution",
             "code_gen": "execution",
+            "review": "review",
             "qa": "qa",
             "validation": "qa",
             "validation_qa": "qa",
@@ -940,6 +941,7 @@ class AgentConfigService(Service):
         mapping = {
             "execution": "exec",
             "planning": "planning",
+            "review": "review",
             "qa": "qa",
             "onboarding_discovery": "discovery",
         }
@@ -1632,6 +1634,7 @@ class AgentConfigService(Service):
             "planning": "planning",
             "exec": "execution",
             "code_gen": "execution",
+            "review": "review",
             "qa": "qa",
             "discovery": "onboarding_discovery",
         }

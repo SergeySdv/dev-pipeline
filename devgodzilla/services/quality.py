@@ -686,9 +686,24 @@ class QualityService(Service):
             return {}
 
         metadata: Dict[str, Any] = {}
+        metadata["context_pack_path"] = str(context_pack)
         test_commands = payload.get("test_commands")
         if isinstance(test_commands, list):
             metadata["test_commands"] = [str(item) for item in test_commands if str(item).strip()]
+
+        metadata["context_pack"] = payload
+        artifact_refs = payload.get("artifact_refs")
+        if isinstance(artifact_refs, dict):
+            metadata["artifact_refs"] = artifact_refs
+            step_artifacts_dir = artifact_refs.get("step_artifacts_dir")
+            if isinstance(step_artifacts_dir, str) and step_artifacts_dir.strip():
+                step_dir = Path(step_artifacts_dir)
+                if not step_dir.is_absolute():
+                    step_dir = workspace_root / step_dir
+                diff_paths = [step_dir / "changes.diff", step_dir / "changes_cached.diff"]
+                existing = [str(path) for path in diff_paths if path.exists()]
+                if existing:
+                    metadata["diff_paths"] = existing
 
         raw_specs = payload.get("test_command_specs")
         if isinstance(raw_specs, list):

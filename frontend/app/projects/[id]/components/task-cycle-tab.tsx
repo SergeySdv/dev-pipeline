@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   CheckCircle2,
+  FolderOpen,
   FileSearch,
   GitBranch,
   PlayCircle,
@@ -17,6 +18,14 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CodeBlock } from "@/components/ui/code-block";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { LoadingState } from "@/components/ui/loading-state";
 import {
@@ -37,7 +46,10 @@ import {
   useReviewWorkItem,
   useSprints,
   useStartBrownfieldRun,
+  useWorkItemArtifactContent,
 } from "@/lib/api";
+import type { WorkItemArtifactRefs } from "@/lib/api";
+import type { WorkItem } from "@/lib/api/types";
 
 interface TaskCycleTabProps {
   projectId: number;
@@ -55,6 +67,70 @@ function toneClass(value: string | null | undefined): string {
     return "bg-yellow-500/10 text-yellow-700";
   }
   return "bg-blue-500/10 text-blue-700";
+}
+
+function nextAction(item: WorkItem): {
+  label: string;
+  implementDisabled: boolean;
+  reviewDisabled: boolean;
+  qaDisabled: boolean;
+  prReadyDisabled: boolean;
+} {
+  const contextBlocked = item.context_status !== "ready" || item.blocking_clarifications > 0;
+  const implementDisabled = contextBlocked;
+  const reviewDisabled =
+    item.status === "queued" || item.status === "context_ready" || item.status === "pr_ready";
+  const qaDisabled =
+    item.review_status !== "passed" || item.status === "queued" || item.status === "context_ready";
+  const prReadyDisabled =
+    item.review_status !== "passed" ||
+    item.qa_status !== "passed" ||
+    item.blocking_clarifications > 0 ||
+    item.blocking_policy_findings > 0;
+
+  if (contextBlocked) {
+    return {
+      label: "Next: resolve context and blocking clarifications",
+      implementDisabled,
+      reviewDisabled,
+      qaDisabled,
+      prReadyDisabled,
+    };
+  }
+  if (item.status === "queued" || item.status === "context_ready") {
+    return {
+      label: "Next: implement",
+      implementDisabled,
+      reviewDisabled,
+      qaDisabled,
+      prReadyDisabled,
+    };
+  }
+  if (item.review_status !== "passed") {
+    return {
+      label: "Next: review",
+      implementDisabled,
+      reviewDisabled,
+      qaDisabled,
+      prReadyDisabled,
+    };
+  }
+  if (item.qa_status !== "passed") {
+    return {
+      label: "Next: run QA",
+      implementDisabled,
+      reviewDisabled,
+      qaDisabled,
+      prReadyDisabled,
+    };
+  }
+  return {
+    label: item.pr_ready ? "Done: PR ready" : "Next: mark PR ready",
+    implementDisabled,
+    reviewDisabled,
+    qaDisabled,
+    prReadyDisabled,
+  };
 }
 
 export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
@@ -75,6 +151,18 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   >("task_cycle");
   const [selectedSprintId, setSelectedSprintId] = useState<string>("");
   const [sprintName, setSprintName] = useState("");
+  const [artifactDialogOpen, setArtifactDialogOpen] = useState(false);
+  const [selectedArtifact, setSelectedArtifact] = useState<{
+    workItemId: number;
+    artifactKey: keyof WorkItemArtifactRefs;
+    label: string;
+  } | null>(null);
+
+  const artifactContent = useWorkItemArtifactContent(
+    selectedArtifact?.workItemId,
+    selectedArtifact?.artifactKey ?? null,
+    artifactDialogOpen
+  );
 
   const protocolNames = useMemo(
     () =>
@@ -138,14 +226,22 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
     }
   };
 
+  const openArtifact = (
+    workItemId: number,
+    artifactKey: keyof WorkItemArtifactRefs,
+    label: string
+  ) => {
+    setSelectedArtifact({ workItemId, artifactKey, label });
+    setArtifactDialogOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">Task Cycle</h3>
           <p className="text-muted-foreground text-sm">
-            Run the brownfield discovery to work-item loop and review items through context,
-            implementation, review, QA, and PR readiness.
+            Default v1 brownfield flow: analyze context, implement, review, run QA, then mark PR-ready.
           </p>
         </div>
         <div className="flex gap-2">
@@ -158,7 +254,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
         <CardHeader>
           <CardTitle className="text-base">Start Brownfield Run</CardTitle>
           <CardDescription>
-            Run a brownfield feature request into task-cycle work items, tasks, a protocol, or a sprint.
+            Use Task Cycle as the primary brownfield path. Other modes remain available for advanced flows.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -256,8 +352,10 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
               protocol.
             </div>
           ) : (
-            workItems.map((item) => (
-              <div key={item.id} className="space-y-3 rounded-lg border p-4">
+            workItems.map((item) => {
+              const actionState = nextAction(item);
+              return (
+                <div key={item.id} className="space-y-3 rounded-lg border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -277,7 +375,25 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       <span>Clarifications: {item.blocking_clarifications}</span>
                       <span>Policy findings: {item.blocking_policy_findings}</span>
                       {item.owner_agent && <span>Owner: {item.owner_agent}</span>}
+                      {item.helper_agents.length > 0 && (
+                        <span>Helpers: {item.helper_agents.join(", ")}</span>
+                      )}
                     </div>
+                    {item.helper_agent_summary && (
+                      <p className="text-muted-foreground text-xs">{item.helper_agent_summary}</p>
+                    )}
+                    {item.task_dir && (
+                      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                        <FolderOpen className="h-3.5 w-3.5" />
+                        <code className="rounded bg-muted px-1.5 py-0.5">{item.task_dir}</code>
+                      </div>
+                    )}
+                    {(item.context_status !== "ready" || item.blocking_clarifications > 0) && (
+                      <p className="text-amber-700 text-xs">
+                        Implementation is blocked until context is ready and blocking clarifications are resolved.
+                      </p>
+                    )}
+                    <p className="text-muted-foreground text-xs">{actionState.label}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Link href={`/protocols/${item.protocol_run_id}`}>
@@ -298,8 +414,40 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
 
                 <div className="flex flex-wrap gap-2">
                   <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openArtifact(item.id, "context_pack_md", "Context Pack")}
+                  >
+                    View Context
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openArtifact(item.id, "review_report_md", "Review Report")}
+                  >
+                    View Review
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openArtifact(item.id, "test_report_md", "Test Report")}
+                  >
+                    View QA
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openArtifact(item.id, "rework_pack_json", "Rework Pack")}
+                  >
+                    View Rework
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
                     variant="outline"
                     size="sm"
+                    disabled={false}
                     onClick={() =>
                       withToast(
                         () =>
@@ -319,6 +467,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={actionState.implementDisabled}
                     onClick={() =>
                       withToast(
                         () =>
@@ -338,6 +487,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={actionState.reviewDisabled}
                     onClick={() =>
                       withToast(
                         () =>
@@ -356,6 +506,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={actionState.qaDisabled}
                     onClick={() =>
                       withToast(
                         () =>
@@ -375,6 +526,7 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={actionState.prReadyDisabled}
                     onClick={() =>
                       withToast(
                         () =>
@@ -391,11 +543,52 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                     Mark PR Ready
                   </Button>
                 </div>
-              </div>
-            ))
+                </div>
+              );
+            })
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={artifactDialogOpen}
+        onOpenChange={(open) => {
+          setArtifactDialogOpen(open);
+          if (!open) {
+            setSelectedArtifact(null);
+          }
+        }}
+      >
+        <DialogContent size="4xl" className="max-h-[85vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{selectedArtifact?.label || "Artifact"}</DialogTitle>
+            <DialogDescription>
+              {selectedArtifact
+                ? `Work item ${selectedArtifact.workItemId} • ${selectedArtifact.artifactKey}`
+                : "Preview task-cycle artifact content"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 overflow-hidden">
+            {artifactContent.isLoading ? (
+              <LoadingState message="Loading artifact..." />
+            ) : artifactContent.error ? (
+              <div className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+                {artifactContent.error instanceof Error
+                  ? artifactContent.error.message
+                  : "Failed to load artifact"}
+              </div>
+            ) : artifactContent.data ? (
+              <CodeBlock
+                code={artifactContent.data.content}
+                language={artifactContent.data.type === "json" ? "json" : "markdown"}
+                title={artifactContent.data.name}
+                maxHeight="65vh"
+                wrapLongLines
+              />
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

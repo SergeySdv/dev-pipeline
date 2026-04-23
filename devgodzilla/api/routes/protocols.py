@@ -121,6 +121,10 @@ class ProtocolFromSpecRequest(BaseModel):
     protocol_name: Optional[str] = None
     spec_run_id: Optional[int] = None
     overwrite: bool = False
+    task_cycle: bool = False
+    owner_agent: Optional[str] = None
+    helper_agents: List[str] = Field(default_factory=list)
+    allow_helper_agents: bool = False
 
 
 class ProtocolFromSpecResponse(BaseModel):
@@ -236,6 +240,15 @@ def create_protocol_from_spec(
             success=False,
             error=result.error or "Protocol creation failed",
             warnings=result.warnings,
+        )
+
+    if result.protocol_run_id and request.task_cycle:
+        from devgodzilla.services.task_cycle import TaskCycleService
+
+        TaskCycleService(ctx, db).seed_task_cycle_metadata(
+            result.protocol_run_id,
+            owner_agent=request.owner_agent,
+            helper_agents=request.helper_agents if (request.allow_helper_agents or request.helper_agents) else [],
         )
 
     protocol = db.get_protocol_run(result.protocol_run_id) if result.protocol_run_id else None

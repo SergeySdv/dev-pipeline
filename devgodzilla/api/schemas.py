@@ -478,6 +478,8 @@ class WorkItemArtifactRefsOut(BaseModel):
     task_dir: str
     context_pack_json: str
     context_pack_md: str
+    review_input_json: str
+    review_input_md: str
     review_report_json: str
     review_report_md: str
     test_report_json: str
@@ -496,7 +498,9 @@ class WorkItemOut(BaseModel):
     review_status: str
     qa_status: str
     owner_agent: Optional[str] = None
+    review_agent: Optional[str] = None
     helper_agents: List[str] = Field(default_factory=list)
+    helper_agent_summary: Optional[str] = None
     task_dir: Optional[str] = None
     artifact_refs: WorkItemArtifactRefsOut
     depends_on: List[int] = Field(default_factory=list)
@@ -519,6 +523,7 @@ class WorkItemImplementRequest(BaseModel):
 class WorkItemReviewOut(BaseModel):
     verdict: str
     summary: str
+    review_agent: Optional[str] = None
     blocking_findings: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
 

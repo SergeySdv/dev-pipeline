@@ -301,6 +301,7 @@ export interface WorkItem {
   qa_status: string;
   owner_agent: string | null;
   helper_agents: string[];
+  helper_agent_summary: string | null;
   task_dir: string | null;
   artifact_refs: WorkItemArtifactRefs;
   depends_on: number[];

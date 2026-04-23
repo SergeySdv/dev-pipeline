@@ -600,10 +600,16 @@ class TestRunQA:
         mock_db.get_project.return_value.local_path = str(workspace)
         context_pack_dir = workspace / ".devgodzilla" / "task-cycle" / "protocols" / "100" / "work-items" / "1000"
         context_pack_dir.mkdir(parents=True, exist_ok=True)
+        step_artifacts_dir = workspace / ".protocols" / "test" / ".devgodzilla" / "steps" / "1000" / "artifacts"
+        step_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (step_artifacts_dir / "changes.diff").write_text("diff --git a/demo b/demo\n", encoding="utf-8")
         (context_pack_dir / "context_pack.json").write_text(
             """
             {
               "test_commands": ["cd packages/web && npm test"],
+              "artifact_refs": {
+                "step_artifacts_dir": ".protocols/test/.devgodzilla/steps/1000/artifacts"
+              },
               "test_command_specs": [
                 {
                   "cwd": "packages/web",
@@ -655,6 +661,9 @@ class TestRunQA:
                 "display": "cd packages/web && npm test",
             }
         ]
+        assert observed["metadata"]["artifact_refs"]["step_artifacts_dir"] == ".protocols/test/.devgodzilla/steps/1000/artifacts"
+        assert observed["metadata"]["diff_paths"] == [str(step_artifacts_dir / "changes.diff")]
+        assert observed["metadata"]["context_pack"]["test_commands"] == ["cd packages/web && npm test"]
 
     def test_run_qa_blocks_protocol_on_failures(self, service_context, mock_db, workspace, monkeypatch):
         """Test run_qa marks protocol blocked when gates fail."""

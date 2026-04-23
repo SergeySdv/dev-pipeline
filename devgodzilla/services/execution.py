@@ -6,6 +6,7 @@ Coordinates repository setup, engine invocation, and QA triggering.
 """
 
 import os
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -587,10 +588,83 @@ class ExecutionService(Service):
         elif step.summary:
             parts.append(f"# Task\n\n{step.summary}")
 
+        context_pack = self._load_task_cycle_context_pack(
+            workspace_root=workspace_root,
+            protocol_run_id=step.protocol_run_id,
+            step_run_id=step.id,
+        )
+        if context_pack:
+            parts.append("# ContextPack (machine-readable handoff)\n\n```json\n" + json.dumps(context_pack, indent=2) + "\n```")
+            test_commands = context_pack.get("test_commands")
+            if isinstance(test_commands, list) and test_commands:
+                rendered = "\n".join(f"- `{str(command)}`" for command in test_commands if str(command).strip())
+                if rendered:
+                    parts.append(f"# Exact Test Commands\n\n{rendered}")
+        helper_summary = self._load_task_cycle_helper_summary(
+            workspace_root=workspace_root,
+            protocol_run_id=step.protocol_run_id,
+            step_run_id=step.id,
+        )
+        if helper_summary:
+            helpers = helper_summary.get("helpers")
+            if isinstance(helpers, list) and helpers:
+                parts.append("# Helper Subtask Findings\n\n```json\n" + json.dumps(helper_summary, indent=2) + "\n```")
+
         if workflow_context.strip():
             parts.append(workflow_context.strip())
         
         return "\n\n---\n\n".join(parts) if parts else f"Execute step: {step.step_name}"
+
+    def _load_task_cycle_context_pack(
+        self,
+        *,
+        workspace_root: Path,
+        protocol_run_id: int,
+        step_run_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        context_pack = (
+            workspace_root
+            / ".devgodzilla"
+            / "task-cycle"
+            / "protocols"
+            / str(protocol_run_id)
+            / "work-items"
+            / str(step_run_id)
+            / "context_pack.json"
+        )
+        if not context_pack.exists():
+            return None
+        try:
+            payload = json.loads(context_pack.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _load_task_cycle_helper_summary(
+        self,
+        *,
+        workspace_root: Path,
+        protocol_run_id: int,
+        step_run_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        helper_summary = (
+            workspace_root
+            / ".devgodzilla"
+            / "task-cycle"
+            / "protocols"
+            / str(protocol_run_id)
+            / "work-items"
+            / str(step_run_id)
+            / "helpers"
+            / "helper_summary.json"
+        )
+        if not helper_summary.exists():
+            return None
+        try:
+            payload = json.loads(helper_summary.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def _fail_step_pre_execution(
         self,
