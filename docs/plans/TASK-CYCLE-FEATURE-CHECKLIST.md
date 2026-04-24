@@ -54,15 +54,15 @@ Use this checklist to validate the task-cycle implementation before shipping.
 
 - [x] `brownfield_feature` can branch into `task_cycle`.
 - [x] The task-cycle branch is part of the same user-facing intake flow.
-- [ ] Windmill scripts remain thin API adapters.
-- [ ] Flow runs and job runs are visible through existing API passthrough endpoints.
+- [x] Windmill scripts remain thin API adapters.
+- [x] Flow runs and job runs are visible through existing API passthrough endpoints.
 - [x] Operator actions in Windmill are named according to business meaning, not raw internal step verbs.
 
 ## Next.js UI
 
 - [x] The project page shows task-cycle progress as work-items, not only protocol steps.
 - [x] The work-item UI is a higher-level projection over existing `step_runs`.
-- [ ] The user can see owner, helper-agent activity summary, status, review state, QA state, and PR-ready state.
+- [x] The user can see owner, helper-agent activity summary, status, review state, QA state, and PR-ready state.
 - [x] The user can open the latest context, review, and test artifacts from the UI.
 - [x] The user can see the task folder path and reusable artifact links for the current work item.
 - [x] The user can trigger implement, review, QA, and mark PR-ready actions from the UI.

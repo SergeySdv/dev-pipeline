@@ -95,13 +95,16 @@ class TaskCycleService(Service):
             ),
             task_dir=self._string_or_none(state.get("task_dir")),
             artifact_refs=schemas.WorkItemArtifactRefsOut(**self._artifact_refs(project, step)),
+            artifact_availability=schemas.WorkItemArtifactAvailabilityOut(
+                **self._artifact_availability(project, step)
+            ),
             depends_on=list(step.depends_on or []),
             pr_ready=bool(state.get("pr_ready", False)),
             blocking_clarifications=blocking_clarifications,
             blocking_policy_findings=int(state.get("blocking_policy_findings", 0) or 0),
             iteration_count=int(state.get("iteration_count", 0) or 0),
             max_iterations=int(state.get("max_iterations", self.config.task_cycle_max_iterations) or self.config.task_cycle_max_iterations),
-            summary=step.summary,
+            summary=self._work_item_summary(step, state),
         )
 
     def start_brownfield_run(
@@ -786,8 +789,45 @@ class TaskCycleService(Service):
         }
         return state
 
-    def _helper_agent_summary(self, helper_agents: List[str], helper_runs: Any = None) -> Optional[str]:
-        return self.helper_runner.build_summary(helper_agents, helper_runs)
+    def _helper_agent_summary(self, helper_agents: List[str], helper_runs: Any = None) -> str:
+        summary = self.helper_runner.build_summary(helper_agents, helper_runs)
+        if summary:
+            return summary
+        if helper_agents:
+            return f"{len(helper_agents)} helpers configured under the owner; no helper activity recorded yet"
+        return "No helper subtasks configured under the owner"
+
+    def _work_item_summary(self, step: StepRun, state: Dict[str, Any]) -> Optional[str]:
+        step_status = str(step.status).lower()
+        last_failure = self._string_or_none(state.get("last_failure_source"))
+        if step_status in {
+            str(StepStatus.FAILED).lower(),
+            str(StepStatus.TIMEOUT).lower(),
+            str(StepStatus.BLOCKED).lower(),
+            "failed",
+            "timeout",
+            "blocked",
+        }:
+            return f"Step is {step_status}"
+        if last_failure == "qa" and state.get("qa_status") != "passed":
+            return "QA findings require rework"
+        if last_failure == "review" and state.get("review_status") != "passed":
+            return "Review findings require rework"
+        if state.get("pr_ready"):
+            return "Ready to open a pull request"
+        if state.get("qa_status") == "passed" and state.get("review_status") == "passed":
+            return "Review and QA passed; mark PR ready"
+        if state.get("qa_status") == "passed":
+            return "QA passed"
+        if state.get("review_status") == "passed":
+            return "Review passed"
+        if state.get("context_status") != "ready":
+            return "Context needs clarification before implementation can proceed"
+        if state.get("status") == self.STATUS_IN_PROGRESS:
+            return step.summary or "Implementation in progress"
+        if state.get("status") == self.STATUS_AWAITING_REVIEW:
+            return "Implementation complete; review is next"
+        return step.summary
 
     def _is_task_cycle_run(self, run) -> bool:
         metadata = dict(run.speckit_metadata or {})
@@ -821,6 +861,35 @@ class TaskCycleService(Service):
         }
         return refs
 
+    def _artifact_availability(self, project, step: StepRun) -> Dict[str, bool]:
+        return {
+            "context_pack_md": self._resolve_artifact_path(project, step, "context_pack_md") is not None,
+            "review_report_md": self._resolve_artifact_path(project, step, "review_report_md") is not None,
+            "test_report_md": self._resolve_artifact_path(project, step, "test_report_md") is not None,
+            "rework_pack_json": self._resolve_artifact_path(project, step, "rework_pack_json") is not None,
+        }
+
+    def _resolve_artifact_path(self, project, step: StepRun, artifact_key: str) -> Optional[Path]:
+        refs = self._artifact_refs(project, step)
+        artifact_path = Path(refs[artifact_key])
+        if artifact_path.exists() and artifact_path.is_file():
+            return artifact_path
+
+        if artifact_key == "test_report_md":
+            step_artifacts_dir = Path(refs["step_artifacts_dir"])
+            for fallback_name in ("quality-report.md", "qa_report.md"):
+                fallback_path = step_artifacts_dir / fallback_name
+                if fallback_path.exists() and fallback_path.is_file():
+                    return fallback_path
+
+        if artifact_key == "test_report_json":
+            step_artifacts_dir = Path(refs["step_artifacts_dir"])
+            fallback_path = step_artifacts_dir / "execution.json"
+            if fallback_path.exists() and fallback_path.is_file():
+                return fallback_path
+
+        return None
+
     def _run_helper_subtasks(
         self,
         *,
@@ -852,8 +921,8 @@ class TaskCycleService(Service):
         refs = self._artifact_refs(project, step)
         if artifact_key not in refs:
             raise TaskCycleError(f"Unknown task-cycle artifact: {artifact_key}")
-        path = Path(refs[artifact_key])
-        if not path.exists() or not path.is_file():
+        path = self._resolve_artifact_path(project, step, artifact_key)
+        if path is None:
             raise TaskCycleError(f"Artifact not found: {artifact_key}")
 
         max_bytes = max(1, min(int(max_bytes), 2_000_000))

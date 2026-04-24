@@ -229,8 +229,13 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
   const openArtifact = (
     workItemId: number,
     artifactKey: keyof WorkItemArtifactRefs,
-    label: string
+    label: string,
+    enabled = true
   ) => {
+    if (!enabled) {
+      toast.error(`${label} is not available for this work item yet`);
+      return;
+    }
     setSelectedArtifact({ workItemId, artifactKey, label });
     setArtifactDialogOpen(true);
   };
@@ -354,6 +359,12 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
           ) : (
             workItems.map((item) => {
               const actionState = nextAction(item);
+              const artifactAvailability = item.artifact_availability ?? {
+                context_pack_md: true,
+                review_report_md: true,
+                test_report_md: true,
+                rework_pack_json: true,
+              };
               return (
                 <div key={item.id} className="space-y-3 rounded-lg border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -375,13 +386,14 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                       <span>Clarifications: {item.blocking_clarifications}</span>
                       <span>Policy findings: {item.blocking_policy_findings}</span>
                       {item.owner_agent && <span>Owner: {item.owner_agent}</span>}
-                      {item.helper_agents.length > 0 && (
-                        <span>Helpers: {item.helper_agents.join(", ")}</span>
-                      )}
+                      <span>
+                        Helpers: {item.helper_agents.length > 0 ? item.helper_agents.join(", ") : "none"}
+                      </span>
+                      <span>PR Ready: {item.pr_ready ? "yes" : "no"}</span>
                     </div>
-                    {item.helper_agent_summary && (
-                      <p className="text-muted-foreground text-xs">{item.helper_agent_summary}</p>
-                    )}
+                    <p className="text-muted-foreground text-xs">
+                      Helper activity: {item.helper_agent_summary || "No helper subtasks configured under the owner"}
+                    </p>
                     {item.task_dir && (
                       <div className="text-muted-foreground flex items-center gap-2 text-xs">
                         <FolderOpen className="h-3.5 w-3.5" />
@@ -403,12 +415,13 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                         <ArrowUpRight className="ml-2 h-3.5 w-3.5" />
                       </Button>
                     </Link>
-                    {item.pr_ready && (
-                      <Badge variant="secondary" className="bg-green-500/10 text-green-700">
-                        <CheckCircle2 className="mr-1 h-3 w-3" />
-                        PR Ready
-                      </Badge>
-                    )}
+                    <Badge
+                      variant="secondary"
+                      className={item.pr_ready ? "bg-green-500/10 text-green-700" : "bg-slate-500/10 text-slate-700"}
+                    >
+                      <CheckCircle2 className="mr-1 h-3 w-3" />
+                      PR Ready: {item.pr_ready ? "yes" : "no"}
+                    </Badge>
                   </div>
                 </div>
 
@@ -416,28 +429,60 @@ export function TaskCycleTab({ projectId }: TaskCycleTabProps) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => openArtifact(item.id, "context_pack_md", "Context Pack")}
+                    disabled={!artifactAvailability.context_pack_md}
+                    onClick={() =>
+                      openArtifact(
+                        item.id,
+                        "context_pack_md",
+                        "Context Pack",
+                        artifactAvailability.context_pack_md
+                      )
+                    }
                   >
                     View Context
                   </Button>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => openArtifact(item.id, "review_report_md", "Review Report")}
+                    disabled={!artifactAvailability.review_report_md}
+                    onClick={() =>
+                      openArtifact(
+                        item.id,
+                        "review_report_md",
+                        "Review Report",
+                        artifactAvailability.review_report_md
+                      )
+                    }
                   >
                     View Review
                   </Button>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => openArtifact(item.id, "test_report_md", "Test Report")}
+                    disabled={!artifactAvailability.test_report_md}
+                    onClick={() =>
+                      openArtifact(
+                        item.id,
+                        "test_report_md",
+                        "Test Report",
+                        artifactAvailability.test_report_md
+                      )
+                    }
                   >
                     View QA
                   </Button>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => openArtifact(item.id, "rework_pack_json", "Rework Pack")}
+                    disabled={!artifactAvailability.rework_pack_json}
+                    onClick={() =>
+                      openArtifact(
+                        item.id,
+                        "rework_pack_json",
+                        "Rework Pack",
+                        artifactAvailability.rework_pack_json
+                      )
+                    }
                   >
                     View Rework
                   </Button>

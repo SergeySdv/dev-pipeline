@@ -83,12 +83,20 @@ test.describe("Project Detail Page", () => {
             task_dir: "/tmp/repo/.devgodzilla/task-cycle/protocols/1/work-items/501",
             context_pack_json: "/tmp/context_pack.json",
             context_pack_md: "/tmp/context_pack.md",
+            review_input_json: "/tmp/review_input.json",
+            review_input_md: "/tmp/review_input.md",
             review_report_json: "/tmp/review_report.json",
             review_report_md: "/tmp/review_report.md",
             test_report_json: "/tmp/test_report.json",
             test_report_md: "/tmp/test_report.md",
             rework_pack_json: "/tmp/rework_pack.json",
             step_artifacts_dir: "/tmp/step-artifacts",
+          },
+          artifact_availability: {
+            context_pack_md: true,
+            review_report_md: true,
+            test_report_md: true,
+            rework_pack_json: false,
           },
           depends_on: [],
           pr_ready: false,
@@ -121,6 +129,8 @@ test.describe("Project Detail Page", () => {
     await taskCycleTab.click();
 
     await expect(page.getByText("Helpers: trace, tests").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Helper activity: 2 helpers under the owner: 2 completed").first()).toBeVisible();
+    await expect(page.getByText("PR Ready: no").first()).toBeVisible();
     await expect(
       page.getByText("/tmp/repo/.devgodzilla/task-cycle/protocols/1/work-items/501").first()
     ).toBeVisible();

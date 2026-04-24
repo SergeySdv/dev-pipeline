@@ -106,7 +106,7 @@ def test_task_cycle_build_context_creates_reusable_artifacts(monkeypatch: pytest
                 assert context["step_run_id"] == step.id
                 assert any(item["path"] == "AGENTS.md" for item in context["style_guides"])
                 assert any(command == "pytest -q" for command in context["test_commands"])
-                assert payload["helper_agent_summary"] is None
+                assert payload["helper_agent_summary"] == "No helper subtasks configured under the owner"
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
@@ -454,6 +454,76 @@ def test_task_cycle_work_item_exposes_helper_agent_summary(monkeypatch: pytest.M
                 payload = resp.json()
                 assert payload["helper_agents"] == ["trace", "tests"]
                 assert "internal delegation only" in payload["helper_agent_summary"]
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_work_item_summary_is_derived_from_state_not_stale_step_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="blocked",
+            assigned_agent="codex",
+        )
+        db.update_step_status(step.id, "blocked", summary="QA passed")
+        db.update_step_run(
+            step.id,
+            runtime_state={
+                "task_cycle": {
+                    "status": "blocked",
+                    "context_status": "ready",
+                    "review_status": "passed",
+                    "qa_status": "pending",
+                    "pr_ready": False,
+                }
+            },
+        )
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                resp = client.get(f"/work-items/{step.id}")
+                assert resp.status_code == 200
+                payload = resp.json()
+                assert payload["qa_status"] == "pending"
+                assert payload["summary"] == "Step is blocked"
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()
@@ -1104,6 +1174,79 @@ def test_task_cycle_failed_review_writes_rework_pack_and_exposes_artifact_conten
                 artifact_resp = client.get(f"/work-items/{step.id}/artifacts/rework_pack_json/content")
                 assert artifact_resp.status_code == 200
                 assert "\"source\": \"review\"" in artifact_resp.json()["content"]
+        finally:
+            app.dependency_overrides.clear()
+            _reset_config_for_tests()
+
+
+@pytest.mark.skipif(TestClient is None, reason="fastapi not installed")
+def test_task_cycle_artifact_content_falls_back_to_step_quality_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devgodzilla.api.dependencies import get_db
+    from devgodzilla.config import _reset_config_for_tests
+    from devgodzilla.db.database import SQLiteDatabase
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        db_path = tmp / "devgodzilla.sqlite"
+        repo = tmp / "repo"
+        projects_root = tmp / "projects-root"
+        _init_repo(repo)
+
+        monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
+        monkeypatch.setenv("DEVGODZILLA_PROJECTS_ROOT", str(projects_root))
+        monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
+        _reset_config_for_tests()
+
+        db = SQLiteDatabase(db_path)
+        db.init_schema()
+        project = db.create_project(
+            name="demo",
+            git_url=str(repo),
+            base_branch="main",
+            local_path=str(repo),
+        )
+        protocol_root = repo / "specs" / "demo-feature" / "_runtime"
+        protocol_root.mkdir(parents=True, exist_ok=True)
+        (protocol_root / "plan.md").write_text("# Plan\n", encoding="utf-8")
+        (protocol_root / "step-01-demo.md").write_text("# Demo step\n", encoding="utf-8")
+        run = db.create_protocol_run(
+            project_id=project.id,
+            protocol_name="demo-feature",
+            status="planned",
+            base_branch="main",
+            worktree_path=str(repo),
+            protocol_root=str(protocol_root),
+        )
+        step = db.create_step_run(
+            protocol_run_id=run.id,
+            step_index=1,
+            step_name="step-01-demo",
+            step_type="execute",
+            status="completed",
+            assigned_agent="dev",
+        )
+
+        step_artifacts_dir = protocol_root / ".devgodzilla" / "steps" / str(step.id) / "artifacts"
+        step_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (step_artifacts_dir / "quality-report.md").write_text(
+            "# QA Report\n\nLegacy step-level QA artifact\n",
+            encoding="utf-8",
+        )
+
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            with TestClient(app) as client:  # type: ignore[arg-type]
+                work_item_resp = client.get(f"/work-items/{step.id}")
+                assert work_item_resp.status_code == 200
+                payload = work_item_resp.json()
+                assert payload["artifact_availability"]["test_report_md"] is True
+                assert not Path(payload["artifact_refs"]["test_report_md"]).exists()
+
+                artifact_resp = client.get(f"/work-items/{step.id}/artifacts/test_report_md/content")
+                assert artifact_resp.status_code == 200
+                assert "Legacy step-level QA artifact" in artifact_resp.json()["content"]
         finally:
             app.dependency_overrides.clear()
             _reset_config_for_tests()

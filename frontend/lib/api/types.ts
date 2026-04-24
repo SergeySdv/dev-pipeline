@@ -282,12 +282,21 @@ export interface WorkItemArtifactRefs {
   task_dir: string;
   context_pack_json: string;
   context_pack_md: string;
+  review_input_json: string;
+  review_input_md: string;
   review_report_json: string;
   review_report_md: string;
   test_report_json: string;
   test_report_md: string;
   rework_pack_json: string;
   step_artifacts_dir: string;
+}
+
+export interface WorkItemArtifactAvailability {
+  context_pack_md: boolean;
+  review_report_md: boolean;
+  test_report_md: boolean;
+  rework_pack_json: boolean;
 }
 
 export interface WorkItem {
@@ -304,6 +313,7 @@ export interface WorkItem {
   helper_agent_summary: string | null;
   task_dir: string | null;
   artifact_refs: WorkItemArtifactRefs;
+  artifact_availability: WorkItemArtifactAvailability;
   depends_on: number[];
   pr_ready: boolean;
   blocking_clarifications: number;

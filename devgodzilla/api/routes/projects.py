@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -240,6 +240,37 @@ class CreateBranchRequest(BaseModel):
     push: bool = Field(default=False, description="Push branch to origin and set upstream")
 
 
+class OnboardToTasksRequest(BaseModel):
+    git_url: str = Field(..., min_length=1)
+    project_name: str = Field(..., min_length=1)
+    branch: str = Field(default="main")
+    description: str = Field(default="")
+    constitution_content: str = Field(default="")
+    feature_request: str = Field(default="")
+    feature_name: str = Field(default="")
+    clarification_entries: List[Dict[str, str]] = Field(default_factory=list)
+    clarification_notes: str = Field(default="")
+    run_discovery_agent: bool = Field(default=False)
+    discovery_pipeline: bool = Field(default=True)
+    discovery_engine_id: str = Field(default="")
+    discovery_model: str = Field(default="")
+    clone_if_missing: bool = Field(default=True)
+
+
+class OnboardToTasksResponse(BaseModel):
+    project_id: int
+    create_project: Dict[str, Any]
+    onboard_project: Dict[str, Any]
+    speckit_specify: Dict[str, Any]
+    speckit_plan: Dict[str, Any]
+    speckit_tasks: Dict[str, Any]
+    speckit_clarify: Optional[Dict[str, Any]] = None
+
+
+OnboardToTasksRequest.model_rebuild()
+OnboardToTasksResponse.model_rebuild()
+
+
 def _auto_onboard_project(ctx, db, created, project_req):
     """Handle auto-onboarding: Windmill queue or synchronous fallback."""
     import time as _t
@@ -387,6 +418,153 @@ def create_project(
         _auto_onboard_project(ctx, db, created, project)
 
     return created
+
+
+@router.post("/projects/actions/onboard-to-tasks", response_model=OnboardToTasksResponse)
+def onboard_to_tasks(
+    request: OnboardToTasksRequest,
+    db: Database = Depends(get_db),
+    ctx: ServiceContext = Depends(get_service_context),
+):
+    """Create a project, onboard it, and generate spec/plan/tasks in one backend-owned workflow."""
+    if not _looks_like_git_repository_url(request.git_url):
+        raise HTTPException(
+            status_code=400,
+            detail="git_url must be a cloneable Git repository URL",
+        )
+
+    created = db.create_project(
+        name=request.project_name,
+        git_url=request.git_url,
+        base_branch=request.branch or "main",
+        description=request.description or "",
+        secrets=None,
+        local_path=None,
+        policy_enforcement_mode="warn",
+    )
+
+    onboarding_result = _run_onboarding_work(
+        project_id=created.id,
+        request=ProjectOnboardRequest(
+            branch=request.branch or "main",
+            clone_if_missing=bool(request.clone_if_missing),
+            constitution_content=request.constitution_content or None,
+            run_discovery_agent=bool(request.run_discovery_agent),
+            discovery_pipeline=bool(request.discovery_pipeline),
+            discovery_engine_id=request.discovery_engine_id or None,
+            discovery_model=request.discovery_model or None,
+        ),
+        ctx=ctx,
+        db=db,
+    )
+
+    project = db.get_project(created.id)
+    if not project.local_path:
+        raise HTTPException(status_code=400, detail="Project has no local path after onboarding")
+
+    service = SpecificationService(ctx, db)
+
+    specify_result = service.run_specify(
+        project.local_path,
+        request.feature_request,
+        feature_name=request.feature_name or None,
+        base_branch=request.branch or "main",
+        project_id=created.id,
+    )
+    if not specify_result.success or not specify_result.spec_path:
+        raise HTTPException(
+            status_code=400,
+            detail=specify_result.error or "Spec generation failed",
+        )
+
+    clarify_payload: Optional[Dict[str, Any]] = None
+    if request.clarification_entries or (request.clarification_notes or "").strip():
+        clarify_result = service.run_clarify(
+            project.local_path,
+            specify_result.spec_path,
+            entries=request.clarification_entries,
+            notes=(request.clarification_notes or None),
+            spec_run_id=specify_result.spec_run_id,
+            project_id=created.id,
+        )
+        if not clarify_result.success:
+            raise HTTPException(
+                status_code=400,
+                detail=clarify_result.error or "Spec clarification failed",
+            )
+        clarify_payload = {
+            "success": clarify_result.success,
+            "spec_path": clarify_result.spec_path,
+            "clarifications_added": clarify_result.clarifications_added,
+            "spec_run_id": clarify_result.spec_run_id,
+            "worktree_path": clarify_result.worktree_path,
+            "error": clarify_result.error,
+        }
+
+    plan_result = service.run_plan(
+        project.local_path,
+        specify_result.spec_path,
+        spec_run_id=specify_result.spec_run_id,
+        project_id=created.id,
+        context=None,
+    )
+    if not plan_result.success or not plan_result.plan_path:
+        raise HTTPException(
+            status_code=400,
+            detail=plan_result.error or "Plan generation failed",
+        )
+
+    tasks_result = service.run_tasks(
+        project.local_path,
+        plan_result.plan_path,
+        spec_run_id=specify_result.spec_run_id,
+        project_id=created.id,
+    )
+    if not tasks_result.success:
+        raise HTTPException(
+            status_code=400,
+            detail=tasks_result.error or "Tasks generation failed",
+        )
+
+    create_project_payload = schemas.ProjectOut.model_validate(created).model_dump(mode="json")
+    onboard_payload = onboarding_result.model_dump(mode="json")
+
+    return OnboardToTasksResponse(
+        project_id=created.id,
+        create_project=create_project_payload,
+        onboard_project=onboard_payload,
+        speckit_specify={
+            "success": specify_result.success,
+            "spec_path": specify_result.spec_path,
+            "spec_number": specify_result.spec_number,
+            "feature_name": specify_result.feature_name,
+            "spec_run_id": specify_result.spec_run_id,
+            "worktree_path": specify_result.worktree_path,
+            "branch_name": specify_result.branch_name,
+            "base_branch": specify_result.base_branch,
+            "spec_root": specify_result.spec_root,
+            "error": specify_result.error,
+        },
+        speckit_plan={
+            "success": plan_result.success,
+            "plan_path": plan_result.plan_path,
+            "data_model_path": plan_result.data_model_path,
+            "contracts_path": plan_result.contracts_path,
+            "spec_run_id": plan_result.spec_run_id,
+            "worktree_path": plan_result.worktree_path,
+            "error": plan_result.error,
+        },
+        speckit_tasks={
+            "success": tasks_result.success,
+            "tasks_path": tasks_result.tasks_path,
+            "task_count": tasks_result.task_count,
+            "parallelizable_count": tasks_result.parallelizable_count,
+            "spec_run_id": tasks_result.spec_run_id,
+            "worktree_path": tasks_result.worktree_path,
+            "error": tasks_result.error,
+        },
+        speckit_clarify=clarify_payload,
+    )
 
 @router.get("/projects", response_model=List[schemas.ProjectOut])
 def list_projects(

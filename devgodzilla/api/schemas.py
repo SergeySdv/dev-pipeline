@@ -488,6 +488,13 @@ class WorkItemArtifactRefsOut(BaseModel):
     step_artifacts_dir: str
 
 
+class WorkItemArtifactAvailabilityOut(BaseModel):
+    context_pack_md: bool = False
+    review_report_md: bool = False
+    test_report_md: bool = False
+    rework_pack_json: bool = False
+
+
 class WorkItemOut(BaseModel):
     id: int
     project_id: int
@@ -503,6 +510,7 @@ class WorkItemOut(BaseModel):
     helper_agent_summary: Optional[str] = None
     task_dir: Optional[str] = None
     artifact_refs: WorkItemArtifactRefsOut
+    artifact_availability: WorkItemArtifactAvailabilityOut = Field(default_factory=WorkItemArtifactAvailabilityOut)
     depends_on: List[int] = Field(default_factory=list)
     pr_ready: bool = False
     blocking_clarifications: int = 0
