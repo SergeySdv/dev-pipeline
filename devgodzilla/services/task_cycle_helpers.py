@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from devgodzilla.engines import EngineRequest, SandboxMode, get_registry
+from devgodzilla.logging import get_logger
 from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.base import ServiceContext
+
+logger = get_logger(__name__)
 
 
 class TaskCycleHelperRunner:

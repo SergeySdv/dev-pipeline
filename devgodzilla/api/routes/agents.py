@@ -32,7 +32,7 @@ def list_agents(
             capabilities=a.capabilities,
             status="configured" if a.enabled else "disabled",
             default_model=a.default_model,
-            reasoning_effort=a.reasoning_effort,
+            reasoning_effort=getattr(a, "reasoning_effort", None),
             command_dir=a.command_dir,
             enabled=a.enabled,
             command=a.command,
