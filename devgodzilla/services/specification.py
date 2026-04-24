@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from devgodzilla.engines import EngineNotFoundError, EngineRequest, SandboxMode, get_registry
 from devgodzilla.logging import get_logger
 from devgodzilla.services.base import Service, ServiceContext
+from devgodzilla.services.agent_config import AgentConfigService
 from devgodzilla.services.policy import PolicyService
 from devgodzilla.services.clarifier import ClarifierService
 from devgodzilla.services.speckit_adapter import SpecKitAdapter

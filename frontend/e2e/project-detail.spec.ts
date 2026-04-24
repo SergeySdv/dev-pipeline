@@ -53,7 +53,68 @@ test.describe("Project Detail Page", () => {
   });
 
   test("Task Cycle tab shows work items when present", async ({ page }) => {
-    await goto(page, "/projects/42");
+    mockAllProjectApis(page, 42, {
+      features: { task_cycle_enabled: true },
+      taskCycle: [
+        {
+          id: 101,
+          project_id: 42,
+          protocol_run_id: 1,
+          title: "Implement login page",
+          status: "in_progress",
+          context_status: "ready",
+          review_status: "pending",
+          qa_status: "pending",
+          owner_agent: "dev",
+          helper_agents: [],
+          helper_agent_summary: null,
+          task_dir: "/tmp/work-item-101",
+          artifact_refs: {},
+          artifact_availability: {
+            context_pack_md: true,
+            review_report_md: false,
+            test_report_md: false,
+            rework_pack_json: false,
+          },
+          depends_on: [],
+          pr_ready: false,
+          blocking_clarifications: 0,
+          blocking_policy_findings: 0,
+          iteration_count: 0,
+          max_iterations: 5,
+          summary: "Create the login UI component",
+        },
+        {
+          id: 102,
+          project_id: 42,
+          protocol_run_id: 1,
+          title: "Setup auth middleware",
+          status: "done",
+          context_status: "ready",
+          review_status: "passed",
+          qa_status: "passed",
+          owner_agent: "dev",
+          helper_agents: [],
+          helper_agent_summary: null,
+          task_dir: "/tmp/work-item-102",
+          artifact_refs: {},
+          artifact_availability: {
+            context_pack_md: true,
+            review_report_md: true,
+            test_report_md: true,
+            rework_pack_json: false,
+          },
+          depends_on: [],
+          pr_ready: false,
+          blocking_clarifications: 0,
+          blocking_policy_findings: 0,
+          iteration_count: 0,
+          max_iterations: 5,
+          summary: "Configure authentication middleware",
+        },
+      ],
+    });
+    await goto(page, "/projects/42?tab=task_cycle");
     await expect(page.getByText("Test Project").first()).toBeVisible({ timeout: 15_000 });
     const taskCycleTab = page.locator("aside").getByRole("button", { name: /Task Cycle/ });
     await expect(taskCycleTab).toBeVisible({ timeout: 10_000 });
@@ -65,6 +126,7 @@ test.describe("Project Detail Page", () => {
 
   test("Task Cycle tab shows helper summary, task dir, and artifact preview actions", async ({ page }) => {
     mockAllProjectApis(page, 42, {
+      features: { task_cycle_enabled: true },
       taskCycle: [
         {
           id: 501,
