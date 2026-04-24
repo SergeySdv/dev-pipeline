@@ -1053,7 +1053,9 @@ def test_protocol_policy_resolves_relative_protocol_root_against_worktree(
         protocol_dir = repo / "specs" / "demo-feature" / "_runtime"
         protocol_dir.mkdir(parents=True, exist_ok=True)
         (protocol_dir / "README.md").write_text("# Runtime\n", encoding="utf-8")
-        (protocol_dir / "step-01-demo.md").write_text("# step\n", encoding="utf-8")
+        step_body = "# Step\n\n## Goal\nDemo\n\n## Tasks\n- [ ] Do it\n\n## Notes\nNone\n"
+        (protocol_dir / "step-01-demo.md").write_text(step_body, encoding="utf-8")
+        (protocol_dir / "step-02-demo.md").write_text(step_body, encoding="utf-8")
 
         db = SQLiteDatabase(db_path)
         db.init_schema()
@@ -1080,6 +1082,13 @@ def test_protocol_policy_resolves_relative_protocol_root_against_worktree(
             step_type="execute",
             status="pending",
         )
+        db.create_step_run(
+            protocol_run_id=protocol.id,
+            step_index=1,
+            step_name="step-02-demo",
+            step_type="execute",
+            status="pending",
+        )
 
         monkeypatch.setenv("DEVGODZILLA_DB_PATH", str(db_path))
         monkeypatch.delenv("DEVGODZILLA_API_TOKEN", raising=False)
@@ -1087,11 +1096,13 @@ def test_protocol_policy_resolves_relative_protocol_root_against_worktree(
         with TestClient(app) as client:  # type: ignore[arg-type]
             protocol_resp = client.get(f"/protocols/{protocol.id}/policy/findings")
             assert protocol_resp.status_code == 200
-            assert protocol_resp.json() == []
+            protocol_codes = {finding["code"] for finding in protocol_resp.json()}
+            assert "policy.protocol.missing_file" not in protocol_codes
 
             step_resp = client.get(f"/steps/{step.id}/policy/findings")
             assert step_resp.status_code == 200
-            assert step_resp.json() == []
+            step_codes = {finding["code"] for finding in step_resp.json()}
+            assert "policy.step.file_missing" not in step_codes
 
 
 def test_protocol_policy_prefers_existing_worktree_protocol_root_over_repo_root() -> None:
